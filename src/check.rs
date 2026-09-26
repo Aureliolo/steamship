@@ -3,7 +3,8 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::{Path, PathBuf, is_separator};
 
 use crate::pattern;
 use crate::scripts::{self, AppScript, DepotScript, FileMapping, Problem};
@@ -102,7 +103,7 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
             Ok(found) if found.is_empty() => problems.push(Problem::new(
                 &depot.path,
                 format!(
-                    "depot {}: LocalPath {:?} matches no files in {}",
+                    "depot {}: LocalPath \"{}\" matches no files in {}",
                     depot.depot_id,
                     mapping.local_path,
                     root.display()
@@ -112,7 +113,7 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
             Err(message) => problems.push(Problem::new(
                 &depot.path,
                 format!(
-                    "depot {}: LocalPath {:?} {message}",
+                    "depot {}: LocalPath \"{}\" {message}",
                     depot.depot_id, mapping.local_path
                 ),
             )),
@@ -128,8 +129,8 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
 fn mapped_by(root: &Path, mapping: &FileMapping) -> Result<Vec<PathBuf>, String> {
     let local = scripts::native(&mapping.local_path);
     let (folder, name) = local
-        .rfind(std::path::is_separator)
-        .map_or(("", local.as_str()), |at| (&local[..at], &local[at + 1..]));
+        .rsplit_once(is_separator)
+        .unwrap_or(("", local.as_str()));
     if folder.contains(['*', '?']) {
         return Err(
             "has a wildcard in a folder name, which steamship cannot map the way steamcmd \
@@ -143,28 +144,25 @@ fn mapped_by(root: &Path, mapping: &FileMapping) -> Result<Vec<PathBuf>, String>
     Ok(found)
 }
 
-fn walk(
-    folder: &Path,
-    name: &str,
-    recursive: bool,
-    found: &mut Vec<PathBuf>,
-) -> std::io::Result<()> {
+fn walk(folder: &Path, name: &str, recursive: bool, found: &mut Vec<PathBuf>) -> io::Result<()> {
     if !folder.is_dir() {
         return Ok(());
     }
     for entry in fs::read_dir(folder)? {
         let entry = entry?;
         let path = entry.path();
-        // A link is followed to a file but never into a folder, so a loop of links cannot
-        // make the walk endless.
-        let kind = entry.file_type()?;
-        let is_file = kind.is_file() || (kind.is_symlink() && path.is_file());
-        if is_file {
-            if pattern::matches(name, &entry.file_name().to_string_lossy()) {
-                found.push(path);
+        if entry.file_type()?.is_dir() {
+            if recursive {
+                walk(&path, name, recursive, found)?;
             }
-        } else if kind.is_dir() && recursive {
-            walk(&path, name, recursive, found)?;
+            continue;
+        }
+        // The kind above is the entry's own, so a link to a folder is never walked into and a
+        // loop of links cannot make the walk endless; a link to a file counts as that file.
+        if path.metadata()?.is_file()
+            && pattern::matches(name, &entry.file_name().to_string_lossy())
+        {
+            found.push(path);
         }
     }
     Ok(())
@@ -200,34 +198,9 @@ fn content_problems(depot_id: u32, file: &Path, problems: &mut Vec<Problem>) {
             format!("is in depot {depot_id}; it is for development only and must not ship"),
         ));
     }
-    if let Some(message) = missing_executable_bit(file) {
+    // Windows file systems have no executable bit, so there the question cannot be asked.
+    #[cfg(unix)]
+    if let Some(message) = crate::unix::missing_executable_bit(file) {
         problems.push(Problem::new(file, message));
     }
-}
-
-/// Windows file systems have no executable bit, so there the question cannot be asked.
-#[cfg(unix)]
-fn missing_executable_bit(file: &Path) -> Option<String> {
-    use std::os::unix::fs::PermissionsExt;
-
-    let mut opened = match fs::File::open(file) {
-        Ok(opened) => opened,
-        Err(error) => return Some(format!("cannot be read: {error}")),
-    };
-    match crate::elf::is_program(&mut opened) {
-        Ok(false) => None,
-        Ok(true) => match opened.metadata() {
-            Ok(metadata) if metadata.permissions().mode() & 0o111 == 0 => {
-                Some("is a Linux program without its executable bit; run chmod +x on it".to_owned())
-            }
-            Ok(_) => None,
-            Err(error) => Some(format!("cannot be read: {error}")),
-        },
-        Err(error) => Some(format!("cannot be read: {error}")),
-    }
-}
-
-#[cfg(not(unix))]
-const fn missing_executable_bit(_: &Path) -> Option<String> {
-    None
 }

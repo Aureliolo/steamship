@@ -16,10 +16,12 @@ const PT_INTERP: u32 = 3;
 /// # Errors
 ///
 /// Only when reading fails; a file that is not ELF, or is cut short, is simply not a program.
-pub fn is_program(file: &mut (impl Read + Seek)) -> io::Result<bool> {
-    let mut header = [0u8; 64];
-    let length = read_up_to(file, &mut header)?;
-    let header = &header[..length];
+pub fn is_program<File>(file: &mut File) -> io::Result<bool>
+where
+    File: Read + Seek,
+{
+    let header = read_up_to(file, 64)?;
+    let header = header.as_slice();
     if header.get(..4) != Some(&MAGIC[..]) {
         return Ok(false);
     }
@@ -62,33 +64,34 @@ pub fn is_program(file: &mut (impl Read + Seek)) -> io::Result<bool> {
     for index in 0..u64::from(count) {
         let Some(at) = index
             .checked_mul(u64::from(entry_size))
-            .and_then(|o| o.checked_add(table))
+            .and_then(|offset| offset.checked_add(table))
         else {
             return Ok(false);
         };
-        file.seek(SeekFrom::Start(at))?;
-        let mut kind = [0u8; 4];
-        if read_up_to(file, &mut kind)? < 4 {
+        // An absolute seek lands at `at` by definition, even past the end, where the short read
+        // below is what says the table is not there.
+        let _: u64 = file.seek(SeekFrom::Start(at))?;
+        let segment = read_up_to(file, 4)?;
+        let Some(segment_kind) = order.u32(&segment, 0) else {
             return Ok(false);
-        }
-        if order.u32(&kind, 0) == Some(PT_INTERP) {
+        };
+        if segment_kind == PT_INTERP {
             return Ok(true);
         }
     }
     Ok(false)
 }
 
-fn read_up_to(file: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {
-    let mut filled = 0;
-    while filled < buffer.len() {
-        match file.read(&mut buffer[filled..]) {
-            Ok(0) => break,
-            Ok(count) => filled += count,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(filled)
+/// Up to `limit` bytes from where `file` stands, fewer only at its end.
+fn read_up_to<File>(file: &mut File, limit: u64) -> io::Result<Vec<u8>>
+where
+    File: Read,
+{
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(limit)
+        .read_to_end(&mut bytes)
+        .map(|_| bytes)
 }
 
 #[derive(Clone, Copy)]
@@ -140,17 +143,28 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    /// Writes `value` at `at`, zero-filling up to it; fields are written in ascending order.
+    fn put(bytes: &mut Vec<u8>, at: usize, value: &[u8]) {
+        bytes.resize(at, 0);
+        bytes.extend_from_slice(value);
+    }
+
     /// A 64-bit little-endian ELF header of `kind` with one program header of `segment`.
     fn elf64(kind: u16, segment: u32) -> Vec<u8> {
-        let mut bytes = vec![0u8; 64 + 56];
-        bytes[..4].copy_from_slice(&MAGIC);
-        bytes[4] = 2;
-        bytes[5] = 1;
-        bytes[16..18].copy_from_slice(&kind.to_le_bytes());
-        bytes[32..40].copy_from_slice(&64u64.to_le_bytes());
-        bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
-        bytes[56..58].copy_from_slice(&1u16.to_le_bytes());
-        bytes[64..68].copy_from_slice(&segment.to_le_bytes());
+        let mut bytes = Vec::new();
+        put(&mut bytes, 0, &MAGIC);
+        put(&mut bytes, 4, &[2, 1]);
+        put(&mut bytes, 16, &kind.to_le_bytes());
+        put(&mut bytes, 32, &64_u64.to_le_bytes());
+        put(&mut bytes, 54, &56_u16.to_le_bytes());
+        put(&mut bytes, 56, &1_u16.to_le_bytes());
+        put(&mut bytes, 64, &segment.to_le_bytes());
+        put(&mut bytes, 120, &[]);
+        bytes
+    }
+
+    fn cut(mut bytes: Vec<u8>, length: usize) -> Vec<u8> {
+        bytes.truncate(length);
         bytes
     }
 
@@ -175,23 +189,80 @@ mod tests {
 
     #[test]
     fn a_32_bit_big_endian_program_is_a_program() {
-        let mut bytes = vec![0u8; 52 + 32];
-        bytes[..4].copy_from_slice(&MAGIC);
-        bytes[4] = 1;
-        bytes[5] = 2;
-        bytes[16..18].copy_from_slice(&ET_DYN.to_be_bytes());
-        bytes[28..32].copy_from_slice(&52u32.to_be_bytes());
-        bytes[42..44].copy_from_slice(&32u16.to_be_bytes());
-        bytes[44..46].copy_from_slice(&1u16.to_be_bytes());
-        bytes[52..56].copy_from_slice(&PT_INTERP.to_be_bytes());
+        let mut bytes = Vec::new();
+        put(&mut bytes, 0, &MAGIC);
+        put(&mut bytes, 4, &[1, 2]);
+        put(&mut bytes, 16, &ET_DYN.to_be_bytes());
+        put(&mut bytes, 28, &52_u32.to_be_bytes());
+        put(&mut bytes, 42, &32_u16.to_be_bytes());
+        put(&mut bytes, 44, &1_u16.to_be_bytes());
+        put(&mut bytes, 52, &PT_INTERP.to_be_bytes());
+        put(&mut bytes, 84, &[]);
         assert!(program(bytes));
+    }
+
+    #[test]
+    fn a_64_bit_big_endian_program_is_a_program() {
+        let mut bytes = Vec::new();
+        put(&mut bytes, 0, &MAGIC);
+        put(&mut bytes, 4, &[2, 2]);
+        put(&mut bytes, 16, &ET_DYN.to_be_bytes());
+        put(&mut bytes, 32, &64_u64.to_be_bytes());
+        put(&mut bytes, 54, &56_u16.to_be_bytes());
+        put(&mut bytes, 56, &1_u16.to_be_bytes());
+        put(&mut bytes, 64, &PT_INTERP.to_be_bytes());
+        put(&mut bytes, 120, &[]);
+        assert!(program(bytes));
+    }
+
+    /// `elf64(ET_DYN, PT_INTERP)` with the bytes at `at` replaced by `value`.
+    fn altered(at: usize, value: &[u8]) -> Vec<u8> {
+        let mut bytes = elf64(ET_DYN, PT_INTERP);
+        let tail = bytes.split_off(at);
+        bytes.extend_from_slice(value);
+        bytes.extend(tail.into_iter().skip(value.len()));
+        bytes
+    }
+
+    #[test]
+    fn a_header_that_does_not_say_program_is_not_one() {
+        assert!(
+            program(altered(0, &[])),
+            "the unaltered header is a program"
+        );
+        assert!(
+            program(altered(54, &4_u16.to_le_bytes())),
+            "program headers just big enough to hold their type are enough"
+        );
+        for (what, at, value) in [
+            ("an unknown class", 4, &[3][..]),
+            ("an unknown byte order", 5, &[0][..]),
+            ("a relocatable object", 16, &1_u16.to_le_bytes()[..]),
+            (
+                "program headers smaller than a type",
+                54,
+                &2_u16.to_le_bytes()[..],
+            ),
+            (
+                "a table past the end of the file",
+                32,
+                &4096_u64.to_le_bytes()[..],
+            ),
+            (
+                "a table at the end of the address space",
+                32,
+                &u64::MAX.to_le_bytes()[..],
+            ),
+        ] {
+            assert!(!program(altered(at, value)), "{what}");
+        }
     }
 
     #[test]
     fn anything_else_or_cut_short_is_not() {
         assert!(!program(b"MZ\x90\x00 a Windows program".to_vec()));
         assert!(!program(Vec::new()));
-        assert!(!program(elf64(ET_DYN, PT_INTERP)[..66].to_vec()));
-        assert!(!program(elf64(ET_DYN, PT_INTERP)[..40].to_vec()));
+        assert!(!program(cut(elf64(ET_DYN, PT_INTERP), 66)));
+        assert!(!program(cut(elf64(ET_DYN, PT_INTERP), 40)));
     }
 }

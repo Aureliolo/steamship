@@ -5,6 +5,7 @@
 //! Anything this reader does not know how steamcmd treats (`#include`, `#base`, `[$WIN32]`
 //! conditions) is refused rather than guessed at.
 
+use std::error::Error;
 use std::fmt;
 
 /// Deeper than any script or manifest nests, and shallow enough that the recursive reader cannot
@@ -31,7 +32,10 @@ pub struct Pair {
 impl Block {
     /// Every value under `key`, in order. Keys match regardless of case, as they do in Valve's
     /// reader, and a key may repeat (`FileMapping` does).
-    pub fn all<'s, 'k>(&'s self, key: &'k str) -> impl Iterator<Item = &'s Value> + use<'s, 'k> {
+    pub fn all<'block, 'key>(
+        &'block self,
+        key: &'key str,
+    ) -> impl Iterator<Item = &'block Value> + use<'block, 'key> {
         self.pairs
             .iter()
             .filter(move |pair| pair.key.eq_ignore_ascii_case(key))
@@ -69,16 +73,16 @@ pub struct ParseError {
 }
 
 impl fmt::Display for ParseError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
-            f,
+            formatter,
             "line {}, column {}: {}",
             self.line, self.column, self.reason
         )
     }
 }
 
-impl std::error::Error for ParseError {}
+impl Error for ParseError {}
 
 /// Reads a whole document: the pairs at its top level, which is one `"AppBuild"` block for a
 /// script and several blocks for a manifest.
@@ -88,7 +92,10 @@ impl std::error::Error for ParseError {}
 /// Anything that is not well-formed `KeyValues`, or that uses a feature this reader refuses.
 pub fn parse(text: &str) -> Result<Block, ParseError> {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let mut reader = Reader { text, at: 0 };
+    let mut reader = Reader {
+        whole: text,
+        rest: text,
+    };
     reader.pairs(0)
 }
 
@@ -111,12 +118,12 @@ pub struct WriteError {
 }
 
 impl fmt::Display for WriteError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?} {}", self.text, self.reason)
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "\"{}\" {}", self.text, self.reason)
     }
 }
 
-impl std::error::Error for WriteError {}
+impl Error for WriteError {}
 
 fn write_pairs(block: &Block, depth: usize, out: &mut String) -> Result<(), WriteError> {
     let indent = "\t".repeat(depth);
@@ -139,7 +146,7 @@ fn write_pairs(block: &Block, depth: usize, out: &mut String) -> Result<(), Writ
                 out.push('\n');
                 out.push_str(&indent);
                 out.push_str("{\n");
-                write_pairs(inner, depth + 1, out)?;
+                write_pairs(inner, depth.saturating_add(1), out)?;
                 out.push_str(&indent);
                 out.push_str("}\n");
             }
@@ -165,23 +172,26 @@ const fn is_directive(key: &str) -> bool {
     key.eq_ignore_ascii_case("#include") || key.eq_ignore_ascii_case("#base")
 }
 
-enum Token<'a> {
+enum Token<'text> {
     Open,
     Close,
-    Text(&'a str),
+    Text(&'text str),
     End,
 }
 
-struct Reader<'a> {
-    text: &'a str,
-    at: usize,
+/// Reads by narrowing `rest`, the text not yet read, so no position is ever computed and no
+/// index can fall outside the text or inside a character.
+struct Reader<'text> {
+    whole: &'text str,
+    rest: &'text str,
 }
 
-impl<'a> Reader<'a> {
+impl<'text> Reader<'text> {
     fn pairs(&mut self, depth: usize) -> Result<Block, ParseError> {
         let mut block = Block::default();
         loop {
-            let start = self.skip();
+            self.skip();
+            let start = self.rest;
             let key = match self.token()? {
                 Token::End if depth == 0 => return Ok(block),
                 Token::End => return Err(self.error_at(start, "a block is missing its closing }")),
@@ -195,15 +205,19 @@ impl<'a> Reader<'a> {
             if is_directive(key) {
                 return Err(self.error_at(start, "#include and #base are not supported"));
             }
-            let value_start = self.skip();
+            self.skip();
+            let value_start = self.rest;
             let value = match self.token()? {
                 Token::Text(text) => Value::Text(text.to_owned()),
-                Token::Open if depth + 1 >= MAX_DEPTH => {
-                    return Err(self.error_at(value_start, "blocks nest too deeply"));
+                Token::Open => {
+                    let Some(deeper) = depth.checked_add(1).filter(|&deeper| deeper < MAX_DEPTH)
+                    else {
+                        return Err(self.error_at(value_start, "blocks nest too deeply"));
+                    };
+                    Value::Block(self.pairs(deeper)?)
                 }
-                Token::Open => Value::Block(self.pairs(depth + 1)?),
                 Token::Close | Token::End => {
-                    return Err(self.error_at(start, &format!("key {key:?} has no value")));
+                    return Err(self.error_at(start, &format!("key \"{key}\" has no value")));
                 }
             };
             block.pairs.push(Pair {
@@ -213,69 +227,58 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// Moves past whitespace and `//` comments, and answers where the next token starts.
-    fn skip(&mut self) -> usize {
-        let bytes = self.text.as_bytes();
+    /// Moves past whitespace and `//` comments.
+    fn skip(&mut self) {
         loop {
-            match bytes.get(self.at) {
-                Some(b' ' | b'\t' | b'\r' | b'\n') => self.at += 1,
-                Some(b'/') if bytes.get(self.at + 1) == Some(&b'/') => {
-                    while bytes.get(self.at).is_some_and(|&byte| byte != b'\n') {
-                        self.at += 1;
-                    }
-                }
-                _ => return self.at,
-            }
+            let trimmed = self.rest.trim_start_matches([' ', '\t', '\r', '\n']);
+            let Some(comment) = trimmed.strip_prefix("//") else {
+                self.rest = trimmed;
+                return;
+            };
+            self.rest = comment.split_once('\n').map_or("", |(_, after)| after);
         }
     }
 
-    fn token(&mut self) -> Result<Token<'a>, ParseError> {
-        let bytes = self.text.as_bytes();
-        let start = self.at;
-        match bytes.get(start) {
+    fn token(&mut self) -> Result<Token<'text>, ParseError> {
+        let start = self.rest;
+        let mut chars = start.chars();
+        match chars.next() {
             None => Ok(Token::End),
-            Some(b'{') => {
-                self.at += 1;
+            Some('{') => {
+                self.rest = chars.as_str();
                 Ok(Token::Open)
             }
-            Some(b'}') => {
-                self.at += 1;
+            Some('}') => {
+                self.rest = chars.as_str();
                 Ok(Token::Close)
             }
-            Some(b'[') => {
-                Err(self.error_at(start, "conditions such as [$WIN32] are not supported"))
-            }
-            Some(b'"') => {
-                let body = start + 1;
-                let Some(length) = self.text[body..].find('"') else {
-                    return Err(self.error_at(start, "a quoted string is never closed"));
-                };
-                self.at = body + length + 1;
-                Ok(Token::Text(&self.text[body..body + length]))
-            }
+            Some('[') => Err(self.error_at(start, "conditions such as [$WIN32] are not supported")),
+            Some('"') => match chars.as_str().split_once('"') {
+                Some((text, after)) => {
+                    self.rest = after;
+                    Ok(Token::Text(text))
+                }
+                None => Err(self.error_at(start, "a quoted string is never closed")),
+            },
             Some(_) => {
-                // Every delimiter is ASCII, so the end found here is always a character boundary.
-                let length = bytes[start..]
-                    .iter()
-                    .position(|byte| {
-                        matches!(
-                            byte,
-                            b' ' | b'\t' | b'\r' | b'\n' | b'{' | b'}' | b'"' | b'['
-                        )
-                    })
-                    .unwrap_or(bytes.len() - start);
-                self.at = start + length;
-                Ok(Token::Text(&self.text[start..start + length]))
+                let (text, after) = start
+                    .find([' ', '\t', '\r', '\n', '{', '}', '"', '['])
+                    .and_then(|end| start.split_at_checked(end))
+                    .unwrap_or((start, ""));
+                self.rest = after;
+                Ok(Token::Text(text))
             }
         }
     }
 
-    fn error_at(&self, at: usize, reason: &str) -> ParseError {
-        let before = &self.text[..at];
-        let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
+    /// Places `at`, a tail of the text, by line and character.
+    fn error_at(&self, at: &str, reason: &str) -> ParseError {
+        let read = self.whole.len().saturating_sub(at.len());
+        let before = self.whole.get(..read).unwrap_or_default();
+        let line = before.rsplit('\n').next().unwrap_or_default();
         ParseError {
-            line: before.matches('\n').count() + 1,
-            column: before[line_start..].chars().count() + 1,
+            line: before.split('\n').count(),
+            column: line.chars().count().saturating_add(1),
             reason: reason.to_owned(),
         }
     }
@@ -353,9 +356,31 @@ mod tests {
     #[test]
     fn keeps_repeated_keys_in_order() {
         let document = parsed(r#""a" { "m" "1" "M" "2" "m" { } }"#);
-        let a = document.block("a").unwrap_or_else(|| panic!("no a"));
-        assert_eq!(a.all("m").count(), 3);
-        assert_eq!(a.text("m"), Some("1"));
+        let block = document.block("a").unwrap_or_else(|| panic!("no a"));
+        assert_eq!(block.all("m").count(), 3);
+        assert_eq!(block.text("m"), Some("1"));
+    }
+
+    #[test]
+    fn asks_for_text_or_a_block_and_gets_only_that() {
+        let document = parsed(r#""text" "x" "block" { }"#);
+        assert_eq!(document.text("block"), None);
+        assert_eq!(document.block("text"), None);
+        assert_eq!(document.text("absent"), None);
+    }
+
+    #[test]
+    fn says_what_it_could_not_write() {
+        let block = Block {
+            pairs: vec![Pair {
+                key: "k".into(),
+                value: Value::Text("a \"b\"".into()),
+            }],
+        };
+        assert_eq!(
+            write(&block).map_err(|error| error.to_string()),
+            Err("\"a \"b\"\" holds a double quote, which a KeyValues file cannot hold".to_owned())
+        );
     }
 
     #[test]
@@ -363,7 +388,9 @@ mod tests {
         let document = parsed("\u{feff}key value\nother { inner \"x\" }");
         assert_eq!(document.text("key"), Some("value"));
         assert_eq!(
-            document.block("other").and_then(|b| b.text("inner")),
+            document
+                .block("other")
+                .and_then(|other| other.text("inner")),
             Some("x")
         );
     }
@@ -394,27 +421,38 @@ mod tests {
 
     #[test]
     fn places_an_error_by_line_and_character() {
-        let error = parse("\"a\"\n{\n  \"é\" }").err();
-        assert_eq!(error.map(|e| (e.line, e.column)), Some((3, 3)));
+        let error = parse("\"a\"\n{\n  \"\u{e9}\" }").err();
+        assert_eq!(error.map(|error| (error.line, error.column)), Some((3, 3)));
+    }
+
+    fn nested(depth: usize) -> String {
+        format!("{}{}", "\"k\" {".repeat(depth), "}".repeat(depth))
     }
 
     #[test]
     fn refuses_nesting_past_the_limit() {
-        let deep = "\"k\" {".repeat(MAX_DEPTH) + &"}".repeat(MAX_DEPTH);
-        assert!(parse(&deep).is_err());
-        let fine = "\"k\" {".repeat(MAX_DEPTH - 1) + &"}".repeat(MAX_DEPTH - 1);
-        assert!(parse(&fine).is_ok());
+        assert_eq!(
+            parse(&nested(MAX_DEPTH)).map_err(|error| error.reason),
+            Err("blocks nest too deeply".to_owned())
+        );
+        let deepest = parse(&nested(MAX_DEPTH.saturating_sub(1)));
+        assert_eq!(deepest.map(|tree| tree.pairs.len()), Ok(1));
     }
 
     #[test]
-    fn refuses_to_write_a_double_quote() {
-        let block = Block {
-            pairs: vec![Pair {
-                key: "a".into(),
-                value: Value::Text("say \"hi\"".into()),
-            }],
-        };
-        assert!(write(&block).is_err());
+    fn refuses_to_write_what_would_not_read_back() {
+        for (key, value) in [("a", "say \"hi\""), ("#base", "x")] {
+            let block = Block {
+                pairs: vec![Pair {
+                    key: key.into(),
+                    value: Value::Text(value.into()),
+                }],
+            };
+            assert!(
+                matches!(write(&block), Err(WriteError { .. })),
+                "{key} {value}"
+            );
+        }
     }
 
     fn text() -> impl Strategy<Value = String> {
@@ -446,13 +484,17 @@ mod tests {
     proptest! {
         #[test]
         fn writing_then_reading_gives_the_same_tree(block in block()) {
-            let written = write(&block).map_err(|e| TestCaseError::fail(e.to_string()))?;
+            let written = write(&block).map_err(|error| TestCaseError::fail(error.to_string()))?;
             prop_assert_eq!(parse(&written), Ok(block));
         }
 
         #[test]
-        fn never_panics_on_any_text(text in ".{0,200}") {
-            let _ = parse(&text);
+        fn any_text_that_reads_writes_back_the_same(text in ".{0,200}") {
+            if let Ok(tree) = parse(&text) {
+                let written =
+                    write(&tree).map_err(|error| TestCaseError::fail(error.to_string()))?;
+                prop_assert_eq!(parse(&written), Ok(tree));
+            }
         }
     }
 }

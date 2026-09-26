@@ -18,28 +18,92 @@ clap = { version = "4.6.7", features = ["derive"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"
 
-[lints.rust]
-unsafe_code = "deny"
-missing_debug_implementations = "warn"
-unreachable_pub = "warn"
-unused_qualifications = "warn"
+[lints]
+workspace = true
 
-[lints.clippy]
+# The fuzz harness is a member so that it is held to the same lints from the one table below.
+# Plain cargo commands build only this crate; the harness needs libFuzzer and is built by
+# cargo-fuzz.
+[workspace]
+members = [".", "fuzz"]
+default-members = ["."]
+
+# Every lint group is on, the restriction group included, and CI turns every warning into an
+# error. The exceptions below are the only ones, and each says why, so a future exception has to
+# argue for itself rather than being appended quietly.
+
+[workspace.lints.rust]
+# unused_crate_dependencies is left off: it judges each target alone, so clap counts as unused in
+# the library and proptest in the binary. cargo-machete checks the manifest as a whole in CI.
+unsafe_code = "deny"
+elided_lifetimes_in_paths = "warn"
+explicit_outlives_requirements = "warn"
+let_underscore_drop = "warn"
+macro_use_extern_crate = "warn"
+meta_variable_misuse = "warn"
+missing_copy_implementations = "warn"
+missing_debug_implementations = "warn"
+non_ascii_idents = "warn"
+redundant_lifetimes = "warn"
+single_use_lifetimes = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unit_bindings = "warn"
+unnameable_types = "warn"
+unreachable_pub = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+unused_qualifications = "warn"
+unused_results = "warn"
+variant_size_differences = "warn"
+
+[workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
-# From the restriction group: a panic is a bug report the user cannot act on, so errors travel
-# as values, and printing is confined to the command line layer.
-unwrap_used = "warn"
-expect_used = "warn"
-panic = "warn"
-todo = "warn"
-unimplemented = "warn"
-dbg_macro = "warn"
-print_stdout = "warn"
-print_stderr = "warn"
-undocumented_unsafe_blocks = "warn"
-allow_attributes = "warn"
-allow_attributes_without_reason = "warn"
+cargo = { level = "warn", priority = -1 }
+restriction = { level = "warn", priority = -1 }
+# Clippy warns against enabling the whole restriction group because some of its lints contradict
+# each other or Rust's own idioms. It is enabled on purpose; the ones that do are the ones below.
+blanket_clippy_restriction_lints = "allow"
+# Each of these has an opposite in the same group (needless_return, unseparated_literal_suffix,
+# the other byte order), so one of every pair has to go. The halves kept are the idiomatic ones.
+implicit_return = "allow"
+separated_literal_suffix = "allow"
+# The ELF reader reads a format that states its own byte order in its header, so both orders are
+# spelled out on purpose; host_endian_bytes, the one that would be a bug, stays on.
+big_endian_bytes = "allow"
+little_endian_bytes = "allow"
+# `?` is how an error travels as a value. Banning it means a match per call doing the same.
+question_mark_used = "allow"
+# A comment earns its place by saying something the code does not. A doc comment on every private
+# item mostly restates the item's name, which is the noise that rule exists to prevent.
+missing_docs_in_private_items = "allow"
+# Items read top down, the entry point first and its helpers after; alphabetical order would put
+# them anywhere.
+arbitrary_source_item_ordering = "allow"
+# A hint for callers in other crates, which the release profile's LTO makes moot.
+missing_inline_in_public_items = "allow"
+# A function that is called once still names a step, which is why it was split out.
+single_call_fn = "allow"
+# Unit tests in an inline `mod tests` is the Rust convention; integration tests live in tests/,
+# which is a crate of its own and so is "outside a cfg(test) module" by construction.
+inline_modules = "allow"
+tests_outside_test_module = "allow"
+# Match ergonomics are the language's default way to match on a reference.
+pattern_type_mismatch = "allow"
+# Asks every trait implementation to restate the trait's default methods.
+missing_trait_methods = "allow"
+# The library API is internal and changes with any release (see src/lib.rs), so there is no
+# downstream to protect by marking types non-exhaustive.
+exhaustive_enums = "allow"
+exhaustive_structs = "allow"
+# This is a std program for three desktop systems, never no_std.
+std_instead_of_alloc = "allow"
+std_instead_of_core = "allow"
+# Rebinding a value to its refined form (`let text = text.trim()`) keeps the raw one out of reach.
+# Shadowing with an unrelated value, the kind that misleads, stays refused.
+shadow_reuse = "allow"
 
 [profile.release]
 lto = true

@@ -1,0 +1,108 @@
+name: Mutants
+
+# Coverage says a line ran; this says a test would notice if it were wrong. cargo-mutants changes
+# the code one small way at a time (a condition flipped, a return value replaced) and fails when
+# the tests still pass. A pull request is held to it on the lines it changes; the whole crate is
+# run weekly, which is where anything the diffs never touched turns up.
+#
+# Code for one system is compiled only there, so each system mutates everything but the other's
+# module: mutating code that is not compiled would always look missed.
+on:
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '41 3 * * 2'
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mutants:
+    name: mutants (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            # renovate: datasource=github-runners depName=ubuntu
+            runner: ubuntu-24.04
+            skip: src/windows.rs
+          - platform: windows
+            # renovate: datasource=github-runners depName=windows
+            runner: windows-2025
+            skip: src/unix.rs
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    permissions:
+      contents: read # Reads the source it mutates, and the base branch to diff against.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Install cargo-mutants
+        if: runner.os == 'Linux'
+        env:
+          # renovate: datasource=github-release-attachments depName=sourcefrog/cargo-mutants versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          CARGO_MUTANTS_TAG: v27.1.0
+          CARGO_MUTANTS_SHA256: dfe6dc37d0342c891d2829b5a695aa57c2d0edecef7e7d0399a30cc6e206411e
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
+            "https://github.com/sourcefrog/cargo-mutants/releases/download/${CARGO_MUTANTS_TAG}/cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
+          echo "${CARGO_MUTANTS_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Install cargo-mutants
+        if: runner.os == 'Windows'
+        env:
+          # renovate: datasource=github-release-attachments depName=sourcefrog/cargo-mutants versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          CARGO_MUTANTS_TAG: v27.1.0
+          CARGO_MUTANTS_SHA256: 2a2f00e47d4b458262a41501b0820aa26015fd35779903d2c8b30b2993f36791
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/cargo-mutants-x86_64-pc-windows-msvc.zip"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
+            "https://github.com/sourcefrog/cargo-mutants/releases/download/${CARGO_MUTANTS_TAG}/cargo-mutants-x86_64-pc-windows-msvc.zip"
+          echo "${CARGO_MUTANTS_SHA256}  ${archive}" | sha256sum --check --strict
+          unzip -q "${archive}" -d "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Mutate what the pull request changed
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SKIP: ${{ matrix.skip }}
+        run: |
+          set -euo pipefail
+          git diff "${BASE_SHA}...HEAD" > "${RUNNER_TEMP}/change.diff"
+          cargo mutants --in-diff "${RUNNER_TEMP}/change.diff" --exclude "${SKIP}" --no-shuffle
+
+      - name: Mutate everything
+        if: github.event_name == 'schedule'
+        env:
+          SKIP: ${{ matrix.skip }}
+        run: cargo mutants --exclude "${SKIP}" --no-shuffle
+
+      - name: Keep the report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutants-${{ matrix.platform }}
+          path: mutants.out/
+          if-no-files-found: ignore

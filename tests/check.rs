@@ -24,6 +24,7 @@ impl Project {
         Self { _temp: temp, root }
     }
 
+    /// Writes `contents` at `relative`, making its folders, and answers where.
     fn file(&self, relative: &str, contents: &[u8]) -> PathBuf {
         let path = self.root.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -31,15 +32,20 @@ impl Project {
         path
     }
 
+    /// The same, for a file nothing refers to by path afterwards.
+    fn put(&self, relative: &str, contents: &[u8]) {
+        drop(self.file(relative, contents));
+    }
+
     /// Two depots in files of their own, content for both, and a debug file to exclude.
     fn shipping(app_extra: &str) -> (Self, PathBuf) {
         let project = Self::new();
-        project.file("export/windows/game.exe", b"MZ");
-        project.file("export/windows/game.pck", b"pack");
-        project.file("export/windows/game.pdb", b"symbols");
-        project.file("export/linux/game.x86_64", b"not really elf");
-        project.file("export/linux/data/game.pck", b"pack");
-        project.file(
+        project.put("export/windows/game.exe", b"MZ");
+        project.put("export/windows/game.pck", b"pack");
+        project.put("export/windows/game.pdb", b"symbols");
+        project.put("export/linux/game.x86_64", b"not really elf");
+        project.put("export/linux/data/game.pck", b"pack");
+        project.put(
             "steam/depot_windows.vdf",
             br#""DepotBuild"
 {
@@ -49,7 +55,7 @@ impl Project {
 }
 "#,
         );
-        project.file(
+        project.put(
             "steam/depot_linux.vdf",
             br#""DepotBuild"
 {
@@ -89,8 +95,12 @@ fn messages(report: &Report) -> Vec<String> {
         .collect()
 }
 
-fn names(report: &Report, depot: usize) -> Vec<String> {
-    report.depots[depot]
+fn names(report: &Report, depot_id: u32) -> Vec<String> {
+    report
+        .depots
+        .iter()
+        .find(|depot| depot.depot_id == depot_id)
+        .unwrap()
         .files
         .iter()
         .map(|file| file.file_name().unwrap().to_string_lossy().into_owned())
@@ -103,8 +113,8 @@ fn a_sound_build_is_mapped_and_nothing_is_refused() {
     let report = check(&app);
     assert_eq!(messages(&report), Vec::<String>::new());
     assert_eq!(report.app_id, Some(1000));
-    assert_eq!(names(&report, 0), ["game.exe", "game.pck"]);
-    assert_eq!(names(&report, 1), ["game.pck", "game.x86_64"]);
+    assert_eq!(names(&report, 1001), ["game.exe", "game.pck"]);
+    assert_eq!(names(&report, 1002), ["game.pck", "game.x86_64"]);
 }
 
 #[test]
@@ -147,35 +157,39 @@ fn a_shipped_steam_appid_txt_is_refused() {
     let (project, app) = Project::shipping("");
     let planted = project.file("export/windows/Steam_AppID.txt", b"1000");
     let report = check(&app);
-    assert_eq!(report.problems.len(), 1);
-    let reported = fs::canonicalize(&report.problems[0].file).unwrap();
-    assert_eq!(reported, fs::canonicalize(planted).unwrap());
+    let reported: Vec<PathBuf> = report
+        .problems
+        .iter()
+        .map(|problem| fs::canonicalize(&problem.file).unwrap())
+        .collect();
+    assert_eq!(reported, [fs::canonicalize(planted).unwrap()]);
+    assert_eq!(
+        messages(&report),
+        ["is in depot 1001; it is for development only and must not ship"]
+    );
 }
 
 #[test]
 fn a_mapping_that_matches_nothing_is_refused() {
     let (project, app) = Project::shipping("");
     fs::remove_dir_all(project.root.join("export/linux")).unwrap();
-    let report = check(&app);
-    assert_eq!(report.problems.len(), 1);
-    assert!(
-        report.problems[0]
-            .message
-            .contains(r#"LocalPath "linux\\*" matches no files"#)
-    );
+    let found = messages(&check(&app));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found.iter().all(|message| {
+        message.starts_with(r#"depot 1002: LocalPath "linux\*" matches no files in "#)
+    }));
 }
 
 #[test]
 fn a_missing_content_root_is_refused() {
     let (project, app) = Project::shipping("");
     fs::remove_dir_all(project.root.join("export")).unwrap();
-    let report = check(&app);
-    assert_eq!(report.problems.len(), 2);
+    let found = messages(&check(&app));
+    assert_eq!(found.len(), 2, "{found:?}");
     assert!(
-        report
-            .problems
+        found
             .iter()
-            .all(|p| p.message.contains("is not a folder"))
+            .all(|message| message.contains("is not a folder"))
     );
 }
 
@@ -189,15 +203,21 @@ fn every_script_problem_is_reported_at_once() {
         .replace("\"1001\"", "\"1003\"");
     fs::write(&depot, text).unwrap();
     let found = messages(&check(&app));
-    assert_eq!(found.len(), 2, "{found:?}");
-    assert!(found[0].contains("says DepotID 1003, but the app script lists it as 1001"));
-    assert!(found[1].contains("depot 1002 names"));
+    let [mismatch, missing] = found.as_slice() else {
+        panic!("expected two problems, found {found:?}");
+    };
+    assert_eq!(
+        mismatch,
+        "says DepotID 1003, but the app script lists it as 1001"
+    );
+    assert!(missing.starts_with("depot 1002 names "), "{missing}");
+    assert!(missing.ends_with(", which does not exist"), "{missing}");
 }
 
 #[test]
 fn an_inline_depot_uses_the_app_scripts_folder() {
     let project = Project::new();
-    project.file("content/game.exe", b"MZ");
+    project.put("content/game.exe", b"MZ");
     let app = project.file(
         "scripts/app.vdf",
         br#""AppBuild" { "AppID" "1000" "ContentRoot" "../content/" "Depots" { "1001" {
@@ -205,7 +225,7 @@ fn an_inline_depot_uses_the_app_scripts_folder() {
     );
     let report = check(&app);
     assert!(report.problems.is_empty(), "{:?}", messages(&report));
-    assert_eq!(names(&report, 0), ["game.exe"]);
+    assert_eq!(names(&report, 1001), ["game.exe"]);
 }
 
 #[test]
@@ -234,17 +254,22 @@ fn a_linux_program_needs_its_executable_bit() {
     assert!(check(&app).problems.is_empty());
 }
 
+/// A 64-bit position-independent ELF program: `ET_DYN` with a `PT_INTERP` segment.
 #[cfg(unix)]
 fn elf_program() -> Vec<u8> {
-    let mut bytes = vec![0u8; 64 + 56];
-    bytes[..4].copy_from_slice(b"\x7fELF");
-    bytes[4] = 2;
-    bytes[5] = 1;
-    bytes[16..18].copy_from_slice(&3u16.to_le_bytes());
-    bytes[32..40].copy_from_slice(&64u64.to_le_bytes());
-    bytes[54..56].copy_from_slice(&56u16.to_le_bytes());
-    bytes[56..58].copy_from_slice(&1u16.to_le_bytes());
-    bytes[64..68].copy_from_slice(&3u32.to_le_bytes());
+    let mut bytes = Vec::new();
+    for (at, value) in [
+        (0, &b"\x7fELF\x02\x01"[..]),
+        (16, &3_u16.to_le_bytes()[..]),
+        (32, &64_u64.to_le_bytes()[..]),
+        (54, &56_u16.to_le_bytes()[..]),
+        (56, &1_u16.to_le_bytes()[..]),
+        (64, &3_u32.to_le_bytes()[..]),
+        (120, &[][..]),
+    ] {
+        bytes.resize(at, 0);
+        bytes.extend_from_slice(value);
+    }
     bytes
 }
 
@@ -265,7 +290,7 @@ fn run(script: &Path) -> (Option<i32>, String, String) {
 fn the_command_says_what_it_mapped_and_exits_0() {
     let (_project, app) = Project::shipping("");
     let (code, stdout, stderr) = run(&app);
-    assert_eq!((code, stderr.as_str()), (Some(0), ""));
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
     assert!(
         stdout.ends_with("app 1000, depot 1001 (2 files), depot 1002 (2 files); nothing refused\n")
     );
@@ -275,7 +300,172 @@ fn the_command_says_what_it_mapped_and_exits_0() {
 fn the_command_lists_every_refusal_and_exits_2() {
     let (_project, app) = Project::shipping(r#""Preview" "1""#);
     let (code, stdout, stderr) = run(&app);
-    assert_eq!((code, stdout.as_str()), (Some(2), ""));
+    assert_eq!((code, stdout.as_str()), (Some(2_i32), ""));
     assert!(stderr.starts_with("refused: "));
     assert!(stderr.contains("\"Preview\" is set in the script; pass --preview"));
+}
+
+/// An app script in `scripts/`, with content beside it, and what `check` says about it.
+fn refusals(app: &str, depot: Option<&str>) -> Vec<String> {
+    let project = Project::new();
+    project.put("content/game.exe", b"MZ");
+    project.put("content/bin/tool.exe", b"MZ");
+    if let Some(depot) = depot {
+        project.put("scripts/depot.vdf", depot.as_bytes());
+    }
+    let app = project.file("scripts/app.vdf", app.as_bytes());
+    messages(&check(&app))
+}
+
+const MAPPING: &str = r#""FileMapping" { "LocalPath" "*" "DepotPath" "." }"#;
+
+#[test]
+fn every_malformed_script_is_refused_with_what_is_wrong() {
+    let cases = [
+        (r#""Other" {}"#.to_owned(), None, "there is no \"AppBuild\" block"),
+        (
+            r#""AppBuild" { "AppID" "1" "ContentRoot" "../content" }"#.to_owned(),
+            None,
+            "\"Depots\" is missing or empty",
+        ),
+        (
+            r#""AppBuild" { "AppID" "1" "ContentRoot" "../content" "Depots" { } }"#.to_owned(),
+            None,
+            "\"Depots\" is missing or empty",
+        ),
+        (
+            format!(r#""AppBuild" {{ "ContentRoot" "../content" "Depots" {{ "1" {{ {MAPPING} }} }} }}"#),
+            None,
+            "\"AppID\" is missing",
+        ),
+        (
+            format!(
+                r#""AppBuild" {{ "AppID" "one" "ContentRoot" "../content" "Depots" {{ "1" {{ {MAPPING} }} }} }}"#
+            ),
+            None,
+            "\"AppID\" \"one\" is not a number",
+        ),
+        (
+            format!(
+                r#""AppBuild" {{ "AppID" "1" "ContentRoot" "../content" "Depots" {{ "x" {{ {MAPPING} }} }} }}"#
+            ),
+            None,
+            "depot ID \"x\" in \"Depots\" is not a number",
+        ),
+        (
+            format!(r#""AppBuild" {{ "AppID" "1" "Depots" {{ "1" {{ {MAPPING} }} }} }}"#),
+            None,
+            "depot 1 has no ContentRoot, in the app script or its own",
+        ),
+        (
+            r#""AppBuild" { "AppID" "1" "ContentRoot" "../content" "Depots" { "1" { "FileMapping" "*" } } }"#
+                .to_owned(),
+            None,
+            "a \"FileMapping\" is not a block",
+        ),
+        (
+            r#""AppBuild" { "AppID" "1" "ContentRoot" "../content" "Depots" { "1" { "FileMapping" { "LocalPath" "*" } } } }"#
+                .to_owned(),
+            None,
+            "a \"FileMapping\" needs both \"LocalPath\" and \"DepotPath\"",
+        ),
+        (
+            r#""AppBuild" { "AppID" "1" "ContentRoot" "../content" "Depots" { "1" { } } }"#.to_owned(),
+            None,
+            "the depot has no \"FileMapping\"",
+        ),
+        (
+            format!(
+                r#""AppBuild" {{ "AppID" "1" "ContentRoot" "../content" "Depots" {{ "1" {{ {MAPPING} "FileExclusion" {{ }} }} }} }}"#
+            ),
+            None,
+            "a \"FileExclusion\" is a block, where a pattern belongs",
+        ),
+        (
+            r#""AppBuild" { "AppID" "1" "ContentRoot" "../content" "Depots" { "1" "depot.vdf" } }"#
+                .to_owned(),
+            Some(r#""Something" { }"#),
+            "there is no \"DepotBuild\" block",
+        ),
+        (
+            r#""AppBuild" { "AppID" "1" "ContentRoot" "../content" "Depots" { "1" "depot.vdf" } }"#
+                .to_owned(),
+            Some(r#""DepotBuild" { "DepotID" "two" "FileMapping" { "LocalPath" "*" "DepotPath" "." } }"#),
+            "\"DepotID\" \"two\" is not a number",
+        ),
+        (
+            r#""AppBuild" { "AppID" "1" "ContentRoot" "../content" "Depots" { "1" { "FileMapping" { "LocalPath" "b*/tool.exe" "DepotPath" "." } } } }"#
+                .to_owned(),
+            None,
+            "depot 1: LocalPath \"b*/tool.exe\" has a wildcard in a folder name, which steamship cannot map the way steamcmd does",
+        ),
+    ];
+    for (app, depot, expected) in cases {
+        assert_eq!(refusals(&app, depot), [expected], "{app}");
+    }
+}
+
+#[test]
+fn the_legacy_depot_block_name_is_read() {
+    let depot =
+        r#""DepotBuildConfig" { "DepotID" "1" "FileMapping" { "LocalPath" "*" "DepotPath" "." } }"#;
+    let app =
+        r#""AppBuild" { "AppID" "1" "ContentRoot" "../content" "Depots" { "1" "depot.vdf" } }"#;
+    assert_eq!(refusals(app, Some(depot)), Vec::<String>::new());
+}
+
+#[test]
+fn a_depots_own_content_root_is_relative_to_its_script() {
+    let project = Project::new();
+    project.put("elsewhere/only.txt", b"x");
+    project.put(
+        "scripts/depot.vdf",
+        br#""DepotBuild" { "DepotID" "1" "ContentRoot" "../elsewhere" "FileMapping" { "LocalPath" "*" "DepotPath" "." } }"#,
+    );
+    let app = project.file(
+        "scripts/app.vdf",
+        br#""AppBuild" { "AppID" "1" "ContentRoot" "../missing" "Depots" { "1" "depot.vdf" } }"#,
+    );
+    let report = check(&app);
+    assert_eq!(messages(&report), Vec::<String>::new());
+    assert_eq!(names(&report, 1), ["only.txt"]);
+}
+
+#[test]
+fn an_absolute_content_root_is_taken_as_written() {
+    let project = Project::new();
+    project.put("content/game.exe", b"MZ");
+    let absolute = project.root.join("content");
+    let app = project.file(
+        "scripts/app.vdf",
+        format!(
+            r#""AppBuild" {{ "AppID" "1" "ContentRoot" "{}" "Depots" {{ "1" {{ {MAPPING} }} }} }}"#,
+            absolute.display()
+        )
+        .as_bytes(),
+    );
+    let report = check(&app);
+    assert_eq!(messages(&report), Vec::<String>::new());
+    assert_eq!(names(&report, 1), ["game.exe"]);
+}
+
+#[test]
+fn a_mapping_descends_into_folders_only_when_recursive() {
+    let project = Project::new();
+    project.put("content/game.exe", b"MZ");
+    project.put("content/bin/tool.exe", b"MZ");
+    project.put("content/bin/tools/debug.exe", b"MZ");
+    project.put("content/data.pck", b"pack");
+    let script = |recursive: &str, exclusion: &str| {
+        format!(
+            r#""AppBuild" {{ "AppID" "1" "ContentRoot" "../content" "Depots" {{ "1" {{
+                "FileMapping" {{ "LocalPath" "*.exe" "DepotPath" "." "Recursive" "{recursive}" }}
+                "FileExclusion" "{exclusion}" }} }} }}"#
+        )
+    };
+    let flat = project.file("scripts/flat.vdf", script("0", "none").as_bytes());
+    assert_eq!(names(&check(&flat), 1), ["game.exe"]);
+    let deep = project.file("scripts/deep.vdf", script("1", "bin/tools*").as_bytes());
+    // In path order: bin/tool.exe sorts before game.exe.
+    assert_eq!(names(&check(&deep), 1), ["tool.exe", "game.exe"]);
 }
