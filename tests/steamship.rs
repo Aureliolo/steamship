@@ -913,3 +913,63 @@ fn a_refused_build_names_every_reason_and_where_the_logs_are_and_exits_1() {
     );
     assert_no_secret_in("stderr", stderr.as_bytes());
 }
+
+/// Whether `condition` comes true within half a minute.
+#[cfg(unix)]
+fn soon<Condition>(mut condition: Condition) -> bool
+where
+    Condition: FnMut() -> bool,
+{
+    let deadline = Instant::now().checked_add(Duration::from_secs(30)).unwrap();
+    while Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    false
+}
+
+/// Sends `which` signal to the process `pid`, and says whether it was there to receive it.
+#[cfg(unix)]
+fn signal(which: &str, pid: &str) -> bool {
+    Command::new("kill")
+        .args([which, pid])
+        .stderr(std::process::Stdio::null())
+        .status()
+        .unwrap()
+        .success()
+}
+
+#[cfg(unix)]
+#[test]
+fn ctrl_c_during_an_upload_ends_steamcmd_with_steamship() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    let home = faked_with("#!/bin/sh\necho $$ > \"$HOME/steamcmd.pid\"\nexec sleep 60\n");
+    let (_project, script) = project(true);
+    let mut steamship = Command::new(env!("CARGO_BIN_EXE_steamship"))
+        .args(["upload", script.to_str().unwrap(), "--version", "1.4.0"])
+        .args(["--account", "build_bot"])
+        .env("STEAMSHIP_HOME", home.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid_file = home.path().join("steamcmd.pid");
+    assert!(soon(
+        || fs::read_to_string(&pid_file).is_ok_and(|pid| pid.ends_with('\n'))
+    ));
+    let steamcmd = fs::read_to_string(&pid_file).unwrap().trim().to_owned();
+    assert!(signal("-INT", &steamship.id().to_string()));
+    let mut ended = None;
+    assert!(soon(|| {
+        ended = steamship.try_wait().unwrap();
+        ended.is_some()
+    }));
+    assert_eq!(ended.unwrap().signal(), Some(2_i32), "ended by Ctrl+C");
+    assert!(
+        soon(|| !signal("-0", &steamcmd)),
+        "steamcmd outlived steamship"
+    );
+}

@@ -2,7 +2,7 @@
 //! and mutation-tested on the systems where it runs.
 #![expect(
     unsafe_code,
-    reason = "stopping a process group, opening a pseudo terminal and changing terminal modes are libc calls"
+    reason = "stopping a process group, catching the signals that end steamship, opening a pseudo terminal and changing terminal modes are libc calls"
 )]
 
 use std::ffi::OsString;
@@ -15,15 +15,76 @@ use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::panic;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
-use std::ptr;
+use std::sync::Once;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+use std::{ptr, slice, str};
 
 use crate::run::Finished;
 use crate::{elf, magic};
 
 /// How often a running program is looked at to see whether it has ended.
 const POLL: Duration = Duration::from_millis(50);
+
+/// The process group of the program steamship is running, or 0 while none is. A program in a
+/// group of its own is out of reach of the terminal's Ctrl+C, so a signal that ends steamship
+/// ends this group first.
+static RUNNING: AtomicI32 = AtomicI32::new(0);
+
+/// The signals that end steamship from outside: Ctrl+C, the terminal closing, and `kill`.
+const ENDING: [libc::c_int; 3] = [libc::SIGINT, libc::SIGHUP, libc::SIGTERM];
+
+/// Marks a process group as the one running, until dropped.
+#[derive(Debug)]
+struct Running(i32);
+
+impl Running {
+    fn mark(group: i32) -> Self {
+        static CATCHING: Once = Once::new();
+        CATCHING.call_once(catch_ending_signals);
+        RUNNING.store(group, Ordering::SeqCst);
+        Self(group)
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        // Cleared, so that a signal after the group has ended cannot reach another that has
+        // since been given its number.
+        let _: Result<i32, i32> =
+            RUNNING.compare_exchange(self.0, 0, Ordering::SeqCst, Ordering::SeqCst);
+    }
+}
+
+#[expect(
+    clippy::as_conversions,
+    clippy::fn_to_numeric_cast_any,
+    reason = "signal takes its handler as the address libc defines sighandler_t to be"
+)]
+fn catch_ending_signals() {
+    for signal in ENDING {
+        // SAFETY: the handler does only what a signal handler may: an atomic load, killpg,
+        // signal and raise.
+        let before = unsafe { libc::signal(signal, on_ending as libc::sighandler_t) };
+        if before == libc::SIG_IGN {
+            // A signal steamship was started to ignore, as under nohup, stays ignored.
+            // SAFETY: puts back the disposition it had.
+            let _: libc::sighandler_t = unsafe { libc::signal(signal, libc::SIG_IGN) };
+        }
+    }
+}
+
+extern "C" fn on_ending(signal: libc::c_int) {
+    let group = RUNNING.load(Ordering::SeqCst);
+    if group != 0 {
+        stop_group(group);
+    }
+    // SAFETY: puts back the default disposition, which a signal handler may do.
+    let _: libc::sighandler_t = unsafe { libc::signal(signal, libc::SIG_DFL) };
+    // SAFETY: with the default disposition back, the signal ends steamship as it would have.
+    let _: libc::c_int = unsafe { libc::raise(signal) };
+}
 
 /// [`crate::run::run`], for Unix: the program leads a process group of its own, so that stopping
 /// it stops whatever it started too.
@@ -49,6 +110,7 @@ pub fn run(
         .process_group(0)
         .spawn()?;
     let group = i32::try_from(child.id()).map_err(io::Error::other)?;
+    let _running = Running::mark(group);
     let reading = thread::spawn(move || {
         let mut output = Vec::new();
         reader.read_to_end(&mut output).map(|_| output)
@@ -105,8 +167,8 @@ pub struct Terminal {
 pub struct Output(File);
 
 impl io::Read for Output {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        match self.0.read(buffer) {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self.0.read(buf) {
             Err(error) if error.raw_os_error() == Some(libc::EIO) => Ok(0),
             read => read,
         }
@@ -126,8 +188,8 @@ impl Terminal {
         environment: &[(OsString, OsString)],
         directory: &Path,
     ) -> io::Result<(Self, Output, File)> {
-        let mut main = -1;
-        let mut replica = -1;
+        let mut main = -1_i32;
+        let mut replica = -1_i32;
         // SAFETY: both are valid places for a descriptor; the name, the settings and the size
         // are left to the system.
         let opened = unsafe {
@@ -139,7 +201,7 @@ impl Terminal {
                 ptr::null_mut(),
             )
         };
-        if opened != 0 {
+        if opened != 0_i32 {
             return Err(io::Error::last_os_error());
         }
         // SAFETY: openpty succeeded, so both descriptors are new and owned by nobody else.
@@ -160,9 +222,11 @@ impl Terminal {
             .spawn()?;
         let output = Output(File::from(main.try_clone()?));
         let group = i32::try_from(child.id()).map_err(io::Error::other)?;
+        let running = Running::mark(group);
         let watching = thread::spawn(move || {
             let status = child.wait();
             stop_group(group);
+            drop(running);
             status
         });
         let terminal = Self {
@@ -223,12 +287,12 @@ impl Keys {
     /// When the terminal will not change modes.
     pub fn open() -> io::Result<Option<Self>> {
         // SAFETY: asks about a descriptor; nothing is changed.
-        if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0 {
+        if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0_i32 {
             return Ok(None);
         }
         let mut saved = MaybeUninit::<libc::termios>::uninit();
         // SAFETY: `saved` is a valid place for the settings.
-        if unsafe { libc::tcgetattr(libc::STDIN_FILENO, saved.as_mut_ptr()) } != 0 {
+        if unsafe { libc::tcgetattr(libc::STDIN_FILENO, saved.as_mut_ptr()) } != 0_i32 {
             return Err(io::Error::last_os_error());
         }
         // SAFETY: tcgetattr succeeded, and on success it writes all of them.
@@ -242,7 +306,7 @@ impl Keys {
             *wait = 0;
         }
         // SAFETY: the settings are the terminal's own with three flags and two counts changed.
-        if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw const raw) } != 0 {
+        if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw const raw) } != 0_i32 {
             return Err(io::Error::last_os_error());
         }
         Ok(Some(Self { saved }))
@@ -255,22 +319,24 @@ impl Keys {
     /// When the terminal cannot be read.
     pub fn read_key(&mut self) -> io::Result<Option<char>> {
         let mut bytes = [0_u8; 4];
-        let mut stdin = io::stdin().lock();
         let Some((first, rest)) = bytes.split_first_mut() else {
             return Ok(None);
         };
-        if stdin.read(std::slice::from_mut(first))? == 0 {
-            return Ok(None);
-        }
-        let length = match *first {
-            0xc0..=0xdf => 1,
-            0xe0..=0xef => 2,
-            0xf0..=0xf7 => 3,
-            _ => 0,
+        let length = {
+            let mut stdin = io::stdin().lock();
+            if stdin.read(slice::from_mut(first))? == 0 {
+                return Ok(None);
+            }
+            let length: usize = match *first {
+                0xc0..=0xdf => 1,
+                0xe0..=0xef => 2,
+                0xf0..=0xf7 => 3,
+                _ => 0,
+            };
+            stdin.read_exact(rest.get_mut(..length).unwrap_or_default())?;
+            length
         };
-        let tail = rest.get_mut(..length).unwrap_or_default();
-        stdin.read_exact(tail)?;
-        let decoded = std::str::from_utf8(bytes.get(..=length).unwrap_or_default())
+        let decoded = str::from_utf8(bytes.get(..=length).unwrap_or_default())
             .ok()
             .and_then(|text| text.chars().next());
         bytes.fill(0);
@@ -290,14 +356,14 @@ impl Drop for Keys {
 fn quiet(descriptor: RawFd) -> io::Result<()> {
     let mut settings = MaybeUninit::<libc::termios>::uninit();
     // SAFETY: `settings` is a valid place for the settings.
-    if unsafe { libc::tcgetattr(descriptor, settings.as_mut_ptr()) } != 0 {
+    if unsafe { libc::tcgetattr(descriptor, settings.as_mut_ptr()) } != 0_i32 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: tcgetattr succeeded, and on success it writes all of them.
     let mut settings = unsafe { settings.assume_init() };
     settings.c_lflag &= !(libc::ECHO | libc::ECHONL);
     // SAFETY: the settings are the terminal's own with its echo off.
-    if unsafe { libc::tcsetattr(descriptor, libc::TCSANOW, &raw const settings) } != 0 {
+    if unsafe { libc::tcsetattr(descriptor, libc::TCSANOW, &raw const settings) } != 0_i32 {
         return Err(io::Error::last_os_error());
     }
     Ok(())

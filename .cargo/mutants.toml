@@ -9,6 +9,14 @@ exclude_re = [
   # LocalFree gives back the memory a security descriptor was read into, and nothing else; a leak
   # changes no behaviour a test could see.
   'replace <impl Drop for Security>::drop with \(\)',
+  # Windows gives each program the console's input mode as it was before any other program
+  # changed it, so a mode left unrestored never reaches the shell; and within steamship nothing
+  # reads the keyboard after a prompt but the next prompt, which sets its own. On Unix the
+  # terminal keeps what it was last set to, and a test sees it.
+  'src[/\\]windows\.rs.*replace <impl Drop for Keys>::drop with \(\)',
+  # The mark of the running process group is cleared so that a signal after the group has ended
+  # cannot reach another given the same number since; no test can make the system reuse one.
+  'src[/\\]unix\.rs.*replace <impl Drop for Running>::drop with \(\)',
   # Revocation checking shows only with a revoked certificate, and asking for no window only
   # when Windows would otherwise wait on someone to answer one.
   'replace quietly_to_the_root with \(\)',
