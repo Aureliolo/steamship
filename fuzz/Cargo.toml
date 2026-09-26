@@ -42,3 +42,10 @@ path = "fuzz_targets/redact.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "terminal"
+path = "fuzz_targets/terminal.rs"
+test = false
+doc = false
+bench = false

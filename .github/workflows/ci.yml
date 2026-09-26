@@ -290,7 +290,8 @@ jobs:
       - name: Check for unused dependencies
         run: cargo machete
 
-  # The parsers read files steamship did not write, so each gets a minute of libFuzzer per run.
+  # The parsers read files and output steamship did not write, so each gets a minute of libFuzzer
+  # per run.
   # Linux only: on Windows the coverage instrumentation links only against the AddressSanitizer
   # runtime, and a sanitizer adds nothing here, where no fuzzed code is unsafe.
   fuzz:
@@ -298,7 +299,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [vdf, elf, pattern, redact]
+        target: [vdf, elf, pattern, redact, terminal]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

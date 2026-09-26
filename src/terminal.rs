@@ -55,29 +55,36 @@ impl Reader {
                     at = at.saturating_add(1);
                 }
                 // A carriage return alone moves back over the line: what follows is the line
-                // again, so the part before is dropped; before a line feed it ends nothing.
-                b'\r' => {
-                    if bytes.get(at.saturating_add(1)) != Some(&b'\n') {
-                        drop(self.take());
+                // again, so the part before is dropped; before a line feed it ends nothing. One
+                // that ends the chunk waits for the next, which says which it is.
+                b'\r' => match bytes.get(at.saturating_add(1)) {
+                    None => {
+                        self.carried = vec![byte];
+                        break;
                     }
-                    at = at.saturating_add(1);
-                }
+                    Some(b'\n') => at = at.saturating_add(1),
+                    Some(_) => {
+                        drop(self.take());
+                        at = at.saturating_add(1);
+                    }
+                },
                 0x07 => at = at.saturating_add(1),
                 0x08 => {
                     self.cursor = self.cursor.saturating_sub(1);
                     at = at.saturating_add(1);
                 }
                 _ => {
-                    let length = utf8_length(byte);
-                    let end = at.saturating_add(length);
-                    let Some(character) = bytes.get(at..end) else {
-                        self.carried = bytes.get(at..).unwrap_or_default().to_vec();
+                    let rest = bytes.get(at..).unwrap_or_default();
+                    let Some(length) = character_length(rest) else {
+                        self.carried = rest.to_vec();
                         break;
                     };
-                    for written in String::from_utf8_lossy(character).chars() {
+                    for written in
+                        String::from_utf8_lossy(rest.get(..length).unwrap_or_default()).chars()
+                    {
                         self.put(written);
                     }
-                    at = end;
+                    at = at.saturating_add(length);
                 }
             }
         }
@@ -111,6 +118,25 @@ const fn utf8_length(lead: u8) -> usize {
         0xe0..=0xef => 3,
         0xf0..=0xf7 => 4,
         _ => 1,
+    }
+}
+
+/// How many bytes of `bytes` the character at their start takes, or none when it is cut off. A
+/// character is its lead byte and the continuation bytes that follow it, as many as the lead
+/// calls for: anything else after the lead, a line feed above all, is not part of it.
+fn character_length(bytes: &[u8]) -> Option<usize> {
+    let wanted = utf8_length(*bytes.first()?);
+    let continuing = bytes
+        .iter()
+        .skip(1)
+        .take(wanted.saturating_sub(1))
+        .take_while(|byte| (0x80..=0xbf).contains(*byte))
+        .count();
+    let complete = continuing.saturating_add(1);
+    if complete < wanted && complete == bytes.len() {
+        None
+    } else {
+        Some(complete)
     }
 }
 
@@ -257,6 +283,36 @@ mod tests {
         assert_eq!(
             reader.read(b"a\x07\xffb\x1bXc\n"),
             [Event::Line("a\u{fffd}bc".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_line_end_cut_between_chunks_still_ends_the_line() {
+        let mut reader = Reader::default();
+        assert_eq!(
+            reader.read(b"Waiting for confirmation...OK\r"),
+            [Event::Waiting("Waiting for confirmation...OK".to_owned())]
+        );
+        assert_eq!(
+            reader.read(b"\nnext"),
+            [
+                Event::Line("Waiting for confirmation...OK".to_owned()),
+                Event::Waiting("next".to_owned())
+            ]
+        );
+        assert_eq!(reader.read(b"\r"), [Event::Waiting("next".to_owned())]);
+        assert_eq!(reader.read(b"over"), [Event::Waiting("over".to_owned())]);
+    }
+
+    #[test]
+    fn a_character_broken_off_by_a_line_feed_does_not_take_the_line_feed_with_it() {
+        let mut reader = Reader::default();
+        assert_eq!(
+            reader.read(b"a\xe2\x82\nb\xf0\n"),
+            [
+                Event::Line("a\u{fffd}".to_owned()),
+                Event::Line("b\u{fffd}".to_owned())
+            ]
         );
     }
 
