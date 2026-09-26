@@ -1,0 +1,12 @@
+# Mutants no test can tell from the original, each with why. Anything else a mutant survives is a
+# missing test.
+exclude_re = [
+  # Every `|` in this crate joins flags that share no bit, where `^` gives the same value.
+  'replace \| with \^',
+  # DeleteProcThreadAttributeList releases what the list refers to, and a handle list refers to
+  # nothing it owns; the list's own storage is freed either way.
+  'replace <impl Drop for AttributeList>::drop with \(\)',
+  # Revocation checking shows only with a revoked certificate, and asking for no window only
+  # when Windows would otherwise wait on someone to answer one.
+  'replace quietly_to_the_root with \(\)',
+]

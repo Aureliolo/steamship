@@ -207,7 +207,7 @@ jobs:
           set -euo pipefail
           version() { grep -m1 -oE '"version"[[:space:]]+"[0-9]+"' "$1" | grep -oE '[0-9]+'; }
           failed=0
-          for system in win32 linux osx; do
+          for system in win64 linux osx; do
             pinned="pins/steam_cmd_${system}.vdf"
             live="${RUNNER_TEMP}/steam_cmd_${system}"
             curl -fsS --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${live}" \

@@ -11,8 +11,9 @@ steamship runs Valve's own steamcmd with your own `app_build` and `depot_build` 
 what steamcmd leaves out:
 
 - **steamcmd set up for you, pinned and verified.** Fetched on first use from Valve's signed
-  package manifest at a version fixed in each steamship release, every package's SHA-256 checked.
-  steamcmd updates itself, so its files are checked again after every run.
+  package manifest at a version fixed in each steamship release, every package's SHA-256 checked,
+  and on Windows Valve's code signature too. steamcmd is kept from updating itself, and its files
+  are checked again after every run.
 - **A clear result.** Success is read from the exit code and Valve's build log, not from
   steamcmd's console output, which is unreliable when captured. You get the BuildID, or the
   reason it failed.
@@ -98,13 +99,13 @@ for example in CI, and verifies an existing install.
 
 ### Exit codes
 
-| Code | Meaning                                                          |
-| ---- | ---------------------------------------------------------------- |
-| 0    | Done                                                             |
-| 1    | The upload failed; the reason and the log's path are printed     |
-| 2    | `check` refused the scripts, or the command line was wrong       |
-| 3    | Not logged in, or the token expired; run `steamship login`       |
-| 4    | steamcmd is missing, altered, or has updated itself past the pin |
+| Code | Meaning                                                      |
+| ---- | ------------------------------------------------------------ |
+| 0    | Done                                                         |
+| 1    | The upload failed; the reason and the log's path are printed |
+| 2    | `check` refused the scripts, or the command line was wrong   |
+| 3    | Not logged in, or the token expired; run `steamship login`   |
+| 4    | steamcmd is missing or has been altered                      |
 
 ## Configuration
 

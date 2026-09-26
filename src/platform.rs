@@ -26,7 +26,7 @@ impl Platform {
     #[must_use]
     pub const fn manifest_name(self) -> &'static str {
         match self {
-            Self::Windows => "win32",
+            Self::Windows => "win64",
             Self::MacOs => "osx",
             Self::Linux => "linux",
         }
@@ -158,6 +158,6 @@ mod tests {
     fn names_each_system_as_valves_manifests_do() {
         let names =
             [Platform::Windows, Platform::MacOs, Platform::Linux].map(Platform::manifest_name);
-        assert_eq!(names, ["win32", "osx", "linux"]);
+        assert_eq!(names, ["win64", "osx", "linux"]);
     }
 }

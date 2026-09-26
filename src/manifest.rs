@@ -11,16 +11,18 @@ use crate::digest;
 use crate::platform::Platform;
 use crate::vdf::{self, Block, Value};
 
-const PINNED_WIN32: &str = include_str!("../pins/steam_cmd_win32.vdf");
+const PINNED_WIN64: &str = include_str!("../pins/steam_cmd_win64.vdf");
 const PINNED_OSX: &str = include_str!("../pins/steam_cmd_osx.vdf");
 const PINNED_LINUX: &str = include_str!("../pins/steam_cmd_linux.vdf");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
-    /// The system the manifest is for, as Valve names it: `win32`, `osx` or `linux`.
+    /// The system the manifest is for, as Valve names it: `win64`, `osx` or `linux`.
     pub system: String,
     pub version: u64,
     pub packages: Vec<Package>,
+    /// The manifest as Valve served it. steamcmd reads its own version from a copy of it.
+    pub text: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,7 +60,7 @@ impl Manifest {
     /// Only if the pinned copy does not parse, which the tests rule out for every platform.
     pub fn pinned(platform: Platform) -> Result<Self, Error> {
         let text = match platform {
-            Platform::Windows => PINNED_WIN32,
+            Platform::Windows => PINNED_WIN64,
             Platform::MacOs => PINNED_OSX,
             Platform::Linux => PINNED_LINUX,
         };
@@ -97,6 +99,7 @@ impl Manifest {
             system: first.key.clone(),
             version,
             packages,
+            text: text.to_owned(),
         })
     }
 }
@@ -191,6 +194,7 @@ mod tests {
         let manifest = Manifest::parse(SAMPLE).unwrap();
         assert_eq!(manifest.system, "linux");
         assert_eq!(manifest.version, 1_788_292_693);
+        assert_eq!(manifest.text, SAMPLE);
         let [package] = manifest.packages.as_slice() else {
             panic!("expected one package, found {:?}", manifest.packages);
         };
