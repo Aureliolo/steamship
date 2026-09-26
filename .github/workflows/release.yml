@@ -90,6 +90,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.build.outputs.version }}
+          CRATES_IO: ${{ vars.CRATES_IO }}
         run: |
           set -euo pipefail
           mapfile -t assets < <(find dist -maxdepth 1 -type f -print | sort)
@@ -129,17 +130,16 @@ jobs:
           fi
 
           # What changed since the last release, one line per pull request: main takes only
-          # squash merges, so each commit's first line is its pull request's title.
-          previous="$(gh api "repos/${GH_REPO}/releases/latest" --jq .tag_name 2> /dev/null || true)"
+          # squash merges, so each commit's first line is its pull request's title. No release
+          # yet answers an empty list; a request that fails fails the job.
+          previous="$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')"
           {
+            printf '%s\n' '## Install' '' 'Download the archive for your system below.'
+            # Named only once crates.io has the crate: the notes of a published release stay.
+            if [[ "${CRATES_IO}" == "publish" ]]; then
+              printf '%s\n' '' 'Or:' '' '```sh' "cargo install --locked steamship@${VERSION}" '```'
+            fi
             printf '%s\n' \
-              '## Install' \
-              '' \
-              'Download the archive for your system below, or:' \
-              '' \
-              '```sh' \
-              "cargo install --locked steamship@${VERSION}" \
-              '```' \
               '' \
               'Check an archive came from this repository'"'"'s release workflow:' \
               '' \

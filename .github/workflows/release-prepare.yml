@@ -115,7 +115,13 @@ jobs:
           VERSION: ${{ steps.bump.outputs.version }}
         run: |
           set -euo pipefail
-          gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${BRANCH}" -f "sha=${GITHUB_SHA}" > /dev/null
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${BRANCH}" > /dev/null 2>&1; then
+            # Left by a run that stopped part way: this run starts it again from main.
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/heads/${BRANCH}" \
+              -f "sha=${GITHUB_SHA}" -F force=true > /dev/null
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${BRANCH}" -f "sha=${GITHUB_SHA}" > /dev/null
+          fi
           jq -n \
             --arg repository "${GITHUB_REPOSITORY}" \
             --arg branch "${BRANCH}" \
@@ -146,8 +152,12 @@ jobs:
           VERSION: ${{ steps.bump.outputs.version }}
         run: |
           set -euo pipefail
-          url="$(gh pr create --base main --head "${BRANCH}" --title "Release v${VERSION}" \
-            --body "Raises the version to ${VERSION}. Merging this tags v${VERSION}, which builds, signs and publishes the release.")"
+          # One already open for the branch, from an earlier run, carries the new commit as it is.
+          url="$(gh pr list --head "${BRANCH}" --state open --json url --jq '.[0].url // empty')"
+          if [[ -z "${url}" ]]; then
+            url="$(gh pr create --base main --head "${BRANCH}" --title "Release v${VERSION}" \
+              --body "Raises the version to ${VERSION}. Merging this tags v${VERSION}, which builds, signs and publishes the release.")"
+          fi
           {
             echo "## Release v${VERSION}"
             echo
