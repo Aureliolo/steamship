@@ -1,0 +1,217 @@
+name: Release
+
+# The tag is created by the tag workflow with the job token, and an event caused by that token
+# starts no workflow, so a push trigger alone would never fire; the tag workflow dispatches this
+# one on the tag instead. The push trigger stays for a tag pushed by hand.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions: {}
+
+# Keyed on the tag rather than the workflow, and never cancelled: two tags are two releases and
+# must both run, while the same tag twice is a re-run that should not race itself.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Building, testing, the SBOM and the signing all happen in release-build.yml, so the identity
+  # Sigstore certifies is those build steps rather than this file's; see there.
+  build:
+    name: build
+    if: github.repository == 'Aureliolo/steamship'
+    permissions:
+      contents: read # The build reads the tagged source.
+      id-token: write # Only release-build.yml's attest job uses it, to sign.
+      attestations: write # Only release-build.yml's attest job uses it, to store the provenance.
+    # zizmor wants `$/...` here, which actionlint rejects as neither of the forms GitHub
+    # documents; this path only runs on a tag, where a syntax error is a failed release.
+    uses: ./.github/workflows/release-build.yml # zizmor: ignore[self-repository]
+
+  publish:
+    name: publish
+    if: github.repository == 'Aureliolo/steamship'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write # Creates the release and uploads the assets onto it.
+
+    steps:
+      - name: Download the bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-bundle
+          path: dist
+
+      - name: Download the signed attestations
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: attestations
+          path: dist
+
+      # The bytes have moved between jobs twice by now, and they are the bytes the attestation was
+      # made over, so the last thing before publishing is to check they still hash right.
+      - name: Verify the checksums once more
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check ./*.sha256)
+
+      # Every file that ships has to verify the way a user will check it, from the file alone,
+      # and has to name release-build.yml at this tag as the builder; otherwise it only looks like
+      # proof.
+      - name: Verify the attestations that will ship
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          bundle="dist/steamship-${VERSION}.intoto.jsonl"
+          signer="${GITHUB_REPOSITORY}/.github/workflows/release-build.yml"
+          verify() {
+            gh attestation verify "$@" --bundle "${bundle}" \
+              --repo "${GITHUB_REPOSITORY}" --signer-workflow "${signer}" \
+              --source-ref "${GITHUB_REF}" --deny-self-hosted-runners
+          }
+          for subject in dist/steamship-*; do
+            if [[ "${subject}" != "${bundle}" ]]; then
+              verify "${subject}"
+            fi
+          done
+          for archive in dist/*.tar.gz dist/*.zip; do
+            verify "${archive}" --predicate-type https://spdx.dev/Document/v2.3
+          done
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find dist -maxdepth 1 -type f -print | sort)
+
+          # A draft is a release `gh release create` began and did not finish. A draft was never
+          # public, so it is removed and the release made again.
+          drop_unfinished_draft() {
+            if [ "$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq .isDraft 2> /dev/null)" = "true" ]; then
+              echo "${GITHUB_REF_NAME} has a draft left by an unfinished create; removing it."
+              gh release delete "${GITHUB_REF_NAME}" --yes
+            fi
+          }
+
+          # A release the tag already carries is taken as done, so the whole run can be re-run
+          # after a later job fails. A published release is immutable, so the way to be
+          # idempotent about it is to confirm it is already right, which means these files and no
+          # others; anything else needs a person.
+          already_released() {
+            if ! gh release view "${GITHUB_REF_NAME}" > /dev/null 2>&1; then
+              return 1
+            fi
+            have="$(gh release view "${GITHUB_REF_NAME}" --json assets --jq '.assets[].name' | sort)"
+            want="$(printf '%s\n' "${assets[@]##*/}" | sort)"
+            if [ "${have}" = "${want}" ]; then
+              echo "${GITHUB_REF_NAME} is released with all its files."
+              return 0
+            fi
+            echo "${GITHUB_REF_NAME} already has a release, and it carries:" >&2
+            printf '%s\n' "${have}" >&2
+            echo "rather than the files this job publishes. It is not rewritten here." >&2
+            exit 1
+          }
+
+          drop_unfinished_draft
+          if already_released; then
+            exit 0
+          fi
+
+          # What changed since the last release, one line per pull request: main takes only
+          # squash merges, so each commit's first line is its pull request's title.
+          previous="$(gh api "repos/${GH_REPO}/releases/latest" --jq .tag_name 2> /dev/null || true)"
+          {
+            printf '%s\n' \
+              '## Install' \
+              '' \
+              'Download the archive for your system below, or:' \
+              '' \
+              '```sh' \
+              "cargo install --locked steamship@${VERSION}" \
+              '```' \
+              '' \
+              'Check an archive came from this repository'"'"'s release workflow:' \
+              '' \
+              '```sh' \
+              "gh attestation verify <archive> --repo ${GH_REPO} --bundle steamship-${VERSION}.intoto.jsonl" \
+              '```' \
+              '' \
+              '## Changes' \
+              ''
+            if [[ -n "${previous}" ]]; then
+              gh api "repos/${GH_REPO}/compare/${previous}...${GITHUB_REF_NAME}" \
+                --jq '.commits[].commit.message | split("\n")[0] | "- " + .'
+            else
+              echo '- The first release.'
+            fi
+          } > notes.md
+
+          # Asked again after a failure, since GitHub has answered a create with a 500 after
+          # making the draft. What the failed attempt left is looked at first.
+          for attempt in 1 2 3; do
+            if gh release create "${GITHUB_REF_NAME}" "${assets[@]}" \
+              --verify-tag \
+              --notes-file notes.md \
+              --title "steamship ${VERSION}"; then
+              exit 0
+            fi
+            drop_unfinished_draft
+            if already_released; then
+              exit 0
+            fi
+            echo "Creating the release failed on attempt ${attempt}." >&2
+            sleep 15
+          done
+          echo "The release could not be created in three attempts." >&2
+          exit 1
+
+  # crates.io, through trusted publishing: the OIDC token below is the whole credential, and no
+  # crates.io token exists anywhere. A crate nobody has published cannot have a trusted publisher
+  # yet, so the first publish is done by hand and this job only runs once the repository variable
+  # CRATES_IO is set to `publish`, after the publisher is configured.
+  crates:
+    name: crates
+    if: github.repository == 'Aureliolo/steamship' && vars.CRATES_IO == 'publish'
+    needs: [build, publish]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: crates-io
+    permissions:
+      contents: read # Reads the tagged source it packages.
+      id-token: write # Exchanged for a short-lived crates.io token.
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # Before the token exists: packaging builds what would be uploaded, build scripts and all,
+      # while there is no token in reach for any of them.
+      - name: Package and check it builds
+        run: cargo package --locked
+
+      - name: Exchange the OIDC token for a crates.io token
+        id: auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
+      # --no-verify: the package was built above, before the token existed; verifying again here
+      # would run every build script with the token in reach.
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish --locked --no-verify

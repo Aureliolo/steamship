@@ -1,0 +1,14 @@
+# How the release SBOM is made. Every binary is built with cargo-auditable, which records in the
+# binary itself each crate that went into it at its exact version, and syft reads that record.
+# The SBOM so lists what shipped rather than what the lockfile holds, which also names crates
+# only the tests and the fuzzer use. That cataloguer is off for a directory by default.
+select-catalogers:
+  - '+cargo-auditable-binary-cataloger'
+
+# Every file that ships, with its digest, so a consumer can check an archive's contents against
+# the SBOM file by file rather than only as a whole.
+file:
+  metadata:
+    selection: all
+    digests:
+      - sha256
