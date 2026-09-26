@@ -7,6 +7,7 @@
 
 use std::env;
 use std::fmt::Display;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -15,12 +16,15 @@ use steamship::account::Account;
 use steamship::install::{self, Outcome};
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
-use steamship::{check, run, steamcmd};
+use steamship::redact::Redactor;
+use steamship::{check, run, steamcmd, upload};
 
 /// Something failed; what, and why, is printed.
 const FAILED: u8 = 1;
 /// `check` refused the scripts, or the command line was wrong (clap uses 2 for the latter too).
 const REFUSED: u8 = 2;
+/// steamcmd has no login it can use; `login` again.
+const LOGIN: u8 = 3;
 /// steamcmd is missing or has been altered.
 const STEAMCMD: u8 = 4;
 
@@ -49,6 +53,21 @@ enum Command {
         #[arg(long, env = "STEAMSHIP_ACCOUNT")]
         account: Option<String>,
     },
+    /// Check the scripts, then build and upload with steamcmd, out of sight, and say the build's
+    /// ID.
+    Upload {
+        /// The app build script, such as `steam/app_build.vdf`.
+        script: PathBuf,
+        /// The version being shipped, which with the commit becomes the build's description.
+        #[arg(long)]
+        version: String,
+        /// Valve's dry run: the whole build is computed and logged, and nothing is uploaded.
+        #[arg(long)]
+        preview: bool,
+        /// The build account, if not the one the last login remembered.
+        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
+        account: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -59,6 +78,17 @@ fn main() -> ExitCode {
             Err(code) => code,
         },
         Command::Login { account } => run_login(account.as_deref()),
+        Command::Upload {
+            script,
+            version,
+            preview,
+            account,
+        } => run_upload(&Upload {
+            script: &script,
+            version: &version,
+            preview,
+            account: account.as_deref(),
+        }),
     }
 }
 
@@ -156,14 +186,121 @@ fn run_login(named: Option<&str>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-fn run_check(script: &Path) -> ExitCode {
+/// Refuses, naming every problem, when `check` found any.
+fn checked(script: &Path) -> Result<check::Report, ExitCode> {
     let report = check::check(script);
-    if !report.problems.is_empty() {
-        for problem in &report.problems {
-            eprintln!("refused: {problem}");
-        }
-        return ExitCode::from(REFUSED);
+    if report.problems.is_empty() {
+        return Ok(report);
     }
+    for problem in &report.problems {
+        eprintln!("refused: {problem}");
+    }
+    Err(ExitCode::from(REFUSED))
+}
+
+struct Upload<'command> {
+    script: &'command Path,
+    version: &'command str,
+    preview: bool,
+    account: Option<&'command str>,
+}
+
+fn run_upload(upload: &Upload<'_>) -> ExitCode {
+    match try_upload(upload) {
+        Ok(code) | Err(code) => code,
+    }
+}
+
+fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
+    let account = account(request.account)?;
+    drop(checked(request.script)?);
+    let description = upload::commit(request.script)
+        .and_then(|commit| upload::description(request.version, &commit))
+        .map_err(|error| fail(&error, REFUSED))?;
+    let (home, manifest) = ready(false)?;
+    let prepared = upload::prepare(&home, request.script, &description, request.preview)
+        .map_err(|error| fail(&error, FAILED))?;
+    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
+    let root = home.join(install::FOLDER);
+    let program = steamcmd::program(&root, Platform::THIS);
+    let kind = if request.preview { "a preview of " } else { "" };
+    println!(
+        "building {kind}app {} as \"{description}\"",
+        prepared.app_id
+    );
+    let finished = run::run(
+        &program,
+        &steamcmd::upload(&account, &prepared.script),
+        &steamcmd::environment(&home, Platform::THIS),
+        &root,
+        steamcmd::UPLOAD_LIMIT,
+    )
+    .map_err(|error| fail(&format!("{}: {error}", program.display()), FAILED))?;
+    let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
+    let console = redactor.redact(&finished.output);
+    let saved = prepared.output.join("steamcmd.log");
+    fs::write(&saved, &console)
+        .map_err(|error| fail(&format!("{}: {error}", saved.display()), FAILED))?;
+    let log = fs::read(prepared.log())
+        .ok()
+        .map(|log| redactor.redact(&log));
+    let outcome = upload::judge(
+        prepared.app_id,
+        finished.code,
+        &String::from_utf8_lossy(&console),
+        log.as_deref().map(String::from_utf8_lossy).as_deref(),
+        request.preview,
+    );
+    let code = report(&outcome, &prepared, &account, &saved);
+    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    Ok(code)
+}
+
+fn report(
+    outcome: &upload::Outcome,
+    prepared: &upload::Prepared,
+    account: &Account,
+    saved: &Path,
+) -> ExitCode {
+    let app = prepared.app_id;
+    match outcome {
+        upload::Outcome::Built { build_id } => {
+            let live = prepared
+                .set_live
+                .as_ref()
+                .map(|branch| format!(", set live on {branch}"))
+                .unwrap_or_default();
+            println!("app {app}: BuildID {build_id}{live}");
+            ExitCode::SUCCESS
+        }
+        upload::Outcome::Previewed => {
+            println!("app {app}: the preview finished; nothing was uploaded");
+            ExitCode::SUCCESS
+        }
+        upload::Outcome::NotLoggedIn(line) => {
+            eprintln!("{line}");
+            eprintln!("run `steamship login --account {account}` to log in again");
+            ExitCode::from(LOGIN)
+        }
+        upload::Outcome::Failed(reasons) => {
+            for reason in reasons {
+                eprintln!("failed: {reason}");
+            }
+            eprintln!(
+                "steamcmd's output is in {}, and its build log in {}",
+                saved.display(),
+                prepared.log().display()
+            );
+            ExitCode::from(FAILED)
+        }
+    }
+}
+
+fn run_check(script: &Path) -> ExitCode {
+    let report = match checked(script) {
+        Ok(report) => report,
+        Err(code) => return code,
+    };
     let depots: Vec<String> = report
         .depots
         .iter()

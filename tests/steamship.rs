@@ -9,7 +9,7 @@
 )]
 
 use std::fs::{self, File};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use steamship::install;
@@ -100,15 +100,22 @@ fn install_says_where_it_could_not_find_a_home_and_exits_1() {
 /// an update would.
 #[cfg(unix)]
 fn faked() -> tempfile::TempDir {
+    faked_with(
+        "#!/bin/sh\n\
+         echo \"args: $*\"\n\
+         echo \"home: $HOME\"\n\
+         echo \"folder: $PWD\"\n\
+         [ -n \"$STEAMSHIP_FAKE_CHANGE\" ] && echo >> \"$0\"\n\
+         exit \"${STEAMSHIP_FAKE_EXIT:-0}\"\n",
+    )
+}
+
+/// A home whose recorded steamcmd is `script`.
+#[cfg(unix)]
+fn faked_with(script: &str) -> tempfile::TempDir {
     use std::os::unix::fs::PermissionsExt as _;
     use steamship::digest;
 
-    let script = "#!/bin/sh\n\
-                  echo \"args: $*\"\n\
-                  echo \"home: $HOME\"\n\
-                  echo \"folder: $PWD\"\n\
-                  [ -n \"$STEAMSHIP_FAKE_CHANGE\" ] && echo >> \"$0\"\n\
-                  exit \"${STEAMSHIP_FAKE_EXIT:-0}\"\n";
     let hash = digest::hex(&digest::sha256(&mut script.as_bytes()).unwrap());
     let home = recorded(&format!("file {hash} steamcmd.sh\n"));
     let program = home.path().join(install::FOLDER).join("steamcmd.sh");
@@ -233,4 +240,232 @@ fn login_with_nowhere_to_look_for_an_account_exits_1() {
         stderr.starts_with("neither STEAMSHIP_HOME nor "),
         "{stderr}"
     );
+}
+
+fn git(folder: &Path, args: &[&str]) {
+    let status = Command::new("git")
+        .args([
+            "-c",
+            "user.name=steamship",
+            "-c",
+            "user.email=steamship@example.invalid",
+        ])
+        .args(["-c", "commit.gpgsign=false"])
+        .args(args)
+        .current_dir(folder)
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+/// A game's scripts and content, committed or not, in a folder named the way a gate worktree is.
+fn project(committed: bool) -> (tempfile::TempDir, PathBuf) {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("fgm gate (x86) 1a2b");
+    let put = |relative: &str, contents: &str| {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    };
+    put("content/game.txt", "the game");
+    put(
+        "steam/depot.vdf",
+        r#""DepotBuild" { "DepotID" "1001" "FileMapping" { "LocalPath" "*" "DepotPath" "." "Recursive" "1" } }"#,
+    );
+    put(
+        "steam/app_build.vdf",
+        r#""AppBuild" { "AppID" "1000" "ContentRoot" "../content" "SetLive" "testing" "Depots" { "1001" "depot.vdf" } }"#,
+    );
+    if committed {
+        git(&root, &["init", "--quiet"]);
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "--quiet", "-m", "scripts"]);
+    }
+    let script = root.join("steam").join("app_build.vdf");
+    (temp, script)
+}
+
+fn upload(
+    script: &Path,
+    home: &Path,
+    extra: &[&str],
+    variables: &[(&str, &str)],
+) -> (Option<i32>, String, String) {
+    let script = script.to_str().unwrap();
+    let mut args = vec!["upload", script, "--account", "build_bot"];
+    args.extend(extra);
+    steamship(&args, Some(home), variables)
+}
+
+#[test]
+fn upload_refuses_a_version_a_description_cannot_carry_and_exits_2() {
+    let (_project, script) = project(true);
+    let home = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.0\""], &[]);
+    assert_eq!((code, stdout.as_str()), (Some(2_i32), ""));
+    assert!(
+        stderr.starts_with("the version \"1.0\\\"\" is not"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn upload_refuses_scripts_outside_a_repository_and_exits_2() {
+    let (_project, script) = project(false);
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = upload(&script, home.path(), &["--version", "1.0"], &[]);
+    assert_eq!(code, Some(2_i32));
+    assert!(
+        stderr
+            .trim_end()
+            .ends_with("which the build description names"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn upload_runs_check_first_and_exits_2_on_a_refusal() {
+    let (project, script) = project(true);
+    fs::write(
+        project
+            .path()
+            .join("fgm gate (x86) 1a2b/content/steam_appid.txt"),
+        "1000",
+    )
+    .unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.0"], &[]);
+    assert_eq!((code, stdout.as_str()), (Some(2_i32), ""));
+    assert!(stderr.starts_with("refused: "), "{stderr}");
+}
+
+/// A token that logs the account in without a password, and a value from its local settings.
+#[cfg(unix)]
+const SECRETS: [&str; 2] = [
+    "eyJhbGciOiJFZERTQSJ9.token.that.logs.in.without.a.password",
+    "localconfig_secret_value_0123456789",
+];
+
+/// A home with a saved login holding [`SECRETS`], where steamcmd is a script that does what the
+/// setup-steamcmd action once did (GHSA-mj96-mh85-r574): prints steamcmd's login files, into its
+/// console and its build log. Then it reports the build finished, or, with
+/// `STEAMSHIP_FAKE_LOGGED_OUT` set, that it has no login.
+#[cfg(unix)]
+fn leaking() -> tempfile::TempDir {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         for arg in \"$@\"; do [ \"$previous\" = +run_app_build ] && script=\"$arg\"; previous=\"$arg\"; done\n\
+         output=$(sed -n 's/^[[:space:]]*\"BuildOutput\"[[:space:]]*\"\\(.*\\)\"$/\\1/p' \"$script\")\n\
+         cat \"$HOME/Steam/config/config.vdf\" \"$HOME\"/Steam/userdata/*/config/localconfig.vdf\n\
+         if [ -n \"$STEAMSHIP_FAKE_LOGGED_OUT\" ]; then\n\
+           echo 'Cached credentials not found.'\n\
+           echo 'FAILED (No cached credentials and @NoPromptForPassword is set)'\n\
+           exit 5\n\
+         fi\n\
+         { cat \"$HOME/Steam/config/config.vdf\"; \
+           echo 'Successfully finished AppID 1000 build (BuildID 4242).'; } \
+           > \"$output/app_build_1000.log\"\n",
+    );
+    let [token, local] = SECRETS;
+    let put = |relative: &str, contents: String| {
+        let path = home.path().join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    };
+    put(
+        "Steam/config/config.vdf",
+        format!(
+            "\"InstallConfigStore\" {{ \"Software\" {{ \"Valve\" {{ \"Steam\" {{ \
+             \"ConnectCache\" {{ \"3a1f0c2e\" \"{token}\" }} }} }} }} }}\n"
+        ),
+    );
+    put(
+        "Steam/userdata/12345/config/localconfig.vdf",
+        format!("\"UserLocalConfigStore\" {{ \"WebStorage\" {{ \"cookie\" \"{local}\" }} }}\n"),
+    );
+    home
+}
+
+/// Every file under `folder` but those in `except`, relative to `folder`, with its contents.
+#[cfg(unix)]
+fn written(folder: &Path, except: &[&str]) -> Vec<(String, Vec<u8>)> {
+    let mut found = Vec::new();
+    let mut pending = vec![folder.to_path_buf()];
+    while let Some(next) = pending.pop() {
+        for entry in fs::read_dir(next).unwrap() {
+            let path = entry.unwrap().path();
+            let relative = path
+                .strip_prefix(folder)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            if path.is_dir() {
+                pending.push(path);
+            } else if !except.contains(&relative.as_str()) {
+                found.push((relative, fs::read(&path).unwrap()));
+            }
+        }
+    }
+    found
+}
+
+#[cfg(unix)]
+fn assert_no_secret_in(what: &str, contents: &[u8]) {
+    for secret in SECRETS {
+        assert!(
+            !contents
+                .windows(secret.len())
+                .any(|window| window == secret.as_bytes()),
+            "{what} holds {secret}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn nothing_upload_prints_or_writes_holds_the_login() {
+    let home = leaking();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.ends_with("app 1000: BuildID 4242, set live on testing\n"),
+        "{stdout}"
+    );
+    assert_no_secret_in("stdout", stdout.as_bytes());
+    let except = [
+        "Steam/config/config.vdf",
+        "Steam/userdata/12345/config/localconfig.vdf",
+        "apps/1000/output/app_build_1000.log",
+    ];
+    let files = written(home.path(), &except);
+    assert!(
+        files
+            .iter()
+            .any(|(path, _)| path == "apps/1000/output/steamcmd.log"),
+        "steamcmd's output is kept"
+    );
+    for (path, contents) in files {
+        assert_no_secret_in(&path, &contents);
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_without_a_login_says_to_log_in_and_exits_3() {
+    let home = leaking();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_FAKE_LOGGED_OUT", "1")],
+    );
+    assert_eq!(code, Some(3_i32));
+    assert_eq!(
+        stderr,
+        "Cached credentials not found.\nrun `steamship login --account build_bot` to log in again\n"
+    );
+    assert_no_secret_in("stdout", stdout.as_bytes());
+    assert_no_secret_in("stderr", stderr.as_bytes());
 }

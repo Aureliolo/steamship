@@ -53,12 +53,26 @@ impl Redactor {
     /// a secret through.
     #[must_use]
     pub fn from_texts(texts: &[Vec<u8>]) -> Self {
-        let mut secrets: Vec<Vec<u8>> = texts
-            .iter()
-            .flat_map(|text| tokens(text))
-            .filter(|&(token, is_value)| is_secret(token, is_value))
-            .map(|(token, _)| token.to_vec())
-            .collect();
+        Self::sorted(
+            texts
+                .iter()
+                .flat_map(|text| tokens(text))
+                .filter(|&(token, is_value)| is_secret(token, is_value))
+                .map(|(token, _)| token.to_vec())
+                .collect(),
+        )
+    }
+
+    /// The secrets of both. steamcmd may renew its token as it runs, so what is printed after a
+    /// run is redacted with the secrets from before it and after it.
+    #[must_use]
+    pub fn and(self, other: Self) -> Self {
+        let mut secrets = self.secrets;
+        secrets.extend(other.secrets);
+        Self::sorted(secrets)
+    }
+
+    fn sorted(mut secrets: Vec<Vec<u8>>) -> Self {
         secrets.sort_by(|left, right| right.len().cmp(&left.len()).then(left.cmp(right)));
         secrets.dedup();
         Self { secrets }
@@ -255,6 +269,17 @@ mod tests {
             let secret = format!("secret_number_{index}_of_five");
             assert_eq!(redactor.redact(secret.as_bytes()), MARKER, "{secret}");
         }
+    }
+
+    #[test]
+    fn secrets_from_before_and_after_a_run_are_all_redacted() {
+        let before = Redactor::from_texts(&[b"\"a\" \"the_token_before_the_run\"".to_vec()]);
+        let after = Redactor::from_texts(&[b"\"a\" \"the_token_after_the_run\"".to_vec()]);
+        let both = before.and(after);
+        assert_eq!(
+            both.redact(b"the_token_before_the_run the_token_after_the_run"),
+            b"[redacted] [redacted]"
+        );
     }
 
     #[test]

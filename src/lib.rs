@@ -17,6 +17,7 @@ pub mod scripts;
 pub mod steamcmd;
 #[cfg(unix)]
 pub mod unix;
+pub mod upload;
 pub mod vdf;
 #[cfg(windows)]
 pub mod windows;
