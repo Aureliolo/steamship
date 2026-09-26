@@ -125,7 +125,7 @@ missing_docs_in_private_items = "allow"
 # Items read top down, the entry point first and its helpers after; alphabetical order would put
 # them anywhere.
 arbitrary_source_item_ordering = "allow"
-# A hint for callers in other crates, which the release profile's LTO makes moot.
+# A hint for callers in other crates, and this library has none (see src/lib.rs).
 missing_inline_in_public_items = "allow"
 # A function that is called once still names a step, which is why it was split out.
 single_call_fn = "allow"
@@ -154,7 +154,25 @@ error_impl_error = "allow"
 # reason, and fail once they stop matching, where this lint could only be silenced by crate name.
 multiple_crate_versions = "allow"
 
+[package.metadata.binstall]
+# `cargo binstall steamship` downloads this repository's own release archive, never a build from
+# a third-party host; a target with no archive falls back to building from source.
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.tar.gz"
+pkg-fmt = "tgz"
+bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"
+disabled-strategies = ["quick-install"]
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.zip"
+pkg-fmt = "zip"
+
+# `cargo install` builds with this profile, so it stays quick: whole-program optimisation nearly
+# triples the build for an 11% smaller binary. The release archives are built with `dist`, which
+# adds it; `cargo install --locked steamship --profile dist` builds the same from source.
 [profile.release]
-lto = true
-codegen-units = 1
 strip = true
+
+[profile.dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
