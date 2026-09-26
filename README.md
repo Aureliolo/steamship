@@ -34,10 +34,11 @@ It works with any engine: anything that ends in a folder of files per platform c
 
 Download the archive for your system from the
 [latest release](https://github.com/Aureliolo/steamship/releases/latest) (Windows x86-64, Linux
-x86-64, macOS arm64 and x86-64) and put `steamship` on your `PATH`, or build it with Cargo:
+x86-64, macOS arm64 and x86-64) and put `steamship` on your `PATH`, or let Cargo do it:
 
 ```sh
-cargo install --locked steamship
+cargo binstall steamship          # that same archive, in seconds
+cargo install --locked steamship  # or built from source
 ```
 
 ## Quick start
