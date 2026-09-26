@@ -1,0 +1,22 @@
+"AppBuild"
+{
+	"AppID" "1000" // your AppID
+	"Desc" "This is a simple build script"
+	"ContentRoot" "..\content\"
+	"BuildOutput" "..\output\"
+	"SetLive" "testing"
+	"Depots"
+	{
+		"1001" "depot_build_1001.vdf"
+		"1002"
+		{
+			"FileMapping"
+			{
+				"LocalPath" "*"
+				"DepotPath" "."
+				"recursive" "1"
+			}
+			"FileExclusion" "*.pdb"
+		}
+	}
+}

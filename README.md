@@ -108,10 +108,10 @@ for example in CI, and verifies an existing install.
 
 ## Configuration
 
-| Variable            | Meaning                                                               |
-| ------------------- | --------------------------------------------------------------------- |
+| Variable            | Meaning                                                                       |
+| ------------------- | ----------------------------------------------------------------------------- |
 | `STEAMSHIP_HOME`    | Where steamcmd, its token and build output live; a per-user folder by default |
-| `STEAMSHIP_ACCOUNT` | The build account, if not the one `login` remembered                  |
+| `STEAMSHIP_ACCOUNT` | The build account, if not the one `login` remembered                          |
 
 There is no password setting anywhere.
 

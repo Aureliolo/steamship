@@ -1,0 +1,9 @@
+{
+  "config": {
+    // Prose wraps at 100, like the code; tables and code blocks are as wide as their content.
+    "MD013": { "line_length": 100, "tables": false, "code_blocks": false }
+  },
+  // Every Markdown file, so a run on a developer's machine lints what CI lints.
+  "globs": ["**/*.md"],
+  "ignores": ["target/**", "fuzz/target/**", "drafts/**"]
+}
