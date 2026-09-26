@@ -19,7 +19,7 @@ use steamship::platform::Platform;
 const FAILED: u8 = 1;
 /// `check` refused the scripts, or the command line was wrong (clap uses 2 for the latter too).
 const REFUSED: u8 = 2;
-/// steamcmd is missing, altered, or has updated itself past the pin.
+/// steamcmd is missing or has been altered.
 const STEAMCMD: u8 = 4;
 
 #[derive(Debug, Parser)]

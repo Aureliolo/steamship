@@ -625,10 +625,12 @@ name = "steamship"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "libc",
  "proptest",
  "sha2",
  "tempfile",
  "ureq",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
