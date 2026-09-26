@@ -6,8 +6,11 @@
     reason = "the error mode is only reachable through Win32 calls"
 )]
 
-use steamship::windows::{NO_DIALOGUES, silence_error_dialogues};
-use windows_sys::Win32::System::Diagnostics::Debug::{GetErrorMode, SetErrorMode};
+use steamship::windows::silence_error_dialogues;
+use windows_sys::Win32::System::Diagnostics::Debug::{
+    GetErrorMode, SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX,
+    SetErrorMode,
+};
 
 #[test]
 fn crashes_and_missing_files_put_up_no_dialogue() {
@@ -16,6 +19,11 @@ fn crashes_and_missing_files_put_up_no_dialogue() {
     silence_error_dialogues();
     // SAFETY: reads one process-wide flag.
     let mode = unsafe { GetErrorMode() };
-    assert_eq!(mode & NO_DIALOGUES, NO_DIALOGUES);
-    assert_ne!(NO_DIALOGUES.count_ones(), 0);
+    for (name, flag) in [
+        ("a crash", SEM_NOGPFAULTERRORBOX),
+        ("a missing disk", SEM_FAILCRITICALERRORS),
+        ("a file that cannot be opened", SEM_NOOPENFILEERRORBOX),
+    ] {
+        assert_eq!(mode & flag, flag, "{name} would still put up a dialogue");
+    }
 }

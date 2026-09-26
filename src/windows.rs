@@ -35,12 +35,11 @@ use windows_sys::Win32::System::JobObjects::{
 };
 use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, CreateDesktopW, HDESK};
 use windows_sys::Win32::System::Threading::{
-    CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
-    DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE,
-    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ResumeThread,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
-    UpdateProcThreadAttribute, WaitForSingleObject,
+    CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessW, DeleteProcThreadAttributeList,
+    EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList,
+    LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_CREATION_FLAGS,
+    PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
+    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 use crate::run::Finished;
@@ -111,7 +110,7 @@ pub fn silence_error_dialogues() {
 }
 
 /// No dialogue for a crash, for a disk that is not there, or for a file that cannot be opened.
-pub const NO_DIALOGUES: THREAD_ERROR_MODE =
+const NO_DIALOGUES: THREAD_ERROR_MODE =
     SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX;
 
 /// A job that ends every process in it when steamship lets go of it, however steamship ends, and
@@ -120,10 +119,10 @@ const JOB_LIMITS: JOB_OBJECT_LIMIT =
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
 
 /// How a program is started: suspended until it is in the job, so that nothing it does happens
-/// outside it; with no console window, which on a desktop nobody sees would only be waste; with
-/// an environment block of UTF-16; and with the attribute list that limits what it inherits.
+/// outside it; with no console window, which on a desktop nobody sees would only be waste; and
+/// with the attribute list that limits what it inherits.
 const CREATION: PROCESS_CREATION_FLAGS =
-    CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
+    CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT;
 
 /// The desktop a program runs on. Nobody switches to it, so nothing on it is ever seen, and
 /// Windows keeps the keyboard focus from crossing from one desktop to another.
