@@ -12,9 +12,8 @@ name: Mutants
 # before the test fails; the minimum timeout is set above that so such a mutant counts as caught
 # rather than timed out.
 on:
+  # Every pull request, whatever it targets, so that one stacked on another is checked too.
   pull_request:
-    branches:
-      - main
   schedule:
     - cron: '41 3 * * 2'
 
