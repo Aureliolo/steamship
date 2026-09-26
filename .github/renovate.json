@@ -1,0 +1,73 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:best-practices", "security:openssf-scorecard", ":semanticCommitsDisabled"],
+  "timezone": "Europe/Zurich",
+  "schedule": ["before 6am on monday"],
+  "description": "The dependency dashboard is on: it is the only place that shows what Renovate tried and could not land, which the weekly pull request never mentions.",
+  "dependencyDashboard": true,
+  "dependencyDashboardLabels": ["renovate"],
+  "separateMajorMinor": false,
+  "commitMessageAction": "Raise",
+  "commitMessageTopic": "{{depName}}",
+  "commitMessageExtra": "to {{newVersion}}",
+  "vulnerabilityAlerts": {
+    "description": "Off, so that a vulnerability fix rides in the one weekly pull request like every other raise instead of arriving on its own branch outside the schedule.",
+    "enabled": false
+  },
+  "lockFileMaintenance": {
+    "description": "Both lock files regenerated the day after the raises, which is where the transitive crates move.",
+    "enabled": true,
+    "schedule": ["before 6am on tuesday"]
+  },
+  "packageRules": [
+    {
+      "description": "One pull request for everything, majors included. Every check has to pass before anything merges, so separate pull requests would only be that many rounds of CI for one week's raises.",
+      "matchPackageNames": ["*"],
+      "groupName": "all dependencies",
+      "groupSlug": "all"
+    },
+    {
+      "description": "Cargo.toml names the version tested, not a floor, so a raise moves it along with the lock file.",
+      "matchManagers": ["cargo"],
+      "rangeStrategy": "bump"
+    }
+  ],
+  "customManagers": [
+    {
+      "description": "Rust: the toolchain CI and developers build with, and the rust-version the crate declares, which is the same version on purpose.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^rust-toolchain\\.toml$/", "/^Cargo\\.toml$/"],
+      "matchStrings": [
+        "channel = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "rust-version = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "rust-lang/rust",
+      "datasourceTemplate": "github-releases",
+      "versioningTemplate": "semver"
+    },
+    {
+      "description": "A release tag with the SHA-256 of the asset downloaded on the next line: actionlint and cargo-deny. The tag and the digest move together.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>\\S+) versioning=(?<versioning>\\S+)\\n\\s*[A-Z0-9_]+_TAG: (?<currentValue>\\S+)\\n\\s*[A-Z0-9_]+_SHA256: (?<currentDigest>[0-9a-f]{64})"
+      ]
+    },
+    {
+      "description": "A crate installed by version in a workflow: cargo-fuzz.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>crate) depName=(?<depName>\\S+)\\n\\s*[A-Z0-9_]+_VERSION: (?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "description": "The runner images inside a job matrix, which the github-actions manager does not read.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-runners) depName=(?<depName>ubuntu|windows|macos)\\n\\s*runner: (?:ubuntu|windows|macos)-(?<currentValue>[0-9.]+(?:-[a-z0-9]+)?)"
+      ]
+    }
+  ]
+}

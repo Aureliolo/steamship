@@ -1,0 +1,37 @@
+[package]
+name = "steamship-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+steamship = { path = ".." }
+
+# Its own workspace, so libFuzzer never enters the published crate's build or lock file.
+[workspace]
+
+[[bin]]
+name = "vdf"
+path = "fuzz_targets/vdf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "elf"
+path = "fuzz_targets/elf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pattern"
+path = "fuzz_targets/pattern.rs"
+test = false
+doc = false
+bench = false

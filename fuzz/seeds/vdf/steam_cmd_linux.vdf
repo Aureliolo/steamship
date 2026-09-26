@@ -1,0 +1,23 @@
+"linux"
+{
+	"version"		"1788292693"
+	"steamcmd_public_all"
+	{
+		"file"		"steamcmd_public_all.zip.9acb456879ee932518117972e2b09b938f19063b"
+		"size"		"60352"
+		"sha2"		"6fad0bff904dac6cce1c56d9bdf60915e8041e9e3d12b3ca3baeca31d1e00acc"
+	}
+	"steamcmd_linux"
+	{
+		"file"		"steamcmd_linux.zip.917c71eb05be1fb555d36ada71f0736c548fa035"
+		"size"		"7924254"
+		"sha2"		"81070e9bd2425bb9d3a89425923c4a9771b6755174fb072f8502836744c5d7e0"
+		"zipvz"		"steamcmd_linux.zip.vz.34de6c9cf13e0cb003b79d42aa9b7a0b99b204a0_5843260"
+		"sha2vz"		"43a96bce91aa3eb9bb42c85bcc66dc9f472ebd7a8d2614df88a5d882332252b2"
+		"IsBootstrapperPackage"		"1"
+	}
+}
+"kvsign2"
+{
+	"linux"		"eb45dd386e3ff0855dedd17c47d99a79c9a41fb0f8bc693a7832d2e734b6d7f6dcf825484bd2c3110edd6a7d2be6258d43c4689ed90c7e8ed47f7885a622930b"
+}
