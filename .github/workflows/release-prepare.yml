@@ -52,6 +52,11 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install
 
+      # The raise below runs offline, so that it can change nothing but the version; what it reads
+      # has to be here first, exactly as the lock file names it.
+      - name: Fetch the locked crates
+        run: cargo fetch --locked
+
       - name: Raise the version
         id: bump
         env:
