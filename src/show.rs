@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use anstream::AutoStream;
 use anstyle::{AnsiColor, Style};
+use clap::builder::styling::Styles;
 
 const DIM: Style = Style::new().dimmed();
 const BOLD: Style = Style::new().bold();
@@ -29,6 +30,39 @@ const FRAMES: [char; 10] = [
     '\u{280b}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283c}', '\u{2834}', '\u{2826}', '\u{2827}',
     '\u{2807}', '\u{280f}',
 ];
+
+const BLUE: Style = AnsiColor::Blue.on_default();
+
+/// The colours of `--help`: headings bold, commands and options as the hints show a command,
+/// and what to fill in dim.
+pub const HELP: Styles = Styles::styled()
+    .header(BOLD)
+    .usage(BOLD)
+    .literal(CYAN.bold())
+    .placeholder(DIM)
+    .valid(GREEN)
+    .invalid(YELLOW)
+    .error(RED.bold());
+
+/// A ship beside the name, the version and what steamship does.
+#[must_use]
+pub fn banner() -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    format!(
+        "{BLUE}      |\\{BLUE:#}\n\
+         {BLUE}      | \\{BLUE:#}         {BOLD}steamship{BOLD:#} {DIM}{version}{DIM:#}\n\
+         {BLUE}   ___|__\\___{BLUE:#}     {DIM}uploads your build to Steam{DIM:#}\n\
+         {BLUE}   \\_________/{BLUE:#}\n\
+         {BLUE}{DIM} ~~~~~~~~~~~~~~~{DIM:#}{BLUE:#}\n"
+    )
+}
+
+/// The banner, on a terminal only: a log has no use for it.
+pub fn banner_on_terminal() {
+    if io::stdout().is_terminal() {
+        anstream::println!("{}", banner());
+    }
+}
 
 /// `steamship <command>`, the first thing a command shows.
 pub fn title(command: &str) {
@@ -277,6 +311,15 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+
+    #[test]
+    fn the_banner_names_steamship_its_version_and_what_it_does() {
+        let banner = banner();
+        assert!(banner.contains("steamship"), "{banner}");
+        assert!(banner.contains(env!("CARGO_PKG_VERSION")), "{banner}");
+        assert!(banner.contains("uploads your build to Steam"), "{banner}");
+        assert_eq!(banner.lines().count(), 5, "{banner}");
+    }
 
     #[test]
     fn a_count_is_grouped_in_threes_and_its_noun_agrees() {
