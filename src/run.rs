@@ -24,7 +24,8 @@ pub struct Finished {
     pub output: Vec<u8>,
 }
 
-/// Runs `program` with `args` in `directory`, and waits at most `limit` for it.
+/// Runs `program` with `args` and `environment` added to steamship's, in `directory`, and waits
+/// at most `limit` for it.
 ///
 /// # Errors
 ///
@@ -32,10 +33,11 @@ pub struct Finished {
 pub fn run(
     program: &Path,
     args: &[OsString],
+    environment: &[(OsString, OsString)],
     directory: &Path,
     limit: Duration,
 ) -> io::Result<Finished> {
-    native::run(program, args, directory, limit)
+    native::run(program, args, environment, directory, limit)
 }
 
 /// Runs `program` in the user's own terminal, for them to type into, with `environment` added to
@@ -87,15 +89,25 @@ mod tests {
         "sleep 60 & exit 4",
     );
 
-    fn shell(line: &str, limit: Duration) -> Finished {
-        let args: Vec<OsString> = SHELL
+    fn shell_args(line: &str) -> Vec<OsString> {
+        SHELL
             .1
             .iter()
             .copied()
             .chain([line])
             .map(OsString::from)
-            .collect();
-        run(Path::new(SHELL.0), &args, &env::temp_dir(), limit).unwrap()
+            .collect()
+    }
+
+    fn shell(line: &str, limit: Duration) -> Finished {
+        run(
+            Path::new(SHELL.0),
+            &shell_args(line),
+            &[],
+            &env::temp_dir(),
+            limit,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -162,29 +174,49 @@ mod tests {
     #[cfg(unix)]
     const PROBE: &str = r#"test "$STEAMSHIP_PROBE" = yes && test -f marker || exit 5"#;
 
-    fn attached_shell(
-        line: &str,
-        environment: &[(OsString, OsString)],
-        directory: &Path,
-    ) -> Option<i32> {
-        let args: Vec<OsString> = SHELL
-            .1
-            .iter()
-            .copied()
-            .chain([line])
-            .map(OsString::from)
-            .collect();
-        attached(Path::new(SHELL.0), &args, environment, directory).unwrap()
+    fn probe() -> [(OsString, OsString); 1] {
+        [(OsString::from("STEAMSHIP_PROBE"), OsString::from("yes"))]
+    }
+
+    fn attached_shell(environment: &[(OsString, OsString)], directory: &Path) -> Option<i32> {
+        attached(
+            Path::new(SHELL.0),
+            &shell_args(PROBE),
+            environment,
+            directory,
+        )
+        .unwrap()
+    }
+
+    fn hidden_shell(environment: &[(OsString, OsString)], directory: &Path) -> Option<i32> {
+        let limit = Duration::from_secs(30);
+        run(
+            Path::new(SHELL.0),
+            &shell_args(PROBE),
+            environment,
+            directory,
+            limit,
+        )
+        .unwrap()
+        .code
     }
 
     #[test]
     fn an_attached_program_gets_its_environment_and_folder_and_is_waited_for() {
         let folder = tempfile::tempdir().unwrap();
         fs::write(folder.path().join("marker"), "").unwrap();
-        let probe = [(OsString::from("STEAMSHIP_PROBE"), OsString::from("yes"))];
-        assert_eq!(attached_shell(PROBE, &probe, folder.path()), Some(0_i32));
-        assert_eq!(attached_shell(PROBE, &[], folder.path()), Some(5_i32));
-        assert_eq!(attached_shell(PROBE, &probe, &env::temp_dir()), Some(5_i32));
+        assert_eq!(attached_shell(&probe(), folder.path()), Some(0_i32));
+        assert_eq!(attached_shell(&[], folder.path()), Some(5_i32));
+        assert_eq!(attached_shell(&probe(), &env::temp_dir()), Some(5_i32));
+    }
+
+    #[test]
+    fn a_hidden_program_gets_its_environment_and_folder() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::write(folder.path().join("marker"), "").unwrap();
+        assert_eq!(hidden_shell(&probe(), folder.path()), Some(0_i32));
+        assert_eq!(hidden_shell(&[], folder.path()), Some(5_i32));
+        assert_eq!(hidden_shell(&probe(), &env::temp_dir()), Some(5_i32));
     }
 
     #[test]
@@ -197,7 +229,8 @@ mod tests {
     #[test]
     fn a_program_that_is_not_there_is_an_error() {
         let missing = env::temp_dir().join("steamship-no-such-program");
-        let error = run(&missing, &[], &env::temp_dir(), Duration::from_secs(5)).unwrap_err();
+        let limit = Duration::from_secs(5);
+        let error = run(&missing, &[], &[], &env::temp_dir(), limit).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 }

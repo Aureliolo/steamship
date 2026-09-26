@@ -5,6 +5,7 @@
     reason = "Windows' own APIs are the only way to ask Windows these questions"
 )]
 
+use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::{self, Read as _};
@@ -46,12 +47,12 @@ use windows_sys::Win32::System::JobObjects::{
 use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, CreateDesktopW, HDESK};
 use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows_sys::Win32::System::Threading::{
-    CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess, INFINITE,
-    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken,
-    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ResumeThread,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
-    UpdateProcThreadAttribute, WaitForSingleObject,
+    CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+    DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
+    GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+    OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_CREATION_FLAGS,
+    PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
+    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 use crate::run::Finished;
@@ -79,6 +80,7 @@ static DESKTOPS: AtomicU64 = AtomicU64::new(0);
 pub fn run(
     program: &Path,
     args: &[OsString],
+    environment: &[(OsString, OsString)],
     directory: &Path,
     limit: Duration,
 ) -> io::Result<Finished> {
@@ -90,6 +92,7 @@ pub fn run(
     let process = spawn(
         program,
         args,
+        environment_block(environment).as_deref(),
         directory,
         &desktop,
         &job,
@@ -132,10 +135,10 @@ const JOB_LIMITS: JOB_OBJECT_LIMIT =
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
 
 /// How a program is started: suspended until it is in the job, so that nothing it does happens
-/// outside it; with no console window, which on a desktop nobody sees would only be waste; and
-/// with the attribute list that limits what it inherits.
+/// outside it; with no console window, which on a desktop nobody sees would only be waste; with
+/// an environment block of UTF-16; and with the attribute list that limits what it inherits.
 const CREATION: PROCESS_CREATION_FLAGS =
-    CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT;
+    CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
 
 /// The desktop a program runs on. Nobody switches to it, so nothing on it is ever seen, and
 /// Windows keeps the keyboard focus from crossing from one desktop to another.
@@ -240,6 +243,7 @@ impl Process {
 fn spawn(
     program: &Path,
     args: &[OsString],
+    environment: Option<&[u16]>,
     directory: &Path,
     desktop: &Desktop,
     job: &Job,
@@ -273,9 +277,10 @@ fn spawn(
     let mut line = command_line(program.as_os_str(), args);
     let directory = wide(directory.as_os_str());
     let mut started = PROCESS_INFORMATION::default();
-    // SAFETY: every buffer is NUL-terminated and outlives the call, `line` is writable as the
-    // call requires, `info` describes a live attribute list, and `started` receives the handles.
-    // Inheritance is on, and the attribute list limits it to exactly `handles`.
+    // SAFETY: every buffer is NUL-terminated and outlives the call, the environment block ends
+    // in the two NULs Windows looks for, `line` is writable as the call requires, `info`
+    // describes a live attribute list, and `started` receives the handles. Inheritance is on,
+    // and the attribute list limits it to exactly `handles`.
     let created = unsafe {
         CreateProcessW(
             application.as_ptr(),
@@ -284,7 +289,7 @@ fn spawn(
             ptr::null(),
             1,
             CREATION,
-            ptr::null(),
+            environment.map_or(ptr::null(), |block| block.as_ptr().cast()),
             directory.as_ptr(),
             (&raw const info).cast(),
             &raw mut started,
@@ -429,6 +434,33 @@ fn quote(arg: &OsStr, line: &mut Vec<u16>) {
     }
     line.extend(iter::repeat_n(backslash, backslashes.saturating_mul(2)));
     line.push(quote_mark);
+}
+
+/// steamship's own environment with `changes` made to it, as the block `CreateProcessW` takes,
+/// or none when there are no changes and the program inherits steamship's as it stands.
+fn environment_block(changes: &[(OsString, OsString)]) -> Option<Vec<u16>> {
+    if changes.is_empty() {
+        return None;
+    }
+    let mut variables: Vec<(OsString, OsString)> = env::vars_os()
+        .filter(|(name, _)| {
+            !changes
+                .iter()
+                .any(|(changed, _)| changed.eq_ignore_ascii_case(name))
+        })
+        .chain(changes.iter().cloned())
+        .collect();
+    // Windows keeps the block in order of name, ignoring case, and names are compared that way.
+    variables.sort_by_key(|(name, _)| name.to_ascii_uppercase());
+    let mut block = Vec::new();
+    for (name, value) in variables {
+        block.extend(name.encode_wide());
+        block.push(u16::from(b'='));
+        block.extend(value.encode_wide());
+        block.push(0);
+    }
+    block.push(0);
+    Some(block)
 }
 
 fn wide(text: &OsStr) -> Vec<u16> {
@@ -972,6 +1004,7 @@ mod tests {
         let process = spawn(
             &winver,
             &[],
+            None,
             &env::temp_dir(),
             &desktop,
             &job,
@@ -1032,6 +1065,33 @@ mod tests {
             )]
         );
         assert!(!restrict(folder.path()).unwrap(), "already so");
+    }
+
+    #[test]
+    fn a_changed_variable_replaces_steamships_whatever_its_case_and_the_block_stays_in_order() {
+        assert_eq!(environment_block(&[]), None);
+        let block =
+            environment_block(&[(OsString::from("path"), OsString::from("changed"))]).unwrap();
+        assert_eq!(block.last_chunk(), Some(&[0_u16, 0_u16]));
+        let text = String::from_utf16(&block).unwrap();
+        let entries: Vec<&str> = text.trim_end_matches('\0').split('\0').collect();
+        let paths: Vec<&str> = entries
+            .iter()
+            .copied()
+            .filter(|entry| entry.to_ascii_uppercase().starts_with("PATH="))
+            .collect();
+        assert_eq!(paths, ["path=changed"]);
+        let names: Vec<String> = entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .split('=')
+                    .next()
+                    .unwrap_or_default()
+                    .to_ascii_uppercase()
+            })
+            .collect();
+        assert!(names.is_sorted(), "{names:?}");
     }
 
     #[test]

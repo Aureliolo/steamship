@@ -28,12 +28,14 @@ const POLL: Duration = Duration::from_millis(50);
 pub fn run(
     program: &Path,
     args: &[OsString],
+    environment: &[(OsString, OsString)],
     directory: &Path,
     limit: Duration,
 ) -> io::Result<Finished> {
     let (mut reader, writer) = io::pipe()?;
     let mut child = Command::new(program)
         .args(args)
+        .envs(environment.iter().map(|(name, value)| (name, value)))
         .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(writer.try_clone()?)
