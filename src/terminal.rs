@@ -45,10 +45,10 @@ impl Reader {
                     self.cursor = self
                         .cursor
                         .saturating_add(forward(rest.get(..length).unwrap_or_default()));
-                    if self.pending.len() < self.cursor {
-                        self.pending.resize(self.cursor, ' ');
-                    }
-                    at = at.saturating_add(length);
+                    self.pending
+                        .resize(self.pending.len().max(self.cursor), ' ');
+                    // Every turn moves on by a byte at least, which is what ends the loop.
+                    at = at.saturating_add(length.max(1));
                 }
                 b'\n' => {
                     events.push(Event::Line(self.take()));
@@ -84,7 +84,7 @@ impl Reader {
                     {
                         self.put(written);
                     }
-                    at = at.saturating_add(length);
+                    at = at.saturating_add(length.max(1));
                 }
             }
         }
@@ -302,6 +302,36 @@ mod tests {
         );
         assert_eq!(reader.read(b"\r"), [Event::Waiting("next".to_owned())]);
         assert_eq!(reader.read(b"over"), [Event::Waiting("over".to_owned())]);
+    }
+
+    #[test]
+    fn characters_of_every_length_are_read_whole_even_when_cut_between_chunks() {
+        let text = "a\u{e9}\u{20ac}\u{1f600}";
+        assert_eq!(
+            Reader::default().read(format!("{text}\n").as_bytes()),
+            [Event::Line(text.to_owned())]
+        );
+        let bytes = text.as_bytes();
+        for cut in 1..bytes.len() {
+            let (first, second) = bytes.split_at(cut);
+            let mut reader = Reader::default();
+            let mut events = reader.read(first);
+            events.extend(reader.read(second));
+            assert_eq!(
+                events.last(),
+                Some(&Event::Waiting(text.to_owned())),
+                "{cut}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_escape_inside_a_title_does_not_end_it() {
+        let mut reader = Reader::default();
+        assert_eq!(
+            reader.read(b"\x1b]0;a\x1bXb\x07c\n"),
+            [Event::Line("c".to_owned())]
+        );
     }
 
     #[test]

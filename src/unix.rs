@@ -187,8 +187,8 @@ impl Terminal {
         environment: &[(OsString, OsString)],
         directory: &Path,
     ) -> io::Result<(Self, Output, File)> {
-        let mut main = -1_i32;
-        let mut replica = -1_i32;
+        let mut main = 0_i32;
+        let mut replica = 0_i32;
         // SAFETY: both are valid places for a descriptor; the name, the settings and the size
         // are left to the system.
         let opened = unsafe {
@@ -296,14 +296,7 @@ impl Keys {
         }
         // SAFETY: tcgetattr succeeded, and on success it writes all of them.
         let saved = unsafe { saved.assume_init() };
-        let mut raw = saved;
-        raw.c_lflag &= !(libc::ECHO | libc::ICANON | libc::ISIG);
-        if let Some(least) = raw.c_cc.get_mut(libc::VMIN) {
-            *least = 1;
-        }
-        if let Some(wait) = raw.c_cc.get_mut(libc::VTIME) {
-            *wait = 0;
-        }
+        let raw = raw(saved);
         // SAFETY: the settings are the terminal's own with three flags and two counts changed.
         if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw const raw) } != 0_i32 {
             return Err(io::Error::last_os_error());
@@ -349,6 +342,20 @@ impl Drop for Keys {
         let _: i32 =
             unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw const self.saved) };
     }
+}
+
+/// `settings` for reading one key at a time: no echo, no line editing and no signal keys, and a
+/// read that waits for a single byte. Everything else is left as it was.
+fn raw(settings: libc::termios) -> libc::termios {
+    let mut raw = settings;
+    raw.c_lflag &= !(libc::ECHO | libc::ICANON | libc::ISIG);
+    if let Some(least) = raw.c_cc.get_mut(libc::VMIN) {
+        *least = 1;
+    }
+    if let Some(wait) = raw.c_cc.get_mut(libc::VTIME) {
+        *wait = 0;
+    }
+    raw
 }
 
 /// Turns off the echo of the terminal at `descriptor`.
@@ -434,6 +441,8 @@ pub fn make_link(target: &str, link: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::mem;
+
     use super::*;
 
     #[test]
@@ -451,5 +460,28 @@ mod tests {
         let folder = tempfile::tempdir().unwrap();
         let error = restrict(&folder.path().join("missing")).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn keys_are_read_one_at_a_time_unshown_and_the_rest_of_the_settings_kept() {
+        // SAFETY: termios is integers and arrays of them, for which all zeroes is a value.
+        let mut settings: libc::termios = unsafe { mem::zeroed() };
+        settings.c_lflag = libc::ECHO | libc::ICANON | libc::ISIG | libc::IEXTEN | libc::ECHOE;
+        settings.c_iflag = libc::ICRNL;
+        let raw = raw(settings);
+        assert_eq!(raw.c_lflag, libc::IEXTEN | libc::ECHOE);
+        assert_eq!(raw.c_iflag, libc::ICRNL);
+        assert_eq!(raw.c_cc.get(libc::VMIN), Some(&1));
+        assert_eq!(raw.c_cc.get(libc::VTIME), Some(&0));
+    }
+
+    #[test]
+    fn only_the_end_of_a_terminal_is_read_as_the_end_of_its_output() {
+        use std::io::Read as _;
+
+        // Reading a folder fails, and not with EIO.
+        let mut output = Output(File::open("/").unwrap());
+        let error = output.read(&mut [0_u8; 8]).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EISDIR));
     }
 }

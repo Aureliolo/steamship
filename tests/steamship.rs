@@ -480,10 +480,11 @@ fn login_on_a_terminal_asks_for_the_account_shows_it_as_typed_and_refuses_a_bad_
     let home = tempfile::tempdir().unwrap();
     let mut session = Session::start(&login_then_look(), home.path());
     session.wait_for("account");
-    session.type_in("+qx\u{7f}uit");
-    session.wait_for("+quit");
+    // A character of each length UTF-8 has, which are read as whole characters.
+    session.type_in("+qx\u{7f}uit\u{e9}\u{20ac}\u{1f600}");
+    session.wait_for("+quit\u{e9}\u{20ac}\u{1f600}");
     session.type_in("\r");
-    session.wait_for("\"+quit\" is not a Steam account name");
+    session.wait_for("\"+quit\u{e9}\u{20ac}\u{1f600}\" is not a Steam account name");
     looks_as_it_was(&mut session, "exited 2");
     assert!(!home.path().join("account").exists());
 }
@@ -532,8 +533,12 @@ fn login_on_a_terminal_hides_the_password_and_waits_for_approval_with_a_spinner(
     session.type_in("build_bot\r");
     session.wait_for("password");
     session.type_in("hunter2\r");
+    // Drawn over and over on a terminal, with how long it has been, where elsewhere it would be
+    // written once, ending in "...".
+    session.wait_for(" waiting for you in the Steam Mobile app ");
     session.wait_for("exited 0");
     let seen = session.seen();
+    assert!(!seen.contains("Mobile app..."), "{seen}");
     assert!(seen.contains("  account   build_bot\n"), "{seen}");
     assert!(
         seen.contains(&format!("  password  {}\n", "\u{2022}".repeat(7))),

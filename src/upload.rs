@@ -97,15 +97,13 @@ pub fn commit(path: &Path) -> Result<String, Error> {
         .current_dir(&folder)
         .output()
         .map_err(at(&folder))?;
-    let commit = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if output.status.success() && !commit.is_empty() {
-        Ok(commit)
-    } else {
-        Err(Error::Description(format!(
+    if !output.status.success() {
+        return Err(Error::Description(format!(
             "{} is not in a Git repository with a commit, which the build description names",
             folder.display()
-        )))
+        )));
     }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

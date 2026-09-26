@@ -292,7 +292,8 @@ impl Terminal {
         let job = Job::create()?;
         let (typed, input) = io::pipe()?;
         let (output, written) = io::pipe()?;
-        let console = PseudoConsole::create(&typed, &written)?;
+        // Wide enough that steamcmd's longest line is never broken across two.
+        let console = PseudoConsole::create(&typed, &written, COORD { X: 240, Y: 50 })?;
         // The console holds its own copies now; ours would keep the output open after it closes.
         drop(typed);
         drop(written);
@@ -338,10 +339,8 @@ impl Terminal {
 struct PseudoConsole(HPCON);
 
 impl PseudoConsole {
-    fn create(input: &PipeReader, output: &PipeWriter) -> io::Result<Self> {
+    fn create(input: &PipeReader, output: &PipeWriter, size: COORD) -> io::Result<Self> {
         let mut console: HPCON = 0;
-        // Wide enough that steamcmd's longest line is never broken across two.
-        let size = COORD { X: 240, Y: 50 };
         // SAFETY: both pipe ends are open for the length of the call, and the console takes its
         // own copies of them.
         let result = unsafe {
@@ -1364,6 +1363,14 @@ mod tests {
                 .unwrap()
                 .is_protected()
         );
+    }
+
+    #[test]
+    fn a_pseudo_console_windows_will_not_make_is_an_error() {
+        let (typed, _input) = io::pipe().unwrap();
+        let (_output, written) = io::pipe().unwrap();
+        drop(PseudoConsole::create(&typed, &written, COORD { X: 0, Y: 0 }).unwrap_err());
+        drop(PseudoConsole::create(&typed, &written, COORD { X: 80, Y: 25 }).unwrap());
     }
 
     #[test]

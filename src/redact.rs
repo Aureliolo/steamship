@@ -88,16 +88,19 @@ impl Redactor {
     }
 
     /// `output` with every secret replaced by [`MARKER`]. Replacing runs until none is left, so
-    /// that no secret survives by being put together from what surrounds a replacement; each
-    /// pass shortens the output, so it ends.
+    /// that no secret survives by being put together from what surrounds a replacement. Each
+    /// pass shortens the output, so there are never more passes than it has bytes.
     #[must_use]
     pub fn redact(&self, output: &[u8]) -> Vec<u8> {
         let mut text = output.to_vec();
-        while let Some(secret) = self
-            .secrets
-            .iter()
-            .find(|secret| find(&text, secret).is_some())
-        {
+        for _ in 0..=output.len() {
+            let Some(secret) = self
+                .secrets
+                .iter()
+                .find(|secret| find(&text, secret).is_some())
+            else {
+                break;
+            };
             text = replace(&text, secret);
         }
         text
@@ -152,10 +155,12 @@ fn tokens(text: &[u8]) -> Vec<(&[u8], bool)> {
         } else if first.is_ascii_whitespace() {
             rest = after;
         } else {
+            // A word is at least the byte it starts with, which keeps the loop moving on.
             let end = rest
                 .iter()
                 .position(|&byte| byte.is_ascii_whitespace() || matches!(byte, b'"' | b'{' | b'}'))
-                .unwrap_or(rest.len());
+                .unwrap_or(rest.len())
+                .max(1);
             let (word, beyond) = rest.split_at(end);
             found.push((word, after_key));
             after_key = !after_key;
