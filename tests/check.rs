@@ -414,21 +414,40 @@ fn the_legacy_depot_block_name_is_read() {
     assert_eq!(refusals(app, Some(depot)), Vec::<String>::new());
 }
 
-#[test]
-fn a_depots_own_content_root_is_relative_to_its_script() {
+/// A depot script one folder below the app script, with a `ContentRoot` of its own that names a
+/// folder existing under the app's content root, under the app script's folder and under the
+/// depot script's folder, each holding a different file.
+fn nested_depot(app_content_root: &str) -> Report {
     let project = Project::new();
-    project.put("elsewhere/only.txt", b"x");
+    project.put("content/windows/under_the_app_root.txt", b"x");
+    project.put("steam/windows/beside_the_app_script.txt", b"x");
+    project.put("steam/depots/windows/beside_the_depot_script.txt", b"x");
     project.put(
-        "scripts/depot.vdf",
-        br#""DepotBuild" { "DepotID" "1" "ContentRoot" "../elsewhere" "FileMapping" { "LocalPath" "*" "DepotPath" "." } }"#,
+        "steam/depots/depot.vdf",
+        br#""DepotBuild" { "DepotID" "1" "ContentRoot" "windows" "FileMapping" { "LocalPath" "*" "DepotPath" "." } }"#,
     );
     let app = project.file(
-        "scripts/app.vdf",
-        br#""AppBuild" { "AppID" "1" "ContentRoot" "../missing" "Depots" { "1" "depot.vdf" } }"#,
+        "steam/app.vdf",
+        format!(
+            r#""AppBuild" {{ "AppID" "1" {app_content_root} "Depots" {{ "1" "depots/depot.vdf" }} }}"#
+        )
+        .as_bytes(),
     );
-    let report = check(&app);
+    check(&app)
+}
+
+#[test]
+fn a_depots_own_content_root_is_relative_to_the_apps() {
+    let report = nested_depot(r#""ContentRoot" "../content""#);
     assert_eq!(messages(&report), Vec::<String>::new());
-    assert_eq!(names(&report, 1), ["only.txt"]);
+    assert_eq!(names(&report, 1), ["under_the_app_root.txt"]);
+}
+
+#[test]
+fn a_depots_own_content_root_is_relative_to_the_app_script_when_the_app_has_none() {
+    let report = nested_depot("");
+    assert_eq!(messages(&report), Vec::<String>::new());
+    assert_eq!(names(&report, 1), ["beside_the_app_script.txt"]);
 }
 
 #[test]

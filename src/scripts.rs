@@ -1,8 +1,9 @@
 //! Valve's app and depot build scripts, read into what steamship needs from them.
 //!
-//! Paths follow Valve's rules: the app script's `ContentRoot` and depot script names are
+//! Paths follow steamcmd, as tried: the app script's `ContentRoot` and depot script names are
 //! relative to the app script, and `LocalPath` is relative to the content root. A depot script's
-//! own `ContentRoot` is taken as relative to that depot script.
+//! own `ContentRoot` is relative to the app's, or to the app script when it has none, never to
+//! the depot script.
 
 use std::fmt;
 use std::fs;
@@ -164,7 +165,7 @@ fn depot(
         ));
     }
     let content_root = match (block.text("ContentRoot"), app_root) {
-        (Some(own), _) => Some(resolve(&parent(&path), own)),
+        (Some(own), _) => Some(resolve(app_root.unwrap_or(app_folder), own)),
         (None, Some(root)) => Some(root.to_path_buf()),
         (None, None) => None,
     };
