@@ -1,0 +1,153 @@
+name: Prepare release
+
+# Cutting a tag by hand is the one release step nobody can check afterwards, and it is the step
+# most often done at the wrong time, from the wrong branch, against the wrong version. This puts
+# it behind a button: pick the bump, and out comes a branch with the signed version commit and a
+# pull request for it. Merge that and the tagging and publishing follow, with nobody typing a
+# version again.
+#
+# The checks on that pull request are created in an approval-required state and wait for a click.
+# That is GitHub's rule for anything a workflow opens with the job token. Getting them to start by
+# themselves would mean a GitHub App or a personal access token, which is a standing credential
+# bought to save one click.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to raise
+        required: true
+        type: choice
+        default: patch
+        options:
+          - patch
+          - minor
+          - major
+      version:
+        description: An exact version instead, such as 1.0.0. Overrides the bump above.
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: release-prepare
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # Creates the release branch and the signed version commit on it.
+      pull-requests: write # Opens the release pull request for that branch.
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Raise the version
+        id: bump
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          current="$(cargo metadata --locked --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "steamship") | .version')"
+          IFS=. read -r major minor patch <<< "${current}"
+          case "${BUMP}" in
+            major) next="$((major + 1)).0.0" ;;
+            minor) next="${major}.$((minor + 1)).0" ;;
+            *) next="${major}.${minor}.$((patch + 1))" ;;
+          esac
+          next="${VERSION:-${next}}"
+          if [[ ! "${next}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "${next} is not a version of three numbers." >&2
+            exit 1
+          fi
+          # The package's own version is the first `version` line in Cargo.toml.
+          sed -i "0,/^version = \"${current}\"$/s//version = \"${next}\"/" Cargo.toml
+          cargo update --workspace --offline
+          changed="$(git diff --name-only | sort | tr '\n' ' ')"
+          if [[ "${changed}" != "Cargo.lock Cargo.toml " ]]; then
+            echo "The bump changed ${changed}rather than Cargo.toml and Cargo.lock." >&2
+            exit 1
+          fi
+          {
+            echo "version=${next}"
+            echo "branch=release/v${next}"
+          } >> "${GITHUB_OUTPUT}"
+
+      # A tag rather than a release: a version can be tagged with no release attached, and the tag
+      # ruleset lets nothing move or delete one, so that number is spent either way. Matching refs
+      # answer an empty list when there is none, so a failed request fails rather than reads free.
+      - name: Refuse a version whose tag is taken
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          taken="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v${VERSION}" \
+            --jq "map(select(.ref == \"refs/tags/v${VERSION}\")) | length")"
+          if [[ "${taken}" != 0 ]]; then
+            echo "v${VERSION} is already tagged. Pick a version whose tag is free." >&2
+            exit 1
+          fi
+
+      # Committed through the API rather than pushed: GitHub signs what it commits itself, and the
+      # branch ruleset on main takes only signed commits.
+      - name: Commit the bump on a branch of its own
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.bump.outputs.branch }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/heads/${BRANCH}" -f "sha=${GITHUB_SHA}" > /dev/null
+          jq -n \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg branch "${BRANCH}" \
+            --arg head "${GITHUB_SHA}" \
+            --arg headline "Release v${VERSION}" \
+            --arg manifest "$(base64 -w0 Cargo.toml)" \
+            --arg lock "$(base64 -w0 Cargo.lock)" \
+            '{
+              query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+              variables: {input: {
+                branch: {repositoryNameWithOwner: $repository, branchName: $branch},
+                expectedHeadOid: $head,
+                message: {headline: $headline},
+                fileChanges: {additions: [
+                  {path: "Cargo.toml", contents: $manifest},
+                  {path: "Cargo.lock", contents: $lock}
+                ]}
+              }}
+            }' > commit.json
+          gh api graphql --input commit.json --jq .data.createCommitOnBranch.commit.oid
+          rm commit.json
+
+      - name: Open the release pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ steps.bump.outputs.branch }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          set -euo pipefail
+          url="$(gh pr create --base main --head "${BRANCH}" --title "Release v${VERSION}" \
+            --body "Raises the version to ${VERSION}. Merging this tags v${VERSION}, which builds, signs and publishes the release.")"
+          {
+            echo "## Release v${VERSION}"
+            echo
+            echo "${url}"
+            echo
+            echo 'Its checks are waiting on **Approve workflows to run** in the merge box.'
+            echo 'Approve them, and merge once they are green: that tags and publishes.'
+          } >> "${GITHUB_STEP_SUMMARY}"
