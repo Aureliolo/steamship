@@ -39,7 +39,7 @@ cargo install --locked steamship@<version>
 ## Quick start
 
 ```sh
-steamship login --account <build-account>           # once; you type into steamcmd yourself
+steamship login                                     # once; you type into steamcmd yourself
 steamship check steam/app_build.vdf                 # offline, no login
 steamship upload steam/app_build.vdf --version 1.4.0 --preview   # uploads nothing
 steamship upload steam/app_build.vdf --version 1.4.0
@@ -53,11 +53,12 @@ Steamworks SDK's ContentBuilder uses. If you already upload with steamcmd, you a
 ### `login`
 
 ```sh
-steamship login --account <build-account>
+steamship login [--account <name>]
 ```
 
-Runs `steamcmd +login <build-account> +quit` in your terminal. You type the password and Steam
-Guard code into steamcmd, or approve in the Steam Mobile app; steamship does not read them.
+Logs the account in with steamcmd, in your terminal. Without `--account`, steamship uses the
+account you logged in with last, or asks for its name. You type the password and Steam Guard code
+into steamcmd, or approve the login in the Steam Mobile app; steamship does not read them.
 steamcmd keeps a token, and later runs use it without a password. When it expires, an upload
 stops and tells you to run this again.
 

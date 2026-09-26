@@ -8,11 +8,12 @@
 use std::env;
 use std::fmt::Display;
 use std::fs;
+use std::io::{self, IsTerminal as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use steamship::account::Account;
+use steamship::account::{Account, Asked};
 use steamship::install::{self, Outcome};
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
@@ -127,7 +128,8 @@ fn steamcmd_failed(error: &install::Error) -> ExitCode {
 }
 
 /// The account named on the command line or in the environment, or else the one remembered.
-fn account(named: Option<&str>) -> Result<Account, ExitCode> {
+/// With `ask`, and a person at a terminal, the account's name is asked for when there is none.
+fn account(named: Option<&str>, ask: bool) -> Result<Account, ExitCode> {
     if let Some(name) = named {
         return Account::parse(name).map_err(|error| fail(&error, REFUSED));
     }
@@ -136,6 +138,16 @@ fn account(named: Option<&str>) -> Result<Account, ExitCode> {
         .map_err(|error| fail(&error, FAILED))?;
     match Account::remembered(&home) {
         Ok(Some(account)) => Ok(account),
+        Ok(None) if ask && io::stdin().is_terminal() => {
+            Account::ask(io::stdin().lock(), io::stderr()).map_err(|asked| {
+                let code = if matches!(asked, Asked::Invalid(_)) {
+                    REFUSED
+                } else {
+                    FAILED
+                };
+                fail(&asked, code)
+            })
+        }
         Ok(None) => Err(fail(
             &"name the build account with --account or STEAMSHIP_ACCOUNT",
             REFUSED,
@@ -148,7 +160,7 @@ fn account(named: Option<&str>) -> Result<Account, ExitCode> {
 }
 
 fn run_login(named: Option<&str>) -> ExitCode {
-    let account = match account(named) {
+    let account = match account(named, true) {
         Ok(account) => account,
         Err(code) => return code,
     };
@@ -216,7 +228,7 @@ fn run_upload(upload: &Upload<'_>) -> ExitCode {
 }
 
 fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
-    let account = account(request.account)?;
+    let account = account(request.account, false)?;
     drop(checked(request.script)?);
     let description = upload::commit(request.script)
         .and_then(|commit| upload::description(request.version, &commit))
