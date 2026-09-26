@@ -1,15 +1,21 @@
 //! What only Unix does. Kept in a module of its own so that everything here is compiled, tested
 //! and mutation-tested on the systems where it runs.
-#![expect(unsafe_code, reason = "stopping a whole process group is a libc call")]
+#![expect(
+    unsafe_code,
+    reason = "stopping a process group, opening a pseudo terminal and changing terminal modes are libc calls"
+)]
 
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, Read as _};
+use std::mem::MaybeUninit;
+use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
 use std::os::unix::fs::{PermissionsExt as _, symlink as make_symlink};
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::panic;
 use std::path::Path;
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::ptr;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -77,6 +83,214 @@ pub fn run(
 
 /// Only Windows puts up a dialogue of its own when a program crashes.
 pub const fn silence_error_dialogues() {}
+
+/// A program running on a pseudo terminal.
+///
+/// The program reads and writes it as the terminal it takes it for: one that shows its prompts
+/// at once and hides what is typed at a password. It leads a process group of its own, ended as
+/// one when it ends.
+///
+/// Dropped before it is waited for, it ends the program and everything the program started.
+#[derive(Debug)]
+pub struct Terminal {
+    child: Child,
+    waited: bool,
+}
+
+/// What a program writes to its pseudo terminal. Once the program, and whatever it started, has
+/// closed the terminal, reading fails with `EIO`: that is the end of the output, and read as such.
+#[derive(Debug)]
+pub struct Output(File);
+
+impl io::Read for Output {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        match self.0.read(buffer) {
+            Err(error) if error.raw_os_error() == Some(libc::EIO) => Ok(0),
+            read => read,
+        }
+    }
+}
+
+impl Terminal {
+    /// Starts `program`, and answers it with what it writes, escapes and all, and what it reads
+    /// as typed. The output ends once the program has.
+    ///
+    /// # Errors
+    ///
+    /// When the terminal or the process cannot be made.
+    pub fn start(
+        program: &Path,
+        args: &[OsString],
+        environment: &[(OsString, OsString)],
+        directory: &Path,
+    ) -> io::Result<(Self, Output, File)> {
+        let mut main = -1;
+        let mut replica = -1;
+        // SAFETY: both are valid places for a descriptor; the name, the settings and the size
+        // are left to the system.
+        let opened = unsafe {
+            libc::openpty(
+                &raw mut main,
+                &raw mut replica,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                ptr::null_mut(),
+            )
+        };
+        if opened != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: openpty succeeded, so both descriptors are new and owned by nobody else.
+        let main = unsafe { OwnedFd::from_raw_fd(main) };
+        // SAFETY: as above.
+        let replica = unsafe { OwnedFd::from_raw_fd(replica) };
+        // What is typed must never come back in the output, where it would be read, so the
+        // terminal does not echo it, whatever the program itself asks for.
+        quiet(replica.as_raw_fd())?;
+        let child = Command::new(program)
+            .args(args)
+            .envs(environment.iter().map(|(name, value)| (name, value)))
+            .current_dir(directory)
+            .stdin(Stdio::from(replica.try_clone()?))
+            .stdout(Stdio::from(replica.try_clone()?))
+            .stderr(Stdio::from(replica))
+            .process_group(0)
+            .spawn()?;
+        let output = Output(File::from(main.try_clone()?));
+        let terminal = Self {
+            child,
+            waited: false,
+        };
+        Ok((terminal, output, File::from(main)))
+    }
+
+    /// Waits for the program to end, then ends whatever it left running.
+    ///
+    /// # Errors
+    ///
+    /// When waiting fails.
+    pub fn wait(mut self) -> io::Result<Option<i32>> {
+        let status = self.child.wait()?;
+        self.waited = true;
+        self.stop();
+        Ok(status
+            .code()
+            .or_else(|| status.signal().map(|signal| signal.saturating_add(128))))
+    }
+
+    fn stop(&self) {
+        if let Ok(group) = i32::try_from(self.child.id()) {
+            stop_group(group);
+        }
+    }
+}
+
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        if !self.waited {
+            self.stop();
+            // Reaped, so that it is not left a zombie for as long as steamship runs.
+            drop(self.child.wait());
+        }
+    }
+}
+
+/// The keyboard, one character at a time as it is typed and without the terminal showing it.
+///
+/// The terminal's echo, line editing and signal keys are off until this is dropped, which puts
+/// them back.
+#[derive(Debug)]
+pub struct Keys {
+    saved: libc::termios,
+}
+
+impl Keys {
+    /// The keyboard, or none when input does not come from a terminal.
+    ///
+    /// # Errors
+    ///
+    /// When the terminal will not change modes.
+    pub fn open() -> io::Result<Option<Self>> {
+        // SAFETY: asks about a descriptor; nothing is changed.
+        if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0 {
+            return Ok(None);
+        }
+        let mut saved = MaybeUninit::<libc::termios>::uninit();
+        // SAFETY: `saved` is a valid place for the settings.
+        if unsafe { libc::tcgetattr(libc::STDIN_FILENO, saved.as_mut_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: tcgetattr succeeded, and on success it writes all of them.
+        let saved = unsafe { saved.assume_init() };
+        let mut raw = saved;
+        raw.c_lflag &= !(libc::ECHO | libc::ICANON | libc::ISIG);
+        if let Some(least) = raw.c_cc.get_mut(libc::VMIN) {
+            *least = 1;
+        }
+        if let Some(wait) = raw.c_cc.get_mut(libc::VTIME) {
+            *wait = 0;
+        }
+        // SAFETY: the settings are the terminal's own with three flags and two counts changed.
+        if unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw const raw) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Some(Self { saved }))
+    }
+
+    /// The next character typed, or none when input has ended.
+    ///
+    /// # Errors
+    ///
+    /// When the terminal cannot be read.
+    pub fn read_key(&mut self) -> io::Result<Option<char>> {
+        let mut bytes = [0_u8; 4];
+        let mut stdin = io::stdin().lock();
+        let Some((first, rest)) = bytes.split_first_mut() else {
+            return Ok(None);
+        };
+        if stdin.read(std::slice::from_mut(first))? == 0 {
+            return Ok(None);
+        }
+        let length = match *first {
+            0xc0..=0xdf => 1,
+            0xe0..=0xef => 2,
+            0xf0..=0xf7 => 3,
+            _ => 0,
+        };
+        let tail = rest.get_mut(..length).unwrap_or_default();
+        stdin.read_exact(tail)?;
+        let decoded = std::str::from_utf8(bytes.get(..=length).unwrap_or_default())
+            .ok()
+            .and_then(|text| text.chars().next());
+        bytes.fill(0);
+        Ok(Some(decoded.unwrap_or(char::REPLACEMENT_CHARACTER)))
+    }
+}
+
+impl Drop for Keys {
+    fn drop(&mut self) {
+        // SAFETY: puts back the settings the terminal had when this was opened.
+        let _: i32 =
+            unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &raw const self.saved) };
+    }
+}
+
+/// Turns off the echo of the terminal at `descriptor`.
+fn quiet(descriptor: RawFd) -> io::Result<()> {
+    let mut settings = MaybeUninit::<libc::termios>::uninit();
+    // SAFETY: `settings` is a valid place for the settings.
+    if unsafe { libc::tcgetattr(descriptor, settings.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: tcgetattr succeeded, and on success it writes all of them.
+    let mut settings = unsafe { settings.assume_init() };
+    settings.c_lflag &= !(libc::ECHO | libc::ECHONL);
+    // SAFETY: the settings are the terminal's own with its echo off.
+    if unsafe { libc::tcsetattr(descriptor, libc::TCSANOW, &raw const settings) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
 
 fn stop_group(group: i32) {
     // SAFETY: `killpg` only sends a signal; a group that has already gone is an error it

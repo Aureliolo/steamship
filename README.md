@@ -17,8 +17,9 @@ what steamcmd leaves out:
 - **A clear result.** Success is read from the exit code and Valve's build log, not from
   steamcmd's console output, which is unreliable when captured. You get the BuildID, or the
   reason it failed.
-- **No passwords.** You log in once, yourself, into steamcmd. steamship never sees a password or
-  Steam Guard code, and nothing it prints or writes contains your login token.
+- **No passwords kept.** You log in once. Your password and Steam Guard code are passed directly
+  to steamcmd, never logged or saved, and nothing steamship prints or writes contains your login
+  token.
 - **Checked before it uploads.** Scripts that would upload the wrong thing are refused before
   anything is sent.
 
@@ -39,7 +40,7 @@ cargo install --locked steamship@<version>
 ## Quick start
 
 ```sh
-steamship login                                     # once; you type into steamcmd yourself
+steamship login                                     # once
 steamship check steam/app_build.vdf                 # offline, no login
 steamship upload steam/app_build.vdf --version 1.4.0 --preview   # uploads nothing
 steamship upload steam/app_build.vdf --version 1.4.0
@@ -56,11 +57,11 @@ Steamworks SDK's ContentBuilder uses. If you already upload with steamcmd, you a
 steamship login [--account <name>]
 ```
 
-Logs the account in with steamcmd, in your terminal. Without `--account`, steamship uses the
-account you logged in with last, or asks for its name. You type the password and Steam Guard code
-into steamcmd, or approve the login in the Steam Mobile app; steamship does not read them.
-steamcmd keeps a token, and later runs use it without a password. When it expires, an upload
-stops and tells you to run this again.
+Logs the account in with steamcmd. Without `--account`, steamship uses the account you logged in
+with last, or asks for its name. It then asks for the password, and for a Steam Guard code or
+approval in the Steam Mobile app; what you type is passed directly to steamcmd, never logged or
+saved. steamcmd keeps a token, and later runs use it without a password. When it expires, an
+upload stops and tells you to run this again.
 
 ### `check`
 

@@ -15,8 +15,9 @@ Only the latest release gets fixes.
 
 ## What steamship handles
 
-- **No password.** steamship has no option, variable or file for a password or Steam Guard code.
-  You type them into steamcmd once, and steamcmd keeps a token in its `config/config.vdf`.
+- **No stored password.** steamship has no option, variable or file for a password or Steam Guard
+  code. What you type at `login` is passed directly to steamcmd, never logged or saved. steamcmd
+  keeps a token in its `config/config.vdf`.
 - **The token file.** steamship restricts steamcmd's `config` folder to your user. It reads
   `config.vdf` only to remove the token's values from everything it prints or writes, and a test
   plants a token and checks every output path.

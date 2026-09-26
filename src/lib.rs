@@ -3,10 +3,12 @@
 
 pub mod account;
 pub mod check;
+pub mod conversation;
 pub mod digest;
 pub mod download;
 pub mod elf;
 pub mod install;
+pub mod login;
 pub mod magic;
 pub mod manifest;
 pub mod pattern;
@@ -14,7 +16,10 @@ pub mod platform;
 pub mod redact;
 pub mod run;
 pub mod scripts;
+pub mod show;
 pub mod steamcmd;
+pub mod terminal;
+pub mod typing;
 #[cfg(unix)]
 pub mod unix;
 pub mod upload;

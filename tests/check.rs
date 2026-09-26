@@ -291,8 +291,17 @@ fn the_command_says_what_it_mapped_and_exits_0() {
     let (_project, app) = Project::shipping("");
     let (code, stdout, stderr) = run(&app);
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
-    assert!(
-        stdout.ends_with("app 1000, depot 1001 (2 files), depot 1002 (2 files); nothing refused\n")
+    assert_eq!(
+        stdout,
+        format!(
+            "steamship check\n  \
+             script    {}\n  \
+             app       \u{2713} 1000, 2 depots, 4 files, checked\n  \
+             depot     1001, 2 files\n  \
+             depot     1002, 2 files\n  \
+             \u{2713} nothing refused\n",
+            app.display()
+        )
     );
 }
 
@@ -300,8 +309,14 @@ fn the_command_says_what_it_mapped_and_exits_0() {
 fn the_command_lists_every_refusal_and_exits_2() {
     let (_project, app) = Project::shipping(r#""Preview" "1""#);
     let (code, stdout, stderr) = run(&app);
-    assert_eq!((code, stdout.as_str()), (Some(2_i32), ""));
-    assert!(stderr.starts_with("refused: "));
+    assert_eq!(code, Some(2_i32));
+    assert!(!stdout.contains('\u{2713}'), "{stdout}");
+    assert!(
+        stderr
+            .lines()
+            .all(|line| line.starts_with("  \u{2717} refused: ")),
+        "{stderr}"
+    );
     assert!(stderr.contains("\"Preview\" is set in the script; pass --preview"));
 }
 

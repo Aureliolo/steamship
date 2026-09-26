@@ -8,7 +8,7 @@
 use std::env;
 use std::ffi::{OsStr, OsString, c_void};
 use std::fs::File;
-use std::io::{self, Read as _};
+use std::io::{self, PipeReader, PipeWriter, Read as _};
 use std::iter;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStrExt as _;
@@ -18,7 +18,7 @@ use std::path::Path;
 use std::process;
 use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{
@@ -35,6 +35,11 @@ use windows_sys::Win32::Security::{
     PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+use windows_sys::Win32::System::Console::{
+    CONSOLE_MODE, COORD, ClosePseudoConsole, CreatePseudoConsole, ENABLE_ECHO_INPUT,
+    ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, GetConsoleMode, GetStdHandle, HPCON, ReadConsoleW,
+    STD_INPUT_HANDLE, SetConsoleMode,
+};
 use windows_sys::Win32::System::Diagnostics::Debug::{
     SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX, SetErrorMode,
     THREAD_ERROR_MODE,
@@ -51,9 +56,9 @@ use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
     DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
     GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-    OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_CREATION_FLAGS,
-    PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
-    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+    OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+    PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
+    STARTUPINFOEXW, STARTUPINFOW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 use crate::run::Finished;
@@ -97,7 +102,7 @@ pub fn run(
         directory,
         &desktop,
         &job,
-        [input.as_raw_handle(), writer.as_raw_handle()],
+        Streams::Handles([input.as_raw_handle(), writer.as_raw_handle()]),
     )?;
     // The child has its own copies now. Holding ours would keep the output open after it ends.
     drop(writer);
@@ -136,13 +141,19 @@ const JOB_LIMITS: JOB_OBJECT_LIMIT =
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
 
 /// How a program is started: suspended until it is in the job, so that nothing it does happens
-/// outside it; with no console window, which on a desktop nobody sees would only be waste; with
-/// an environment block of UTF-16; and with the attribute list that limits what it inherits.
+/// outside it; with an environment block of UTF-16; and with the attribute list that limits what
+/// it inherits.
 const CREATION: PROCESS_CREATION_FLAGS =
-    CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
+    CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
+
+/// A program given pipes has no console window either, which on a desktop nobody sees would
+/// only be waste. One on a pseudo console must not be told so: it would get a console of its own
+/// in place of the pseudo console, and nothing it wrote would arrive.
+const PIPED: PROCESS_CREATION_FLAGS = CREATION | CREATE_NO_WINDOW;
 
 /// The desktop a program runs on. Nobody switches to it, so nothing on it is ever seen, and
 /// Windows keeps the keyboard focus from crossing from one desktop to another.
+#[derive(Debug)]
 struct Desktop {
     handle: HDESK,
     name: Vec<u16>,
@@ -179,6 +190,7 @@ impl Drop for Desktop {
     }
 }
 
+#[derive(Debug)]
 struct Job(OwnedHandle);
 
 impl Job {
@@ -214,9 +226,16 @@ impl Job {
     }
 }
 
+#[derive(Debug)]
 struct Process(OwnedHandle);
 
 impl Process {
+    /// Returns once the process has ended.
+    fn ended(&self) {
+        // SAFETY: the process handle is open for as long as `self`.
+        let _: u32 = unsafe { WaitForSingleObject(self.0.as_raw_handle(), INFINITE) };
+    }
+
     /// The exit code, or none when `limit` passed first and the job was ended.
     fn wait(&self, limit: Duration, job: &Job) -> io::Result<Option<i32>> {
         // INFINITE itself is reserved, so the longest finite wait is one less.
@@ -238,9 +257,211 @@ impl Process {
     }
 }
 
-/// Starts `program` suspended, on `desktop`, in `job`, handing down exactly `handles` (its input
-/// first, then the one its output and errors both go to), and only then lets it run, so that it
-/// never does anything outside the job.
+/// A program running on a pseudo console.
+///
+/// The program reads and writes it as the terminal it takes it for: one that shows its prompts
+/// at once and hides what is typed at a password. It runs, like any other, on a desktop nobody
+/// sees and in a job that ends everything it starts.
+///
+/// Dropped before it is waited for, it ends the program and everything the program started.
+#[derive(Debug)]
+pub struct Terminal {
+    process: Process,
+    /// Closes the console once the program ends, which is what ends its output: the console
+    /// keeps it open for as long as the console is open.
+    closing: Option<JoinHandle<()>>,
+    job: Job,
+    _desktop: Desktop,
+}
+
+impl Terminal {
+    /// Starts `program`, and answers it with what it writes, escapes and all, and what it reads
+    /// as typed. The output ends once the program has.
+    ///
+    /// # Errors
+    ///
+    /// When the console, the desktop, the job or the process cannot be made.
+    pub fn start(
+        program: &Path,
+        args: &[OsString],
+        environment: &[(OsString, OsString)],
+        directory: &Path,
+    ) -> io::Result<(Self, PipeReader, PipeWriter)> {
+        silence_error_dialogues();
+        let desktop = Desktop::create()?;
+        let job = Job::create()?;
+        let (typed, input) = io::pipe()?;
+        let (output, written) = io::pipe()?;
+        let console = PseudoConsole::create(&typed, &written)?;
+        // The console holds its own copies now; ours would keep the output open after it closes.
+        drop(typed);
+        drop(written);
+        let process = spawn(
+            program,
+            args,
+            environment_block(environment).as_deref(),
+            directory,
+            &desktop,
+            &job,
+            Streams::Console(console.0),
+        )?;
+        let watched = Process(process.0.try_clone()?);
+        let closing = thread::spawn(move || {
+            watched.ended();
+            drop(console);
+        });
+        let terminal = Self {
+            process,
+            closing: Some(closing),
+            job,
+            _desktop: desktop,
+        };
+        Ok((terminal, output, input))
+    }
+
+    /// Waits for the program to end and says its exit code.
+    ///
+    /// # Errors
+    ///
+    /// When the exit code cannot be read.
+    pub fn wait(mut self) -> io::Result<Option<i32>> {
+        if let Some(closing) = self.closing.take() {
+            closing
+                .join()
+                .unwrap_or_else(|panic| panic::resume_unwind(panic));
+        }
+        self.process.wait(Duration::MAX, &self.job)
+    }
+}
+
+#[derive(Debug)]
+struct PseudoConsole(HPCON);
+
+impl PseudoConsole {
+    fn create(input: &PipeReader, output: &PipeWriter) -> io::Result<Self> {
+        let mut console: HPCON = 0;
+        // Wide enough that steamcmd's longest line is never broken across two.
+        let size = COORD { X: 240, Y: 50 };
+        // SAFETY: both pipe ends are open for the length of the call, and the console takes its
+        // own copies of them.
+        let result = unsafe {
+            CreatePseudoConsole(
+                size,
+                input.as_raw_handle(),
+                output.as_raw_handle(),
+                0,
+                &raw mut console,
+            )
+        };
+        if result < 0_i32 {
+            Err(io::Error::from_raw_os_error(result))
+        } else {
+            Ok(Self(console))
+        }
+    }
+}
+
+impl Drop for PseudoConsole {
+    fn drop(&mut self) {
+        // SAFETY: the console came from CreatePseudoConsole and is closed once, here.
+        unsafe {
+            ClosePseudoConsole(self.0);
+        }
+    }
+}
+
+/// The keyboard, one character at a time as it is typed and without the console showing it.
+///
+/// The console's own echo, line editing and handling of Ctrl+C are off until this is dropped,
+/// which puts them back.
+#[derive(Debug)]
+pub struct Keys {
+    input: HANDLE,
+    mode: CONSOLE_MODE,
+}
+
+impl Keys {
+    /// The keyboard, or none when input does not come from a console.
+    ///
+    /// # Errors
+    ///
+    /// When the console will not change modes.
+    pub fn open() -> io::Result<Option<Self>> {
+        // SAFETY: asks for this process's own standard input; nothing is freed.
+        let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+        let mut mode = 0;
+        // SAFETY: `mode` is a valid place for the answer; a handle that is no console fails.
+        if unsafe { GetConsoleMode(input, &raw mut mode) } == 0_i32 {
+            return Ok(None);
+        }
+        let raw = mode & !(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT);
+        // SAFETY: as above, with a mode made from the console's own.
+        if unsafe { SetConsoleMode(input, raw) } == 0_i32 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Some(Self { input, mode }))
+    }
+
+    /// The next character typed, or none when input has ended.
+    ///
+    /// # Errors
+    ///
+    /// When the console cannot be read.
+    pub fn read_key(&mut self) -> io::Result<Option<char>> {
+        let mut units = Vec::with_capacity(2);
+        loop {
+            let mut unit = 0_u16;
+            let mut read = 0_u32;
+            // SAFETY: `unit` has room for the one unit asked for, and `read` for the count.
+            let done = unsafe {
+                ReadConsoleW(
+                    self.input,
+                    (&raw mut unit).cast(),
+                    1,
+                    &raw mut read,
+                    ptr::null(),
+                )
+            };
+            if done == 0_i32 {
+                return Err(io::Error::last_os_error());
+            }
+            if read == 0 {
+                return Ok(None);
+            }
+            units.push(unit);
+            // A high surrogate is half a character; the other half is the next unit.
+            if !(0xd800..=0xdbff).contains(&unit) {
+                let decoded = char::decode_utf16(units.iter().copied()).next();
+                units.fill(0);
+                return Ok(Some(
+                    decoded
+                        .and_then(Result::ok)
+                        .unwrap_or(char::REPLACEMENT_CHARACTER),
+                ));
+            }
+        }
+    }
+}
+
+impl Drop for Keys {
+    fn drop(&mut self) {
+        // SAFETY: puts back the mode the console had when this was opened.
+        let _: BOOL = unsafe { SetConsoleMode(self.input, self.mode) };
+    }
+}
+
+/// Where a program's input and output go.
+#[derive(Clone, Copy)]
+enum Streams {
+    /// These handles, handed down: its input first, then the one its output and errors both go
+    /// to.
+    Handles([RawHandle; 2]),
+    /// A pseudo console, which it reads and writes as a terminal.
+    Console(HPCON),
+}
+
+/// Starts `program` suspended, on `desktop`, in `job`, with `streams` and nothing else handed
+/// down, and only then lets it run, so that it never does anything outside the job.
 fn spawn(
     program: &Path,
     args: &[OsString],
@@ -248,20 +469,36 @@ fn spawn(
     directory: &Path,
     desktop: &Desktop,
     job: &Job,
-    handles: [RawHandle; 2],
+    streams: Streams,
 ) -> io::Result<Process> {
-    for handle in handles {
-        // SAFETY: both handles are open for the length of this call.
-        if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) }
-            == 0_i32
-        {
-            return Err(io::Error::last_os_error());
+    let (mut list, [input, output], inherit, creation) = match streams {
+        Streams::Handles(handles) => {
+            for handle in handles {
+                // SAFETY: both handles are open for the length of this call.
+                if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) }
+                    == 0_i32
+                {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            (
+                AttributeList::handing_down(&handles)?,
+                handles,
+                1_i32,
+                PIPED,
+            )
         }
-    }
-    let mut list = AttributeList::handing_down(&handles)?;
+        // No standard handles at all: a program that inherits none but is told to use them
+        // talks to the pseudo console, where one left to default could take steamship's.
+        Streams::Console(console) => (
+            AttributeList::on_console(console)?,
+            [INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE],
+            0_i32,
+            CREATION,
+        ),
+    };
     // STARTUPINFOW asks for a writable name, though CreateProcessW only reads it.
     let mut desktop_name = desktop.name.clone();
-    let [input, output] = handles;
     let info = STARTUPINFOEXW {
         StartupInfo: STARTUPINFOW {
             cb: size_of_u32::<STARTUPINFOEXW>(),
@@ -280,16 +517,16 @@ fn spawn(
     let mut started = PROCESS_INFORMATION::default();
     // SAFETY: every buffer is NUL-terminated and outlives the call, the environment block ends
     // in the two NULs Windows looks for, `line` is writable as the call requires, `info`
-    // describes a live attribute list, and `started` receives the handles. Inheritance is on,
-    // and the attribute list limits it to exactly `handles`.
+    // describes a live attribute list, and `started` receives the handles. Handed-down handles
+    // are limited by the attribute list to exactly those; with a console none are inherited.
     let created = unsafe {
         CreateProcessW(
             application.as_ptr(),
             line.as_mut_ptr(),
             ptr::null(),
             ptr::null(),
-            1,
-            CREATION,
+            inherit,
+            creation,
             environment.map_or(ptr::null(), |block| block.as_ptr().cast()),
             directory.as_ptr(),
             (&raw const info).cast(),
@@ -328,16 +565,44 @@ fn spawn(
     }
 }
 
-/// A process-thread attribute list naming the only handles a new process inherits.
+/// A process-thread attribute list with one attribute: the only handles a new process inherits,
+/// or the pseudo console it runs on.
 struct AttributeList {
     /// Pointer-aligned storage for the list, which Windows sizes.
     storage: Vec<usize>,
-    /// The handles the list points at, kept here for as long as the list.
-    handles: Box<[RawHandle; 2]>,
+    /// The handles the list points at, when it hands any down, kept for as long as the list.
+    _handles: Option<Box<[RawHandle; 2]>>,
 }
 
 impl AttributeList {
     fn handing_down(handles: &[RawHandle; 2]) -> io::Result<Self> {
+        let kept = Box::new(*handles);
+        let value = (&raw const *kept).cast();
+        Self::with(
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            value,
+            size_of::<[RawHandle; 2]>(),
+            Some(kept),
+        )
+    }
+
+    /// The pseudo console attribute's value is the console handle itself, not a pointer to it.
+    fn on_console(console: HPCON) -> io::Result<Self> {
+        let value = ptr::without_provenance(console.cast_unsigned());
+        Self::with(
+            PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+            value,
+            size_of::<HPCON>(),
+            None,
+        )
+    }
+
+    fn with(
+        attribute: u32,
+        value: *const c_void,
+        size_of_value: usize,
+        handles: Option<Box<[RawHandle; 2]>>,
+    ) -> io::Result<Self> {
         let mut size = 0_usize;
         // SAFETY: a null list with a size to fill is how the needed size is asked for; the call
         // then fails with ERROR_INSUFFICIENT_BUFFER, which is expected.
@@ -345,7 +610,7 @@ impl AttributeList {
             unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &raw mut size) };
         let mut list = Self {
             storage: vec![0; size.div_ceil(size_of::<usize>())],
-            handles: Box::new(*handles),
+            _handles: handles,
         };
         // SAFETY: `storage` holds at least `size` bytes, aligned for the list.
         if unsafe { InitializeProcThreadAttributeList(list.pointer(), 1, 0, &raw mut size) }
@@ -353,18 +618,16 @@ impl AttributeList {
         {
             return Err(io::Error::last_os_error());
         }
-        let handed = &raw const *list.handles;
-        let attribute =
-            usize::try_from(PROC_THREAD_ATTRIBUTE_HANDLE_LIST).map_err(io::Error::other)?;
-        // SAFETY: the list was initialised for one attribute, and the handle array it is told
-        // about lives in `list` itself, so it outlives every use of the list.
+        let attribute = usize::try_from(attribute).map_err(io::Error::other)?;
+        // SAFETY: the list was initialised for one attribute; a value that points anywhere
+        // points into `list.handles`, which lives as long as the list does.
         let updated = unsafe {
             UpdateProcThreadAttribute(
                 list.pointer(),
                 0,
                 attribute,
-                handed.cast(),
-                size_of::<[RawHandle; 2]>(),
+                value,
+                size_of_value,
                 ptr::null_mut(),
                 ptr::null(),
             )
@@ -1016,7 +1279,7 @@ mod tests {
             &env::temp_dir(),
             &desktop,
             &job,
-            [input.as_raw_handle(), output.as_raw_handle()],
+            Streams::Handles([input.as_raw_handle(), output.as_raw_handle()]),
         )
         .unwrap();
         // SAFETY: the process handle is open for as long as `process`.

@@ -8,7 +8,6 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::Path;
-use std::process::Command;
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -40,32 +39,12 @@ pub fn run(
     native::run(program, args, environment, directory, limit)
 }
 
-/// Runs `program` in the user's own terminal, for them to type into, with `environment` added to
-/// steamship's, and waits for it. steamship reads nothing it types or prints.
-///
-/// # Errors
-///
-/// When the program cannot be started.
-pub fn attached(
-    program: &Path,
-    args: &[OsString],
-    environment: &[(OsString, OsString)],
-    directory: &Path,
-) -> io::Result<Option<i32>> {
-    native::silence_error_dialogues();
-    let status = Command::new(program)
-        .args(args)
-        .envs(environment.iter().map(|(name, value)| (name, value)))
-        .current_dir(directory)
-        .status()?;
-    Ok(status.code())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
     use std::fs;
+    use std::io::{Read as _, Write as _};
     use std::time::Instant;
 
     /// A shell, what makes it run the one line that follows, a line that starts a grandchild
@@ -178,14 +157,28 @@ mod tests {
         [(OsString::from("STEAMSHIP_PROBE"), OsString::from("yes"))]
     }
 
-    fn attached_shell(environment: &[(OsString, OsString)], directory: &Path) -> Option<i32> {
-        attached(
-            Path::new(SHELL.0),
-            &shell_args(PROBE),
-            environment,
-            directory,
+    /// Runs a shell `line` on a terminal, with `typed` typed into it, and gives its exit code and
+    /// all it wrote.
+    fn on_terminal(
+        args: &[OsString],
+        environment: &[(OsString, OsString)],
+        directory: &Path,
+        typed: &[u8],
+    ) -> (Option<i32>, String) {
+        let (terminal, mut output, mut input) =
+            native::Terminal::start(Path::new(SHELL.0), args, environment, directory).unwrap();
+        input.write_all(typed).unwrap();
+        let mut written = Vec::new();
+        let _: usize = output.read_to_end(&mut written).unwrap();
+        drop(input);
+        (
+            terminal.wait().unwrap(),
+            String::from_utf8_lossy(&written).into_owned(),
         )
-        .unwrap()
+    }
+
+    fn terminal_shell(environment: &[(OsString, OsString)], directory: &Path) -> Option<i32> {
+        on_terminal(&shell_args(PROBE), environment, directory, b"").0
     }
 
     fn hidden_shell(environment: &[(OsString, OsString)], directory: &Path) -> Option<i32> {
@@ -202,12 +195,68 @@ mod tests {
     }
 
     #[test]
-    fn an_attached_program_gets_its_environment_and_folder_and_is_waited_for() {
+    fn a_program_on_a_terminal_gets_its_environment_and_folder_and_is_waited_for() {
         let folder = tempfile::tempdir().unwrap();
         fs::write(folder.path().join("marker"), "").unwrap();
-        assert_eq!(attached_shell(&probe(), folder.path()), Some(0_i32));
-        assert_eq!(attached_shell(&[], folder.path()), Some(5_i32));
-        assert_eq!(attached_shell(&probe(), &env::temp_dir()), Some(5_i32));
+        assert_eq!(terminal_shell(&probe(), folder.path()), Some(0_i32));
+        assert_eq!(terminal_shell(&[], folder.path()), Some(5_i32));
+        assert_eq!(terminal_shell(&probe(), &env::temp_dir()), Some(5_i32));
+    }
+
+    /// A line that reads a line typed at its prompt and exits 0 only when that was `hunter2`.
+    /// `cmd` expands `%typed%` as it reads its line, before anything has been typed, and leaves it
+    /// as it is while there is no such variable; the `cmd` it starts then expands it as it reads
+    /// its own line, after `set /p` has set it.
+    #[cfg(windows)]
+    const READS_TYPED: &str =
+        "set /p typed=password: & cmd /d /c if \"%typed%\"==\"hunter2\" (exit 0) else (exit 5)";
+    #[cfg(unix)]
+    const READS_TYPED: &str =
+        "printf 'password: '; read -r typed; test \"$typed\" = hunter2 || exit 5";
+
+    #[test]
+    fn what_is_typed_reaches_a_program_on_a_terminal() {
+        let args = shell_args(READS_TYPED);
+        let (code, written) = on_terminal(&args, &[], &env::temp_dir(), b"hunter2\r");
+        assert_eq!(code, Some(0_i32), "{written:?}");
+        assert!(written.contains("password:"), "{written:?}");
+        let (wrong, _) = on_terminal(&args, &[], &env::temp_dir(), b"hunter3\r");
+        assert_eq!(wrong, Some(5_i32));
+    }
+
+    /// Windows leaves echo to the program, which sets its own console's modes; steamcmd hides a
+    /// password as it is typed.
+    #[cfg(unix)]
+    #[test]
+    fn what_is_typed_on_a_terminal_is_not_echoed() {
+        let (code, written) = on_terminal(
+            &shell_args(READS_TYPED),
+            &[],
+            &env::temp_dir(),
+            b"hunter2\r",
+        );
+        assert_eq!(code, Some(0_i32), "{written:?}");
+        assert!(!written.contains("hunter2"), "{written:?}");
+    }
+
+    #[test]
+    fn a_program_on_a_terminal_dropped_unwaited_is_ended() {
+        let started = Instant::now();
+        let (terminal, mut output, _input) = native::Terminal::start(
+            Path::new(SHELL.0),
+            &shell_args(SHELL.2),
+            &[],
+            &env::temp_dir(),
+        )
+        .unwrap();
+        drop(terminal);
+        let mut written = Vec::new();
+        let _: usize = output.read_to_end(&mut written).unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "took {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]
@@ -220,9 +269,9 @@ mod tests {
     }
 
     #[test]
-    fn an_attached_program_that_is_not_there_is_an_error() {
+    fn a_program_on_a_terminal_that_is_not_there_is_an_error() {
         let missing = env::temp_dir().join("steamship-no-such-program");
-        let error = attached(&missing, &[], &[], &env::temp_dir()).unwrap_err();
+        let error = native::Terminal::start(&missing, &[], &[], &env::temp_dir()).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 

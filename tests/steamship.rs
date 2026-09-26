@@ -42,6 +42,15 @@ fn steamship(
     )
 }
 
+/// The first failure steamship reported, without the cross before it; or, when it reported
+/// none, all it wrote, for the assertion to show.
+fn failure(stderr: &str) -> &str {
+    stderr
+        .lines()
+        .find_map(|line| line.trim_start().strip_prefix("\u{2717} "))
+        .unwrap_or(stderr)
+}
+
 /// A home that records the pinned steamcmd as installed, with `files` in its inventory.
 fn recorded(files: &str) -> tempfile::TempDir {
     let home = tempfile::tempdir().unwrap();
@@ -60,14 +69,21 @@ fn install_says_when_the_install_is_as_pinned() {
     let home = recorded("");
     let (code, stdout, stderr) = run(Some(home.path()));
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
-    assert!(stdout.ends_with(" is as pinned\n"), "{stdout}");
+    assert!(stdout.starts_with("steamship install\n"), "{stdout}");
+    assert!(stdout.contains(", pinned and verified\n"), "{stdout}");
+    let folder = home.path().join(install::FOLDER);
+    assert!(
+        stdout.ends_with(&format!("  folder    {}\n", folder.display())),
+        "{stdout}"
+    );
 }
 
 #[test]
 fn install_names_what_changed_and_exits_4() {
     let home = recorded(&format!("file {} steamcmd.exe\n", "0".repeat(64)));
     let (code, stdout, stderr) = run(Some(home.path()));
-    assert_eq!((code, stdout.as_str()), (Some(4_i32), ""));
+    assert_eq!(code, Some(4_i32));
+    assert!(stdout.ends_with("\u{2717} not as pinned\n"), "{stdout}");
     assert!(
         stderr.trim_end().ends_with("steamcmd.exe is missing"),
         "{stderr}"
@@ -87,10 +103,10 @@ fn install_turns_a_second_run_away_and_exits_1() {
 
 #[test]
 fn install_says_where_it_could_not_find_a_home_and_exits_1() {
-    let (code, stdout, stderr) = run(None);
-    assert_eq!((code, stdout.as_str()), (Some(1_i32), ""));
+    let (code, _, stderr) = run(None);
+    assert_eq!(code, Some(1_i32));
     assert!(
-        stderr.starts_with("neither STEAMSHIP_HOME nor "),
+        failure(&stderr).starts_with("neither STEAMSHIP_HOME nor "),
         "{stderr}"
     );
 }
@@ -131,6 +147,8 @@ fn login_runs_steamcmd_for_the_account_in_the_home_and_remembers_it() {
     let (code, stdout, stderr) =
         steamship(&["login", "--account", "build_bot"], Some(home.path()), &[]);
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
+    assert!(stdout.starts_with("steamship login\n"), "{stdout}");
+    assert!(stdout.contains("  account   as named\n"), "{stdout}");
     assert!(
         stdout.contains("args: +@ShutdownOnFailedCommand 1 +login build_bot +quit\n"),
         "{stdout}"
@@ -145,34 +163,128 @@ fn login_runs_steamcmd_for_the_account_in_the_home_and_remembers_it() {
         "{stdout}"
     );
     assert!(
-        stdout.ends_with(
-            "the build account is logged in; uploads use the login steamcmd keeps, until it \
-             expires\n"
-        ),
+        stdout.ends_with("\u{2713} logged in\n    uploads use this login until it expires\n"),
         "{stdout}"
     );
     let (again, said, _) = steamship(&["login"], Some(home.path()), &[]);
     assert_eq!(again, Some(0_i32));
+    assert!(said.contains("  account   remembered\n"), "{said}");
     assert!(said.contains(" +login build_bot "), "{said}");
 }
 
 #[cfg(unix)]
 #[test]
-fn login_that_steamcmd_refuses_exits_1_and_remembers_nothing() {
+fn login_that_steamcmd_ends_badly_exits_1_and_remembers_nothing() {
     let home = faked();
     let (code, _, stderr) = steamship(
         &["login", "--account", "build_bot"],
         Some(home.path()),
         &[("STEAMSHIP_FAKE_EXIT", "5")],
     );
-    assert_eq!(
-        (code, stderr.as_str()),
-        (
-            Some(1_i32),
-            "steamcmd did not log the build account in (it exited 5)\n"
-        )
+    assert_eq!(code, Some(1_i32));
+    assert_eq!(failure(&stderr), "not logged in: steamcmd exited 5");
+    assert!(
+        stderr.ends_with("run steamship login to try again\n"),
+        "{stderr}"
     );
     assert!(!home.path().join("account").exists());
+}
+
+/// A home whose steamcmd asks for a password, keeps what was typed in `typed` in the home, and
+/// logs in only when that was `hunter2`, refusing it as steamcmd does otherwise.
+#[cfg(unix)]
+fn asking() -> tempfile::TempDir {
+    faked_with(
+        "#!/bin/sh\n\
+         echo 'Cached credentials not found.'\n\
+         printf 'password: '\n\
+         read -r typed\n\
+         printf '%s' \"$typed\" > \"$HOME/typed\"\n\
+         echo\n\
+         if [ \"$typed\" = hunter2 ]; then\n\
+           echo \"Logging in user 'build_bot' [U:1:0] to Steam Public...OK\"\n\
+           exit 0\n\
+         fi\n\
+         echo \"Logging in user 'build_bot' [U:1:0] to Steam Public...ERROR (Invalid Password)\"\n\
+         exit 5\n",
+    )
+}
+
+/// `steamship login` in `home`, with `typed` piped to it as a script would.
+#[cfg(unix)]
+fn login_typing(home: &Path, typed: &str) -> (Option<i32>, String, String) {
+    use std::io::Write as _;
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_steamship"))
+        .args(["login", "--account", "build_bot"])
+        .env_remove("STEAMSHIP_ACCOUNT")
+        .env("STEAMSHIP_HOME", home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(typed.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn login_passes_the_password_to_steamcmd_and_never_shows_it() {
+    let home = asking();
+    let (code, stdout, stderr) = login_typing(home.path(), "hunter2\n");
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(home.path().join("typed")).unwrap(),
+        "hunter2"
+    );
+    assert!(stdout.contains("  password  \n"), "{stdout}");
+    assert!(!stdout.contains("hunter2"), "the password was shown");
+    assert!(!stdout.contains("Cached credentials"), "{stdout}");
+    assert!(
+        stdout.ends_with("\u{2713} logged in\n    uploads use this login until it expires\n"),
+        "{stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn login_with_a_wrong_password_says_steam_refused_it_and_exits_1() {
+    let home = asking();
+    let (code, stdout, stderr) = login_typing(home.path(), "hunter3\n");
+    assert_eq!(code, Some(1_i32));
+    assert_eq!(
+        failure(&stderr),
+        "not logged in: Steam refused the password"
+    );
+    for shown in [&stdout, &stderr] {
+        assert!(!shown.contains("hunter3"), "the password was shown");
+    }
+    assert!(!home.path().join("account").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn login_with_no_password_to_give_ends_steamcmd_and_exits_1() {
+    let home = asking();
+    let (code, _, stderr) = login_typing(home.path(), "");
+    assert_eq!(code, Some(1_i32));
+    assert_eq!(
+        failure(&stderr),
+        "not logged in: input ended before steamcmd had an answer"
+    );
+    assert!(!home.path().join("typed").exists());
 }
 
 #[cfg(unix)]
@@ -202,9 +314,9 @@ fn login_refuses_a_name_steamcmd_could_read_as_a_command_and_exits_2() {
             &[("STEAMSHIP_ACCOUNT", "+quit")],
         ),
     ] {
-        assert_eq!((code, stdout.as_str()), (Some(2_i32), ""));
+        assert_eq!((code, stdout.as_str()), (Some(2_i32), "steamship login\n"));
         assert!(
-            stderr.starts_with("\"+quit\" is not a Steam account name"),
+            failure(&stderr).starts_with("\"+quit\" is not a Steam account name"),
             "{stderr}"
         );
     }
@@ -213,14 +325,11 @@ fn login_refuses_a_name_steamcmd_could_read_as_a_command_and_exits_2() {
 #[test]
 fn login_with_no_account_says_how_to_name_one_and_exits_2() {
     let home = tempfile::tempdir().unwrap();
-    let (code, stdout, stderr) = steamship(&["login"], Some(home.path()), &[]);
+    let (code, _, stderr) = steamship(&["login"], Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32));
     assert_eq!(
-        (code, stdout.as_str(), stderr.as_str()),
-        (
-            Some(2_i32),
-            "",
-            "name the build account with --account or STEAMSHIP_ACCOUNT\n"
-        )
+        failure(&stderr),
+        "name the build account with --account or STEAMSHIP_ACCOUNT"
     );
 }
 
@@ -230,7 +339,10 @@ fn login_with_a_remembered_account_that_is_not_one_exits_1() {
     fs::write(home.path().join("account"), "+quit\n").unwrap();
     let (code, _, stderr) = steamship(&["login"], Some(home.path()), &[]);
     assert_eq!(code, Some(1_i32));
-    assert!(stderr.starts_with("the account remembered in "), "{stderr}");
+    assert!(
+        failure(&stderr).starts_with("the account remembered in "),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -238,7 +350,7 @@ fn login_with_nowhere_to_look_for_an_account_exits_1() {
     let (code, _, stderr) = steamship(&["login"], None, &[]);
     assert_eq!(code, Some(1_i32));
     assert!(
-        stderr.starts_with("neither STEAMSHIP_HOME nor "),
+        failure(&stderr).starts_with("neither STEAMSHIP_HOME nor "),
         "{stderr}"
     );
 }
@@ -302,10 +414,10 @@ fn upload(
 fn upload_refuses_a_version_a_description_cannot_carry_and_exits_2() {
     let (_project, script) = project(true);
     let home = tempfile::tempdir().unwrap();
-    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.0\""], &[]);
-    assert_eq!((code, stdout.as_str()), (Some(2_i32), ""));
+    let (code, _, stderr) = upload(&script, home.path(), &["--version", "1.0\""], &[]);
+    assert_eq!(code, Some(2_i32));
     assert!(
-        stderr.starts_with("the version \"1.0\\\"\" is not"),
+        failure(&stderr).starts_with("the version \"1.0\\\"\" is not"),
         "{stderr}"
     );
 }
@@ -336,8 +448,9 @@ fn upload_runs_check_first_and_exits_2_on_a_refusal() {
     .unwrap();
     let home = tempfile::tempdir().unwrap();
     let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.0"], &[]);
-    assert_eq!((code, stdout.as_str()), (Some(2_i32), ""));
-    assert!(stderr.starts_with("refused: "), "{stderr}");
+    assert_eq!(code, Some(2_i32));
+    assert_eq!(stdout, "steamship upload\n");
+    assert!(failure(&stderr).starts_with("refused: "), "{stderr}");
 }
 
 /// A token that logs the account in without a password, and a value from its local settings.
@@ -439,7 +552,11 @@ fn nothing_upload_prints_or_writes_holds_the_login() {
     let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
     assert!(
-        stdout.ends_with("app 1000: BuildID 4242, set live on testing\n"),
+        stdout.contains("  app       \u{2713} 1000, 1 depot, 1 file, checked\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\u{2713} app 1000: BuildID 4242, set live on testing\n"),
         "{stdout}"
     );
     assert_no_secret_in("stdout", stdout.as_bytes());
@@ -473,8 +590,12 @@ fn an_upload_without_a_login_says_to_log_in_and_exits_3() {
     );
     assert_eq!(code, Some(3_i32));
     assert_eq!(
-        stderr,
-        "Cached credentials not found.\nlog the build account in again with `steamship login`\n"
+        failure(&stderr),
+        "not logged in: Cached credentials not found."
+    );
+    assert!(
+        stderr.ends_with("log the build account in again with steamship login\n"),
+        "{stderr}"
     );
     assert_no_secret_in("stdout", stdout.as_bytes());
     assert_no_secret_in("stderr", stderr.as_bytes());
@@ -493,11 +614,12 @@ fn a_preview_says_nothing_was_uploaded() {
     );
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
     assert!(
-        stdout.starts_with("building a preview of app 1000 as \"1.4.0 "),
+        stdout.starts_with("steamship upload, preview\n"),
         "{stdout}"
     );
+    assert!(stdout.contains("\n  build     1.4.0 "), "{stdout}");
     assert!(
-        stdout.ends_with("app 1000: the preview finished; nothing was uploaded\n"),
+        stdout.contains("\u{2713} nothing was uploaded, as asked\n"),
         "{stdout}"
     );
     let copy = fs::read_to_string(home.path().join("apps/1000/app_build.vdf")).unwrap();
@@ -520,8 +642,8 @@ fn a_refused_build_names_every_reason_and_where_the_logs_are_and_exits_1() {
     assert_eq!(
         stderr,
         format!(
-            "failed: Failed to initialize build on server (Access Denied)\n\
-             steamcmd's output is in {}, and its build log in {}\n",
+            "  \u{2717} Failed to initialize build on server (Access Denied)\n    \
+             log  {}, and steamcmd's own in {}\n",
             output.join("steamcmd.log").display(),
             output.join("app_build_1000.log").display()
         )
