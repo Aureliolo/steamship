@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf, is_separator};
 
 use crate::pattern;
 use crate::scripts::{self, AppScript, DepotScript, FileMapping, Problem};
+#[cfg(unix)]
+use crate::unix;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
@@ -200,7 +202,7 @@ fn content_problems(depot_id: u32, file: &Path, problems: &mut Vec<Problem>) {
     }
     // Windows file systems have no executable bit, so there the question cannot be asked.
     #[cfg(unix)]
-    if let Some(message) = crate::unix::missing_executable_bit(file) {
+    if let Some(message) = unix::missing_executable_bit(file) {
         problems.push(Problem::new(file, message));
     }
 }

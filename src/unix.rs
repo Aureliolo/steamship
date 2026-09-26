@@ -2,7 +2,7 @@
 //! is compiled, tested and mutation-tested on the systems where it runs.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use crate::elf;

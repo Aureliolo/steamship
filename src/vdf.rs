@@ -260,10 +260,15 @@ impl<'text> Reader<'text> {
                 }
                 None => Err(self.error_at(start, "a quoted string is never closed")),
             },
-            Some(_) => {
-                let (text, after) = start
+            Some(first) => {
+                // The first character belongs to the token whatever it is, so every read takes
+                // at least one character and the reader cannot stop advancing.
+                let tail = chars.as_str();
+                let end = tail
                     .find([' ', '\t', '\r', '\n', '{', '}', '"', '['])
-                    .and_then(|end| start.split_at_checked(end))
+                    .unwrap_or(tail.len());
+                let (text, after) = start
+                    .split_at_checked(first.len_utf8().saturating_add(end))
                     .unwrap_or((start, ""));
                 self.rest = after;
                 Ok(Token::Text(text))

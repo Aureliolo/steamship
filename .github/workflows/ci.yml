@@ -132,9 +132,13 @@ jobs:
           persist-credentials: false
 
       - name: Check for dashes
+        # The dashes are built from their UTF-8 bytes, so this file holds none for the search to
+        # find and the pattern does not depend on the runner's locale.
         run: |
           set -euo pipefail
-          if git grep -n -I -e $'—' -e $'–'; then
+          em="$(printf '\342\200\224')"
+          en="$(printf '\342\200\223')"
+          if git grep -n -I -F -e "${em}" -e "${en}"; then
             echo "::error::Em and en dashes are not used here; use a colon, semicolon, comma, full stop or brackets."
             exit 1
           fi
