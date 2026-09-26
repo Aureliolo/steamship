@@ -1,6 +1,8 @@
 [default]
 # British spelling everywhere: colour, behaviour, licence as the noun.
 locale = "en-gb"
+# steamcmd's own messages, quoted as it prints them, which steamship matches and tests against.
+extend-ignore-re = ["Failed to initialize build on server"]
 
 [default.extend-identifiers]
 # Other crates' names, which are not ours to spell: sha2's `finalize`, and Windows' own API as
