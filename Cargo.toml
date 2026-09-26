@@ -13,6 +13,10 @@ include = ["/src", "/LICENSE-APACHE", "/LICENSE-MIT", "/README.md"]
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
+sha2 = "0.11.0"
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+# Valve's packages use only stored and deflated entries, so one pure-Rust decoder is all it needs.
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
 proptest = "1.11.0"
@@ -104,6 +108,12 @@ std_instead_of_core = "allow"
 # Rebinding a value to its refined form (`let text = text.trim()`) keeps the raw one out of reach.
 # Shadowing with an unrelated value, the kind that misleads, stays refused.
 shadow_reuse = "allow"
+# A module's error type is called Error, as the standard library's io::Error and fmt::Error are.
+# module_name_repetitions refuses the alternative (download::DownloadError), so one has to go.
+error_impl_error = "allow"
+# cargo-deny's bans check owns duplicate versions: its exceptions name the exact version with a
+# reason, and fail once they stop matching, where this lint could only be silenced by crate name.
+multiple_crate_versions = "allow"
 
 [profile.release]
 lto = true

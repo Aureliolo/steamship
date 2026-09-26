@@ -143,6 +143,84 @@ jobs:
             exit 1
           fi
 
+  # The pinned steamcmd, installed for real from Valve's CDN on each system, then installed again,
+  # which must find it as pinned. Nothing runs steamcmd here.
+  install:
+    name: install (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            # renovate: datasource=github-runners depName=ubuntu
+            runner: ubuntu-24.04
+          - platform: windows
+            # renovate: datasource=github-runners depName=windows
+            runner: windows-2025
+          - platform: macos
+            # renovate: datasource=github-runners depName=macos
+            runner: macos-26
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read # Reads the source it builds.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Install steamcmd, then verify it
+        run: |
+          set -euo pipefail
+          export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
+          cargo run --locked -- install | tee "${RUNNER_TEMP}/first.txt"
+          grep -q ' installed in ' "${RUNNER_TEMP}/first.txt"
+          cargo run --locked -- install | tee "${RUNNER_TEMP}/second.txt"
+          grep -q ' is as pinned$' "${RUNNER_TEMP}/second.txt"
+
+  # Each pin against the manifest Valve serves now. At the same version they must be the same bytes,
+  # which is how a Renovate raise, which moves only the version, shows it needs finishing. When
+  # Valve is ahead, Renovate raises the pin, so that is a notice rather than a failure.
+  pins:
+    name: pins
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the pins it compares.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare the pins with Valve's manifests
+        run: |
+          set -euo pipefail
+          version() { grep -m1 -oE '"version"[[:space:]]+"[0-9]+"' "$1" | grep -oE '[0-9]+'; }
+          failed=0
+          for system in win32 linux osx; do
+            pinned="pins/steam_cmd_${system}.vdf"
+            live="${RUNNER_TEMP}/steam_cmd_${system}"
+            curl -fsS --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${live}" \
+              "https://cdn.steamstatic.com/client/steam_cmd_${system}"
+            if [ "$(version "${pinned}")" != "$(version "${live}")" ]; then
+              echo "::notice file=${pinned}::Valve serves steamcmd $(version "${live}") for ${system}; the pin is $(version "${pinned}"), and Renovate raises it."
+            elif ! cmp -s "${pinned}" "${live}"; then
+              echo "::error file=${pinned}::${pinned} names Valve's current version but not its packages. Run 'cargo run --example pins' and commit what it writes."
+              failed=1
+            fi
+          done
+          exit "${failed}"
+
   # A dependency the code no longer uses is attack surface for nothing.
   machete:
     name: machete
@@ -258,7 +336,7 @@ jobs:
 
       # The whole workspace: without --workspace only the default member would be checked.
       - name: Check
-        run: cargo deny --workspace --locked check
+        run: cargo deny --workspace --locked check --deny warnings
 
   markdown:
     name: markdown

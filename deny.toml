@@ -9,7 +9,10 @@ unsound = "all"
 
 [licenses]
 version = 2
-allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
+# Permissive, OSI-approved licences only. ISC, BSD-3-Clause and CDLA-Permissive-2.0 come with the
+# TLS stack: ring and webpki are ISC, subtle is BSD-3-Clause, and webpki-roots carries Mozilla's
+# root certificates under CDLA-Permissive-2.0. Zlib is zlib-rs, the deflate decoder.
+allow = ["Apache-2.0", "BSD-3-Clause", "CDLA-Permissive-2.0", "ISC", "MIT", "Unicode-3.0", "Zlib"]
 confidence-threshold = 0.93
 
 # libFuzzer is LLVM's, under the NCSA licence. It reaches only the fuzz harness, which is never
@@ -23,6 +26,17 @@ multiple-versions = "deny"
 wildcards = "deny"
 # The fuzz harness reaches the crate by path, which carries no version; it is never published.
 allow-wildcard-paths = true
+
+# ring, the cryptography under rustls, still depends on these older versions while the rest of the
+# tree has moved on, so both versions of each are built. Each skip names the exact version, and CI
+# runs cargo-deny with warnings as errors, so a skip that stops matching fails until it is removed.
+[[bans.skip]]
+crate = "getrandom@0.2.17"
+reason = "ring 0.17 depends on it; everything else is on a newer getrandom"
+
+[[bans.skip]]
+crate = "windows-sys@0.52.0"
+reason = "ring 0.17 depends on it; everything else is on a newer windows-sys"
 
 [sources]
 unknown-registry = "deny"

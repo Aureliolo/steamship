@@ -1,1 +1,4 @@
 * text=auto eol=lf
+# Valve's files, kept byte for byte as Valve serves them: git must never rewrite their line endings.
+/pins/** -text
+/fuzz/seeds/** -text

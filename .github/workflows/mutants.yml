@@ -7,6 +7,10 @@ name: Mutants
 #
 # Code for one system is compiled only there, so each system mutates everything but the other's
 # module: mutating code that is not compiled would always look missed.
+#
+# A mutant that makes the downloader retry sits through its real waits, about a minute in all,
+# before the test fails; the minimum timeout is set above that so such a mutant counts as caught
+# rather than timed out.
 on:
   pull_request:
     branches:
@@ -91,13 +95,14 @@ jobs:
         run: |
           set -euo pipefail
           git diff "${BASE_SHA}...HEAD" > "${RUNNER_TEMP}/change.diff"
-          cargo mutants --in-diff "${RUNNER_TEMP}/change.diff" --exclude "${SKIP}" --no-shuffle
+          cargo mutants --in-diff "${RUNNER_TEMP}/change.diff" --exclude "${SKIP}" --no-shuffle \
+            --minimum-test-timeout 120
 
       - name: Mutate everything
         if: github.event_name == 'schedule'
         env:
           SKIP: ${{ matrix.skip }}
-        run: cargo mutants --exclude "${SKIP}" --no-shuffle
+        run: cargo mutants --exclude "${SKIP}" --no-shuffle --minimum-test-timeout 120
 
       - name: Keep the report
         if: failure()
