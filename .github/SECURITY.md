@@ -27,5 +27,6 @@ Only the latest release gets fixes.
 - **steamcmd itself.** Installed from Valve's signed manifest at a pinned version, every package
   checked by SHA-256 and, on Windows, every program and library by Valve's code signature.
   steamcmd is kept from updating itself, and re-checked after every run.
-- **Releases.** Built by GitHub Actions from a tagged commit, with a SHA-256 and a signed build
-  provenance attestation for each binary.
+- **Releases.** Built by GitHub Actions from a signed, tagged commit on main, at SLSA Build
+  Level 3, with a SHA-256, an SPDX SBOM and Sigstore attestations for every file. A published
+  release and its tag cannot be changed.
