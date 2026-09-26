@@ -12,7 +12,8 @@ name: Mutants
 #
 # A mutant that makes the downloader retry sits through its real waits, about a minute in all,
 # before the test fails; the minimum timeout is set above that so such a mutant counts as caught
-# rather than timed out.
+# rather than timed out. Two mutants are built and tested at a time, one for each pair of the
+# runner's four cores.
 on:
   # Every pull request, whatever it targets, so that one stacked on another is checked too.
   pull_request:
@@ -97,13 +98,13 @@ jobs:
           set -euo pipefail
           git diff "${BASE_SHA}...HEAD" > "${RUNNER_TEMP}/change.diff"
           cargo mutants --in-diff "${RUNNER_TEMP}/change.diff" "${SCOPE}" src/windows.rs \
-            --no-shuffle --minimum-test-timeout 120
+            --no-shuffle --minimum-test-timeout 120 --jobs 2
 
       - name: Mutate everything
         if: github.event_name == 'schedule'
         env:
           SCOPE: ${{ matrix.scope }}
-        run: cargo mutants "${SCOPE}" src/windows.rs --no-shuffle --minimum-test-timeout 120
+        run: cargo mutants "${SCOPE}" src/windows.rs --no-shuffle --minimum-test-timeout 120 --jobs 2
 
       - name: Keep the report
         if: failure()
