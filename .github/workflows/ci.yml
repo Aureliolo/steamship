@@ -200,6 +200,29 @@ jobs:
           test "${status}" -eq 1
           grep -q '^failed: Failed to initialize build on server (Access Denied)' "${RUNNER_TEMP}/upload.txt"
 
+      # steamcmd keeps its login in a config.vdf whose place differs by system; the redaction
+      # reads it from three places, and this is where each system shows which one it uses. And
+      # nothing of steamcmd's may land in the runner's own home, which would be the user's.
+      - name: Find steamcmd's login file where the redaction looks, and nowhere else
+        run: |
+          set -euo pipefail
+          home="${RUNNER_TEMP}/steamship home"
+          found="$(cd "${home}" && find . -path '*/config/config.vdf' | sed 's|^\./||')"
+          echo "config.vdf: ${found:-none}"
+          case "${found}" in
+            steamcmd/config/config.vdf | Steam/config/config.vdf | "Library/Application Support/Steam/config/config.vdf") ;;
+            *)
+              echo "steamcmd kept its login somewhere the redaction does not look." >&2
+              exit 1
+              ;;
+          esac
+          for leaked in "${HOME}/Steam" "${HOME}/.steam" "${HOME}/Library/Application Support/Steam"; do
+            if [[ -e "${leaked}" ]]; then
+              echo "steamcmd wrote to ${leaked}, outside the steamship home." >&2
+              exit 1
+            fi
+          done
+
   # Each pin against the manifest Valve serves now. At the same version they must be the same bytes,
   # which is how a Renovate raise, which moves only the version, shows it needs finishing. When
   # Valve is ahead, Renovate raises the pin, so that is a notice rather than a failure.
