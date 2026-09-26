@@ -9,7 +9,7 @@ repository = "https://github.com/Aureliolo/steamship"
 readme = "README.md"
 keywords = ["steam", "steamworks", "steamcmd", "gamedev", "deploy"]
 categories = ["command-line-utilities", "game-development", "development-tools::build-utils"]
-include = ["/src", "/LICENSE-APACHE", "/LICENSE-MIT", "/README.md"]
+include = ["/src", "/pins", "/LICENSE-APACHE", "/LICENSE-MIT", "/README.md"]
 
 [dependencies]
 # Already in the tree through clap: colour that turns itself off when the output is not a

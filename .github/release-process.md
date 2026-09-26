@@ -30,8 +30,8 @@ and then publishes:
    runs no code from the repository.
 5. **publish** checks every file once more the way you would, from the file alone, and creates
    the GitHub release.
-6. **crates**, once turned on, publishes the same tagged source to crates.io with no stored
-   token: crates.io trusts this workflow, and a short-lived token is the whole credential.
+6. **crates** publishes the same tagged source to crates.io with no stored token: crates.io
+   trusts this workflow, and a short-lived token is the whole credential.
 
 ## What a release carries
 

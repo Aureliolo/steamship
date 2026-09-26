@@ -64,6 +64,12 @@ jobs:
         if: '!cancelled()'
         run: cargo test --locked
 
+      # The crate as crates.io would receive it, built from its package alone: a file the build
+      # reads but the package leaves out fails here rather than at publishing.
+      - name: Build the published package
+        if: '!cancelled()'
+        run: cargo publish --dry-run --locked
+
   # A floor on the lines the tests run, measured on Linux, where the Unix-only checks run too. A
   # change that adds code without tests for it fails here.
   coverage:

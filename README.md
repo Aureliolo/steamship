@@ -30,8 +30,6 @@ what steamcmd leaves out:
 
 It works with any engine: anything that ends in a folder of files per platform can be shipped.
 
-> **Status:** in development, nothing released yet. This README is the contract for 1.0.
-
 ## Install
 
 Download the binary for your system from
