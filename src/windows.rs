@@ -6,16 +6,17 @@
 )]
 
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::{OsStr, OsString, c_void};
 use std::fs::File;
 use std::io::{self, Read as _};
 use std::iter;
+use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStrExt as _;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle, RawHandle};
 use std::panic;
 use std::path::Path;
 use std::process;
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -591,15 +592,14 @@ impl User {
 struct Security {
     /// Freed with `LocalFree`; `acl` points into it.
     descriptor: PSECURITY_DESCRIPTOR,
-    acl: *mut ACL,
+    /// None for a null list, which Windows reads as everyone being allowed everything.
+    acl: Option<NonNull<ACL>>,
 }
 
 impl Security {
     fn of(name: &[u16]) -> io::Result<Self> {
-        let mut security = Self {
-            descriptor: ptr::null_mut(),
-            acl: ptr::null_mut(),
-        };
+        let mut acl = MaybeUninit::<*mut ACL>::uninit();
+        let mut descriptor = MaybeUninit::<PSECURITY_DESCRIPTOR>::uninit();
         // SAFETY: `name` is NUL-terminated, and both outputs are valid places for pointers.
         let status = unsafe {
             GetNamedSecurityInfoW(
@@ -608,13 +608,20 @@ impl Security {
                 DACL_SECURITY_INFORMATION,
                 ptr::null_mut(),
                 ptr::null_mut(),
-                &raw mut security.acl,
+                acl.as_mut_ptr(),
                 ptr::null_mut(),
-                &raw mut security.descriptor,
+                descriptor.as_mut_ptr(),
             )
         };
         win32(status)?;
-        Ok(security)
+        // SAFETY: the call succeeded, and on success it writes both.
+        let descriptor = unsafe { descriptor.assume_init() };
+        // SAFETY: as above.
+        let acl = unsafe { acl.assume_init() };
+        Ok(Self {
+            descriptor,
+            acl: NonNull::new(acl),
+        })
     }
 
     fn is_protected(&self) -> bool {
@@ -629,30 +636,32 @@ impl Security {
 
     /// Each entry's type, flags and access, and whether it is for `user`.
     fn entries(&self, user: &User) -> Vec<(u32, u32, u32, bool)> {
-        if self.acl.is_null() {
+        let Some(acl) = self.acl else {
             return Vec::new();
-        }
-        // SAFETY: a list that is there points into the descriptor, alive as long as `self`.
-        let count = unsafe { (*self.acl).AceCount };
+        };
+        // SAFETY: the list points into the descriptor, alive as long as `self`.
+        let count = unsafe { acl.as_ref() }.AceCount;
         (0..u32::from(count))
             .filter_map(|index| {
-                let mut entry = ptr::null_mut();
-                // SAFETY: `index` is below the list's count.
-                if unsafe { GetAce(self.acl, index, &raw mut entry) } == 0_i32 {
+                let mut found = MaybeUninit::<*mut c_void>::uninit();
+                // SAFETY: `index` is below the list's count, and `found` is a place for a pointer.
+                if unsafe { GetAce(acl.as_ptr(), index, found.as_mut_ptr()) } == 0_i32 {
                     return None;
                 }
-                let entry: *const ACCESS_ALLOWED_ACE = entry.cast();
+                // SAFETY: the call succeeded, and on success it writes the pointer.
+                let entry =
+                    NonNull::new(unsafe { found.assume_init() })?.cast::<ACCESS_ALLOWED_ACE>();
                 // SAFETY: every kind of entry starts with its header and then its access mask,
                 // and SidStart is read only for the kind that has one.
                 let ACCESS_ALLOWED_ACE {
                     Header: header,
                     Mask: mask,
                     ..
-                } = unsafe { *entry };
+                } = unsafe { entry.read() };
                 let kind = u32::from(header.AceType);
                 let mine = kind == ACCESS_ALLOWED_ACE_TYPE && {
                     // SAFETY: an access-allowed entry holds its SID from SidStart on.
-                    let sid = unsafe { &raw const (*entry).SidStart };
+                    let sid = unsafe { &raw const (*entry.as_ptr()).SidStart };
                     // SAFETY: both SIDs are valid for the length of the call.
                     let equal = unsafe { EqualSid(sid.cast_mut().cast(), user.sid()) };
                     equal != 0_i32

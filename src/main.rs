@@ -158,9 +158,11 @@ fn run_login(named: Option<&str>) -> ExitCode {
     };
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
+    // The account's name is never printed: it is half of what logs it in, and output like this
+    // ends up in logs that others read.
     println!(
-        "steamcmd asks for the password of {account} and a Steam Guard code, or for approval in \
-         the Steam Mobile app; steamship reads neither."
+        "steamcmd asks for the build account's password and a Steam Guard code, or for approval \
+         in the Steam Mobile app; steamship reads neither."
     );
     let environment = steamcmd::environment(&home, Platform::THIS);
     let code = match run::attached(&program, &steamcmd::login(&account), &environment, &root) {
@@ -175,14 +177,16 @@ fn run_login(named: Option<&str>) -> ExitCode {
             .map(|code| format!(" (it exited {code})"))
             .unwrap_or_default();
         return fail(
-            &format!("steamcmd did not log {account} in{exited}"),
+            &format!("steamcmd did not log the build account in{exited}"),
             FAILED,
         );
     }
     if let Err(error) = account.remember(&home) {
         return fail(&format!("{}: {error}", home.display()), FAILED);
     }
-    println!("{account} is logged in; uploads use the login steamcmd keeps, until it expires");
+    println!(
+        "the build account is logged in; uploads use the login steamcmd keeps, until it expires"
+    );
     ExitCode::SUCCESS
 }
 
@@ -251,17 +255,12 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         log.as_deref().map(String::from_utf8_lossy).as_deref(),
         request.preview,
     );
-    let code = report(&outcome, &prepared, &account, &saved);
+    let code = report(&outcome, &prepared, &saved);
     install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(code)
 }
 
-fn report(
-    outcome: &upload::Outcome,
-    prepared: &upload::Prepared,
-    account: &Account,
-    saved: &Path,
-) -> ExitCode {
+fn report(outcome: &upload::Outcome, prepared: &upload::Prepared, saved: &Path) -> ExitCode {
     let app = prepared.app_id;
     match outcome {
         upload::Outcome::Built { build_id } => {
@@ -279,7 +278,7 @@ fn report(
         }
         upload::Outcome::NotLoggedIn(line) => {
             eprintln!("{line}");
-            eprintln!("run `steamship login --account {account}` to log in again");
+            eprintln!("log the build account in again with `steamship login`");
             ExitCode::from(LOGIN)
         }
         upload::Outcome::Failed(reasons) => {

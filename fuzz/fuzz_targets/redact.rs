@@ -13,12 +13,14 @@ fuzz_target!(|data: &[u8]| {
     let (file, output) = data.split_at(split);
     let redactor = Redactor::from_texts(&[file.to_vec()]);
     let redacted = redactor.redact(output);
-    for secret in redactor.secrets() {
+    // A failure names the secret by its place, as steamship would: the input that found it is
+    // kept by the fuzzer, which is where to look.
+    for (index, secret) in redactor.secrets().iter().enumerate() {
         assert!(
             !redacted
                 .windows(secret.len())
                 .any(|window| window == secret.as_slice()),
-            "{secret:?} is left in {redacted:?}"
+            "secret {index} is left in the output"
         );
     }
     assert_eq!(

@@ -73,6 +73,9 @@ impl Redactor {
     }
 
     fn sorted(mut secrets: Vec<Vec<u8>>) -> Self {
+        // Replacing a secret no longer than the marker need not shorten the output, and could
+        // put the secret back for the next pass to find, forever.
+        secrets.retain(|secret| secret.len() > MARKER.len());
         secrets.sort_by(|left, right| right.len().cmp(&left.len()).then(left.cmp(right)));
         secrets.dedup();
         Self { secrets }
@@ -267,7 +270,12 @@ mod tests {
         let redactor = Redactor::for_home(home.path()).unwrap();
         for index in 0..places.len() {
             let secret = format!("secret_number_{index}_of_five");
-            assert_eq!(redactor.redact(secret.as_bytes()), MARKER, "{secret}");
+            assert_eq!(
+                redactor.redact(secret.as_bytes()),
+                MARKER,
+                "the secret in {}",
+                places.get(index).copied().unwrap_or_default()
+            );
         }
     }
 

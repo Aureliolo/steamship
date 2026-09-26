@@ -106,7 +106,7 @@ fn faked() -> tempfile::TempDir {
          echo \"home: $HOME\"\n\
          echo \"folder: $PWD\"\n\
          [ -n \"$STEAMSHIP_FAKE_CHANGE\" ] && echo >> \"$0\"\n\
-         exit \"${STEAMSHIP_FAKE_EXIT:-0}\"\n",
+         exit \"$((STEAMSHIP_FAKE_EXIT + 0))\"\n",
     )
 }
 
@@ -146,13 +146,14 @@ fn login_runs_steamcmd_for_the_account_in_the_home_and_remembers_it() {
     );
     assert!(
         stdout.ends_with(
-            "build_bot is logged in; uploads use the login steamcmd keeps, until it expires\n"
+            "the build account is logged in; uploads use the login steamcmd keeps, until it \
+             expires\n"
         ),
         "{stdout}"
     );
-    let (code, stdout, _) = steamship(&["login"], Some(home.path()), &[]);
-    assert_eq!(code, Some(0_i32));
-    assert!(stdout.contains(" +login build_bot "), "{stdout}");
+    let (again, said, _) = steamship(&["login"], Some(home.path()), &[]);
+    assert_eq!(again, Some(0_i32));
+    assert!(said.contains(" +login build_bot "), "{said}");
 }
 
 #[cfg(unix)]
@@ -168,7 +169,7 @@ fn login_that_steamcmd_refuses_exits_1_and_remembers_nothing() {
         (code, stderr.as_str()),
         (
             Some(1_i32),
-            "steamcmd did not log build_bot in (it exited 5)\n"
+            "steamcmd did not log the build account in (it exited 5)\n"
         )
     );
     assert!(!home.path().join("account").exists());
@@ -407,7 +408,9 @@ fn written(folder: &Path, except: &[&str]) -> Vec<(String, Vec<u8>)> {
                 .into_owned();
             if path.is_dir() {
                 pending.push(path);
-            } else if !except.contains(&relative.as_str()) {
+                continue;
+            }
+            if !except.contains(&relative.as_str()) {
                 found.push((relative, fs::read(&path).unwrap()));
             }
         }
@@ -417,12 +420,13 @@ fn written(folder: &Path, except: &[&str]) -> Vec<(String, Vec<u8>)> {
 
 #[cfg(unix)]
 fn assert_no_secret_in(what: &str, contents: &[u8]) {
-    for secret in SECRETS {
+    // A failure names the secret by its place in SECRETS: printing it would be the leak itself.
+    for (index, secret) in SECRETS.iter().enumerate() {
         assert!(
             !contents
                 .windows(secret.len())
                 .any(|window| window == secret.as_bytes()),
-            "{what} holds {secret}"
+            "{what} holds secret {index}"
         );
     }
 }
@@ -470,7 +474,7 @@ fn an_upload_without_a_login_says_to_log_in_and_exits_3() {
     assert_eq!(code, Some(3_i32));
     assert_eq!(
         stderr,
-        "Cached credentials not found.\nrun `steamship login --account build_bot` to log in again\n"
+        "Cached credentials not found.\nlog the build account in again with `steamship login`\n"
     );
     assert_no_secret_in("stdout", stdout.as_bytes());
     assert_no_secret_in("stderr", stderr.as_bytes());
