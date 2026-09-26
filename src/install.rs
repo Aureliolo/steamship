@@ -18,7 +18,14 @@ use zip::ZipArchive;
 
 use crate::digest;
 use crate::download;
+use crate::magic;
 use crate::manifest::{Manifest, Package};
+// What each system does differently lives in a module of its own, which is how every line of it
+// is compiled, tested and mutation-tested on the system it is for.
+#[cfg(unix)]
+use crate::unix as native;
+#[cfg(windows)]
+use crate::windows as native;
 
 /// steamcmd's folder in the home.
 pub const FOLDER: &str = "steamcmd";
@@ -208,9 +215,8 @@ fn clear(path: &Path) -> Result<(), Error> {
 
 /// Whether `archive` is there and is exactly the file `package` pins.
 fn is_pinned(archive: &Path, package: &Package) -> Result<bool, Error> {
-    match fs::metadata(archive) {
-        Ok(metadata) if metadata.len() == package.size => Ok(sha256(archive)? == package.sha256),
-        Ok(_) => Ok(false),
+    match File::open(archive) {
+        Ok(mut opened) => Ok(digest::sha256(&mut opened).map_err(at(archive))? == package.sha256),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(Error::Io {
             path: archive.to_path_buf(),
@@ -261,7 +267,7 @@ fn unpack(archive: &Path, into: &Path, name: &str) -> Result<(), Error> {
                     relative.display()
                 )));
             }
-            make_link(&link, &target).map_err(at(&target))?;
+            native::make_link(&link, &target).map_err(at(&target))?;
             continue;
         }
         let mut out = File::create(&target).map_err(at(&target))?;
@@ -270,7 +276,7 @@ fn unpack(archive: &Path, into: &Path, name: &str) -> Result<(), Error> {
         let _: u64 = io::copy(&mut entry, &mut out)
             .map_err(|error| refuse(format!("cannot be unpacked: {error}")))?;
         out.flush().map_err(at(&target))?;
-        mark_if_program(&target)?;
+        native::mark_if_program(&target).map_err(at(&target))?;
     }
     Ok(())
 }
@@ -292,60 +298,6 @@ fn stays_inside(entry: &Path, target: &str) -> bool {
         }
     }
     true
-}
-
-#[cfg(unix)]
-fn make_link(target: &str, link: &Path) -> io::Result<()> {
-    crate::unix::symlink(target, link)
-}
-
-/// Only macOS packages hold links, and they are only ever unpacked on macOS.
-#[cfg(not(unix))]
-fn make_link(_: &str, _: &Path) -> io::Result<()> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "a package for this system holds a link",
-    ))
-}
-
-/// Valve's zips carry no permissions, so a program is made executable here, as steamcmd's own
-/// installer does; everything else is left readable only.
-#[cfg(unix)]
-fn mark_if_program(path: &Path) -> Result<(), Error> {
-    let mode = if looks_like_program(path)? {
-        0o755
-    } else {
-        0o644
-    };
-    crate::unix::set_mode(path, mode).map_err(at(path))
-}
-
-#[cfg(not(unix))]
-#[expect(
-    clippy::unnecessary_wraps,
-    reason = "the same signature as the Unix one"
-)]
-const fn mark_if_program(_: &Path) -> Result<(), Error> {
-    Ok(())
-}
-
-/// Whether `path` starts the way a program for any of the three systems does: a Windows
-/// executable, an ELF or Mach-O file, or a script.
-fn looks_like_program(path: &Path) -> Result<bool, Error> {
-    const STARTS: [&[u8]; 8] = [
-        b"MZ",
-        b"#!",
-        b"\x7fELF",
-        b"\xfe\xed\xfa\xce",
-        b"\xfe\xed\xfa\xcf",
-        b"\xce\xfa\xed\xfe",
-        b"\xcf\xfa\xed\xfe",
-        b"\xca\xfe\xba\xbe",
-    ];
-    let mut start = Vec::new();
-    let opened = File::open(path).map_err(at(path))?;
-    let _: usize = opened.take(4).read_to_end(&mut start).map_err(at(path))?;
-    Ok(STARTS.iter().any(|magic| start.starts_with(magic)))
 }
 
 /// What was unpacked: every file with its SHA-256 and every link with its target, by path from
@@ -465,7 +417,10 @@ impl Inventory {
         }
         for (relative, kind) in walk(root)? {
             let recorded = self.files.contains_key(&relative) || self.links.contains_key(&relative);
-            if !recorded && (kind == Kind::Link || looks_like_program(&root.join(&relative))?) {
+            let path = root.join(&relative);
+            if !recorded
+                && (kind == Kind::Link || magic::looks_like_program(&path).map_err(at(&path))?)
+            {
                 changes.push(format!("{relative} is new"));
             }
         }
@@ -518,6 +473,38 @@ fn walk(root: &Path) -> Result<Vec<(String, Kind)>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_inventory_describes_only_its_own_system_and_version() {
+        let inventory = Inventory {
+            system: "win32".into(),
+            version: 7,
+            files: BTreeMap::new(),
+            links: BTreeMap::new(),
+        };
+        let manifest = |system: &str, version| Manifest {
+            system: system.into(),
+            version,
+            packages: Vec::new(),
+        };
+        assert!(inventory.describes(&manifest("win32", 7)));
+        assert!(!inventory.describes(&manifest("win32", 8)));
+        assert!(!inventory.describes(&manifest("linux", 7)));
+    }
+
+    #[test]
+    fn an_inventory_reads_back_as_it_was_written() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("steamcmd.inventory");
+        let inventory = Inventory {
+            system: "osx".into(),
+            version: 9,
+            files: BTreeMap::from([("dir/with space.dylib".to_owned(), [7_u8; 32])]),
+            links: BTreeMap::from([("Current".to_owned(), "A".to_owned())]),
+        };
+        inventory.write(&path).unwrap();
+        assert_eq!(Inventory::read(&path), Some(inventory));
+    }
 
     #[test]
     fn says_what_went_wrong() {

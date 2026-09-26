@@ -107,6 +107,27 @@ mod tests {
         );
     }
 
+    /// A writer that only counts the flushes it is asked for.
+    struct Flushes(usize);
+
+    impl Write for Flushes {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.0 = self.0.saturating_add(1);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_flush_reaches_the_writer_underneath() {
+        let mut hashing = Hashing::new(Flushes(0));
+        hashing.flush().unwrap();
+        assert_eq!(hashing.finish().1.0, 1);
+    }
+
     #[test]
     fn reads_only_exactly_64_hexadecimal_digits() {
         assert_eq!(

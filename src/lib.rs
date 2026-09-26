@@ -6,6 +6,7 @@ pub mod digest;
 pub mod download;
 pub mod elf;
 pub mod install;
+pub mod magic;
 pub mod manifest;
 pub mod pattern;
 pub mod platform;
@@ -13,3 +14,5 @@ pub mod scripts;
 #[cfg(unix)]
 pub mod unix;
 pub mod vdf;
+#[cfg(windows)]
+pub mod windows;

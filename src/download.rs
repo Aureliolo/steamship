@@ -211,6 +211,7 @@ where
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use std::iter;
     use std::net::TcpListener;
 
     use crate::digest;
@@ -326,11 +327,15 @@ mod tests {
     }
 
     /// Serves `responses` in order, one per connection, on a local port; answers the address.
+    /// Any request past the script is answered with a server error, so code that asks more often
+    /// than it should fails at once instead of waiting on a server that has nothing to say.
     fn serve(responses: Vec<Vec<u8>>) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/package", listener.local_addr().unwrap());
+        let unscripted = response("599 Not In The Script", b"");
+        let replies = responses.into_iter().chain(iter::repeat_n(unscripted, 16));
         drop(thread::spawn(move || {
-            for reply in responses {
+            for reply in replies {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut request = Vec::new();
                 let mut byte = [0_u8; 1];

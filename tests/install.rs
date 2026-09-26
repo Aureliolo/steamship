@@ -10,12 +10,10 @@ use std::cell::Cell;
 use std::fs::{self, File};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use steamship::digest;
 use steamship::install::{self, Error, Outcome};
 use steamship::manifest::{Manifest, Package};
-use steamship::platform::Platform;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
@@ -388,70 +386,116 @@ fn a_link_that_would_point_outside_is_refused() {
     );
 }
 
-/// `steamship install` with `STEAMSHIP_HOME` set to `home`, or with no environment at all.
-fn run(home: Option<&Path>) -> (Option<i32>, String, String) {
-    let mut built = Command::new(env!("CARGO_BIN_EXE_steamship"));
-    let command = match home {
-        Some(home) => built.arg("install").env("STEAMSHIP_HOME", home),
-        None => built.arg("install").env_clear(),
-    };
-    let output = command.output().unwrap();
-    (
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
+#[test]
+fn an_install_of_another_version_does_not_verify() {
+    let setup = Setup::new();
+    let installed = steamcmd(&setup);
+    let _: Outcome = setup.install(&installed, &Cell::new(0)).unwrap();
+    let newer = Setup::manifest(2, installed.packages);
+    let error = install::verify(&setup.home, &newer).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .ends_with("no install of version 2 is recorded"),
+        "{error}"
+    );
+}
+
+#[test]
+fn a_recorded_link_that_is_not_there_is_named() {
+    let setup = Setup::new();
+    let manifest = steamcmd(&setup);
+    let fetched = Cell::new(0);
+    let _: Outcome = setup.install(&manifest, &fetched).unwrap();
+    let inventory = setup.home.join("steamcmd.inventory");
+    let recorded = fs::read_to_string(&inventory).unwrap();
+    fs::write(
+        &inventory,
+        format!("{recorded}link Versions/Current -> A\n"),
     )
-}
-
-/// A home that records the pinned steamcmd as installed, with `files` in its inventory.
-fn recorded(files: &str) -> tempfile::TempDir {
-    let home = tempfile::tempdir().unwrap();
-    let pinned = Manifest::pinned(Platform::THIS).unwrap();
-    fs::create_dir_all(home.path().join(install::FOLDER)).unwrap();
-    let inventory = format!(
-        "steamship inventory 1\nsystem {}\nversion {}\n{files}",
-        pinned.system, pinned.version
-    );
-    fs::write(home.path().join("steamcmd.inventory"), inventory).unwrap();
-    home
-}
-
-#[test]
-fn the_command_says_when_the_install_is_as_pinned() {
-    let home = recorded("");
-    let (code, stdout, stderr) = run(Some(home.path()));
-    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
-    assert!(stdout.ends_with(" is as pinned\n"), "{stdout}");
-}
-
-#[test]
-fn the_command_names_what_changed_and_exits_4() {
-    let home = recorded(&format!("file {} steamcmd.exe\n", "0".repeat(64)));
-    let (code, stdout, stderr) = run(Some(home.path()));
-    assert_eq!((code, stdout.as_str()), (Some(4_i32), ""));
-    assert!(
-        stderr.trim_end().ends_with("steamcmd.exe is missing"),
-        "{stderr}"
+    .unwrap();
+    assert_eq!(
+        changes(setup.install(&manifest, &fetched)),
+        ["Versions/Current no longer links to A"]
     );
 }
 
-#[test]
-fn the_command_turns_a_second_run_away_and_exits_1() {
-    let home = recorded("");
-    let held = File::create(home.path().join("steamship.lock")).unwrap();
-    held.try_lock().unwrap();
-    let (code, _, stderr) = run(Some(home.path()));
-    assert_eq!(code, Some(1_i32));
-    assert!(stderr.contains("another steamship is using"), "{stderr}");
-    held.unlock().unwrap();
+/// Keeps a file out of the installer's reach, neither readable nor removable, until dropped.
+///
+/// Unix, for a user who is not root, does it with permissions: none on the file, and a folder
+/// whose entries cannot change. Windows does it by holding the file open and sharing it with
+/// nobody, which is what a virus scanner or an open editor does to a file there.
+struct Held {
+    #[cfg(unix)]
+    path: PathBuf,
+    #[cfg(windows)]
+    _open: File,
+}
+
+impl Held {
+    #[cfg(unix)]
+    fn new(path: &Path) -> Self {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(0o000)).unwrap();
+        let folder = path.parent().unwrap();
+        fs::set_permissions(folder, fs::Permissions::from_mode(0o500)).unwrap();
+        Self {
+            path: path.to_path_buf(),
+        }
+    }
+
+    #[cfg(windows)]
+    fn new(path: &Path) -> Self {
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        let open = File::options().read(true).share_mode(0).open(path).unwrap();
+        Self { _open: open }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Held {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        // Put back, so the temporary folder can be cleaned up after the test.
+        let folder = self.path.parent().unwrap();
+        fs::set_permissions(folder, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
 }
 
 #[test]
-fn the_command_says_where_it_could_not_find_a_home_and_exits_1() {
-    let (code, stdout, stderr) = run(None);
-    assert_eq!((code, stdout.as_str()), (Some(1_i32), ""));
+fn a_download_that_cannot_be_read_is_an_error_not_a_refetch() {
+    let setup = Setup::new();
+    let manifest = steamcmd(&setup);
+    let downloads = setup.home.join("downloads");
+    fs::create_dir_all(&downloads).unwrap();
+    let unreadable = downloads.join(&manifest.packages.first().unwrap().file);
+    fs::write(&unreadable, b"whatever").unwrap();
+    let held = Held::new(&unreadable);
+    let fetched = Cell::new(0);
+    let result = setup.install(&manifest, &fetched);
+    drop(held);
     assert!(
-        stderr.starts_with("neither STEAMSHIP_HOME nor "),
-        "{stderr}"
+        matches!(&result, Err(Error::Io { path, .. }) if *path == unreadable),
+        "{result:?}"
+    );
+    assert_eq!(fetched.get(), 0);
+}
+
+#[test]
+fn leftovers_that_cannot_be_cleared_are_an_error() {
+    let setup = Setup::new();
+    let staging = setup.home.join("steamcmd.new");
+    fs::create_dir_all(staging.join("stuck")).unwrap();
+    fs::write(staging.join("stuck/file"), b"x").unwrap();
+    let held = Held::new(&staging.join("stuck/file"));
+    let result = setup.install(&steamcmd(&setup), &Cell::new(0));
+    drop(held);
+    assert!(
+        matches!(&result, Err(Error::Io { path, .. }) if *path == staging),
+        "{result:?}"
     );
 }

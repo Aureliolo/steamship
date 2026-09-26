@@ -6,7 +6,7 @@ use std::io;
 use std::os::unix::fs::{PermissionsExt as _, symlink as make_symlink};
 use std::path::Path;
 
-use crate::elf;
+use crate::{elf, magic};
 
 /// Says what is wrong when `file` is a Linux program that nobody may execute.
 #[must_use]
@@ -28,12 +28,18 @@ pub fn missing_executable_bit(file: &Path) -> Option<String> {
     }
 }
 
-/// Sets `path`'s permission bits to exactly `mode`.
+/// Valve's zips carry no permissions, so a program is made executable here, as steamcmd's own
+/// installer does, and everything else readable only.
 ///
 /// # Errors
 ///
-/// When the file system refuses.
-pub fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
+/// When `path` cannot be read, or the file system refuses the change.
+pub fn mark_if_program(path: &Path) -> io::Result<()> {
+    let mode = if magic::looks_like_program(path)? {
+        0o755
+    } else {
+        0o644
+    };
     fs::set_permissions(path, fs::Permissions::from_mode(mode))
 }
 
@@ -42,6 +48,6 @@ pub fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
 /// # Errors
 ///
 /// When the file system refuses, or `link` exists.
-pub fn symlink(target: &str, link: &Path) -> io::Result<()> {
+pub fn make_link(target: &str, link: &Path) -> io::Result<()> {
     make_symlink(target, link)
 }
