@@ -3,8 +3,12 @@
 locale = "en-gb"
 
 [default.extend-identifiers]
-# Other crates' names, which are not ours to spell: sha2's `finalize`.
+# Other crates' names, which are not ours to spell: sha2's `finalize`, and Windows' own API as
+# windows-sys names it.
 finalize = "finalize"
+InitializeProcThreadAttributeList = "InitializeProcThreadAttributeList"
+Globalization = "Globalization"
+Win32_Globalization = "Win32_Globalization"
 
 [files]
 # Valve's own files, kept byte for byte as Valve serves them, and the licence texts, which are

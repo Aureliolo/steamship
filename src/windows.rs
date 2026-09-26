@@ -67,7 +67,7 @@ pub fn run(
     directory: &Path,
     limit: Duration,
 ) -> io::Result<Finished> {
-    silence_error_dialogs();
+    silence_error_dialogues();
     let desktop = Desktop::create()?;
     let job = Job::create()?;
     let (mut reader, writer) = io::pipe()?;
@@ -98,10 +98,10 @@ pub fn run(
     Ok(Finished { code, output })
 }
 
-/// Windows shows a dialog when a program crashes, or cannot find a disk or a file it was about to
+/// Windows shows a dialogue when a program crashes, or cannot find a disk or a file it was about to
 /// open. The setting is per process and inherited, so set here it reaches steamcmd and everything
 /// steamcmd starts: those failures are then only returned as errors.
-fn silence_error_dialogs() {
+fn silence_error_dialogues() {
     // SAFETY: changes one process-wide flag and returns the previous one; no memory is involved.
     let _: u32 = unsafe {
         SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX)
