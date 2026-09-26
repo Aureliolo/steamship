@@ -13,6 +13,8 @@ use std::fs::{self, File};
 use std::io::{Read as _, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(unix)]
+use std::process::Stdio;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -243,9 +245,6 @@ fn login_typing(
     typed: &str,
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
-    use std::io::Write as _;
-    use std::process::Stdio;
-
     let mut child = Command::new(env!("CARGO_BIN_EXE_steamship"))
         .args(["login", "--account", "build_bot"])
         .env_remove("STEAMSHIP_ACCOUNT")
@@ -935,7 +934,7 @@ where
 fn signal(which: &str, pid: &str) -> bool {
     Command::new("kill")
         .args([which, pid])
-        .stderr(std::process::Stdio::null())
+        .stderr(Stdio::null())
         .status()
         .unwrap()
         .success()
@@ -952,8 +951,8 @@ fn ctrl_c_during_an_upload_ends_steamcmd_with_steamship() {
         .args(["upload", script.to_str().unwrap(), "--version", "1.4.0"])
         .args(["--account", "build_bot"])
         .env("STEAMSHIP_HOME", home.path())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .unwrap();
     let pid_file = home.path().join("steamcmd.pid");
