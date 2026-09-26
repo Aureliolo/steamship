@@ -1,10 +1,13 @@
 //! How steamcmd is started: which file, with what around it, and with which commands.
 
 use std::ffi::OsString;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::account::Account;
+use crate::install;
 use crate::platform::Platform;
 
 /// The file that starts steamcmd in the install at `root`. On Linux and macOS that is Valve's
@@ -30,6 +33,50 @@ pub fn environment(home: &Path, platform: Platform) -> Vec<(OsString, OsString)>
             vec![(OsString::from("HOME"), home.as_os_str().to_owned())]
         }
     }
+}
+
+/// Where steamcmd keeps its state under `home`: its own folder on Windows, `$HOME/Steam` on
+/// Linux, and the folder macOS keeps application data in.
+fn state_folders(home: &Path) -> [PathBuf; 3] {
+    [
+        home.join(install::FOLDER),
+        home.join("Steam"),
+        home.join("Library")
+            .join("Application Support")
+            .join("Steam"),
+    ]
+}
+
+/// The files that hold steamcmd's saved login in `home`, of those that are there.
+///
+/// `config.vdf` holds the token that logs the account in with no password, and each user's
+/// `localconfig.vdf` more about the account.
+///
+/// # Errors
+///
+/// When a folder that would hold one is there but cannot be read.
+pub fn login_files(home: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    for folder in state_folders(home) {
+        // Whatever is there counts, a file that cannot be read included: skipping it would let
+        // the secrets in it through.
+        let config = folder.join("config").join("config.vdf");
+        if config.try_exists()? {
+            files.push(config);
+        }
+        let users = match fs::read_dir(folder.join("userdata")) {
+            Ok(users) => users,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        for user in users {
+            let local = user?.path().join("config").join("localconfig.vdf");
+            if local.try_exists()? {
+                files.push(local);
+            }
+        }
+    }
+    Ok(files)
 }
 
 /// The commands that log `account` in and quit: steamcmd asks for the password and a Steam

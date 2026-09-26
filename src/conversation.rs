@@ -13,6 +13,8 @@ pub enum Step {
     Approve,
     /// The login was approved.
     Approved,
+    /// steamcmd logs in with the login it saved last time, and asks for nothing.
+    Saved,
     /// steamcmd refused the login, for this reason in its own words.
     Refused(String),
     /// A line steamship gives no meaning to, shown as steamcmd wrote it.
@@ -68,6 +70,9 @@ fn line_step(line: &str) -> Step {
     }
     if line.contains("Waiting for confirmation...OK") {
         return Step::Approved;
+    }
+    if line.starts_with("Logging in using cached credentials") {
+        return Step::Saved;
     }
     let chatter = line.is_empty()
         || line.contains("code:")
@@ -177,6 +182,16 @@ mod tests {
         assert_eq!(
             steps(failed),
             [Step::Refused("Rate Limit Exceeded".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_login_steamcmd_saved_is_recognised() {
+        assert_eq!(
+            step(&Event::Line(
+                "Logging in using cached credentials.".to_owned()
+            )),
+            Step::Saved
         );
     }
 

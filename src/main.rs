@@ -7,7 +7,7 @@ use std::io::{self, IsTerminal as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
 use steamship::account::Account;
 use steamship::install::{self, Outcome};
 use steamship::login::{self, Ending, Person};
@@ -33,7 +33,11 @@ const LOGIN: u8 = 3;
 const STEAMCMD: u8 = 4;
 
 #[derive(Debug, Parser)]
-#[command(version, about = "Uploads game builds to Steam with Valve's steamcmd.")]
+#[command(
+    version,
+    about = "Uploads game builds to Steam with Valve's steamcmd.",
+    styles = show::HELP
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -41,24 +45,28 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Read an app build script and its depot scripts, without logging in, and refuse anything
-    /// that would upload the wrong thing.
-    Check {
-        /// The app build script, such as `steam/app_build.vdf`.
-        script: PathBuf,
-    },
-    /// Install the pinned steamcmd, or verify the one already installed. `login` and `upload`
-    /// do this themselves; this does it ahead of time.
-    Install,
-    /// Log the build account in to steamcmd. The password and Steam Guard code asked for are
-    /// passed directly to steamcmd, never logged or saved.
+    /// Log in to Steam, once, for uploads.
+    ///
+    /// Asks for the account's name when none is given or remembered, then the password, and a
+    /// Steam Guard code or approval in the Steam Mobile app. What you type is passed directly to
+    /// steamcmd, never logged or saved.
     Login {
         /// The build account, if not the one the last login remembered.
         #[arg(long, env = "STEAMSHIP_ACCOUNT")]
         account: Option<String>,
     },
-    /// Check the scripts, then build and upload with steamcmd, out of sight, and say the build's
-    /// ID.
+    /// Check the build scripts, without logging in.
+    ///
+    /// Reads an app build script and every depot script it names, and refuses anything that
+    /// would upload the wrong thing.
+    Check {
+        /// The app build script, such as `steam/app_build.vdf`.
+        script: PathBuf,
+    },
+    /// Check, build and upload, then print the build ID.
+    ///
+    /// Runs `check`, then the build, with steamcmd out of sight, and says the build's ID and
+    /// the branch it was set live on.
     Upload {
         /// The app build script, such as `steam/app_build.vdf`.
         script: PathBuf,
@@ -72,15 +80,36 @@ enum Command {
         #[arg(long, env = "STEAMSHIP_ACCOUNT")]
         account: Option<String>,
     },
+    /// Forget the saved login.
+    ///
+    /// Removes the login steamcmd saved and the account steamship remembered; the next upload
+    /// needs `steamship login` first.
+    Logout,
+    /// Install or verify the pinned steamcmd.
+    ///
+    /// `login` and `upload` do this themselves; this does it ahead of time, as in CI.
+    Install,
 }
 
 fn main() -> ExitCode {
-    match Cli::parse().command {
+    let mut cli = Cli::command();
+    if io::stdout().is_terminal() {
+        cli = cli.before_help(show::banner());
+    }
+    let parsed = cli
+        .try_get_matches()
+        .and_then(|matches| Cli::from_arg_matches(&matches));
+    let command = match parsed {
+        Ok(parsed) => parsed.command,
+        Err(error) => error.exit(),
+    };
+    match command {
         Command::Check { script } => run_check(&script),
         Command::Install => run_install(),
         Command::Login { account } => match try_login(account.as_deref()) {
             Ok(code) | Err(code) => code,
         },
+        Command::Logout => run_logout(),
         Command::Upload {
             script,
             version,
@@ -189,6 +218,8 @@ const APPROVING: &str = "waiting for you in the Steam Mobile app";
 #[derive(Debug, Default)]
 struct Typist {
     approving: Option<Spinner>,
+    /// steamcmd used the login it saved, so nothing was asked.
+    saved: bool,
 }
 
 impl Typist {
@@ -220,6 +251,10 @@ impl Person for Typist {
         }
     }
 
+    fn saved(&mut self) {
+        self.saved = true;
+    }
+
     fn said(&mut self, line: &str) {
         if let Some(spinner) = self.approving.take() {
             self.approving = Some(spinner.around(|| show::aside(line), APPROVING, true));
@@ -240,7 +275,42 @@ fn not_logged_in(reason: &str) -> ExitCode {
     ExitCode::from(FAILED)
 }
 
+fn run_logout() -> ExitCode {
+    show::title("logout");
+    let forgot = home().and_then(|home| {
+        let files = steamcmd::login_files(&home)
+            .map_err(|error| fail(&format!("{}: {error}", home.display()), FAILED))?;
+        for file in &files {
+            fs::remove_file(file)
+                .map_err(|error| fail(&format!("{}: {error}", file.display()), FAILED))?;
+        }
+        let account = Account::forget(&home)
+            .map_err(|error| fail(&format!("{}: {error}", home.display()), FAILED))?;
+        Ok((!files.is_empty(), account))
+    });
+    let (login, account) = match forgot {
+        Ok(forgot) => forgot,
+        Err(code) => return code,
+    };
+    if login {
+        show::done("login", "forgotten");
+    } else {
+        show::field("login", "none saved");
+    }
+    if account {
+        show::done("account", "forgotten");
+    } else {
+        show::field("account", "none remembered");
+    }
+    show::success(
+        "logged out",
+        "the next upload needs `steamship login` first",
+    );
+    ExitCode::SUCCESS
+}
+
 fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
+    show::banner_on_terminal();
     show::title("login");
     let (account, source) = account(named, true)?;
     match source {
@@ -289,7 +359,14 @@ fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     account
         .remember(&home)
         .map_err(|error| fail(&format!("{}: {error}", home.display()), FAILED))?;
-    show::success("logged in", "uploads use this login until it expires");
+    if typist.saved {
+        show::success(
+            "already logged in",
+            "uploads use the saved login until it expires; `steamship logout` forgets it",
+        );
+    } else {
+        show::success("logged in", "uploads use this login until it expires");
+    }
     Ok(ExitCode::SUCCESS)
 }
 

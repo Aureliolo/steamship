@@ -6,9 +6,9 @@
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::install;
+use crate::steamcmd;
 
 /// What a secret is replaced with.
 pub const MARKER: &[u8] = b"[redacted]";
@@ -32,18 +32,8 @@ impl Redactor {
     /// When one of those files is there but cannot be read.
     pub fn for_home(home: &Path) -> io::Result<Self> {
         let mut texts = Vec::new();
-        for folder in steam_folders(home) {
-            let config = folder.join("config").join("config.vdf");
-            texts.extend(read_if_there(&config)?);
-            let users = match fs::read_dir(folder.join("userdata")) {
-                Ok(users) => users,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => return Err(error),
-            };
-            for user in users {
-                let local = user?.path().join("config").join("localconfig.vdf");
-                texts.extend(read_if_there(&local)?);
-            }
+        for file in steamcmd::login_files(home)? {
+            texts.extend(read_if_there(&file)?);
         }
         Ok(Self::from_texts(&texts))
     }
@@ -105,18 +95,6 @@ impl Redactor {
         }
         text
     }
-}
-
-/// Where steamcmd keeps its state under `home`: its own folder on Windows, `$HOME/Steam` on
-/// Linux, and the folder macOS keeps application data in.
-fn steam_folders(home: &Path) -> [PathBuf; 3] {
-    [
-        home.join(install::FOLDER),
-        home.join("Steam"),
-        home.join("Library")
-            .join("Application Support")
-            .join("Steam"),
-    ]
 }
 
 fn read_if_there(path: &Path) -> io::Result<Option<Vec<u8>>> {
