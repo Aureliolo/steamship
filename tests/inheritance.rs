@@ -39,6 +39,7 @@ fn a_program_inherits_only_the_handles_it_is_given() {
         run(
             Path::new(r"C:\Windows\System32\cmd.exe"),
             &args,
+            &[],
             &directory,
             Duration::from_secs(60),
         )

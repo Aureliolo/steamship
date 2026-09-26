@@ -4,9 +4,8 @@ on:
   push:
     branches:
       - main
+  # Every pull request, whatever it targets, so that one stacked on another is checked too.
   pull_request:
-    branches:
-      - main
 
 permissions: {}
 
@@ -182,9 +181,47 @@ jobs:
           set -euo pipefail
           export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
           cargo run --locked -- install | tee "${RUNNER_TEMP}/first.txt"
-          grep -q ' installed in ' "${RUNNER_TEMP}/first.txt"
+          grep -q ', installed as pinned$' "${RUNNER_TEMP}/first.txt"
           cargo run --locked -- install | tee "${RUNNER_TEMP}/second.txt"
-          grep -q ' is as pinned$' "${RUNNER_TEMP}/second.txt"
+          grep -q ', pinned and verified$' "${RUNNER_TEMP}/second.txt"
+
+      # The whole of an upload but the login, against Valve's own test app: steamcmd run out of
+      # sight on this system, given the copy of the script, and refused by Steam, since an
+      # anonymous account may not build. Had steamcmd updated itself, the check after the run
+      # would exit 4 rather than 1.
+      - name: Upload a preview anonymously, which Steam refuses
+        run: |
+          set -euo pipefail
+          export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
+          status=0
+          cargo run --locked -- upload tests/fixtures/spacewar/steam/app_build.vdf \
+            --version ci --account anonymous --preview 2> "${RUNNER_TEMP}/upload.txt" || status=$?
+          cat "${RUNNER_TEMP}/upload.txt"
+          test "${status}" -eq 1
+          grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/upload.txt"
+
+      # steamcmd keeps its login in a config.vdf whose place differs by system; the redaction
+      # reads it from three places, and this is where each system shows which one it uses. And
+      # nothing of steamcmd's may land in the runner's own home, which would be the user's.
+      - name: Find steamcmd's login file where the redaction looks, and nowhere else
+        run: |
+          set -euo pipefail
+          home="${RUNNER_TEMP}/steamship home"
+          found="$(cd "${home}" && find . -path '*/config/config.vdf' | sed 's|^\./||')"
+          echo "config.vdf: ${found:-none}"
+          case "${found}" in
+            steamcmd/config/config.vdf | Steam/config/config.vdf | "Library/Application Support/Steam/config/config.vdf") ;;
+            *)
+              echo "steamcmd kept its login somewhere the redaction does not look." >&2
+              exit 1
+              ;;
+          esac
+          for leaked in "${HOME}/Steam" "${HOME}/.steam" "${HOME}/Library/Application Support/Steam"; do
+            if [[ -e "${leaked}" ]]; then
+              echo "steamcmd wrote to ${leaked}, outside the steamship home." >&2
+              exit 1
+            fi
+          done
 
   # Each pin against the manifest Valve serves now. At the same version they must be the same bytes,
   # which is how a Renovate raise, which moves only the version, shows it needs finishing. When
@@ -253,7 +290,8 @@ jobs:
       - name: Check for unused dependencies
         run: cargo machete
 
-  # The parsers read files steamship did not write, so each gets a minute of libFuzzer per run.
+  # The parsers read files and output steamship did not write, so each gets a minute of libFuzzer
+  # per run.
   # Linux only: on Windows the coverage instrumentation links only against the AddressSanitizer
   # runtime, and a sanitizer adds nothing here, where no fuzzed code is unsafe.
   fuzz:
@@ -261,7 +299,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [vdf, elf, pattern]
+        target: [vdf, elf, pattern, redact, terminal]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:

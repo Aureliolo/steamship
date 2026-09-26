@@ -5,23 +5,40 @@
     reason = "Windows' own APIs are the only way to ask Windows these questions"
 )]
 
-use std::ffi::{OsStr, OsString};
+use std::env;
+use std::ffi::{OsStr, OsString, c_void};
 use std::fs::File;
-use std::io::{self, Read as _};
+use std::io::{self, PipeReader, PipeWriter, Read as _};
 use std::iter;
+use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStrExt as _;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle, RawHandle};
 use std::panic;
 use std::path::Path;
 use std::process;
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{
-    GENERIC_ALL, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
-    WAIT_TIMEOUT,
+    ERROR_SUCCESS, GENERIC_ALL, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, INVALID_HANDLE_VALUE,
+    LocalFree, SetHandleInformation, WAIT_TIMEOUT, WIN32_ERROR,
+};
+use windows_sys::Win32::Security::Authorization::{
+    GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+};
+use windows_sys::Win32::Security::{
+    ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAceEx, CONTAINER_INHERIT_ACE,
+    DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid, GetSecurityDescriptorControl,
+    GetTokenInformation, InitializeAcl, OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER, TokenUser,
+};
+use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+use windows_sys::Win32::System::Console::{
+    CONSOLE_MODE, COORD, ClosePseudoConsole, CreatePseudoConsole, ENABLE_ECHO_INPUT,
+    ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, GetConsoleMode, GetStdHandle, HPCON, ReadConsoleW,
+    STD_INPUT_HANDLE, SetConsoleMode,
 };
 use windows_sys::Win32::System::Diagnostics::Debug::{
     SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX, SetErrorMode,
@@ -34,12 +51,14 @@ use windows_sys::Win32::System::JobObjects::{
     SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, CreateDesktopW, HDESK};
+use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows_sys::Win32::System::Threading::{
-    CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList,
-    LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_CREATION_FLAGS,
-    PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
-    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+    CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+    DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
+    GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
+    OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+    PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
+    STARTUPINFOEXW, STARTUPINFOW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 use crate::run::Finished;
@@ -52,6 +71,7 @@ use windows_sys::Win32::Security::WinTrust::{
     WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE, WTHelperGetProvSignerFromChain,
     WTHelperProvDataFromStateData, WinVerifyTrust,
 };
+use windows_sys::core::BOOL;
 
 /// Numbers each desktop this process makes, so that no two runs share one: a desktop goes away
 /// when its last handle closes, and a run opening one by the same name at that moment is refused.
@@ -66,6 +86,7 @@ static DESKTOPS: AtomicU64 = AtomicU64::new(0);
 pub fn run(
     program: &Path,
     args: &[OsString],
+    environment: &[(OsString, OsString)],
     directory: &Path,
     limit: Duration,
 ) -> io::Result<Finished> {
@@ -77,10 +98,11 @@ pub fn run(
     let process = spawn(
         program,
         args,
+        environment_block(environment).as_deref(),
         directory,
         &desktop,
         &job,
-        [input.as_raw_handle(), writer.as_raw_handle()],
+        Streams::Handles([input.as_raw_handle(), writer.as_raw_handle()]),
     )?;
     // The child has its own copies now. Holding ours would keep the output open after it ends.
     drop(writer);
@@ -119,13 +141,19 @@ const JOB_LIMITS: JOB_OBJECT_LIMIT =
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
 
 /// How a program is started: suspended until it is in the job, so that nothing it does happens
-/// outside it; with no console window, which on a desktop nobody sees would only be waste; and
-/// with the attribute list that limits what it inherits.
+/// outside it; with an environment block of UTF-16; and with the attribute list that limits what
+/// it inherits.
 const CREATION: PROCESS_CREATION_FLAGS =
-    CREATE_SUSPENDED | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT;
+    CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
+
+/// A program given pipes has no console window either, which on a desktop nobody sees would
+/// only be waste. One on a pseudo console must not be told so: it would get a console of its own
+/// in place of the pseudo console, and nothing it wrote would arrive.
+const PIPED: PROCESS_CREATION_FLAGS = CREATION | CREATE_NO_WINDOW;
 
 /// The desktop a program runs on. Nobody switches to it, so nothing on it is ever seen, and
 /// Windows keeps the keyboard focus from crossing from one desktop to another.
+#[derive(Debug)]
 struct Desktop {
     handle: HDESK,
     name: Vec<u16>,
@@ -162,6 +190,7 @@ impl Drop for Desktop {
     }
 }
 
+#[derive(Debug)]
 struct Job(OwnedHandle);
 
 impl Job {
@@ -197,9 +226,16 @@ impl Job {
     }
 }
 
+#[derive(Debug)]
 struct Process(OwnedHandle);
 
 impl Process {
+    /// Returns once the process has ended.
+    fn ended(&self) {
+        // SAFETY: the process handle is open for as long as `self`.
+        let _: u32 = unsafe { WaitForSingleObject(self.0.as_raw_handle(), INFINITE) };
+    }
+
     /// The exit code, or none when `limit` passed first and the job was ended.
     fn wait(&self, limit: Duration, job: &Job) -> io::Result<Option<i32>> {
         // INFINITE itself is reserved, so the longest finite wait is one less.
@@ -221,29 +257,247 @@ impl Process {
     }
 }
 
-/// Starts `program` suspended, on `desktop`, in `job`, handing down exactly `handles` (its input
-/// first, then the one its output and errors both go to), and only then lets it run, so that it
-/// never does anything outside the job.
+/// A program running on a pseudo console.
+///
+/// The program reads and writes it as the terminal it takes it for: one that shows its prompts
+/// at once and hides what is typed at a password. It runs, like any other, on a desktop nobody
+/// sees and in a job that ends everything it starts.
+///
+/// Dropped before it is waited for, it ends the program and everything the program started.
+#[derive(Debug)]
+pub struct Terminal {
+    process: Process,
+    /// Closes the console once the program ends, which is what ends its output: the console
+    /// keeps it open for as long as the console is open.
+    closing: Option<JoinHandle<()>>,
+    job: Job,
+    _desktop: Desktop,
+}
+
+impl Terminal {
+    /// Starts `program`, and answers it with what it writes, escapes and all, and what it reads
+    /// as typed. The output ends once the program has.
+    ///
+    /// # Errors
+    ///
+    /// When the console, the desktop, the job or the process cannot be made.
+    pub fn start(
+        program: &Path,
+        args: &[OsString],
+        environment: &[(OsString, OsString)],
+        directory: &Path,
+    ) -> io::Result<(Self, PipeReader, PipeWriter)> {
+        silence_error_dialogues();
+        let desktop = Desktop::create()?;
+        let job = Job::create()?;
+        let (typed, input) = io::pipe()?;
+        let (output, written) = io::pipe()?;
+        // Wide enough that steamcmd's longest line is never broken across two.
+        let console = PseudoConsole::create(&typed, &written, COORD { X: 240, Y: 50 })?;
+        // The console holds its own copies now; ours would keep the output open after it closes.
+        drop(typed);
+        drop(written);
+        let process = spawn(
+            program,
+            args,
+            environment_block(environment).as_deref(),
+            directory,
+            &desktop,
+            &job,
+            Streams::Console(console.0),
+        )?;
+        let watched = Process(process.0.try_clone()?);
+        let closing = thread::spawn(move || {
+            watched.ended();
+            drop(console);
+        });
+        let terminal = Self {
+            process,
+            closing: Some(closing),
+            job,
+            _desktop: desktop,
+        };
+        Ok((terminal, output, input))
+    }
+
+    /// Waits for the program to end and says its exit code.
+    ///
+    /// # Errors
+    ///
+    /// When the exit code cannot be read.
+    pub fn wait(mut self) -> io::Result<Option<i32>> {
+        if let Some(closing) = self.closing.take() {
+            closing
+                .join()
+                .unwrap_or_else(|panic| panic::resume_unwind(panic));
+        }
+        self.process.wait(Duration::MAX, &self.job)
+    }
+}
+
+#[derive(Debug)]
+struct PseudoConsole(HPCON);
+
+impl PseudoConsole {
+    fn create(input: &PipeReader, output: &PipeWriter, size: COORD) -> io::Result<Self> {
+        let mut console: HPCON = 0;
+        // SAFETY: both pipe ends are open for the length of the call, and the console takes its
+        // own copies of them.
+        let result = unsafe {
+            CreatePseudoConsole(
+                size,
+                input.as_raw_handle(),
+                output.as_raw_handle(),
+                0,
+                &raw mut console,
+            )
+        };
+        if result < 0_i32 {
+            Err(io::Error::from_raw_os_error(result))
+        } else {
+            Ok(Self(console))
+        }
+    }
+}
+
+impl Drop for PseudoConsole {
+    fn drop(&mut self) {
+        // SAFETY: the console came from CreatePseudoConsole and is closed once, here.
+        unsafe {
+            ClosePseudoConsole(self.0);
+        }
+    }
+}
+
+/// The keyboard, one character at a time as it is typed and without the console showing it.
+///
+/// The console's own echo, line editing and handling of Ctrl+C are off until this is dropped,
+/// which puts them back.
+#[derive(Debug)]
+pub struct Keys {
+    input: HANDLE,
+    mode: CONSOLE_MODE,
+}
+
+impl Keys {
+    /// The keyboard, or none when input does not come from a console.
+    ///
+    /// # Errors
+    ///
+    /// When the console will not change modes.
+    pub fn open() -> io::Result<Option<Self>> {
+        // SAFETY: asks for this process's own standard input; nothing is freed.
+        let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+        let mut mode = 0;
+        // SAFETY: `mode` is a valid place for the answer; a handle that is no console fails.
+        if unsafe { GetConsoleMode(input, &raw mut mode) } == 0_i32 {
+            return Ok(None);
+        }
+        let raw = mode & !(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT | ENABLE_PROCESSED_INPUT);
+        // SAFETY: as above, with a mode made from the console's own.
+        if unsafe { SetConsoleMode(input, raw) } == 0_i32 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Some(Self { input, mode }))
+    }
+
+    /// The next character typed, or none when input has ended.
+    ///
+    /// # Errors
+    ///
+    /// When the console cannot be read.
+    pub fn read_key(&mut self) -> io::Result<Option<char>> {
+        let mut units = Vec::with_capacity(2);
+        loop {
+            let mut unit = 0_u16;
+            let mut read = 0_u32;
+            // SAFETY: `unit` has room for the one unit asked for, and `read` for the count.
+            let done = unsafe {
+                ReadConsoleW(
+                    self.input,
+                    (&raw mut unit).cast(),
+                    1,
+                    &raw mut read,
+                    ptr::null(),
+                )
+            };
+            if done == 0_i32 {
+                return Err(io::Error::last_os_error());
+            }
+            if read == 0 {
+                return Ok(None);
+            }
+            units.push(unit);
+            // A high surrogate is half a character; the other half is the next unit.
+            if !(0xd800..=0xdbff).contains(&unit) {
+                let decoded = char::decode_utf16(units.iter().copied()).next();
+                units.fill(0);
+                return Ok(Some(
+                    decoded
+                        .and_then(Result::ok)
+                        .unwrap_or(char::REPLACEMENT_CHARACTER),
+                ));
+            }
+        }
+    }
+}
+
+impl Drop for Keys {
+    fn drop(&mut self) {
+        // SAFETY: puts back the mode the console had when this was opened.
+        let _: BOOL = unsafe { SetConsoleMode(self.input, self.mode) };
+    }
+}
+
+/// Where a program's input and output go.
+#[derive(Clone, Copy)]
+enum Streams {
+    /// These handles, handed down: its input first, then the one its output and errors both go
+    /// to.
+    Handles([RawHandle; 2]),
+    /// A pseudo console, which it reads and writes as a terminal.
+    Console(HPCON),
+}
+
+/// Starts `program` suspended, on `desktop`, in `job`, with `streams` and nothing else handed
+/// down, and only then lets it run, so that it never does anything outside the job.
 fn spawn(
     program: &Path,
     args: &[OsString],
+    environment: Option<&[u16]>,
     directory: &Path,
     desktop: &Desktop,
     job: &Job,
-    handles: [RawHandle; 2],
+    streams: Streams,
 ) -> io::Result<Process> {
-    for handle in handles {
-        // SAFETY: both handles are open for the length of this call.
-        if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) }
-            == 0_i32
-        {
-            return Err(io::Error::last_os_error());
+    let (mut list, [input, output], inherit, creation) = match streams {
+        Streams::Handles(handles) => {
+            for handle in handles {
+                // SAFETY: both handles are open for the length of this call.
+                if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) }
+                    == 0_i32
+                {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            (
+                AttributeList::handing_down(&handles)?,
+                handles,
+                1_i32,
+                PIPED,
+            )
         }
-    }
-    let mut list = AttributeList::handing_down(&handles)?;
+        // No standard handles at all: a program that inherits none but is told to use them
+        // talks to the pseudo console, where one left to default could take steamship's.
+        Streams::Console(console) => (
+            AttributeList::on_console(console)?,
+            [INVALID_HANDLE_VALUE, INVALID_HANDLE_VALUE],
+            0_i32,
+            CREATION,
+        ),
+    };
     // STARTUPINFOW asks for a writable name, though CreateProcessW only reads it.
     let mut desktop_name = desktop.name.clone();
-    let [input, output] = handles;
     let info = STARTUPINFOEXW {
         StartupInfo: STARTUPINFOW {
             cb: size_of_u32::<STARTUPINFOEXW>(),
@@ -260,18 +514,19 @@ fn spawn(
     let mut line = command_line(program.as_os_str(), args);
     let directory = wide(directory.as_os_str());
     let mut started = PROCESS_INFORMATION::default();
-    // SAFETY: every buffer is NUL-terminated and outlives the call, `line` is writable as the
-    // call requires, `info` describes a live attribute list, and `started` receives the handles.
-    // Inheritance is on, and the attribute list limits it to exactly `handles`.
+    // SAFETY: every buffer is NUL-terminated and outlives the call, the environment block ends
+    // in the two NULs Windows looks for, `line` is writable as the call requires, `info`
+    // describes a live attribute list, and `started` receives the handles. Handed-down handles
+    // are limited by the attribute list to exactly those; with a console none are inherited.
     let created = unsafe {
         CreateProcessW(
             application.as_ptr(),
             line.as_mut_ptr(),
             ptr::null(),
             ptr::null(),
-            1,
-            CREATION,
-            ptr::null(),
+            inherit,
+            creation,
+            environment.map_or(ptr::null(), |block| block.as_ptr().cast()),
             directory.as_ptr(),
             (&raw const info).cast(),
             &raw mut started,
@@ -309,16 +564,44 @@ fn spawn(
     }
 }
 
-/// A process-thread attribute list naming the only handles a new process inherits.
+/// A process-thread attribute list with one attribute: the only handles a new process inherits,
+/// or the pseudo console it runs on.
 struct AttributeList {
     /// Pointer-aligned storage for the list, which Windows sizes.
     storage: Vec<usize>,
-    /// The handles the list points at, kept here for as long as the list.
-    handles: Box<[RawHandle; 2]>,
+    /// The handles the list points at, when it hands any down, kept for as long as the list.
+    _handles: Option<Box<[RawHandle; 2]>>,
 }
 
 impl AttributeList {
     fn handing_down(handles: &[RawHandle; 2]) -> io::Result<Self> {
+        let kept = Box::new(*handles);
+        let value = (&raw const *kept).cast();
+        Self::with(
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            value,
+            size_of::<[RawHandle; 2]>(),
+            Some(kept),
+        )
+    }
+
+    /// The pseudo console attribute's value is the console handle itself, not a pointer to it.
+    fn on_console(console: HPCON) -> io::Result<Self> {
+        let value = ptr::without_provenance(console.cast_unsigned());
+        Self::with(
+            PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+            value,
+            size_of::<HPCON>(),
+            None,
+        )
+    }
+
+    fn with(
+        attribute: u32,
+        value: *const c_void,
+        size_of_value: usize,
+        handles: Option<Box<[RawHandle; 2]>>,
+    ) -> io::Result<Self> {
         let mut size = 0_usize;
         // SAFETY: a null list with a size to fill is how the needed size is asked for; the call
         // then fails with ERROR_INSUFFICIENT_BUFFER, which is expected.
@@ -326,7 +609,7 @@ impl AttributeList {
             unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &raw mut size) };
         let mut list = Self {
             storage: vec![0; size.div_ceil(size_of::<usize>())],
-            handles: Box::new(*handles),
+            _handles: handles,
         };
         // SAFETY: `storage` holds at least `size` bytes, aligned for the list.
         if unsafe { InitializeProcThreadAttributeList(list.pointer(), 1, 0, &raw mut size) }
@@ -334,18 +617,16 @@ impl AttributeList {
         {
             return Err(io::Error::last_os_error());
         }
-        let handed = &raw const *list.handles;
-        let attribute =
-            usize::try_from(PROC_THREAD_ATTRIBUTE_HANDLE_LIST).map_err(io::Error::other)?;
-        // SAFETY: the list was initialised for one attribute, and the handle array it is told
-        // about lives in `list` itself, so it outlives every use of the list.
+        let attribute = usize::try_from(attribute).map_err(io::Error::other)?;
+        // SAFETY: the list was initialised for one attribute; a value that points anywhere
+        // points into `list.handles`, which lives as long as the list does.
         let updated = unsafe {
             UpdateProcThreadAttribute(
                 list.pointer(),
                 0,
                 attribute,
-                handed.cast(),
-                size_of::<[RawHandle; 2]>(),
+                value,
+                size_of_value,
                 ptr::null_mut(),
                 ptr::null(),
             )
@@ -418,8 +699,263 @@ fn quote(arg: &OsStr, line: &mut Vec<u16>) {
     line.push(quote_mark);
 }
 
+/// steamship's own environment with `changes` made to it, as the block `CreateProcessW` takes,
+/// or none when there are no changes and the program inherits steamship's as it stands.
+fn environment_block(changes: &[(OsString, OsString)]) -> Option<Vec<u16>> {
+    if changes.is_empty() {
+        return None;
+    }
+    let mut variables: Vec<(OsString, OsString)> = env::vars_os()
+        .filter(|(name, _)| {
+            !changes
+                .iter()
+                .any(|(changed, _)| changed.eq_ignore_ascii_case(name))
+        })
+        .chain(changes.iter().cloned())
+        .collect();
+    // Windows keeps the block in order of name, ignoring case, and names are compared that way.
+    variables.sort_by_key(|(name, _)| name.to_ascii_uppercase());
+    let mut block = Vec::new();
+    for (name, value) in variables {
+        block.extend(name.encode_wide());
+        block.push(u16::from(b'='));
+        block.extend(value.encode_wide());
+        block.push(0);
+    }
+    block.push(0);
+    Some(block)
+}
+
 fn wide(text: &OsStr) -> Vec<u16> {
     text.encode_wide().chain([0]).collect()
+}
+
+/// Leaves `folder` to the current user alone, and says whether it had to change anything.
+///
+/// One entry grants them everything, inherited by all the folder holds, and nothing is inherited
+/// from above, where a shared parent could let others in. Windows carries the entry down to what
+/// the folder already holds, which walks all of it, so that is only done when the folder is not
+/// already so.
+///
+/// # Errors
+///
+/// When the folder's permissions cannot be read or set.
+pub fn restrict(folder: &Path) -> io::Result<bool> {
+    let user = User::current()?;
+    let name = wide(folder.as_os_str());
+    if Security::of(&name)?.is_only(&user) {
+        return Ok(false);
+    }
+    // SAFETY: the SID lives in `user`, which outlives the call.
+    let sid_length = unsafe { GetLengthSid(user.sid()) };
+    // An entry's size counts its SID in place of the SidStart field that marks where it begins.
+    let size = size_of_u32::<ACL>()
+        .saturating_add(size_of_u32::<ACCESS_ALLOWED_ACE>())
+        .saturating_sub(size_of_u32::<u32>())
+        .saturating_add(sid_length);
+    let mut storage = vec![0_u32; usize::try_from(size.div_ceil(4)).map_err(io::Error::other)?];
+    let acl: *mut ACL = storage.as_mut_ptr().cast();
+    // SAFETY: `storage` holds at least `size` bytes, aligned as an ACL must be.
+    if unsafe { InitializeAcl(acl, size, ACL_REVISION) } == 0_i32 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the list was sized for exactly this one entry, and the SID is copied into it.
+    if unsafe {
+        AddAccessAllowedAceEx(
+            acl,
+            ACL_REVISION,
+            OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+            FILE_ALL_ACCESS,
+            user.sid(),
+        )
+    } == 0_i32
+    {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `name` is NUL-terminated and `acl` is a complete list; the owner, the group and the
+    // audit list are left as they are.
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            acl,
+            ptr::null(),
+        )
+    };
+    win32(status).map(|()| true)
+}
+
+fn win32(status: WIN32_ERROR) -> io::Result<()> {
+    if status == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(io::Error::from_raw_os_error(status.cast_signed()))
+    }
+}
+
+/// The user this process runs as.
+struct User {
+    /// A `TOKEN_USER` and the SID it points into, as Windows wrote them, pointer-aligned.
+    storage: Vec<usize>,
+}
+
+impl User {
+    fn current() -> io::Result<Self> {
+        // SAFETY: returns a pseudo handle for this process, which needs no closing.
+        let process = unsafe { GetCurrentProcess() };
+        let mut token: HANDLE = ptr::null_mut();
+        // SAFETY: `token` is a valid place for the new handle.
+        if unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut token) } == 0_i32 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the handle is new and owned by nobody else.
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let mut size = 0_u32;
+        // SAFETY: no buffer with a size of 0 is how the needed size is asked for; the call then
+        // fails with ERROR_INSUFFICIENT_BUFFER, which is expected.
+        let _: BOOL = unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                TokenUser,
+                ptr::null_mut(),
+                0,
+                &raw mut size,
+            )
+        };
+        let length = usize::try_from(size).map_err(io::Error::other)?;
+        let mut storage = vec![0_usize; length.div_ceil(size_of::<usize>())];
+        // SAFETY: `storage` holds at least `size` bytes, aligned for a TOKEN_USER.
+        if unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                TokenUser,
+                storage.as_mut_ptr().cast(),
+                size,
+                &raw mut size,
+            )
+        } == 0_i32
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self { storage })
+    }
+
+    const fn sid(&self) -> PSID {
+        let user: *const TOKEN_USER = self.storage.as_ptr().cast();
+        // SAFETY: `storage` holds the TOKEN_USER that GetTokenInformation wrote.
+        unsafe { (*user).User.Sid }
+    }
+}
+
+/// A file or folder's permissions as Windows reports them.
+struct Security {
+    /// Freed with `LocalFree`; `acl` points into it.
+    descriptor: PSECURITY_DESCRIPTOR,
+    /// None for a null list, which Windows reads as everyone being allowed everything.
+    acl: Option<NonNull<ACL>>,
+}
+
+impl Security {
+    fn of(name: &[u16]) -> io::Result<Self> {
+        let mut acl = MaybeUninit::<*mut ACL>::uninit();
+        let mut descriptor = MaybeUninit::<PSECURITY_DESCRIPTOR>::uninit();
+        // SAFETY: `name` is NUL-terminated, and both outputs are valid places for pointers.
+        let status = unsafe {
+            GetNamedSecurityInfoW(
+                name.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                acl.as_mut_ptr(),
+                ptr::null_mut(),
+                descriptor.as_mut_ptr(),
+            )
+        };
+        win32(status)?;
+        // SAFETY: the call succeeded, and on success it writes both.
+        let descriptor = unsafe { descriptor.assume_init() };
+        // SAFETY: as above.
+        let acl = unsafe { acl.assume_init() };
+        Ok(Self {
+            descriptor,
+            acl: NonNull::new(acl),
+        })
+    }
+
+    fn is_protected(&self) -> bool {
+        let mut control = 0_u16;
+        let mut revision = 0_u32;
+        // SAFETY: the descriptor is the one Windows returned, alive until `self` is dropped.
+        let read = unsafe {
+            GetSecurityDescriptorControl(self.descriptor, &raw mut control, &raw mut revision)
+        };
+        read != 0_i32 && control & SE_DACL_PROTECTED != 0
+    }
+
+    /// Each entry's type, flags and access, and whether it is for `user`.
+    fn entries(&self, user: &User) -> Vec<(u32, u32, u32, bool)> {
+        let Some(acl) = self.acl else {
+            return Vec::new();
+        };
+        // SAFETY: the list points into the descriptor, alive as long as `self`.
+        let count = unsafe { acl.as_ref() }.AceCount;
+        (0..u32::from(count))
+            .filter_map(|index| {
+                let mut found = MaybeUninit::<*mut c_void>::uninit();
+                // SAFETY: `index` is below the list's count, and `found` is a place for a pointer.
+                if unsafe { GetAce(acl.as_ptr(), index, found.as_mut_ptr()) } == 0_i32 {
+                    return None;
+                }
+                // SAFETY: the call succeeded, and on success it writes the pointer.
+                let entry =
+                    NonNull::new(unsafe { found.assume_init() })?.cast::<ACCESS_ALLOWED_ACE>();
+                // SAFETY: every kind of entry starts with its header and then its access mask,
+                // and SidStart is read only for the kind that has one.
+                let ACCESS_ALLOWED_ACE {
+                    Header: header,
+                    Mask: mask,
+                    ..
+                } = unsafe { entry.read() };
+                let kind = u32::from(header.AceType);
+                let mine = kind == ACCESS_ALLOWED_ACE_TYPE && {
+                    // SAFETY: an access-allowed entry holds its SID from SidStart on.
+                    let sid = unsafe { &raw const (*entry.as_ptr()).SidStart };
+                    // SAFETY: both SIDs are valid for the length of the call.
+                    let equal = unsafe { EqualSid(sid.cast_mut().cast(), user.sid()) };
+                    equal != 0_i32
+                };
+                Some((kind, u32::from(header.AceFlags), mask, mine))
+            })
+            .collect()
+    }
+
+    fn is_only(&self, user: &User) -> bool {
+        only(self.is_protected(), &self.entries(user))
+    }
+}
+
+/// Whether permissions that are `protected` from the parent's, with `entries`, leave a folder to
+/// its user alone: one entry, allowing that user everything, passed down to all it holds.
+fn only(protected: bool, entries: &[(u32, u32, u32, bool)]) -> bool {
+    protected
+        && entries
+            == [(
+                ACCESS_ALLOWED_ACE_TYPE,
+                OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+                FILE_ALL_ACCESS,
+                true,
+            )]
+}
+
+impl Drop for Security {
+    fn drop(&mut self) {
+        // SAFETY: the descriptor came from GetNamedSecurityInfoW and is freed once, here.
+        let _: HLOCAL = unsafe { LocalFree(self.descriptor) };
+    }
 }
 
 /// Windows has no executable bit, so there is nothing to mark.
@@ -606,14 +1142,14 @@ mod tests {
     use std::os::windows::ffi::OsStringExt as _;
     use std::path::PathBuf;
     use std::slice;
-    use windows_sys::Win32::Foundation::{HLOCAL, HWND, LPARAM, LocalFree};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::Globalization::lstrlenW;
+    use windows_sys::Win32::Security::INHERITED_ACE;
     use windows_sys::Win32::System::StationsAndDesktops::EnumDesktopWindows;
     use windows_sys::Win32::System::StationsAndDesktops::{DESKTOP_READOBJECTS, OpenDesktopW};
     use windows_sys::Win32::System::Threading::GetProcessId;
     use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindowVisible};
-    use windows_sys::core::BOOL;
 
     /// A library Windows installs with a signature of its own inside it, rather than in a
     /// catalogue, which is the kind steamcmd's files carry.
@@ -744,10 +1280,11 @@ mod tests {
         let process = spawn(
             &winver,
             &[],
+            None,
             &env::temp_dir(),
             &desktop,
             &job,
-            [input.as_raw_handle(), output.as_raw_handle()],
+            Streams::Handles([input.as_raw_handle(), output.as_raw_handle()]),
         )
         .unwrap();
         // SAFETY: the process handle is open for as long as `process`.
@@ -780,6 +1317,109 @@ mod tests {
         assert!(desktop_exists(&name));
         drop(desktop);
         assert!(!desktop_exists(&name));
+    }
+
+    #[test]
+    fn a_restricted_folder_is_its_users_alone_down_to_what_it_already_held() {
+        let folder = tempfile::tempdir().unwrap();
+        let held = folder.path().join("config.vdf");
+        fs::write(&held, "token").unwrap();
+        let user = User::current().unwrap();
+        let name = wide(folder.path().as_os_str());
+        assert!(!Security::of(&name).unwrap().is_only(&user));
+        assert!(restrict(folder.path()).unwrap());
+        assert!(Security::of(&name).unwrap().is_only(&user));
+        assert_eq!(
+            Security::of(&wide(held.as_os_str()))
+                .unwrap()
+                .entries(&user),
+            [(
+                ACCESS_ALLOWED_ACE_TYPE,
+                INHERITED_ACE,
+                FILE_ALL_ACCESS,
+                true
+            )]
+        );
+        assert!(!restrict(folder.path()).unwrap(), "already so");
+    }
+
+    #[test]
+    fn a_new_folder_takes_its_permissions_from_its_parent_and_is_not_only_its_users() {
+        let folder = tempfile::tempdir().unwrap();
+        let user = User::current().unwrap();
+        let security = Security::of(&wide(folder.path().as_os_str())).unwrap();
+        assert!(!security.is_protected());
+        let entries = security.entries(&user);
+        let allowed = |mine: bool| {
+            entries
+                .iter()
+                .any(|entry| entry.0 == ACCESS_ALLOWED_ACE_TYPE && entry.3 == mine)
+        };
+        // The temporary folder is shared with the system and administrators, besides its user.
+        assert!(allowed(true) && allowed(false), "{entries:?}");
+        assert!(restrict(folder.path()).unwrap());
+        assert!(
+            Security::of(&wide(folder.path().as_os_str()))
+                .unwrap()
+                .is_protected()
+        );
+    }
+
+    #[test]
+    fn a_pseudo_console_windows_will_not_make_is_an_error() {
+        let (typed, _input) = io::pipe().unwrap();
+        let (_output, written) = io::pipe().unwrap();
+        drop(PseudoConsole::create(&typed, &written, COORD { X: 0, Y: 0 }).unwrap_err());
+        drop(PseudoConsole::create(&typed, &written, COORD { X: 80, Y: 25 }).unwrap());
+    }
+
+    #[test]
+    fn only_a_protected_single_entry_for_the_user_is_the_users_alone() {
+        let alone = [(
+            ACCESS_ALLOWED_ACE_TYPE,
+            OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+            FILE_ALL_ACCESS,
+            true,
+        )];
+        assert!(only(true, &alone));
+        assert!(!only(false, &alone), "inherits whatever its parent allows");
+        let someone_else = [(alone[0].0, alone[0].1, alone[0].2, false)];
+        assert!(!only(true, &someone_else));
+        assert!(!only(true, &[]));
+    }
+
+    #[test]
+    fn a_changed_variable_replaces_steamships_whatever_its_case_and_the_block_stays_in_order() {
+        assert_eq!(environment_block(&[]), None);
+        let block =
+            environment_block(&[(OsString::from("path"), OsString::from("changed"))]).unwrap();
+        assert_eq!(block.last_chunk(), Some(&[0_u16, 0_u16]));
+        let text = String::from_utf16(&block).unwrap();
+        let entries: Vec<&str> = text.trim_end_matches('\0').split('\0').collect();
+        let paths: Vec<&str> = entries
+            .iter()
+            .copied()
+            .filter(|entry| entry.to_ascii_uppercase().starts_with("PATH="))
+            .collect();
+        assert_eq!(paths, ["path=changed"]);
+        let names: Vec<String> = entries
+            .iter()
+            .map(|entry| {
+                entry
+                    .split('=')
+                    .next()
+                    .unwrap_or_default()
+                    .to_ascii_uppercase()
+            })
+            .collect();
+        assert!(names.is_sorted(), "{names:?}");
+    }
+
+    #[test]
+    fn a_folder_that_is_not_there_cannot_be_restricted() {
+        let folder = tempfile::tempdir().unwrap();
+        let error = restrict(&folder.path().join("missing")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
     /// Mostly the units that quoting is about, with anything else mixed in.

@@ -117,6 +117,8 @@ where
     Fetch: Fn(&Package, &Path) -> Result<(), Error>,
 {
     fs::create_dir_all(home).map_err(at(home))?;
+    // The home holds steamcmd's login token, which can publish builds.
+    let _: bool = native::restrict(home).map_err(at(home))?;
     let _held = lock(home)?;
     let root = home.join(FOLDER);
     if let Some(inventory) = Inventory::read(&home.join(INVENTORY))

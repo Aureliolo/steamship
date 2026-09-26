@@ -23,7 +23,8 @@ pub struct Finished {
     pub output: Vec<u8>,
 }
 
-/// Runs `program` with `args` in `directory`, and waits at most `limit` for it.
+/// Runs `program` with `args` and `environment` added to steamship's, in `directory`, and waits
+/// at most `limit` for it.
 ///
 /// # Errors
 ///
@@ -31,16 +32,21 @@ pub struct Finished {
 pub fn run(
     program: &Path,
     args: &[OsString],
+    environment: &[(OsString, OsString)],
     directory: &Path,
     limit: Duration,
 ) -> io::Result<Finished> {
-    native::run(program, args, directory, limit)
+    native::run(program, args, environment, directory, limit)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
+    use std::fs;
+    use std::io::Write as _;
+    use std::sync::mpsc;
+    use std::thread;
     use std::time::Instant;
 
     /// A shell, what makes it run the one line that follows, a line that starts a grandchild
@@ -64,15 +70,25 @@ mod tests {
         "sleep 60 & exit 4",
     );
 
-    fn shell(line: &str, limit: Duration) -> Finished {
-        let args: Vec<OsString> = SHELL
+    fn shell_args(line: &str) -> Vec<OsString> {
+        SHELL
             .1
             .iter()
             .copied()
             .chain([line])
             .map(OsString::from)
-            .collect();
-        run(Path::new(SHELL.0), &args, &env::temp_dir(), limit).unwrap()
+            .collect()
+    }
+
+    fn shell(line: &str, limit: Duration) -> Finished {
+        run(
+            Path::new(SHELL.0),
+            &shell_args(line),
+            &[],
+            &env::temp_dir(),
+            limit,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -131,10 +147,158 @@ mod tests {
         );
     }
 
+    /// A shell line that exits 0 only when `STEAMSHIP_PROBE` is `yes` and the folder it runs in
+    /// holds `marker`.
+    #[cfg(windows)]
+    const PROBE: &str =
+        r#"if "%STEAMSHIP_PROBE%"=="yes" (if exist marker (exit 0) else (exit 5)) else (exit 5)"#;
+    #[cfg(unix)]
+    const PROBE: &str = r#"test "$STEAMSHIP_PROBE" = yes && test -f marker || exit 5"#;
+
+    fn probe() -> [(OsString, OsString); 1] {
+        [(OsString::from("STEAMSHIP_PROBE"), OsString::from("yes"))]
+    }
+
+    /// Runs a shell `line` on a terminal, with `typed` typed into it, and gives its exit code and
+    /// all it wrote.
+    fn on_terminal(
+        args: &[OsString],
+        environment: &[(OsString, OsString)],
+        directory: &Path,
+        typed: &[u8],
+    ) -> (Option<i32>, String) {
+        let (terminal, output, mut input) =
+            native::Terminal::start(Path::new(SHELL.0), args, environment, directory).unwrap();
+        input.write_all(typed).unwrap();
+        let written = to_the_end(output);
+        drop(input);
+        (
+            terminal.wait().unwrap(),
+            String::from_utf8_lossy(&written).into_owned(),
+        )
+    }
+
+    /// All of `output`, which must end within half a minute: output that never ends fails the
+    /// test rather than holding it up for good.
+    fn to_the_end<Output>(mut output: Output) -> Vec<u8>
+    where
+        Output: io::Read + Send + 'static,
+    {
+        let (sender, receiver) = mpsc::channel();
+        let _reading = thread::spawn(move || {
+            let mut written = Vec::new();
+            let read = output.read_to_end(&mut written).map(|_| written);
+            drop(sender.send(read));
+        });
+        receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the output never ended")
+            .unwrap()
+    }
+
+    fn terminal_shell(environment: &[(OsString, OsString)], directory: &Path) -> Option<i32> {
+        on_terminal(&shell_args(PROBE), environment, directory, b"").0
+    }
+
+    fn hidden_shell(environment: &[(OsString, OsString)], directory: &Path) -> Option<i32> {
+        let limit = Duration::from_secs(30);
+        run(
+            Path::new(SHELL.0),
+            &shell_args(PROBE),
+            environment,
+            directory,
+            limit,
+        )
+        .unwrap()
+        .code
+    }
+
+    #[test]
+    fn a_program_on_a_terminal_gets_its_environment_and_folder_and_is_waited_for() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::write(folder.path().join("marker"), "").unwrap();
+        assert_eq!(terminal_shell(&probe(), folder.path()), Some(0_i32));
+        assert_eq!(terminal_shell(&[], folder.path()), Some(5_i32));
+        assert_eq!(terminal_shell(&probe(), &env::temp_dir()), Some(5_i32));
+    }
+
+    /// A line that reads a line typed at its prompt and exits 0 only when that was `hunter2`.
+    /// `cmd` expands `%typed%` as it reads its line, before anything has been typed, and leaves it
+    /// as it is while there is no such variable; the `cmd` it starts then expands it as it reads
+    /// its own line, after `set /p` has set it.
+    #[cfg(windows)]
+    const READS_TYPED: &str =
+        "set /p typed=password: & cmd /d /c if \"%typed%\"==\"hunter2\" (exit 0) else (exit 5)";
+    #[cfg(unix)]
+    const READS_TYPED: &str =
+        "printf 'password: '; read -r typed; test \"$typed\" = hunter2 || exit 5";
+
+    #[test]
+    fn what_is_typed_reaches_a_program_on_a_terminal() {
+        let args = shell_args(READS_TYPED);
+        let (code, written) = on_terminal(&args, &[], &env::temp_dir(), b"hunter2\r");
+        assert_eq!(code, Some(0_i32), "{written:?}");
+        assert!(written.contains("password:"), "{written:?}");
+        let (wrong, _) = on_terminal(&args, &[], &env::temp_dir(), b"hunter3\r");
+        assert_eq!(wrong, Some(5_i32));
+    }
+
+    /// Windows leaves echo to the program, which sets its own console's modes; steamcmd hides a
+    /// password as it is typed.
+    #[cfg(unix)]
+    #[test]
+    fn what_is_typed_on_a_terminal_is_not_echoed() {
+        let (code, written) = on_terminal(
+            &shell_args(READS_TYPED),
+            &[],
+            &env::temp_dir(),
+            b"hunter2\r",
+        );
+        assert_eq!(code, Some(0_i32), "{written:?}");
+        assert!(!written.contains("hunter2"), "{written:?}");
+    }
+
+    #[test]
+    fn the_output_of_a_program_on_a_terminal_ends_when_it_does_whatever_it_left_running() {
+        let (code, _) = on_terminal(&shell_args(SHELL.3), &[], &env::temp_dir(), b"");
+        assert_eq!(code, Some(4_i32));
+    }
+
+    #[test]
+    fn a_program_on_a_terminal_dropped_unwaited_is_ended() {
+        // The line runs for a minute, and holds the output open, unless it is ended.
+        let (terminal, output, _input) = native::Terminal::start(
+            Path::new(SHELL.0),
+            &shell_args(SHELL.2),
+            &[],
+            &env::temp_dir(),
+        )
+        .unwrap();
+        drop(terminal);
+        drop(to_the_end(output));
+    }
+
+    #[test]
+    fn a_hidden_program_gets_its_environment_and_folder() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::write(folder.path().join("marker"), "").unwrap();
+        assert_eq!(hidden_shell(&probe(), folder.path()), Some(0_i32));
+        assert_eq!(hidden_shell(&[], folder.path()), Some(5_i32));
+        assert_eq!(hidden_shell(&probe(), &env::temp_dir()), Some(5_i32));
+    }
+
+    #[test]
+    fn a_program_on_a_terminal_that_is_not_there_is_an_error() {
+        let missing = env::temp_dir().join("steamship-no-such-program");
+        let error = native::Terminal::start(&missing, &[], &[], &env::temp_dir()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
+
     #[test]
     fn a_program_that_is_not_there_is_an_error() {
         let missing = env::temp_dir().join("steamship-no-such-program");
-        let error = run(&missing, &[], &env::temp_dir(), Duration::from_secs(5)).unwrap_err();
+        let limit = Duration::from_secs(5);
+        let error = run(&missing, &[], &[], &env::temp_dir(), limit).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 }
