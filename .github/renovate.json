@@ -63,8 +63,8 @@
     {
       "description": "Valve's steamcmd manifests, one per system, pinned byte for byte in pins/. Only the version inside a pin can be raised here; the pins check in CI then fails on the stale packages and says to run `cargo run --example pins`, which rewrites the pin from Valve's live manifest for review.",
       "customType": "regex",
-      "managerFilePatterns": ["/^pins/steam_cmd_(win32|linux|osx)\\.vdf$/"],
-      "matchStrings": ["^\"(?<system>win32|linux|osx)\"\\s*\\{\\s*\"version\"\\s+\"(?<currentValue>\\d+)\""],
+      "managerFilePatterns": ["/^pins/steam_cmd_(win64|linux|osx)\\.vdf$/"],
+      "matchStrings": ["^\"(?<system>win64|linux|osx)\"\\s*\\{\\s*\"version\"\\s+\"(?<currentValue>\\d+)\""],
       "depNameTemplate": "steamcmd {{{system}}}",
       "packageNameTemplate": "steam_cmd_{{{system}}}",
       "datasourceTemplate": "custom.steamcmd",

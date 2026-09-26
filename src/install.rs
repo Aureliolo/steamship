@@ -1,7 +1,7 @@
 //! Installing steamcmd from the pinned manifest, and checking that an install is still what was
 //! pinned.
 //!
-//! steamcmd updates itself when it runs, so an install is only known to be the pinned one by
+//! steamcmd is told not to update itself, but an install is only known to be the pinned one by
 //! looking: every file it unpacked is recorded with its SHA-256 in an inventory beside it, and
 //! checked against that record after every run. Its `config` folder, where steamcmd keeps the
 //! login token, is steamcmd's to write, is never recorded, and is carried across a reinstall.
@@ -35,6 +35,13 @@ const STAGING: &str = "steamcmd.new";
 const PREVIOUS: &str = "steamcmd.old";
 const DOWNLOADS: &str = "downloads";
 const LOCK: &str = "steamship.lock";
+/// The settings file steamcmd's bootstrapper reads beside itself.
+const SETTINGS: &str = "steam.cfg";
+/// Without this, steamcmd replaces itself with whatever Valve serves on its first run and on any
+/// later run after Valve moves, and the pin would hold only until then. A raise of the pin is how
+/// it changes instead. It is recorded in the inventory like every file unpacked, so a change to
+/// it is caught as well.
+const NO_UPDATES: &str = "BootStrapperInhibitAll=enable\n";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -187,6 +194,14 @@ where
         }
         unpack(&archive, &staging, &package.file)?;
     }
+    let settings = staging.join(SETTINGS);
+    fs::write(&settings, NO_UPDATES).map_err(at(&settings))?;
+    // Where Valve's own installer leaves the manifest. Without it steamcmd calls itself a local
+    // build, not the version it is.
+    let bookkeeping = staging.join("package");
+    fs::create_dir_all(&bookkeeping).map_err(at(&bookkeeping))?;
+    let copy = bookkeeping.join(format!("steam_cmd_{}.manifest", manifest.system));
+    fs::write(&copy, &manifest.text).map_err(at(&copy))?;
     let inventory = Inventory::take(&staging, manifest)?;
     let config = root.join(CONFIG);
     if config.exists() {
@@ -483,7 +498,7 @@ mod tests {
     #[test]
     fn an_inventory_describes_only_its_own_system_and_version() {
         let inventory = Inventory {
-            system: "win32".into(),
+            system: "win64".into(),
             version: 7,
             files: BTreeMap::new(),
             links: BTreeMap::new(),
@@ -492,9 +507,10 @@ mod tests {
             system: system.into(),
             version,
             packages: Vec::new(),
+            text: String::new(),
         };
-        assert!(inventory.describes(&manifest("win32", 7)));
-        assert!(!inventory.describes(&manifest("win32", 8)));
+        assert!(inventory.describes(&manifest("win64", 7)));
+        assert!(!inventory.describes(&manifest("win64", 8)));
         assert!(!inventory.describes(&manifest("linux", 7)));
     }
 

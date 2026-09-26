@@ -73,6 +73,7 @@ impl Setup {
             system: "test".to_owned(),
             version,
             packages,
+            text: format!("\"test\" {{ \"version\" \"{version}\" }}"),
         }
     }
 
@@ -187,6 +188,31 @@ fn every_change_to_the_install_is_named() {
     assert!(
         install::verify(&setup.home, &manifest)
             .is_err_and(|error| matches!(error, Error::Altered { .. }))
+    );
+}
+
+#[test]
+fn steamcmd_is_told_its_version_and_not_to_update_itself_and_held_to_both() {
+    let setup = Setup::new();
+    let manifest = steamcmd(&setup);
+    let _: Outcome = setup.install(&manifest, &Cell::new(0)).unwrap();
+    let settings = setup.root().join("steam.cfg");
+    assert_eq!(
+        fs::read_to_string(&settings).unwrap(),
+        "BootStrapperInhibitAll=enable\n"
+    );
+    let copy = setup.root().join("package/steam_cmd_test.manifest");
+    assert_eq!(fs::read_to_string(&copy).unwrap(), manifest.text);
+    fs::write(&settings, "").unwrap();
+    fs::write(&copy, "").unwrap();
+    let mut found = changes(install::verify(&setup.home, &manifest).map(|()| Outcome::Verified));
+    found.sort();
+    assert_eq!(
+        found,
+        [
+            "package/steam_cmd_test.manifest has changed",
+            "steam.cfg has changed"
+        ]
     );
 }
 
