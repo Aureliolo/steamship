@@ -32,12 +32,12 @@ It works with any engine: anything that ends in a folder of files per platform c
 
 ## Install
 
-Download the binary for your system from
-[Releases](https://github.com/Aureliolo/steamship/releases) (Windows x86-64, Linux x86-64, macOS
-arm64 and x86-64), or build it from source:
+Download the archive for your system from the
+[latest release](https://github.com/Aureliolo/steamship/releases/latest) (Windows x86-64, Linux
+x86-64, macOS arm64 and x86-64) and put `steamship` on your `PATH`, or build it with Cargo:
 
 ```sh
-cargo install --locked steamship@<version>
+cargo install --locked steamship
 ```
 
 ## Quick start
@@ -104,13 +104,13 @@ for example in CI, and verifies an existing install.
 
 ### Exit codes
 
-| Code | Meaning                                                      |
-| ---- | ------------------------------------------------------------ |
-| 0    | Done                                                         |
-| 1    | The upload failed; the reason and the log's path are printed |
-| 2    | `check` refused the scripts, or the command line was wrong   |
-| 3    | Not logged in, or the token expired; run `steamship login`   |
-| 4    | steamcmd is missing or has been altered                      |
+| Code | Meaning                                                                              |
+| ---- | ------------------------------------------------------------------------------------ |
+| 0    | Done                                                                                 |
+| 1    | The upload or login failed; the reason is printed, and for an upload the logs' paths |
+| 2    | `check` refused the scripts, or the command line was wrong                           |
+| 3    | Not logged in, or the token expired; run `steamship login`                           |
+| 4    | steamcmd is missing or has been altered                                              |
 
 ## Configuration
 
