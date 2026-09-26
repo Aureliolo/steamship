@@ -123,13 +123,73 @@ fn install_says_where_it_could_not_find_a_home_and_exits_1() {
     );
 }
 
+#[test]
+fn logout_forgets_steamcmds_saved_login_on_every_system_and_the_account() {
+    let home = tempfile::tempdir().unwrap();
+    let saved = [
+        "steamcmd/config/config.vdf",
+        "Steam/config/config.vdf",
+        "Library/Application Support/Steam/config/config.vdf",
+        "steamcmd/userdata/12345/config/localconfig.vdf",
+    ];
+    for file in saved {
+        let path = home.path().join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "\"token\" \"a_saved_login_token_0123456789\"").unwrap();
+    }
+    fs::write(home.path().join("account"), "build_bot\n").unwrap();
+    let kept = home.path().join("steamcmd/config/other.vdf");
+    fs::write(&kept, "kept").unwrap();
+    let (code, stdout, stderr) = steamship(&["logout"], Some(home.path()), &[]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert_eq!(
+        stdout,
+        "steamship logout\n  \
+         login     \u{2713} forgotten\n  \
+         account   \u{2713} forgotten\n  \
+         \u{2713} logged out\n    \
+         the next upload needs `steamship login` first\n"
+    );
+    for file in saved {
+        assert!(!home.path().join(file).exists(), "{file}");
+    }
+    assert!(!home.path().join("account").exists());
+    assert!(kept.exists(), "only the login is removed");
+    let (again, said, _) = steamship(&["logout"], Some(home.path()), &[]);
+    assert_eq!(again, Some(0_i32));
+    assert!(
+        said.contains("  login     none saved\n  account   none remembered\n"),
+        "{said}"
+    );
+}
+
+#[test]
+fn help_lists_every_command_with_one_short_line() {
+    let (code, stdout, _) = steamship(&["--help"], Some(Path::new(".")), &[]);
+    assert_eq!(code, Some(0_i32));
+    assert!(
+        !stdout.contains("uploads your build to Steam"),
+        "no banner in a log"
+    );
+    for line in [
+        "  login    Log in to Steam, once, for uploads\n",
+        "  check    Check the build scripts, without logging in\n",
+        "  upload   Check, build and upload, then print the build ID\n",
+        "  logout   Forget the saved login\n",
+        "  install  Install or verify the pinned steamcmd\n",
+    ] {
+        assert!(stdout.contains(line), "{line:?} in {stdout}");
+    }
+}
+
 /// A home whose recorded steamcmd is a script that prints what it was started with and exits
 /// with `STEAMSHIP_FAKE_EXIT`, or 0. With `STEAMSHIP_FAKE_CHANGE` set it first changes itself, as
-/// an update would.
+/// an update would; with `STEAMSHIP_FAKE_SAVED` set it logs in with the login it saved.
 #[cfg(unix)]
 fn faked() -> tempfile::TempDir {
     faked_with(
         "#!/bin/sh\n\
+         [ -n \"$STEAMSHIP_FAKE_SAVED\" ] && echo 'Logging in using cached credentials.'\n\
          echo \"args: $*\"\n\
          echo \"home: $HOME\"\n\
          echo \"folder: $PWD\"\n\
@@ -182,6 +242,26 @@ fn login_runs_steamcmd_for_the_account_in_the_home_and_remembers_it() {
     assert_eq!(again, Some(0_i32));
     assert!(said.contains("  account   remembered\n"), "{said}");
     assert!(said.contains(" +login build_bot "), "{said}");
+}
+
+#[cfg(unix)]
+#[test]
+fn login_with_a_saved_login_says_it_is_already_logged_in() {
+    let home = faked();
+    let (code, stdout, stderr) = steamship(
+        &["login", "--account", "build_bot"],
+        Some(home.path()),
+        &[("STEAMSHIP_FAKE_SAVED", "1")],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(!stdout.contains("cached credentials"), "{stdout}");
+    assert!(
+        stdout.ends_with(
+            "\u{2713} already logged in\n    uploads use the saved login until it expires; \
+             `steamship logout` forgets it\n"
+        ),
+        "{stdout}"
+    );
 }
 
 #[cfg(unix)]
@@ -480,6 +560,10 @@ fn login_on_a_terminal_asks_for_the_account_shows_it_as_typed_and_refuses_a_bad_
     let home = tempfile::tempdir().unwrap();
     let mut session = Session::start(&login_then_look(), home.path());
     session.wait_for("account");
+    assert!(
+        session.seen().contains("uploads your build to Steam"),
+        "the banner on a terminal"
+    );
     // A character of each length UTF-8 has, which are read as whole characters.
     session.type_in("+qx\u{7f}uit\u{e9}\u{20ac}\u{1f600}");
     session.wait_for("+quit\u{e9}\u{20ac}\u{1f600}");
