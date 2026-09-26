@@ -395,15 +395,15 @@ mod tests {
             [Event::Waiting("[ 90%]  done".to_owned())]
         );
         assert_eq!(
-            reader.read(b"\x1b[1Habove\x1b[Hover"),
+            reader.read(b"\x1b[1Habcdef\x1b[Hxy"),
             [
                 Event::Line("[ 90%]  done".to_owned()),
-                Event::Waiting("overe".to_owned())
+                Event::Waiting("xycdef".to_owned())
             ]
         );
         assert_eq!(
             reader.read(b"\x1b[;4H!\x1b[1:1H\x1b[1;2;3H\x1b[?25h"),
-            [Event::Waiting("ove!e".to_owned())]
+            [Event::Waiting("xyc!ef".to_owned())]
         );
     }
 
