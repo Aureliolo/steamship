@@ -6,7 +6,10 @@ locale = "en-gb"
 # Other crates' names, which are not ours to spell: sha2's `finalize`, and Windows' own API as
 # windows-sys names it.
 finalize = "finalize"
+InitializeAcl = "InitializeAcl"
 InitializeProcThreadAttributeList = "InitializeProcThreadAttributeList"
+Authorization = "Authorization"
+Win32_Security_Authorization = "Win32_Security_Authorization"
 Globalization = "Globalization"
 Win32_Globalization = "Win32_Globalization"
 

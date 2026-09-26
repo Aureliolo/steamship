@@ -114,6 +114,20 @@ pub fn mark_if_program(path: &Path) -> io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(mode))
 }
 
+/// Leaves `folder` to the current user alone, and says whether it had to change anything.
+///
+/// # Errors
+///
+/// When the folder's permissions cannot be read or set.
+pub fn restrict(folder: &Path) -> io::Result<bool> {
+    let mode = fs::metadata(folder)?.permissions().mode() & 0o7777;
+    if mode == 0o700 {
+        return Ok(false);
+    }
+    fs::set_permissions(folder, fs::Permissions::from_mode(0o700))?;
+    Ok(true)
+}
+
 /// Makes `link` a symbolic link to `target`, which is written as given.
 ///
 /// # Errors
@@ -121,4 +135,26 @@ pub fn mark_if_program(path: &Path) -> io::Result<()> {
 /// When the file system refuses, or `link` exists.
 pub fn make_link(target: &str, link: &Path) -> io::Result<()> {
     make_symlink(target, link)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_restricted_folder_is_its_users_alone() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::set_permissions(folder.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(restrict(folder.path()).unwrap());
+        let mode = fs::metadata(folder.path()).unwrap().permissions().mode();
+        assert_eq!(mode & 0o7777, 0o700);
+        assert!(!restrict(folder.path()).unwrap(), "already so");
+    }
+
+    #[test]
+    fn a_folder_that_is_not_there_cannot_be_restricted() {
+        let folder = tempfile::tempdir().unwrap();
+        let error = restrict(&folder.path().join("missing")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+    }
 }

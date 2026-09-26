@@ -20,9 +20,19 @@ use std::thread;
 use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{
-    GENERIC_ALL, HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
-    WAIT_TIMEOUT,
+    ERROR_SUCCESS, GENERIC_ALL, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, INVALID_HANDLE_VALUE,
+    LocalFree, SetHandleInformation, WAIT_TIMEOUT, WIN32_ERROR,
 };
+use windows_sys::Win32::Security::Authorization::{
+    GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+};
+use windows_sys::Win32::Security::{
+    ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAceEx, CONTAINER_INHERIT_ACE,
+    DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid, GetSecurityDescriptorControl,
+    GetTokenInformation, InitializeAcl, OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
+    PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER, TokenUser,
+};
+use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
 use windows_sys::Win32::System::Diagnostics::Debug::{
     SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX, SetErrorMode,
     THREAD_ERROR_MODE,
@@ -34,12 +44,14 @@ use windows_sys::Win32::System::JobObjects::{
     SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, CreateDesktopW, HDESK};
+use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList,
-    LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_CREATION_FLAGS,
-    PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
-    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+    EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess, INFINITE,
+    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken,
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ResumeThread,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
+    UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 use crate::run::Finished;
@@ -52,6 +64,7 @@ use windows_sys::Win32::Security::WinTrust::{
     WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE, WTHelperGetProvSignerFromChain,
     WTHelperProvDataFromStateData, WinVerifyTrust,
 };
+use windows_sys::core::BOOL;
 
 /// Numbers each desktop this process makes, so that no two runs share one: a desktop goes away
 /// when its last handle closes, and a run opening one by the same name at that moment is refused.
@@ -422,6 +435,220 @@ fn wide(text: &OsStr) -> Vec<u16> {
     text.encode_wide().chain([0]).collect()
 }
 
+/// Leaves `folder` to the current user alone, and says whether it had to change anything.
+///
+/// One entry grants them everything, inherited by all the folder holds, and nothing is inherited
+/// from above, where a shared parent could let others in. Windows carries the entry down to what
+/// the folder already holds, which walks all of it, so that is only done when the folder is not
+/// already so.
+///
+/// # Errors
+///
+/// When the folder's permissions cannot be read or set.
+pub fn restrict(folder: &Path) -> io::Result<bool> {
+    let user = User::current()?;
+    let name = wide(folder.as_os_str());
+    if Security::of(&name)?.is_only(&user) {
+        return Ok(false);
+    }
+    // SAFETY: the SID lives in `user`, which outlives the call.
+    let sid_length = unsafe { GetLengthSid(user.sid()) };
+    // An entry's size counts its SID in place of the SidStart field that marks where it begins.
+    let size = size_of_u32::<ACL>()
+        .saturating_add(size_of_u32::<ACCESS_ALLOWED_ACE>())
+        .saturating_sub(size_of_u32::<u32>())
+        .saturating_add(sid_length);
+    let mut storage = vec![0_u32; usize::try_from(size.div_ceil(4)).map_err(io::Error::other)?];
+    let acl: *mut ACL = storage.as_mut_ptr().cast();
+    // SAFETY: `storage` holds at least `size` bytes, aligned as an ACL must be.
+    if unsafe { InitializeAcl(acl, size, ACL_REVISION) } == 0_i32 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the list was sized for exactly this one entry, and the SID is copied into it.
+    if unsafe {
+        AddAccessAllowedAceEx(
+            acl,
+            ACL_REVISION,
+            OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+            FILE_ALL_ACCESS,
+            user.sid(),
+        )
+    } == 0_i32
+    {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `name` is NUL-terminated and `acl` is a complete list; the owner, the group and the
+    // audit list are left as they are.
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            acl,
+            ptr::null(),
+        )
+    };
+    win32(status).map(|()| true)
+}
+
+fn win32(status: WIN32_ERROR) -> io::Result<()> {
+    if status == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(io::Error::from_raw_os_error(status.cast_signed()))
+    }
+}
+
+/// The user this process runs as.
+struct User {
+    /// A `TOKEN_USER` and the SID it points into, as Windows wrote them, pointer-aligned.
+    storage: Vec<usize>,
+}
+
+impl User {
+    fn current() -> io::Result<Self> {
+        // SAFETY: returns a pseudo handle for this process, which needs no closing.
+        let process = unsafe { GetCurrentProcess() };
+        let mut token: HANDLE = ptr::null_mut();
+        // SAFETY: `token` is a valid place for the new handle.
+        if unsafe { OpenProcessToken(process, TOKEN_QUERY, &raw mut token) } == 0_i32 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the handle is new and owned by nobody else.
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let mut size = 0_u32;
+        // SAFETY: no buffer with a size of 0 is how the needed size is asked for; the call then
+        // fails with ERROR_INSUFFICIENT_BUFFER, which is expected.
+        let _: BOOL = unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                TokenUser,
+                ptr::null_mut(),
+                0,
+                &raw mut size,
+            )
+        };
+        let length = usize::try_from(size).map_err(io::Error::other)?;
+        let mut storage = vec![0_usize; length.div_ceil(size_of::<usize>())];
+        // SAFETY: `storage` holds at least `size` bytes, aligned for a TOKEN_USER.
+        if unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                TokenUser,
+                storage.as_mut_ptr().cast(),
+                size,
+                &raw mut size,
+            )
+        } == 0_i32
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self { storage })
+    }
+
+    const fn sid(&self) -> PSID {
+        let user: *const TOKEN_USER = self.storage.as_ptr().cast();
+        // SAFETY: `storage` holds the TOKEN_USER that GetTokenInformation wrote.
+        unsafe { (*user).User.Sid }
+    }
+}
+
+/// A file or folder's permissions as Windows reports them.
+struct Security {
+    /// Freed with `LocalFree`; `acl` points into it.
+    descriptor: PSECURITY_DESCRIPTOR,
+    acl: *mut ACL,
+}
+
+impl Security {
+    fn of(name: &[u16]) -> io::Result<Self> {
+        let mut security = Self {
+            descriptor: ptr::null_mut(),
+            acl: ptr::null_mut(),
+        };
+        // SAFETY: `name` is NUL-terminated, and both outputs are valid places for pointers.
+        let status = unsafe {
+            GetNamedSecurityInfoW(
+                name.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                &raw mut security.acl,
+                ptr::null_mut(),
+                &raw mut security.descriptor,
+            )
+        };
+        win32(status)?;
+        Ok(security)
+    }
+
+    fn is_protected(&self) -> bool {
+        let mut control = 0_u16;
+        let mut revision = 0_u32;
+        // SAFETY: the descriptor is the one Windows returned, alive until `self` is dropped.
+        let read = unsafe {
+            GetSecurityDescriptorControl(self.descriptor, &raw mut control, &raw mut revision)
+        };
+        read != 0_i32 && control & SE_DACL_PROTECTED != 0
+    }
+
+    /// Each entry's type, flags and access, and whether it is for `user`.
+    fn entries(&self, user: &User) -> Vec<(u32, u32, u32, bool)> {
+        if self.acl.is_null() {
+            return Vec::new();
+        }
+        // SAFETY: a list that is there points into the descriptor, alive as long as `self`.
+        let count = unsafe { (*self.acl).AceCount };
+        (0..u32::from(count))
+            .filter_map(|index| {
+                let mut entry = ptr::null_mut();
+                // SAFETY: `index` is below the list's count.
+                if unsafe { GetAce(self.acl, index, &raw mut entry) } == 0_i32 {
+                    return None;
+                }
+                let entry: *const ACCESS_ALLOWED_ACE = entry.cast();
+                // SAFETY: every kind of entry starts with its header and then its access mask,
+                // and SidStart is read only for the kind that has one.
+                let ACCESS_ALLOWED_ACE {
+                    Header: header,
+                    Mask: mask,
+                    ..
+                } = unsafe { *entry };
+                let kind = u32::from(header.AceType);
+                let mine = kind == ACCESS_ALLOWED_ACE_TYPE && {
+                    // SAFETY: an access-allowed entry holds its SID from SidStart on.
+                    let sid = unsafe { &raw const (*entry).SidStart };
+                    // SAFETY: both SIDs are valid for the length of the call.
+                    let equal = unsafe { EqualSid(sid.cast_mut().cast(), user.sid()) };
+                    equal != 0_i32
+                };
+                Some((kind, u32::from(header.AceFlags), mask, mine))
+            })
+            .collect()
+    }
+
+    fn is_only(&self, user: &User) -> bool {
+        self.is_protected()
+            && self.entries(user)
+                == [(
+                    ACCESS_ALLOWED_ACE_TYPE,
+                    OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+                    FILE_ALL_ACCESS,
+                    true,
+                )]
+    }
+}
+
+impl Drop for Security {
+    fn drop(&mut self) {
+        // SAFETY: the descriptor came from GetNamedSecurityInfoW and is freed once, here.
+        let _: HLOCAL = unsafe { LocalFree(self.descriptor) };
+    }
+}
+
 /// Windows has no executable bit, so there is nothing to mark.
 ///
 /// # Errors
@@ -606,14 +833,14 @@ mod tests {
     use std::os::windows::ffi::OsStringExt as _;
     use std::path::PathBuf;
     use std::slice;
-    use windows_sys::Win32::Foundation::{HLOCAL, HWND, LPARAM, LocalFree};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::Globalization::lstrlenW;
+    use windows_sys::Win32::Security::INHERITED_ACE;
     use windows_sys::Win32::System::StationsAndDesktops::EnumDesktopWindows;
     use windows_sys::Win32::System::StationsAndDesktops::{DESKTOP_READOBJECTS, OpenDesktopW};
     use windows_sys::Win32::System::Threading::GetProcessId;
     use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindowVisible};
-    use windows_sys::core::BOOL;
 
     /// A library Windows installs with a signature of its own inside it, rather than in a
     /// catalogue, which is the kind steamcmd's files carry.
@@ -780,6 +1007,37 @@ mod tests {
         assert!(desktop_exists(&name));
         drop(desktop);
         assert!(!desktop_exists(&name));
+    }
+
+    #[test]
+    fn a_restricted_folder_is_its_users_alone_down_to_what_it_already_held() {
+        let folder = tempfile::tempdir().unwrap();
+        let held = folder.path().join("config.vdf");
+        fs::write(&held, "token").unwrap();
+        let user = User::current().unwrap();
+        let name = wide(folder.path().as_os_str());
+        assert!(!Security::of(&name).unwrap().is_only(&user));
+        assert!(restrict(folder.path()).unwrap());
+        assert!(Security::of(&name).unwrap().is_only(&user));
+        assert_eq!(
+            Security::of(&wide(held.as_os_str()))
+                .unwrap()
+                .entries(&user),
+            [(
+                ACCESS_ALLOWED_ACE_TYPE,
+                INHERITED_ACE,
+                FILE_ALL_ACCESS,
+                true
+            )]
+        );
+        assert!(!restrict(folder.path()).unwrap(), "already so");
+    }
+
+    #[test]
+    fn a_folder_that_is_not_there_cannot_be_restricted() {
+        let folder = tempfile::tempdir().unwrap();
+        let error = restrict(&folder.path().join("missing")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
     /// Mostly the units that quoting is about, with anything else mixed in.
