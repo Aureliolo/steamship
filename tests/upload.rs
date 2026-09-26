@@ -5,7 +5,7 @@
 )]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{self, Path, PathBuf};
 use std::process::Command;
 
 use steamship::upload::{self, Error};
@@ -102,7 +102,7 @@ fn a_script_named_by_a_relative_path_gets_absolute_paths_in_its_copy() {
     let relative = Path::new("tests/fixtures/spacewar/steam/app_build.vdf");
     let prepared = upload::prepare(home.path(), relative, "1 abc", true).unwrap();
     let app = app_block(&prepared.script);
-    let steam = std::path::absolute(relative.parent().unwrap()).unwrap();
+    let steam = path::absolute(relative.parent().unwrap()).unwrap();
     assert_eq!(
         app.text("ContentRoot"),
         Some(format!("{}/../content/", slashed(&steam)).as_str())
