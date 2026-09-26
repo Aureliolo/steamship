@@ -4,6 +4,7 @@
 //! whole lines, and as the line it has started but not ended, which is where a program leaves a
 //! prompt it waits at.
 
+use std::cmp::Ordering;
 use std::{mem, str};
 
 /// What the program has written so far and not yet been taken as a line.
@@ -14,6 +15,10 @@ pub struct Reader {
     /// Where in the line the next character goes: a backspace moves it back, and what is
     /// written there then takes the place of what was.
     cursor: usize,
+    /// The screen row the line is on, counted from 0, once a move to a row has said where that
+    /// is. At the foot of the screen a line feed scrolls rather than moving down, so this can
+    /// run ahead of the true row, but never behind it.
+    row: Option<usize>,
     /// Bytes of a character or an escape sequence cut off at the end of the last chunk.
     carried: Vec<u8>,
 }
@@ -42,16 +47,20 @@ impl Reader {
                         self.carried = rest.to_vec();
                         break;
                     };
-                    self.cursor = self
-                        .cursor
-                        .saturating_add(forward(rest.get(..length).unwrap_or_default()));
-                    self.pending
-                        .resize(self.pending.len().max(self.cursor), ' ');
+                    match movement(rest.get(..length).unwrap_or_default()) {
+                        Move::Forward(columns) => {
+                            self.cursor = self.cursor.saturating_add(columns);
+                            self.fill();
+                        }
+                        Move::To { row, column } => self.move_to(row, column, &mut events),
+                        Move::Nowhere => {}
+                    }
                     // Every turn moves on by a byte at least, which is what ends the loop.
                     at = at.saturating_add(length.max(1));
                 }
                 b'\n' => {
                     events.push(Event::Line(self.take()));
+                    self.row = self.row.map(|row| row.saturating_add(1));
                     at = at.saturating_add(1);
                 }
                 // A carriage return alone moves back over the line: what follows is the line
@@ -103,6 +112,35 @@ impl Reader {
         self.cursor = self.cursor.saturating_add(1);
     }
 
+    /// Moves the cursor to `row` and `column` of the screen. A pseudo console writes an empty
+    /// line as such a move down past it, so a move down ends the line and leaves a blank one for
+    /// each row it passes. A move up, to write over what is shown, only ends the line.
+    fn move_to(&mut self, row: usize, column: usize, events: &mut Vec<Event>) {
+        match self.row.map(|from| (from, from.cmp(&row))) {
+            Some((_, Ordering::Equal)) => {}
+            Some((from, Ordering::Less)) => {
+                events.push(Event::Line(self.take()));
+                for _ in from.saturating_add(1)..row {
+                    events.push(Event::Line(String::new()));
+                }
+            }
+            Some((_, Ordering::Greater)) | None => {
+                if !self.pending.is_empty() {
+                    events.push(Event::Line(self.take()));
+                }
+            }
+        }
+        self.row = Some(row);
+        self.cursor = column;
+        self.fill();
+    }
+
+    /// Spaces up to the cursor, where it has moved past the end of the line.
+    fn fill(&mut self) {
+        self.pending
+            .resize(self.pending.len().max(self.cursor), ' ');
+    }
+
     /// The line so far, which starts a new one.
     fn take(&mut self) -> String {
         self.cursor = 0;
@@ -140,27 +178,63 @@ fn character_length(bytes: &[u8]) -> Option<usize> {
     }
 }
 
-/// How far `sequence` moves the cursor forward along the line. A pseudo console writes the
-/// spaces at the end of what it shows, such as the one after a prompt, as such a move.
-fn forward(sequence: &[u8]) -> usize {
-    let Some(count) = sequence
-        .strip_prefix(b"\x1b[")
-        .and_then(|rest| rest.strip_suffix(b"C"))
-    else {
-        return 0;
-    };
-    if count.is_empty() {
-        return 1;
-    }
-    // A console is never wider than this; a larger count is not a line's worth of spaces.
-    str::from_utf8(count)
-        .ok()
-        .and_then(|count| count.parse::<usize>().ok())
-        .map_or(0, |count| count.min(WIDEST))
+/// Where an escape sequence moves the cursor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Move {
+    /// Along the line by this many columns. A pseudo console writes the spaces at the end of
+    /// what it shows, such as the one after a prompt, as such a move.
+    Forward(usize),
+    /// To this row and column of the screen, counted from 0.
+    To {
+        row: usize,
+        column: usize,
+    },
+    Nowhere,
 }
 
-/// The most columns a move forward is taken to cross.
-const WIDEST: usize = 512;
+fn movement(sequence: &[u8]) -> Move {
+    let Some(inside) = sequence.strip_prefix(b"\x1b[") else {
+        return Move::Nowhere;
+    };
+    if let Some(count) = inside.strip_suffix(b"C") {
+        return count_of(count).map_or(Move::Nowhere, Move::Forward);
+    }
+    let Some(position) = inside
+        .strip_suffix(b"H")
+        .or_else(|| inside.strip_suffix(b"f"))
+    else {
+        return Move::Nowhere;
+    };
+    let mut numbers = position.split(|&byte| byte == b';').map(count_of);
+    let row = numbers.next().flatten();
+    let column = numbers.next().unwrap_or(Some(1));
+    match (row, column, numbers.next()) {
+        (Some(row), Some(column), None) => Move::To {
+            row: row.saturating_sub(1),
+            column: column.saturating_sub(1),
+        },
+        _ => Move::Nowhere,
+    }
+}
+
+/// A count in an escape sequence, which left out or 0 means 1, as the standard has it.
+fn count_of(digits: &[u8]) -> Option<usize> {
+    if !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    if digits.is_empty() {
+        return Some(1);
+    }
+    // A console is never larger than this; a larger count is not a screen's worth of anything.
+    let count = str::from_utf8(digits)
+        .ok()
+        .and_then(|digits| digits.parse::<usize>().ok())
+        .map_or(LARGEST, |count| count.min(LARGEST));
+    Some(count.max(1))
+}
+
+/// The most columns, or rows, a move is taken to cross.
+const LARGEST: usize = 512;
 
 /// The length of the escape sequence at the start of `bytes`, or none when it is cut off.
 /// Control sequences (`ESC [` ... a final byte), operating system commands (`ESC ]` ... BEL or
@@ -272,8 +346,78 @@ mod tests {
             [Event::Waiting("password: ".to_owned())]
         );
         assert_eq!(
-            reader.read(b"\ra\x1b[Cb\x1b[3Cc\x1b[99999Cd\x1b[1;2Ce\n"),
-            [Event::Line(format!("a b   c{}de", " ".repeat(WIDEST)))]
+            reader.read(
+                b"\ra\x1b[Cb\x1b[3Cc\x1b[99999Cd\x1b[1;2Ce\x1b[0Cf\x1b[99999999999999999999999Cg\n"
+            ),
+            [Event::Line(format!(
+                "a b   c{}de f{}g",
+                " ".repeat(LARGEST),
+                " ".repeat(LARGEST)
+            ))]
+        );
+    }
+
+    /// What steamship wrote to a pseudo console, a blank line and all, from a trial.
+    const BLANK: &[u8] =
+        b"\x1b[?25l\x1b[2J\x1b[m\x1b[1m\x1b[Hsteamship\x1b[22m\x1b[2m\x1b[1Clogout\r\n\
+        \x1b]0;cmd.exe\x07\x1b[?25h  \x1b[2mlogin     \x1b[22mnone saved\r\n    \x1b[2mthe next \
+        upload\x1b[22m\x1b[5;1H  \x1b[33m\xe2\x86\x91 \x1b[m\x1b[1mnewer\x1b[22m\r\n\x1b[?25h";
+
+    #[test]
+    fn a_move_down_past_rows_ends_the_line_and_leaves_them_blank() {
+        assert_eq!(
+            lines(&Reader::default().read(BLANK)),
+            [
+                "steamship logout",
+                "  login     none saved",
+                "    the next upload",
+                "",
+                "  \u{2191} newer"
+            ]
+        );
+        let mut reader = Reader::default();
+        assert_eq!(
+            reader.read(b"\x1b[2;1Ha\r\n\x1b[5;3Hb"),
+            [
+                Event::Line("a".to_owned()),
+                Event::Line(String::new()),
+                Event::Line(String::new()),
+                Event::Waiting("  b".to_owned())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_move_along_the_row_or_up_it_writes_over_ends_no_line_but_one_written() {
+        let mut reader = Reader::default();
+        assert_eq!(
+            reader.read(b"\x1b[3;1H[ 10%]\x1b[3;1f[ 90%]\x1b[3;9Hdone"),
+            [Event::Waiting("[ 90%]  done".to_owned())]
+        );
+        assert_eq!(
+            reader.read(b"\x1b[1Habove\x1b[Hover"),
+            [
+                Event::Line("[ 90%]  done".to_owned()),
+                Event::Waiting("overe".to_owned())
+            ]
+        );
+        assert_eq!(
+            reader.read(b"\x1b[;4H!\x1b[1:1H\x1b[1;2;3H\x1b[?25h"),
+            [Event::Waiting("ove!e".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_move_to_a_row_before_any_is_known_ends_only_a_line_written() {
+        let mut reader = Reader::default();
+        assert_eq!(reader.read(b"\x1b[9;1H"), []);
+        assert_eq!(
+            Reader::default().read(b"a\x1b[9;1Hb"),
+            [Event::Line("a".to_owned()), Event::Waiting("b".to_owned())]
+        );
+        assert_eq!(
+            Reader::default().read(b"\x1b[99999999999999999999;1Hb"),
+            [Event::Waiting("b".to_owned())]
         );
     }
 
