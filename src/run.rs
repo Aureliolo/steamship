@@ -8,6 +8,7 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::Path;
+use std::process::Command;
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -37,10 +38,32 @@ pub fn run(
     native::run(program, args, directory, limit)
 }
 
+/// Runs `program` in the user's own terminal, for them to type into, with `environment` added to
+/// steamship's, and waits for it. steamship reads nothing it types or prints.
+///
+/// # Errors
+///
+/// When the program cannot be started.
+pub fn attached(
+    program: &Path,
+    args: &[OsString],
+    environment: &[(OsString, OsString)],
+    directory: &Path,
+) -> io::Result<Option<i32>> {
+    native::silence_error_dialogues();
+    let status = Command::new(program)
+        .args(args)
+        .envs(environment.iter().map(|(name, value)| (name, value)))
+        .current_dir(directory)
+        .status()?;
+    Ok(status.code())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
+    use std::fs;
     use std::time::Instant;
 
     /// A shell, what makes it run the one line that follows, a line that starts a grandchild
@@ -129,6 +152,46 @@ mod tests {
             "took {:?}",
             started.elapsed()
         );
+    }
+
+    /// A shell line that exits 0 only when `STEAMSHIP_PROBE` is `yes` and the folder it runs in
+    /// holds `marker`.
+    #[cfg(windows)]
+    const PROBE: &str =
+        r#"if "%STEAMSHIP_PROBE%"=="yes" (if exist marker (exit 0) else (exit 5)) else (exit 5)"#;
+    #[cfg(unix)]
+    const PROBE: &str = r#"test "$STEAMSHIP_PROBE" = yes && test -f marker || exit 5"#;
+
+    fn attached_shell(
+        line: &str,
+        environment: &[(OsString, OsString)],
+        directory: &Path,
+    ) -> Option<i32> {
+        let args: Vec<OsString> = SHELL
+            .1
+            .iter()
+            .copied()
+            .chain([line])
+            .map(OsString::from)
+            .collect();
+        attached(Path::new(SHELL.0), &args, environment, directory).unwrap()
+    }
+
+    #[test]
+    fn an_attached_program_gets_its_environment_and_folder_and_is_waited_for() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::write(folder.path().join("marker"), "").unwrap();
+        let probe = [(OsString::from("STEAMSHIP_PROBE"), OsString::from("yes"))];
+        assert_eq!(attached_shell(PROBE, &probe, folder.path()), Some(0_i32));
+        assert_eq!(attached_shell(PROBE, &[], folder.path()), Some(5_i32));
+        assert_eq!(attached_shell(PROBE, &probe, &env::temp_dir()), Some(5_i32));
+    }
+
+    #[test]
+    fn an_attached_program_that_is_not_there_is_an_error() {
+        let missing = env::temp_dir().join("steamship-no-such-program");
+        let error = attached(&missing, &[], &[], &env::temp_dir()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]

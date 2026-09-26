@@ -73,6 +73,9 @@ pub fn run(
     Ok(Finished { code, output })
 }
 
+/// Only Windows puts up a dialogue of its own when a program crashes.
+pub const fn silence_error_dialogues() {}
+
 fn stop_group(group: i32) {
     // SAFETY: `killpg` only sends a signal; a group that has already gone is an error it
     // reports and that nothing here depends on.
