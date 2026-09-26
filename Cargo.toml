@@ -18,19 +18,38 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 # Valve's packages use only stored and deflated entries, so one pure-Rust decoder is all it needs.
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
+[target.'cfg(unix)'.dependencies]
+# Already in the tree through ring and sha2; stopping a process group has no std API.
+libc = "0.2.189"
+
 [target.'cfg(windows)'.dependencies]
 # Already in the tree through clap, so Windows' own APIs cost no crate that was not there.
 windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_Security",
   "Win32_Security_Cryptography",
   "Win32_Security_Cryptography_Catalog",
   "Win32_Security_Cryptography_Sip",
   "Win32_Security_WinTrust",
+  "Win32_System_Diagnostics_Debug",
+  "Win32_System_JobObjects",
+  "Win32_System_StationsAndDesktops",
+  "Win32_System_Threading",
 ] }
 
 [dev-dependencies]
 proptest = "1.11.0"
 tempfile = "3.27.0"
+
+[target.'cfg(windows)'.dev-dependencies]
+# Windows' own argument parser, which the tests hold the command line steamship writes against,
+# and its window list, which they search for anything a program run out of sight has shown.
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Globalization",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [lints]
 workspace = true

@@ -10,6 +10,7 @@ pub mod magic;
 pub mod manifest;
 pub mod pattern;
 pub mod platform;
+pub mod run;
 pub mod scripts;
 #[cfg(unix)]
 pub mod unix;
