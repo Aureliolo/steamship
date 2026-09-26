@@ -280,6 +280,16 @@ mod tests {
     }
 
     #[test]
+    fn a_secret_no_longer_than_the_marker_is_never_kept() {
+        let as_long = vec![b'x'; MARKER.len()];
+        let longer = vec![b'x'; MARKER.len() + 1];
+        assert_eq!(
+            Redactor::sorted(vec![as_long, longer.clone()]).secrets,
+            [longer]
+        );
+    }
+
+    #[test]
     fn secrets_from_before_and_after_a_run_are_all_redacted() {
         let before = Redactor::from_texts(&[b"\"a\" \"the_token_before_the_run\"".to_vec()]);
         let after = Redactor::from_texts(&[b"\"a\" \"the_token_after_the_run\"".to_vec()]);
