@@ -181,9 +181,9 @@ jobs:
           set -euo pipefail
           export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
           cargo run --locked -- install | tee "${RUNNER_TEMP}/first.txt"
-          grep -q ' installed in ' "${RUNNER_TEMP}/first.txt"
+          grep -q ', installed as pinned$' "${RUNNER_TEMP}/first.txt"
           cargo run --locked -- install | tee "${RUNNER_TEMP}/second.txt"
-          grep -q ' is as pinned$' "${RUNNER_TEMP}/second.txt"
+          grep -q ', pinned and verified$' "${RUNNER_TEMP}/second.txt"
 
       # The whole of an upload but the login, against Valve's own test app: steamcmd run out of
       # sight on this system, given the copy of the script, and refused by Steam, since an
@@ -198,7 +198,7 @@ jobs:
             --version ci --account anonymous --preview 2> "${RUNNER_TEMP}/upload.txt" || status=$?
           cat "${RUNNER_TEMP}/upload.txt"
           test "${status}" -eq 1
-          grep -q '^failed: Failed to initialize build on server (Access Denied)' "${RUNNER_TEMP}/upload.txt"
+          grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/upload.txt"
 
       # steamcmd keeps its login in a config.vdf whose place differs by system; the redaction
       # reads it from three places, and this is where each system shows which one it uses. And

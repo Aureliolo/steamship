@@ -312,7 +312,7 @@ fn stop_group(group: i32) {
 /// Says what is wrong when `file` is a Linux program that nobody may execute.
 #[must_use]
 pub fn missing_executable_bit(file: &Path) -> Option<String> {
-    let mut opened = match fs::File::open(file) {
+    let mut opened = match File::open(file) {
         Ok(opened) => opened,
         Err(error) => return Some(format!("cannot be read: {error}")),
     };
