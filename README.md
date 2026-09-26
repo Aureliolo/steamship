@@ -32,12 +32,12 @@ It works with any engine: anything that ends in a folder of files per platform c
 
 ## Install
 
-Download the binary for your system from
-[Releases](https://github.com/Aureliolo/steamship/releases) (Windows x86-64, Linux x86-64, macOS
-arm64 and x86-64), or build it from source:
+Download the archive for your system from the
+[latest release](https://github.com/Aureliolo/steamship/releases/latest) (Windows x86-64, Linux
+x86-64, macOS arm64 and x86-64) and put `steamship` on your `PATH`, or build it with Cargo:
 
 ```sh
-cargo install --locked steamship@<version>
+cargo install --locked steamship
 ```
 
 ## Quick start
