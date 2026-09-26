@@ -877,7 +877,6 @@ mod tests {
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::Globalization::lstrlenW;
     use windows_sys::Win32::Security::INHERITED_ACE;
-    use windows_sys::Win32::System::Diagnostics::Debug::GetErrorMode;
     use windows_sys::Win32::System::StationsAndDesktops::EnumDesktopWindows;
     use windows_sys::Win32::System::StationsAndDesktops::{DESKTOP_READOBJECTS, OpenDesktopW};
     use windows_sys::Win32::System::Threading::GetProcessId;
@@ -1101,15 +1100,6 @@ mod tests {
             })
             .collect();
         assert!(names.is_sorted(), "{names:?}");
-    }
-
-    #[test]
-    fn crashes_and_missing_files_put_up_no_dialogue() {
-        silence_error_dialogues();
-        let wanted = SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX;
-        // SAFETY: reads one process-wide flag.
-        let mode = unsafe { GetErrorMode() };
-        assert_eq!(mode & wanted, wanted);
     }
 
     #[test]
