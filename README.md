@@ -104,13 +104,13 @@ for example in CI, and verifies an existing install.
 
 ### Exit codes
 
-| Code | Meaning                                                      |
-| ---- | ------------------------------------------------------------ |
-| 0    | Done                                                         |
-| 1    | The upload failed; the reason and the log's path are printed |
-| 2    | `check` refused the scripts, or the command line was wrong   |
-| 3    | Not logged in, or the token expired; run `steamship login`   |
-| 4    | steamcmd is missing or has been altered                      |
+| Code | Meaning                                                                              |
+| ---- | ------------------------------------------------------------------------------------ |
+| 0    | Done                                                                                 |
+| 1    | The upload or login failed; the reason is printed, and for an upload the logs' paths |
+| 2    | `check` refused the scripts, or the command line was wrong                           |
+| 3    | Not logged in, or the token expired; run `steamship login`                           |
+| 4    | steamcmd is missing or has been altered                                              |
 
 ## Configuration
 
