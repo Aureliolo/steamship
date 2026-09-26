@@ -126,13 +126,12 @@ pub fn took(elapsed: Duration) -> String {
     }
 }
 
-/// What moves back to the start of the line and clears it.
-const CLEAR: &str = "\r\x1b[2K";
-
 /// How long each frame of a spinner is shown.
 const FRAME: Duration = Duration::from_millis(90);
 
-/// Draws a spinner on `out` until `running` goes false, then clears its line.
+/// Draws a spinner on `out` until `running` goes false, then clears its line. Each frame is drawn
+/// over the last from the start of the line, and the line is cleared by writing spaces over it:
+/// with `NO_COLOR` set every escape sequence is left out, the one that clears a line included.
 fn spin<Out>(
     out: &mut Out,
     running: &AtomicBool,
@@ -144,23 +143,26 @@ fn spin<Out>(
 where
     Out: Write,
 {
+    let mut widest = 0;
     for frame in FRAMES.iter().cycle() {
         if !running.load(Ordering::Relaxed) {
             break;
         }
         let clock = if clock {
-            format!(" {DIM}{} s{DIM:#}", started.elapsed().as_secs())
+            format!(" {} s", started.elapsed().as_secs())
         } else {
             String::new()
         };
+        let plain = format!("  {label:<LABEL$}{frame} {text}{clock}");
+        widest = widest.max(plain.chars().count());
         write!(
             out,
-            "{CLEAR}  {DIM}{label:<LABEL$}{DIM:#}{YELLOW}{frame}{YELLOW:#} {text}{clock}"
+            "\r  {DIM}{label:<LABEL$}{DIM:#}{YELLOW}{frame}{YELLOW:#} {text}{DIM}{clock}{DIM:#}"
         )?;
         out.flush()?;
         thread::sleep(FRAME);
     }
-    write!(out, "{CLEAR}")?;
+    write!(out, "\r{:widest$}\r", "")?;
     out.flush()
 }
 
@@ -344,12 +346,16 @@ mod tests {
         spinner.done("uploaded");
         let drawn = out.text();
         let first = format!(
-            "{CLEAR}  {DIM}steam     {DIM:#}{YELLOW}\u{280b}{YELLOW:#} uploading {DIM}0 s{DIM:#}"
+            "\r  {DIM}steam     {DIM:#}{YELLOW}\u{280b}{YELLOW:#} uploading{DIM} 0 s{DIM:#}\r"
         );
         assert!(drawn.starts_with(&first), "{drawn:?}");
         let second = format!("\u{2819}{YELLOW:#} uploading");
         assert!(drawn.contains(&second), "{drawn:?}");
-        assert!(drawn.ends_with(CLEAR), "{drawn:?}");
+        // As wide as "  steam     ⠋ uploading 0 s", the widest frame.
+        assert!(
+            drawn.ends_with(&format!("\r{}\r", " ".repeat(27))),
+            "{drawn:?}"
+        );
         thread::sleep(FRAME.saturating_mul(2));
         assert_eq!(out.text(), drawn, "drawn after it was done");
     }
@@ -369,7 +375,10 @@ mod tests {
         let drawn = out.text();
         assert!(drawn.contains("waiting"), "{drawn:?}");
         assert!(!drawn.contains(" s"), "{drawn:?}");
-        assert!(drawn.ends_with(CLEAR), "{drawn:?}");
+        assert!(
+            drawn.ends_with(&format!("\r{}\r", " ".repeat(21))),
+            "{drawn:?}"
+        );
     }
 
     #[test]

@@ -4,13 +4,16 @@
 //! whole lines, and as the line it has started but not ended, which is where a program leaves a
 //! prompt it waits at.
 
-use std::{iter, mem, str};
+use std::{mem, str};
 
 /// What the program has written so far and not yet been taken as a line.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Reader {
     /// Text of the line being written.
-    pending: String,
+    pending: Vec<char>,
+    /// Where in the line the next character goes: a backspace moves it back, and what is
+    /// written there then takes the place of what was.
+    cursor: usize,
     /// Bytes of a character or an escape sequence cut off at the end of the last chunk.
     carried: Vec<u8>,
 }
@@ -39,23 +42,31 @@ impl Reader {
                         self.carried = rest.to_vec();
                         break;
                     };
-                    let spaces = forward(rest.get(..length).unwrap_or_default());
-                    self.pending.extend(iter::repeat_n(' ', spaces));
+                    self.cursor = self
+                        .cursor
+                        .saturating_add(forward(rest.get(..length).unwrap_or_default()));
+                    if self.pending.len() < self.cursor {
+                        self.pending.resize(self.cursor, ' ');
+                    }
                     at = at.saturating_add(length);
                 }
                 b'\n' => {
-                    events.push(Event::Line(mem::take(&mut self.pending)));
+                    events.push(Event::Line(self.take()));
                     at = at.saturating_add(1);
                 }
                 // A carriage return alone moves back over the line: what follows is the line
                 // again, so the part before is dropped; before a line feed it ends nothing.
                 b'\r' => {
                     if bytes.get(at.saturating_add(1)) != Some(&b'\n') {
-                        self.pending.clear();
+                        drop(self.take());
                     }
                     at = at.saturating_add(1);
                 }
-                0x07 | 0x08 => at = at.saturating_add(1),
+                0x07 => at = at.saturating_add(1),
+                0x08 => {
+                    self.cursor = self.cursor.saturating_sub(1);
+                    at = at.saturating_add(1);
+                }
                 _ => {
                     let length = utf8_length(byte);
                     let end = at.saturating_add(length);
@@ -63,15 +74,32 @@ impl Reader {
                         self.carried = bytes.get(at..).unwrap_or_default().to_vec();
                         break;
                     };
-                    self.pending.push_str(&String::from_utf8_lossy(character));
+                    for written in String::from_utf8_lossy(character).chars() {
+                        self.put(written);
+                    }
                     at = end;
                 }
             }
         }
         if !self.pending.is_empty() {
-            events.push(Event::Waiting(self.pending.clone()));
+            events.push(Event::Waiting(self.pending.iter().collect()));
         }
         events
+    }
+
+    /// Writes `character` where the cursor is, over what was there, and moves past it.
+    fn put(&mut self, character: char) {
+        match self.pending.get_mut(self.cursor) {
+            Some(there) => *there = character,
+            None => self.pending.push(character),
+        }
+        self.cursor = self.cursor.saturating_add(1);
+    }
+
+    /// The line so far, which starts a new one.
+    fn take(&mut self) -> String {
+        self.cursor = 0;
+        mem::take(&mut self.pending).into_iter().collect()
     }
 }
 
@@ -224,11 +252,28 @@ mod tests {
     }
 
     #[test]
-    fn bells_backspaces_and_bytes_that_are_not_utf_8_do_no_harm() {
+    fn bells_and_bytes_that_are_not_utf_8_do_no_harm() {
         let mut reader = Reader::default();
         assert_eq!(
-            reader.read(b"a\x07\x08\xffb\x1bXc\n"),
+            reader.read(b"a\x07\xffb\x1bXc\n"),
             [Event::Line("a\u{fffd}bc".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_backspace_moves_back_and_what_follows_is_written_over_the_line() {
+        let mut reader = Reader::default();
+        assert_eq!(
+            reader.read(b"+qx\x08 \x08uit"),
+            [Event::Waiting("+quit".to_owned())]
+        );
+        assert_eq!(
+            reader.read(b"\x08\x08\x08\x08\x08\x08\x08-\n"),
+            [Event::Line("-quit".to_owned())]
+        );
+        assert_eq!(
+            reader.read(b"ab\x08\x1b[3Cc\n"),
+            [Event::Line("ab  c".to_owned())]
         );
     }
 }

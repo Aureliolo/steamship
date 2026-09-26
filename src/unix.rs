@@ -35,16 +35,16 @@ static RUNNING: AtomicI32 = AtomicI32::new(0);
 /// The signals that end steamship from outside: Ctrl+C, the terminal closing, and `kill`.
 const ENDING: [libc::c_int; 3] = [libc::SIGINT, libc::SIGHUP, libc::SIGTERM];
 
-/// Marks a process group as the one running, until dropped.
+/// Marks a process group as the one running, until dropped. steamship runs one program at a time.
 #[derive(Debug)]
-struct Running(i32);
+struct Running;
 
 impl Running {
     fn mark(group: i32) -> Self {
         static CATCHING: Once = Once::new();
         CATCHING.call_once(catch_ending_signals);
         RUNNING.store(group, Ordering::SeqCst);
-        Self(group)
+        Self
     }
 }
 
@@ -52,21 +52,20 @@ impl Drop for Running {
     fn drop(&mut self) {
         // Cleared, so that a signal after the group has ended cannot reach another that has
         // since been given its number.
-        let _: Result<i32, i32> =
-            RUNNING.compare_exchange(self.0, 0, Ordering::SeqCst, Ordering::SeqCst);
+        RUNNING.store(0, Ordering::SeqCst);
     }
 }
 
 #[expect(
     clippy::as_conversions,
-    clippy::fn_to_numeric_cast_any,
-    reason = "signal takes its handler as the address libc defines sighandler_t to be"
+    reason = "a function becomes the pointer signal takes only through a cast"
 )]
 fn catch_ending_signals() {
+    let handler = (on_ending as *const ()).expose_provenance();
     for signal in ENDING {
         // SAFETY: the handler does only what a signal handler may: an atomic load, killpg,
         // signal and raise.
-        let before = unsafe { libc::signal(signal, on_ending as libc::sighandler_t) };
+        let before = unsafe { libc::signal(signal, handler) };
         if before == libc::SIG_IGN {
             // A signal steamship was started to ignore, as under nohup, stays ignored.
             // SAFETY: puts back the disposition it had.
@@ -77,7 +76,7 @@ fn catch_ending_signals() {
 
 extern "C" fn on_ending(signal: libc::c_int) {
     let group = RUNNING.load(Ordering::SeqCst);
-    if group != 0 {
+    if group != 0_i32 {
         stop_group(group);
     }
     // SAFETY: puts back the default disposition, which a signal handler may do.
