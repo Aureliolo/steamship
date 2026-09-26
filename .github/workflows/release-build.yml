@@ -137,13 +137,14 @@ jobs:
         if: matrix.native
         run: cargo test --locked
 
-      # Windows' C runtime linked in, so the binary runs on a machine without the Visual C++
-      # redistributable.
+      # The dist profile, optimised as a whole program, where `cargo install` keeps to the
+      # quicker release profile. Windows' C runtime linked in, so the binary runs on a machine
+      # without the Visual C++ redistributable.
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
           CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo auditable build --locked --release --target "${TARGET}"
+        run: cargo auditable build --locked --profile dist --target "${TARGET}"
 
       - name: Verify the build left the source as it was
         run: |
@@ -167,7 +168,7 @@ jobs:
             binary="steamship.exe"
           fi
           mkdir -p "dist/${name}"
-          cp "target/${TARGET}/release/${binary}" README.md LICENSE-APACHE LICENSE-MIT "dist/${name}/"
+          cp "target/${TARGET}/dist/${binary}" README.md LICENSE-APACHE LICENSE-MIT "dist/${name}/"
           cd dist
           if [[ "${TARGET}" == *windows* ]]; then
             archive="${name}.zip"
