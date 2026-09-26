@@ -241,7 +241,7 @@ fn a_script_that_is_not_keyvalues_is_refused_with_its_place() {
 #[cfg(unix)]
 #[test]
 fn a_linux_program_needs_its_executable_bit() {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::PermissionsExt as _;
 
     let (project, app) = Project::shipping("");
     let program = project.file("export/linux/game.x86_64", &elf_program());
