@@ -1,0 +1,170 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Named by platform rather than by runner image: the name is what the branch ruleset requires,
+  # and an image raise must not rename a required check out from under it.
+  rust:
+    name: rust (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Renovate reads a runner out of `runs-on:` but not out of a matrix, so each of these
+        # carries its own line for it.
+        include:
+          - platform: linux
+            # renovate: datasource=github-runners depName=ubuntu
+            runner: ubuntu-24.04
+          - platform: windows
+            # renovate: datasource=github-runners depName=windows
+            runner: windows-2025
+          - platform: macos
+            # renovate: datasource=github-runners depName=macos
+            runner: macos-26
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read # Reads the source it builds.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The toolchain rust-toolchain.toml pins, fetched by the runner's rustup, which checks every
+      # component against the hashes in Rust's release manifest.
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Lint
+        if: '!cancelled()'
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Test
+        if: '!cancelled()'
+        run: cargo test --locked
+
+  # The parsers read files steamship did not write, so each gets a minute of libFuzzer per run.
+  # Linux only: on Windows the coverage instrumentation links only against the AddressSanitizer
+  # runtime, and a sanitizer adds nothing here, where no fuzzed code is unsafe.
+  fuzz:
+    name: fuzz (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [vdf, elf, pattern]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # Reads the source it builds.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # From source at an exact version, every dependency held to the hashes in its lock file.
+      - name: Install cargo-fuzz
+        env:
+          # renovate: datasource=crate depName=cargo-fuzz
+          CARGO_FUZZ_VERSION: 0.13.2
+        run: cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
+
+      - name: Fuzz
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          corpus="${GITHUB_WORKSPACE}/fuzz/corpus/${TARGET}"
+          seeds="${GITHUB_WORKSPACE}/fuzz/seeds/${TARGET}"
+          mkdir -p "${corpus}" "${seeds}"
+          cargo fuzz run --sanitizer none "${TARGET}" "${corpus}" "${seeds}" -- -max_total_time=60
+
+      - name: Keep the failing input
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-${{ matrix.target }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore
+
+  # Licences, advisories, duplicate crates and where every crate comes from.
+  deny:
+    name: deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the lock file it checks.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # The release archive, refused unless it matches the digest written here.
+      - name: Install cargo-deny
+        env:
+          # renovate: datasource=github-release-attachments depName=EmbarkStudios/cargo-deny versioning=semver
+          CARGO_DENY_TAG: 0.20.2
+          CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+        run: |
+          set -euo pipefail
+          name="cargo-deny-${CARGO_DENY_TAG}-x86_64-unknown-linux-musl"
+          archive="${RUNNER_TEMP}/${name}.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_TAG}/${name}.tar.gz"
+          echo "${CARGO_DENY_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/${name}" >> "${GITHUB_PATH}"
+
+      - name: Check the crate
+        run: cargo deny --locked check
+
+      # Held to fuzz/deny.toml, the one beside its manifest, which says where it differs and why.
+      - name: Check the fuzz crate
+        if: '!cancelled()'
+        run: cargo deny --manifest-path fuzz/Cargo.toml --locked check
+
+  markdown:
+    name: markdown
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the Markdown it lints.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Lint
+        uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0

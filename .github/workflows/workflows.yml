@@ -1,0 +1,72 @@
+name: Workflows
+
+# The workflows are code with credentials attached. actionlint covers syntax, expressions and the
+# shell inside run: blocks; zizmor covers the security side, template injection and over-broad
+# permissions. No paths filter: both are required checks, and a required check a paths filter
+# skipped never reports, which leaves the pull request waiting on it forever.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the workflow files.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The release archive, refused unless it matches the digest written here. shellcheck comes
+      # with the runner image, so the shell inside run: blocks is checked too.
+      - name: Run actionlint
+        env:
+          # renovate: datasource=github-release-attachments depName=rhysd/actionlint versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          ACTIONLINT_TAG: v1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/actionlint_${ACTIONLINT_TAG#v}_linux_amd64.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
+            "https://github.com/rhysd/actionlint/releases/download/${ACTIONLINT_TAG}/actionlint_${ACTIONLINT_TAG#v}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}" actionlint
+          "${RUNNER_TEMP}/actionlint" -color
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the workflow files.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Findings fail the job rather than going to the security tab: a lint result is fixed or
+      # argued about in the pull request that introduced it. The zizmor version is fixed by the
+      # container digest inside the action at the commit pinned here.
+      - name: Run zizmor
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          persona: pedantic
+          advanced-security: false
+          annotations: true
