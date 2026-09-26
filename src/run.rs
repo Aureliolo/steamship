@@ -44,7 +44,9 @@ mod tests {
     use super::*;
     use std::env;
     use std::fs;
-    use std::io::{Read as _, Write as _};
+    use std::io::Write as _;
+    use std::sync::mpsc;
+    use std::thread;
     use std::time::Instant;
 
     /// A shell, what makes it run the one line that follows, a line that starts a grandchild
@@ -165,16 +167,33 @@ mod tests {
         directory: &Path,
         typed: &[u8],
     ) -> (Option<i32>, String) {
-        let (terminal, mut output, mut input) =
+        let (terminal, output, mut input) =
             native::Terminal::start(Path::new(SHELL.0), args, environment, directory).unwrap();
         input.write_all(typed).unwrap();
-        let mut written = Vec::new();
-        let _: usize = output.read_to_end(&mut written).unwrap();
+        let written = to_the_end(output);
         drop(input);
         (
             terminal.wait().unwrap(),
             String::from_utf8_lossy(&written).into_owned(),
         )
+    }
+
+    /// All of `output`, which must end within half a minute: output that never ends fails the
+    /// test rather than holding it up for good.
+    fn to_the_end<Output>(mut output: Output) -> Vec<u8>
+    where
+        Output: io::Read + Send + 'static,
+    {
+        let (sender, receiver) = mpsc::channel();
+        let _reading = thread::spawn(move || {
+            let mut written = Vec::new();
+            let read = output.read_to_end(&mut written).map(|_| written);
+            drop(sender.send(read));
+        });
+        receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the output never ended")
+            .unwrap()
     }
 
     fn terminal_shell(environment: &[(OsString, OsString)], directory: &Path) -> Option<i32> {
@@ -240,9 +259,15 @@ mod tests {
     }
 
     #[test]
+    fn the_output_of_a_program_on_a_terminal_ends_when_it_does_whatever_it_left_running() {
+        let (code, _) = on_terminal(&shell_args(SHELL.3), &[], &env::temp_dir(), b"");
+        assert_eq!(code, Some(4_i32));
+    }
+
+    #[test]
     fn a_program_on_a_terminal_dropped_unwaited_is_ended() {
-        let started = Instant::now();
-        let (terminal, mut output, _input) = native::Terminal::start(
+        // The line runs for a minute, and holds the output open, unless it is ended.
+        let (terminal, output, _input) = native::Terminal::start(
             Path::new(SHELL.0),
             &shell_args(SHELL.2),
             &[],
@@ -250,13 +275,7 @@ mod tests {
         )
         .unwrap();
         drop(terminal);
-        let mut written = Vec::new();
-        let _: usize = output.read_to_end(&mut written).unwrap();
-        assert!(
-            started.elapsed() < Duration::from_secs(30),
-            "took {:?}",
-            started.elapsed()
-        );
+        drop(to_the_end(output));
     }
 
     #[test]

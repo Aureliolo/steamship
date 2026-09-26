@@ -352,18 +352,31 @@ mod tests {
     const LOG: &str = "[2026-09-26 17:27:28]: Starting AppID 5335970 build (flags 0x0).\n\
                        [2026-09-26 17:29:02]: Successfully finished AppID 5335970 build (BuildID 18273645).\n";
 
+    /// What steamcmd prints on logging in with the token it keeps.
+    const LOGGED_IN: &str = "Logging in user 'build_bot' [U:1:0] to Steam Public...OK\r\n\
+                             Waiting for client config...OK\r\n";
+
     #[test]
     fn takes_the_build_id_from_the_log_when_steamcmd_exits_0() {
         assert_eq!(
-            judge(5_335_970, Some(0_i32), "", Some(LOG), false),
+            judge(5_335_970, Some(0_i32), LOGGED_IN, Some(LOG), false),
             Outcome::Built {
                 build_id: 18_273_645
             }
         );
         assert_eq!(
-            judge(5_335_970, Some(0_i32), "", Some(LOG), true),
+            judge(5_335_970, Some(0_i32), LOGGED_IN, Some(LOG), true),
             Outcome::Previewed
         );
+    }
+
+    #[test]
+    fn a_failure_after_logging_in_is_not_a_failure_to_log_in() {
+        let console = format!("{LOGGED_IN}ERROR! FAILED to upload a chunk\r\n");
+        assert!(matches!(
+            judge(5_335_970, Some(6_i32), &console, None, false),
+            Outcome::Failed(_)
+        ));
     }
 
     #[test]

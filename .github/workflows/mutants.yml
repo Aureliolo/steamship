@@ -5,8 +5,10 @@ name: Mutants
 # the tests still pass. A pull request is held to it on the lines it changes; the whole crate is
 # run weekly, which is where anything the diffs never touched turns up.
 #
-# Code for one system is compiled only there, so each system mutates everything but the other's
-# module: mutating code that is not compiled would always look missed.
+# Code for one system is compiled only there, and mutating code that is not compiled would always
+# look missed. So Linux mutates everything but the Windows module, and Windows mutates that module
+# alone: the code both systems share is mutated once, on Linux, where the tests that run the whole
+# command against a stand-in steamcmd can run.
 #
 # A mutant that makes the downloader retry sits through its real waits, about a minute in all,
 # before the test fails; the minimum timeout is set above that so such a mutant counts as caught
@@ -33,11 +35,11 @@ jobs:
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
             runner: ubuntu-24.04
-            skip: src/windows.rs
+            scope: --exclude
           - platform: windows
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
-            skip: src/unix.rs
+            scope: --file
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -90,18 +92,18 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          SKIP: ${{ matrix.skip }}
+          SCOPE: ${{ matrix.scope }}
         run: |
           set -euo pipefail
           git diff "${BASE_SHA}...HEAD" > "${RUNNER_TEMP}/change.diff"
-          cargo mutants --in-diff "${RUNNER_TEMP}/change.diff" --exclude "${SKIP}" --no-shuffle \
-            --minimum-test-timeout 120
+          cargo mutants --in-diff "${RUNNER_TEMP}/change.diff" "${SCOPE}" src/windows.rs \
+            --no-shuffle --minimum-test-timeout 120
 
       - name: Mutate everything
         if: github.event_name == 'schedule'
         env:
-          SKIP: ${{ matrix.skip }}
-        run: cargo mutants --exclude "${SKIP}" --no-shuffle --minimum-test-timeout 120
+          SCOPE: ${{ matrix.scope }}
+        run: cargo mutants "${SCOPE}" src/windows.rs --no-shuffle --minimum-test-timeout 120
 
       - name: Keep the report
         if: failure()

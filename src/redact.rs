@@ -175,9 +175,14 @@ fn replace(text: &[u8], secret: &[u8]) -> Vec<u8> {
     let mut rest = text;
     while let Some(at) = find(rest, secret) {
         let (before, from) = rest.split_at(at);
+        // Each turn takes a whole secret off what remains, so the loop ends however `find`
+        // answers.
+        let Some(after) = from.get(secret.len()..) else {
+            break;
+        };
         replaced.extend_from_slice(before);
         replaced.extend_from_slice(MARKER);
-        rest = from.get(secret.len()..).unwrap_or_default();
+        rest = after;
     }
     replaced.extend_from_slice(rest);
     replaced

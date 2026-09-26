@@ -14,9 +14,9 @@ use std::os::unix::fs::{PermissionsExt as _, symlink as make_symlink};
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::panic;
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::ptr;
-use std::thread;
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use crate::run::Finished;
@@ -93,11 +93,13 @@ pub const fn silence_error_dialogues() {}
 /// Dropped before it is waited for, it ends the program and everything the program started.
 #[derive(Debug)]
 pub struct Terminal {
-    child: Child,
-    waited: bool,
+    group: i32,
+    /// Waits for the program, then ends its process group: whatever the program left running
+    /// would otherwise hold the terminal, and so its output, open.
+    watching: Option<JoinHandle<io::Result<ExitStatus>>>,
 }
 
-/// What a program writes to its pseudo terminal. Once the program, and whatever it started, has
+/// What a program writes to its pseudo terminal. Once the program and everything it started have
 /// closed the terminal, reading fails with `EIO`: that is the end of the output, and read as such.
 #[derive(Debug)]
 pub struct Output(File);
@@ -147,7 +149,7 @@ impl Terminal {
         // What is typed must never come back in the output, where it would be read, so the
         // terminal does not echo it, whatever the program itself asks for.
         quiet(replica.as_raw_fd())?;
-        let child = Command::new(program)
+        let mut child = Command::new(program)
             .args(args)
             .envs(environment.iter().map(|(name, value)| (name, value)))
             .current_dir(directory)
@@ -157,40 +159,49 @@ impl Terminal {
             .process_group(0)
             .spawn()?;
         let output = Output(File::from(main.try_clone()?));
+        let group = i32::try_from(child.id()).map_err(io::Error::other)?;
+        let watching = thread::spawn(move || {
+            let status = child.wait();
+            stop_group(group);
+            status
+        });
         let terminal = Self {
-            child,
-            waited: false,
+            group,
+            watching: Some(watching),
         };
         Ok((terminal, output, File::from(main)))
     }
 
-    /// Waits for the program to end, then ends whatever it left running.
+    /// Waits for the program to end and says its exit code, or the shell's stand-in for one
+    /// when a signal ended it.
     ///
     /// # Errors
     ///
     /// When waiting fails.
     pub fn wait(mut self) -> io::Result<Option<i32>> {
-        let status = self.child.wait()?;
-        self.waited = true;
-        self.stop();
-        Ok(status
-            .code()
-            .or_else(|| status.signal().map(|signal| signal.saturating_add(128))))
-    }
-
-    fn stop(&self) {
-        if let Ok(group) = i32::try_from(self.child.id()) {
-            stop_group(group);
-        }
+        let status = self
+            .watching
+            .take()
+            .map(|watching| {
+                watching
+                    .join()
+                    .unwrap_or_else(|panic| panic::resume_unwind(panic))
+            })
+            .transpose()?;
+        Ok(status.and_then(|status| {
+            status
+                .code()
+                .or_else(|| status.signal().map(|signal| signal.saturating_add(128)))
+        }))
     }
 }
 
 impl Drop for Terminal {
     fn drop(&mut self) {
-        if !self.waited {
-            self.stop();
-            // Reaped, so that it is not left a zombie for as long as steamship runs.
-            drop(self.child.wait());
+        if let Some(watching) = self.watching.take() {
+            stop_group(self.group);
+            // Joined, so that the program is reaped rather than left a zombie while steamship runs.
+            drop(watching.join());
         }
     }
 }

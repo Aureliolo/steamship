@@ -8,13 +8,23 @@
     reason = "a test reports failure by panicking, its helpers included"
 )]
 
+use std::ffi::OsString;
 use std::fs::{self, File};
+use std::io::{Read as _, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::mpsc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use steamship::install;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
+use steamship::terminal::{Event, Reader};
+#[cfg(unix)]
+use steamship::unix::Terminal;
+#[cfg(windows)]
+use steamship::windows::Terminal;
 
 /// `steamship install` with `STEAMSHIP_HOME` set to `home`, or with no environment at all.
 fn run(home: Option<&Path>) -> (Option<i32>, String, String) {
@@ -192,27 +202,47 @@ fn login_that_steamcmd_ends_badly_exits_1_and_remembers_nothing() {
 
 /// A home whose steamcmd asks for a password, keeps what was typed in `typed` in the home, and
 /// logs in only when that was `hunter2`, refusing it as steamcmd does otherwise.
+///
+/// With `STEAMSHIP_FAKE_GUARD` set to `code` it then asks for a Steam Guard code, kept in `code`
+/// and taken only when it is `AB12C`; set to `app`, it waits for the login to be approved in the
+/// Steam Mobile app, saying something steamship has no meaning for meanwhile, and with
+/// `STEAMSHIP_FAKE_DENY` set the approval never comes.
 #[cfg(unix)]
 fn asking() -> tempfile::TempDir {
     faked_with(
         "#!/bin/sh\n\
+         failed() { echo \"Logging in user 'build_bot' [U:1:0] to Steam Public...$1\"; exit 5; }\n\
          echo 'Cached credentials not found.'\n\
          printf 'password: '\n\
          read -r typed\n\
          printf '%s' \"$typed\" > \"$HOME/typed\"\n\
          echo\n\
-         if [ \"$typed\" = hunter2 ]; then\n\
-           echo \"Logging in user 'build_bot' [U:1:0] to Steam Public...OK\"\n\
-           exit 0\n\
-         fi\n\
-         echo \"Logging in user 'build_bot' [U:1:0] to Steam Public...ERROR (Invalid Password)\"\n\
-         exit 5\n",
+         [ \"$typed\" = hunter2 ] || failed 'ERROR (Invalid Password)'\n\
+         case \"$STEAMSHIP_FAKE_GUARD\" in\n\
+           code)\n\
+             printf 'Steam Guard code: '\n\
+             read -r code\n\
+             printf '%s' \"$code\" > \"$HOME/code\"\n\
+             echo\n\
+             [ \"$code\" = AB12C ] || failed 'FAILED (Invalid Login Auth Code)' ;;\n\
+           app)\n\
+             echo 'Please confirm the login in the Steam Mobile app on your phone.'\n\
+             echo 'A line steamship has no meaning for'\n\
+             sleep 1\n\
+             [ -z \"$STEAMSHIP_FAKE_DENY\" ] || failed 'FAILED (Timeout)'\n\
+             echo 'Waiting for confirmation...OK' ;;\n\
+         esac\n\
+         echo \"Logging in user 'build_bot' [U:1:0] to Steam Public...OK\"\n",
     )
 }
 
-/// `steamship login` in `home`, with `typed` piped to it as a script would.
+/// `steamship login` in `home`, with `typed` piped to it as a script would, and `variables` set.
 #[cfg(unix)]
-fn login_typing(home: &Path, typed: &str) -> (Option<i32>, String, String) {
+fn login_typing(
+    home: &Path,
+    typed: &str,
+    variables: &[(&str, &str)],
+) -> (Option<i32>, String, String) {
     use std::io::Write as _;
     use std::process::Stdio;
 
@@ -220,6 +250,7 @@ fn login_typing(home: &Path, typed: &str) -> (Option<i32>, String, String) {
         .args(["login", "--account", "build_bot"])
         .env_remove("STEAMSHIP_ACCOUNT")
         .env("STEAMSHIP_HOME", home)
+        .envs(variables.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -243,7 +274,7 @@ fn login_typing(home: &Path, typed: &str) -> (Option<i32>, String, String) {
 #[test]
 fn login_passes_the_password_to_steamcmd_and_never_shows_it() {
     let home = asking();
-    let (code, stdout, stderr) = login_typing(home.path(), "hunter2\n");
+    let (code, stdout, stderr) = login_typing(home.path(), "hunter2\n", &[]);
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
     assert_eq!(
         fs::read_to_string(home.path().join("typed")).unwrap(),
@@ -262,7 +293,7 @@ fn login_passes_the_password_to_steamcmd_and_never_shows_it() {
 #[test]
 fn login_with_a_wrong_password_says_steam_refused_it_and_exits_1() {
     let home = asking();
-    let (code, stdout, stderr) = login_typing(home.path(), "hunter3\n");
+    let (code, stdout, stderr) = login_typing(home.path(), "hunter3\n", &[]);
     assert_eq!(code, Some(1_i32));
     assert_eq!(
         failure(&stderr),
@@ -278,13 +309,245 @@ fn login_with_a_wrong_password_says_steam_refused_it_and_exits_1() {
 #[test]
 fn login_with_no_password_to_give_ends_steamcmd_and_exits_1() {
     let home = asking();
-    let (code, _, stderr) = login_typing(home.path(), "");
+    let (code, _, stderr) = login_typing(home.path(), "", &[]);
     assert_eq!(code, Some(1_i32));
     assert_eq!(
         failure(&stderr),
         "not logged in: input ended before steamcmd had an answer"
     );
     assert!(!home.path().join("typed").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn login_passes_a_steam_guard_code_to_steamcmd() {
+    let home = asking();
+    let guard = [("STEAMSHIP_FAKE_GUARD", "code")];
+    let (code, stdout, stderr) = login_typing(home.path(), "hunter2\nAB12C\n", &guard);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(home.path().join("code")).unwrap(),
+        "AB12C"
+    );
+    assert!(stdout.contains("  password  \n  code      \n"), "{stdout}");
+    let (wrong, _, said) = login_typing(home.path(), "hunter2\nAB12D\n", &guard);
+    assert_eq!(wrong, Some(1_i32));
+    assert_eq!(failure(&said), "not logged in: Steam refused the code");
+}
+
+#[cfg(unix)]
+#[test]
+fn login_waits_for_approval_in_the_app_and_passes_on_what_it_cannot_place() {
+    let home = asking();
+    let (code, stdout, stderr) =
+        login_typing(home.path(), "hunter2\n", &[("STEAMSHIP_FAKE_GUARD", "app")]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    let waiting = "  approve   waiting for you in the Steam Mobile app...\n";
+    assert!(
+        stdout.contains(&format!(
+            "{waiting}    A line steamship has no meaning for\n{waiting}  approve   \u{2713} approved\n"
+        )),
+        "{stdout}"
+    );
+    assert!(stdout.ends_with("\u{2713} logged in\n    uploads use this login until it expires\n"));
+}
+
+#[cfg(unix)]
+#[test]
+fn login_never_approved_says_so_and_exits_1() {
+    let home = asking();
+    let (code, stdout, stderr) = login_typing(
+        home.path(),
+        "hunter2\n",
+        &[
+            ("STEAMSHIP_FAKE_GUARD", "app"),
+            ("STEAMSHIP_FAKE_DENY", "1"),
+        ],
+    );
+    assert_eq!(code, Some(1_i32));
+    assert!(
+        stdout.ends_with("  approve   \u{2717} not approved\n"),
+        "{stdout}"
+    );
+    assert_eq!(failure(&stderr), "not logged in: steamcmd says: Timeout");
+    assert!(!home.path().join("account").exists());
+}
+
+/// steamship on a terminal of its own, as a person runs it, with what it shows read as it comes.
+struct Session {
+    terminal: Option<Terminal>,
+    input: Box<dyn Write>,
+    chunks: mpsc::Receiver<Vec<u8>>,
+    reader: Reader,
+    /// The lines shown so far, and the one being written.
+    shown: String,
+    pending: String,
+}
+
+impl Session {
+    /// Starts `line` in the system's shell on a terminal, in a home of its own with no account in
+    /// the environment.
+    fn start(line: &str, home: &Path) -> Self {
+        #[cfg(windows)]
+        let (shell, args) = (r"C:\Windows\System32\cmd.exe", ["/d", "/s", "/c"]);
+        #[cfg(unix)]
+        let (shell, args) = ("/bin/sh", ["-c"]);
+        let args: Vec<OsString> = args
+            .iter()
+            .copied()
+            .chain([line])
+            .map(OsString::from)
+            .collect();
+        let environment = [(
+            OsString::from("STEAMSHIP_HOME"),
+            home.as_os_str().to_owned(),
+        )];
+        let (terminal, mut output, input) =
+            Terminal::start(Path::new(shell), &args, &environment, home).unwrap();
+        let (sender, chunks) = mpsc::channel();
+        let _reading = thread::spawn(move || {
+            let mut chunk = [0_u8; 4096];
+            while let Ok(length) = output.read(&mut chunk) {
+                if length == 0 || sender.send(chunk.get(..length).unwrap().to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        Self {
+            terminal: Some(terminal),
+            input: Box::new(input),
+            chunks,
+            reader: Reader::default(),
+            shown: String::new(),
+            pending: String::new(),
+        }
+    }
+
+    /// Everything shown so far.
+    fn seen(&self) -> String {
+        format!("{}{}", self.shown, self.pending)
+    }
+
+    /// Reads on until `text` has been shown, or fails the test after half a minute.
+    fn wait_for(&mut self, text: &str) {
+        let deadline = Instant::now().checked_add(Duration::from_secs(30)).unwrap();
+        while !self.seen().contains(text) {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let chunk = self.chunks.recv_timeout(left);
+            assert!(chunk.is_ok(), "{text:?} never shown in {:?}", self.seen());
+            let chunk = chunk.unwrap();
+            self.pending.clear();
+            for event in self.reader.read(&chunk) {
+                match event {
+                    Event::Line(line) => {
+                        self.shown.push_str(&line);
+                        self.shown.push('\n');
+                    }
+                    Event::Waiting(started) => self.pending = started,
+                }
+            }
+        }
+    }
+
+    fn type_in(&mut self, keys: &str) {
+        self.input.write_all(keys.as_bytes()).unwrap();
+        self.input.flush().unwrap();
+    }
+
+    /// The shell's terminal, to wait for.
+    const fn end(&mut self) -> Terminal {
+        self.terminal.take().unwrap()
+    }
+}
+
+/// A line that runs `steamship login` with no account named, then shows how the terminal was
+/// left: on Unix its settings, and on Windows whether a line typed at the shell's own prompt
+/// is echoed, as it is only in the mode steamship found it in.
+fn login_then_look() -> String {
+    let steamship = env!("CARGO_BIN_EXE_steamship");
+    // A line reaches `cmd` with its quotes escaped as other programs read them, which `cmd` does
+    // not, so nothing in it is quoted.
+    #[cfg(windows)]
+    assert!(!steamship.contains(' '), "{steamship}");
+    #[cfg(windows)]
+    let line = format!("set STEAMSHIP_ACCOUNT=& {steamship} login & set /p after=next: ");
+    #[cfg(unix)]
+    let line = format!("unset STEAMSHIP_ACCOUNT; '{steamship}' login; echo \"exited $?\"; stty -a");
+    line
+}
+
+#[test]
+fn login_on_a_terminal_asks_for_the_account_shows_it_as_typed_and_refuses_a_bad_one() {
+    let home = tempfile::tempdir().unwrap();
+    let mut session = Session::start(&login_then_look(), home.path());
+    session.wait_for("account");
+    session.type_in("+qx\u{7f}uit");
+    session.wait_for("+quit");
+    session.type_in("\r");
+    session.wait_for("\"+quit\" is not a Steam account name");
+    looks_as_it_was(&mut session, "exited 2");
+    assert!(!home.path().join("account").exists());
+}
+
+/// Checks that `session`'s terminal is as steamship found it, once steamship has `exited` so.
+#[cfg(windows)]
+fn looks_as_it_was(session: &mut Session, _exited: &str) {
+    session.wait_for("next:");
+    session.type_in("typed after\r");
+    session.wait_for("next: typed after");
+    let _: Option<i32> = session.end().wait().unwrap();
+}
+
+#[cfg(unix)]
+fn looks_as_it_was(session: &mut Session, exited: &str) {
+    session.wait_for(exited);
+    session.wait_for("icanon");
+    let _: Option<i32> = session.end().wait().unwrap();
+    let seen = session.seen();
+    assert!(
+        !seen.contains("-icanon") && !seen.contains("-isig"),
+        "{seen}"
+    );
+}
+
+#[test]
+fn login_on_a_terminal_can_be_given_up_with_ctrl_c() {
+    let home = tempfile::tempdir().unwrap();
+    let mut session = Session::start(&login_then_look(), home.path());
+    session.wait_for("account");
+    session.type_in("build\u{3}");
+    session.wait_for("the account name: given up");
+    looks_as_it_was(&mut session, "exited 1");
+}
+
+#[cfg(unix)]
+#[test]
+fn login_on_a_terminal_hides_the_password_and_waits_for_approval_with_a_spinner() {
+    let home = asking();
+    let line = format!(
+        "unset STEAMSHIP_ACCOUNT; STEAMSHIP_FAKE_GUARD=app '{}' login; echo \"exited $?\"",
+        env!("CARGO_BIN_EXE_steamship")
+    );
+    let mut session = Session::start(&line, home.path());
+    session.wait_for("account");
+    session.type_in("build_bot\r");
+    session.wait_for("password");
+    session.type_in("hunter2\r");
+    session.wait_for("exited 0");
+    let seen = session.seen();
+    assert!(seen.contains("  account   build_bot\n"), "{seen}");
+    assert!(
+        seen.contains(&format!("  password  {}\n", "\u{2022}".repeat(7))),
+        "{seen}"
+    );
+    assert!(!seen.contains("hunter2"), "the password was shown");
+    assert!(seen.contains("  approve   \u{2713} approved\n"), "{seen}");
+    assert!(seen.contains("\u{2713} logged in"), "{seen}");
+    assert_eq!(session.end().wait().unwrap(), Some(0_i32));
+    assert_eq!(
+        fs::read_to_string(home.path().join("account")).unwrap(),
+        "build_bot\n"
+    );
 }
 
 #[cfg(unix)]

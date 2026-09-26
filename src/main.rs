@@ -6,7 +6,6 @@ use std::fs;
 use std::io::{self, IsTerminal as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use steamship::account::Account;
@@ -168,8 +167,7 @@ fn account(named: Option<&str>, ask: bool) -> Result<(Account, Source), ExitCode
     let home = home()?;
     match Account::remembered(&home) {
         Ok(Some(account)) => Ok((account, Source::Remembered)),
-        Ok(None) if ask && io::stdin().is_terminal() => show::prompt("account")
-            .and_then(|()| typing::ask(&mut anstream::stdout(), Echo::Typed))
+        Ok(None) if ask && io::stdin().is_terminal() => typing::ask("account", Echo::Typed)
             .map_err(|error| fail(&format!("the account name: {error}"), FAILED))
             .and_then(|name| Account::parse(&name).map_err(|error| fail(&error, REFUSED)))
             .map(|account| (account, Source::Typed)),
@@ -196,8 +194,7 @@ struct Typist {
 impl Typist {
     fn ask(&mut self, label: &str, echo: Echo) -> io::Result<Zeroizing<String>> {
         drop(self.approving.take());
-        show::prompt(label)?;
-        typing::ask(&mut anstream::stdout(), echo)
+        typing::ask(label, echo)
     }
 }
 
@@ -306,8 +303,8 @@ fn checked(script: &Path) -> Result<check::Report, ExitCode> {
             &format!(
                 "{}, {}, {}, checked",
                 report.app_id.unwrap_or_default(),
-                counted(report.depots.len(), "depot"),
-                counted(files, "file"),
+                show::counted(report.depots.len(), "depot"),
+                show::counted(files, "file"),
             ),
         );
         return Ok(report);
@@ -316,20 +313,6 @@ fn checked(script: &Path) -> Result<check::Report, ExitCode> {
         show::failure("refused", &problem.to_string(), None);
     }
     Err(ExitCode::from(REFUSED))
-}
-
-/// `count` `noun`s, the count in groups of three digits.
-fn counted(count: usize, noun: &str) -> String {
-    let digits = count.to_string();
-    let mut grouped = String::with_capacity(digits.len().saturating_mul(2));
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len().saturating_sub(index)).is_multiple_of(3) {
-            grouped.push(',');
-        }
-        grouped.push(digit);
-    }
-    let plural = if count == 1 { "" } else { "s" };
-    format!("{grouped} {noun}{plural}")
 }
 
 struct Upload<'command> {
@@ -376,7 +359,7 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         &root,
         steamcmd::UPLOAD_LIMIT,
     );
-    let took = took(spinner.elapsed());
+    let took = show::took(spinner.elapsed());
     let finished = match finished {
         Ok(finished) => finished,
         Err(error) => {
@@ -402,16 +385,6 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
     let code = report(&outcome, spinner, &took, &prepared, &saved);
     install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(code)
-}
-
-/// A duration as a person reads it: seconds under two minutes, else minutes.
-fn took(elapsed: Duration) -> String {
-    let seconds = elapsed.as_secs();
-    if seconds < 120 {
-        format!("{seconds} s")
-    } else {
-        format!("{} min", seconds.div_euclid(60))
-    }
 }
 
 fn report(
@@ -472,7 +445,11 @@ fn run_check(script: &Path) -> ExitCode {
             for depot in &report.depots {
                 show::field(
                     "depot",
-                    &format!("{}, {}", depot.depot_id, counted(depot.files.len(), "file")),
+                    &format!(
+                        "{}, {}",
+                        depot.depot_id,
+                        show::counted(depot.files.len(), "file")
+                    ),
                 );
             }
             show::success("nothing refused", "");

@@ -5,6 +5,7 @@ use std::io::{self, BufRead, Write};
 
 use zeroize::Zeroizing;
 
+use crate::show;
 #[cfg(unix)]
 use crate::unix as native;
 #[cfg(windows)]
@@ -105,18 +106,21 @@ where
     Ok(read)
 }
 
-/// A line typed at this process's terminal, or piped to it. Either way `shown` is left at the
-/// start of a new line.
+/// A line typed at this process's terminal after a prompt labelled `label`, or piped to it.
+///
+/// Either way the output is left at the start of a new line. The keyboard is taken before the
+/// prompt is shown, so that nothing typed in answer to it reaches the terminal's own handling
+/// first, where Ctrl+C would end steamship and Backspace be applied twice.
 ///
 /// # Errors
 ///
-/// As [`line`] and [`piped`].
-pub fn ask<Shown>(shown: &mut Shown, echo: Echo) -> io::Result<Zeroizing<String>>
-where
-    Shown: Write,
-{
-    if let Some(mut keys) = native::Keys::open()? {
-        return line(&mut keys, shown, echo);
+/// As [`line`] and [`piped`], and when the prompt cannot be shown.
+pub fn ask(label: &str, echo: Echo) -> io::Result<Zeroizing<String>> {
+    let keys = native::Keys::open()?;
+    show::prompt(label)?;
+    let mut shown = anstream::stdout();
+    if let Some(mut keys) = keys {
+        return line(&mut keys, &mut shown, echo);
     }
     let read = piped(&mut io::stdin().lock())?;
     shown.write_all(b"\n")?;

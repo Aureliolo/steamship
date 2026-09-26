@@ -935,15 +935,21 @@ impl Security {
     }
 
     fn is_only(&self, user: &User) -> bool {
-        self.is_protected()
-            && self.entries(user)
-                == [(
-                    ACCESS_ALLOWED_ACE_TYPE,
-                    OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
-                    FILE_ALL_ACCESS,
-                    true,
-                )]
+        only(self.is_protected(), &self.entries(user))
     }
+}
+
+/// Whether permissions that are `protected` from the parent's, with `entries`, leave a folder to
+/// its user alone: one entry, allowing that user everything, passed down to all it holds.
+fn only(protected: bool, entries: &[(u32, u32, u32, bool)]) -> bool {
+    protected
+        && entries
+            == [(
+                ACCESS_ALLOWED_ACE_TYPE,
+                OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+                FILE_ALL_ACCESS,
+                true,
+            )]
 }
 
 impl Drop for Security {
@@ -1336,6 +1342,43 @@ mod tests {
             )]
         );
         assert!(!restrict(folder.path()).unwrap(), "already so");
+    }
+
+    #[test]
+    fn a_new_folder_takes_its_permissions_from_its_parent_and_is_not_only_its_users() {
+        let folder = tempfile::tempdir().unwrap();
+        let user = User::current().unwrap();
+        let security = Security::of(&wide(folder.path().as_os_str())).unwrap();
+        assert!(!security.is_protected());
+        let entries = security.entries(&user);
+        let allowed = |mine: bool| {
+            entries
+                .iter()
+                .any(|entry| entry.0 == ACCESS_ALLOWED_ACE_TYPE && entry.3 == mine)
+        };
+        // The temporary folder is shared with the system and administrators, besides its user.
+        assert!(allowed(true) && allowed(false), "{entries:?}");
+        assert!(restrict(folder.path()).unwrap());
+        assert!(
+            Security::of(&wide(folder.path().as_os_str()))
+                .unwrap()
+                .is_protected()
+        );
+    }
+
+    #[test]
+    fn only_a_protected_single_entry_for_the_user_is_the_users_alone() {
+        let alone = [(
+            ACCESS_ALLOWED_ACE_TYPE,
+            OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+            FILE_ALL_ACCESS,
+            true,
+        )];
+        assert!(only(true, &alone));
+        assert!(!only(false, &alone), "inherits whatever its parent allows");
+        let someone_else = [(alone[0].0, alone[0].1, alone[0].2, false)];
+        assert!(!only(true, &someone_else));
+        assert!(!only(true, &[]));
     }
 
     #[test]

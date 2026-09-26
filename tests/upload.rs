@@ -232,6 +232,17 @@ fn the_commit_is_the_one_the_scripts_are_in() {
 }
 
 #[test]
+fn scripts_in_a_repository_with_no_commit_yet_are_refused() {
+    let project = Project::new();
+    let original = project.file("steam/app_build.vdf", APP);
+    git(&project.root, &["init", "--quiet"]);
+    assert!(matches!(
+        upload::commit(&original),
+        Err(Error::Description(reason)) if reason.ends_with("which the build description names")
+    ));
+}
+
+#[test]
 fn scripts_outside_a_repository_are_refused() {
     let project = Project::new();
     let original = project.file("steam/app_build.vdf", APP);

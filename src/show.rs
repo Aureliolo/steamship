@@ -4,7 +4,7 @@
 //! steamcmd is silent. Colour and the spinner appear only on a terminal, and colour not with
 //! `NO_COLOR` set; written anywhere else, the same lines are plain.
 
-use std::io::{self, IsTerminal as _, Write as _};
+use std::io::{self, IsTerminal as _, Write};
 use std::mem;
 use std::panic;
 use std::sync::Arc;
@@ -100,27 +100,75 @@ pub fn aside(line: &str) {
     anstream::println!("    {DIM}{line}{DIM:#}");
 }
 
-/// Draws a spinner until `running` goes false, then clears its line. Output that cannot be
-/// written ends it early: there is nowhere left to show it.
-fn spin(running: &AtomicBool, label: &str, text: &str, clock: bool, started: Instant) {
-    let mut out = AutoStream::auto(io::stdout());
-    for frame in FRAMES.iter().cycle() {
-        let going = running.load(Ordering::Relaxed);
-        let line = if going {
-            let clock = if clock {
-                format!(" {DIM}{} s{DIM:#}", started.elapsed().as_secs())
-            } else {
-                String::new()
-            };
-            format!("\r\x1b[2K  {DIM}{label:<LABEL$}{DIM:#}{YELLOW}{frame}{YELLOW:#} {text}{clock}")
-        } else {
-            "\r\x1b[2K".to_owned()
-        };
-        if write!(out, "{line}").and_then(|()| out.flush()).is_err() || !going {
-            return;
+/// `count` `noun`s, the count in groups of three digits.
+#[must_use]
+pub fn counted(count: usize, noun: &str) -> String {
+    let digits = count.to_string();
+    let mut grouped = String::with_capacity(digits.len().saturating_mul(2));
+    for (index, digit) in digits.chars().enumerate() {
+        if index > 0 && digits.len().saturating_sub(index).is_multiple_of(3) {
+            grouped.push(',');
         }
-        thread::sleep(Duration::from_millis(90));
+        grouped.push(digit);
     }
+    let plural = if count == 1 { "" } else { "s" };
+    format!("{grouped} {noun}{plural}")
+}
+
+/// A duration as a person reads it: seconds up to two minutes, then whole minutes.
+#[must_use]
+pub fn took(elapsed: Duration) -> String {
+    let seconds = elapsed.as_secs();
+    if seconds < 120 {
+        format!("{seconds} s")
+    } else {
+        format!("{} min", seconds.div_euclid(60))
+    }
+}
+
+/// What moves back to the start of the line and clears it.
+const CLEAR: &str = "\r\x1b[2K";
+
+/// How long each frame of a spinner is shown.
+const FRAME: Duration = Duration::from_millis(90);
+
+/// Draws a spinner on `out` until `running` goes false, then clears its line.
+fn spin<Out>(
+    out: &mut Out,
+    running: &AtomicBool,
+    label: &str,
+    text: &str,
+    clock: bool,
+    started: Instant,
+) -> io::Result<()>
+where
+    Out: Write,
+{
+    for frame in FRAMES.iter().cycle() {
+        if !running.load(Ordering::Relaxed) {
+            break;
+        }
+        let clock = if clock {
+            format!(" {DIM}{} s{DIM:#}", started.elapsed().as_secs())
+        } else {
+            String::new()
+        };
+        write!(
+            out,
+            "{CLEAR}  {DIM}{label:<LABEL$}{DIM:#}{YELLOW}{frame}{YELLOW:#} {text}{clock}"
+        )?;
+        out.flush()?;
+        thread::sleep(FRAME);
+    }
+    write!(out, "{CLEAR}")?;
+    out.flush()
+}
+
+/// Standard output, when it is a terminal a spinner can be drawn on.
+fn terminal() -> Option<AutoStream<io::Stdout>> {
+    io::stdout()
+        .is_terminal()
+        .then(|| AutoStream::auto(io::stdout()))
 }
 
 /// A step under way, with a spinner and how long it has taken, redrawn on a terminal. Anywhere
@@ -130,25 +178,36 @@ pub struct Spinner {
     label: String,
     started: Instant,
     running: Arc<AtomicBool>,
-    drawing: Option<JoinHandle<()>>,
+    /// Output that could not be written ends the drawing early, with nowhere left to show it.
+    drawing: Option<JoinHandle<io::Result<()>>>,
 }
 
 impl Spinner {
     /// Starts showing `label` and `text`; `clock` adds the time it has taken.
     #[must_use]
     pub fn start(label: &str, text: &str, clock: bool) -> Self {
-        let started = Instant::now();
+        Self::begun(label, text, clock, Instant::now(), terminal())
+    }
+
+    /// A spinner for a step that began at `started`, drawn on `out`, or written once without.
+    fn begun<Out>(label: &str, text: &str, clock: bool, started: Instant, out: Option<Out>) -> Self
+    where
+        Out: Write + Send + 'static,
+    {
         let running = Arc::new(AtomicBool::new(true));
-        let drawing = if io::stdout().is_terminal() {
-            let running = Arc::clone(&running);
-            let (label, text) = (label.to_owned(), text.to_owned());
-            Some(thread::spawn(move || {
-                spin(&running, &label, &text, clock, started);
-            }))
-        } else {
-            field(label, &format!("{text}..."));
-            None
-        };
+        let drawing = out.map_or_else(
+            || {
+                field(label, &format!("{text}..."));
+                None
+            },
+            |mut out| {
+                let running = Arc::clone(&running);
+                let (label, text) = (label.to_owned(), text.to_owned());
+                Some(thread::spawn(move || {
+                    spin(&mut out, &running, &label, &text, clock, started)
+                }))
+            },
+        );
         Self {
             label: label.to_owned(),
             started,
@@ -169,7 +228,6 @@ impl Spinner {
         self.running.store(false, Ordering::Relaxed);
         if let Some(drawing) = self.drawing.take()
             && let Err(panic) = drawing.join()
-            && !thread::panicking()
         {
             panic::resume_unwind(panic);
         }
@@ -202,14 +260,124 @@ impl Spinner {
         let started = self.started;
         let label = self.stop();
         show();
-        let mut again = Self::start(&label, text, clock);
-        again.started = started;
-        again
+        Self::begun(&label, text, clock, started, terminal())
     }
 }
 
 impl Drop for Spinner {
     fn drop(&mut self) {
         self.halt();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+
+    #[test]
+    fn a_count_is_grouped_in_threes_and_its_noun_agrees() {
+        let cases = [
+            (0, "0 files"),
+            (1, "1 file"),
+            (999, "999 files"),
+            (1_000, "1,000 files"),
+            (1_284, "1,284 files"),
+            (100_000, "100,000 files"),
+            (1_234_567, "1,234,567 files"),
+        ];
+        for (count, expected) in cases {
+            assert_eq!(counted(count, "file"), expected);
+        }
+    }
+
+    #[test]
+    fn a_duration_is_in_seconds_up_to_two_minutes_then_in_minutes() {
+        let cases = [
+            (0, "0 s"),
+            (119, "119 s"),
+            (120, "2 min"),
+            (179, "2 min"),
+            (7_200, "120 min"),
+        ];
+        for (seconds, expected) in cases {
+            assert_eq!(took(Duration::from_secs(seconds)), expected);
+        }
+    }
+
+    /// Output a test can read back while a spinner still holds it.
+    #[derive(Clone, Default)]
+    struct Shared(Arc<Mutex<Vec<u8>>>);
+
+    impl Shared {
+        fn text(&self) -> String {
+            String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+        }
+    }
+
+    impl Write for Shared {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .map_err(|poisoned| io::Error::other(poisoned.to_string()))?
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_spinner_redraws_its_step_until_done_then_clears_it() {
+        let out = Shared::default();
+        let spinner = Spinner::begun(
+            "steam",
+            "uploading",
+            true,
+            Instant::now(),
+            Some(out.clone()),
+        );
+        thread::sleep(FRAME.saturating_mul(4));
+        spinner.done("uploaded");
+        let drawn = out.text();
+        let first = format!(
+            "{CLEAR}  {DIM}steam     {DIM:#}{YELLOW}\u{280b}{YELLOW:#} uploading {DIM}0 s{DIM:#}"
+        );
+        assert!(drawn.starts_with(&first), "{drawn:?}");
+        let second = format!("\u{2819}{YELLOW:#} uploading");
+        assert!(drawn.contains(&second), "{drawn:?}");
+        assert!(drawn.ends_with(CLEAR), "{drawn:?}");
+        thread::sleep(FRAME.saturating_mul(2));
+        assert_eq!(out.text(), drawn, "drawn after it was done");
+    }
+
+    #[test]
+    fn a_spinner_without_a_clock_draws_no_time_and_a_dropped_one_stops() {
+        let out = Shared::default();
+        let spinner = Spinner::begun(
+            "approve",
+            "waiting",
+            false,
+            Instant::now(),
+            Some(out.clone()),
+        );
+        thread::sleep(FRAME.saturating_mul(2));
+        drop(spinner);
+        let drawn = out.text();
+        assert!(drawn.contains("waiting"), "{drawn:?}");
+        assert!(!drawn.contains(" s"), "{drawn:?}");
+        assert!(drawn.ends_with(CLEAR), "{drawn:?}");
+    }
+
+    #[test]
+    fn a_spinner_times_its_step_from_when_it_began() {
+        let began = Instant::now().checked_sub(Duration::from_secs(5)).unwrap();
+        let spinner = Spinner::begun("steam", "uploading", true, began, None::<Shared>);
+        assert!(spinner.elapsed() >= Duration::from_secs(5));
+        let again = spinner.around(|| {}, "uploading", true);
+        assert!(again.elapsed() >= Duration::from_secs(5));
     }
 }

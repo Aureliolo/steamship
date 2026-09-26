@@ -6,6 +6,9 @@ exclude_re = [
   # DeleteProcThreadAttributeList releases what the list refers to, and a handle list refers to
   # nothing it owns; the list's own storage is freed either way.
   'replace <impl Drop for AttributeList>::drop with \(\)',
+  # LocalFree gives back the memory a security descriptor was read into, and nothing else; a leak
+  # changes no behaviour a test could see.
+  'replace <impl Drop for Security>::drop with \(\)',
   # Revocation checking shows only with a revoked certificate, and asking for no window only
   # when Windows would otherwise wait on someone to answer one.
   'replace quietly_to_the_root with \(\)',
