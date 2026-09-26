@@ -1,24 +1,34 @@
 //! The command line.
-#![expect(
-    clippy::print_stdout,
-    clippy::print_stderr,
-    reason = "this is the layer whose output is the interface"
-)]
 
 use std::env;
+use std::fmt::Display;
+use std::fs;
+use std::io::{self, IsTerminal as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use steamship::check;
+use steamship::account::Account;
 use steamship::install::{self, Outcome};
+use steamship::login::{self, Ending, Person};
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
+use steamship::redact::Redactor;
+use steamship::show::{self, Hint, Spinner};
+use steamship::typing::{self, Echo};
+#[cfg(unix)]
+use steamship::unix::Terminal;
+#[cfg(windows)]
+use steamship::windows::Terminal;
+use steamship::{check, conversation, run, steamcmd, upload};
+use zeroize::Zeroizing;
 
 /// Something failed; what, and why, is printed.
 const FAILED: u8 = 1;
 /// `check` refused the scripts, or the command line was wrong (clap uses 2 for the latter too).
 const REFUSED: u8 = 2;
+/// steamcmd has no login it can use; `login` again.
+const LOGIN: u8 = 3;
 /// steamcmd is missing or has been altered.
 const STEAMCMD: u8 = 4;
 
@@ -40,69 +50,411 @@ enum Command {
     /// Install the pinned steamcmd, or verify the one already installed. `login` and `upload`
     /// do this themselves; this does it ahead of time.
     Install,
+    /// Log the build account in to steamcmd. The password and Steam Guard code asked for are
+    /// passed directly to steamcmd, never logged or saved.
+    Login {
+        /// The build account, if not the one the last login remembered.
+        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
+        account: Option<String>,
+    },
+    /// Check the scripts, then build and upload with steamcmd, out of sight, and say the build's
+    /// ID.
+    Upload {
+        /// The app build script, such as `steam/app_build.vdf`.
+        script: PathBuf,
+        /// The version being shipped, which with the commit becomes the build's description.
+        #[arg(long)]
+        version: String,
+        /// Valve's dry run: the whole build is computed and logged, and nothing is uploaded.
+        #[arg(long)]
+        preview: bool,
+        /// The build account, if not the one the last login remembered.
+        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
+        account: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
     match Cli::parse().command {
         Command::Check { script } => run_check(&script),
         Command::Install => run_install(),
+        Command::Login { account } => match try_login(account.as_deref()) {
+            Ok(code) | Err(code) => code,
+        },
+        Command::Upload {
+            script,
+            version,
+            preview,
+            account,
+        } => run_upload(&Upload {
+            script: &script,
+            version: &version,
+            preview,
+            account: account.as_deref(),
+        }),
     }
+}
+
+fn home() -> Result<PathBuf, ExitCode> {
+    Platform::THIS
+        .home(|name| env::var_os(name))
+        .map_err(|error| fail(&error, FAILED))
+}
+
+/// The home, and the pinned steamcmd in it, installed or verified.
+fn ready() -> Result<(PathBuf, Manifest), ExitCode> {
+    let home = home()?;
+    let manifest = Manifest::pinned(Platform::THIS).map_err(|error| fail(&error, FAILED))?;
+    let spinner = Spinner::start("steamcmd", "checking the pinned version", false);
+    match install::install(&home, &manifest) {
+        Ok(Outcome::Installed) => spinner.done(&format!(
+            "{} ({}), installed as pinned",
+            manifest.version, manifest.system
+        )),
+        Ok(Outcome::Verified) => spinner.done(&format!(
+            "{} ({}), pinned and verified",
+            manifest.version, manifest.system
+        )),
+        Err(error) => {
+            spinner.failed("not as pinned");
+            return Err(steamcmd_failed(&error));
+        }
+    }
+    Ok((home, manifest))
 }
 
 fn run_install() -> ExitCode {
-    let home = match Platform::THIS.home(|name| env::var_os(name)) {
-        Ok(home) => home,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::from(FAILED);
+    show::title("install");
+    match ready() {
+        Ok((home, _)) => {
+            show::field("folder", &home.join(install::FOLDER).display().to_string());
+            ExitCode::SUCCESS
         }
+        Err(code) => code,
+    }
+}
+
+fn fail(error: &dyn Display, code: u8) -> ExitCode {
+    show::failure(&error.to_string(), "", None);
+    ExitCode::from(code)
+}
+
+fn steamcmd_failed(error: &install::Error) -> ExitCode {
+    let code = if matches!(error, install::Error::Altered { .. }) {
+        STEAMCMD
+    } else {
+        FAILED
     };
-    let manifest = match Manifest::pinned(Platform::THIS) {
-        Ok(manifest) => manifest,
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::from(FAILED);
-        }
-    };
-    let root = home.join(install::FOLDER);
-    let pinned = format!("steamcmd {} ({})", manifest.version, manifest.system);
-    match install::install(&home, &manifest) {
-        Ok(Outcome::Installed) => println!("{pinned} installed in {}", root.display()),
-        Ok(Outcome::Verified) => println!("{pinned} in {} is as pinned", root.display()),
-        Err(error @ install::Error::Altered { .. }) => {
-            eprintln!("{error}");
-            return ExitCode::from(STEAMCMD);
-        }
-        Err(error) => {
-            eprintln!("{error}");
-            return ExitCode::from(FAILED);
+    fail(error, code)
+}
+
+/// Where the account came from, which is what `login` shows of it: its name is never printed,
+/// being half of what logs it in, and output like this ends up in logs that others read.
+#[derive(Debug, Clone, Copy)]
+enum Source {
+    Named,
+    Remembered,
+    Typed,
+}
+
+/// The account named on the command line or in the environment, or else the one remembered.
+/// With `ask`, and a person at a terminal, the account's name is asked for when there is none.
+fn account(named: Option<&str>, ask: bool) -> Result<(Account, Source), ExitCode> {
+    if let Some(name) = named {
+        let account = Account::parse(name).map_err(|error| fail(&error, REFUSED))?;
+        return Ok((account, Source::Named));
+    }
+    let home = home()?;
+    match Account::remembered(&home) {
+        Ok(Some(account)) => Ok((account, Source::Remembered)),
+        Ok(None) if ask && io::stdin().is_terminal() => typing::ask("account", Echo::Typed)
+            .map_err(|error| fail(&format!("the account name: {error}"), FAILED))
+            .and_then(|name| Account::parse(&name).map_err(|error| fail(&error, REFUSED)))
+            .map(|account| (account, Source::Typed)),
+        Ok(None) => Err(fail(
+            &"name the build account with --account or STEAMSHIP_ACCOUNT",
+            REFUSED,
+        )),
+        Err(error) => Err(fail(
+            &format!("the account remembered in {}: {error}", home.display()),
+            FAILED,
+        )),
+    }
+}
+
+/// What steamship shows while it waits for the login to be approved.
+const APPROVING: &str = "waiting for you in the Steam Mobile app";
+
+/// The person at the terminal, answering steamcmd through steamship's own prompts.
+#[derive(Debug, Default)]
+struct Typist {
+    approving: Option<Spinner>,
+}
+
+impl Typist {
+    fn ask(&mut self, label: &str, echo: Echo) -> io::Result<Zeroizing<String>> {
+        drop(self.approving.take());
+        typing::ask(label, echo)
+    }
+}
+
+impl Person for Typist {
+    fn password(&mut self) -> io::Result<Zeroizing<String>> {
+        self.ask("password", Echo::Dots)
+    }
+
+    fn code(&mut self) -> io::Result<Zeroizing<String>> {
+        self.ask("code", Echo::Typed)
+    }
+
+    fn approving(&mut self) {
+        if self.approving.is_none() {
+            self.approving = Some(Spinner::start("approve", APPROVING, true));
         }
     }
-    ExitCode::SUCCESS
+
+    fn approved(&mut self) {
+        match self.approving.take() {
+            Some(spinner) => spinner.done("approved"),
+            None => show::done("approve", "approved"),
+        }
+    }
+
+    fn said(&mut self, line: &str) {
+        if let Some(spinner) = self.approving.take() {
+            self.approving = Some(spinner.around(|| show::aside(line), APPROVING, true));
+        } else {
+            show::aside(line);
+        }
+    }
+}
+
+/// `login` failed, for `reason`, and can be tried again.
+fn not_logged_in(reason: &str) -> ExitCode {
+    let again = Hint {
+        before: "run ",
+        command: "steamship login",
+        after: " to try again",
+    };
+    show::failure("not logged in", reason, Some(again));
+    ExitCode::from(FAILED)
+}
+
+fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
+    show::title("login");
+    let (account, source) = account(named, true)?;
+    match source {
+        Source::Named => show::field("account", "as named"),
+        Source::Remembered => show::field("account", "remembered"),
+        Source::Typed => {}
+    }
+    let (home, manifest) = ready()?;
+    let root = home.join(install::FOLDER);
+    let program = steamcmd::program(&root, Platform::THIS);
+    let environment = steamcmd::environment(&home, Platform::THIS);
+    let (terminal, mut output, mut input) =
+        Terminal::start(&program, &steamcmd::login(&account), &environment, &root)
+            .map_err(|error| not_logged_in(&format!("{}: {error}", program.display())))?;
+    let mut typist = Typist::default();
+    let conversed = login::converse(&mut output, &mut input, &mut typist);
+    if let Some(spinner) = typist.approving.take() {
+        spinner.failed("not approved");
+    }
+    // Dropping the terminal unwaited ends steamcmd, which is what giving up should do.
+    let ending = conversed.map_err(|error| {
+        let kind = error.kind();
+        not_logged_in(&if kind == io::ErrorKind::Interrupted {
+            "given up".to_owned()
+        } else if kind == io::ErrorKind::UnexpectedEof {
+            "input ended before steamcmd had an answer".to_owned()
+        } else {
+            error.to_string()
+        })
+    })?;
+    drop(input);
+    let code = terminal
+        .wait()
+        .map_err(|error| not_logged_in(&format!("{}: {error}", program.display())))?;
+    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    if let Ending::Refused(reason) = ending {
+        return Err(not_logged_in(&conversation::explain(&reason)));
+    }
+    if code != Some(0_i32) {
+        let exited = code.map_or_else(
+            || "steamcmd was stopped".to_owned(),
+            |code| format!("steamcmd exited {code}"),
+        );
+        return Err(not_logged_in(&exited));
+    }
+    account
+        .remember(&home)
+        .map_err(|error| fail(&format!("{}: {error}", home.display()), FAILED))?;
+    show::success("logged in", "uploads use this login until it expires");
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Refuses, naming every problem, when `check` found any; otherwise shows what was checked.
+fn checked(script: &Path) -> Result<check::Report, ExitCode> {
+    let report = check::check(script);
+    if report.problems.is_empty() {
+        let files = report.depots.iter().map(|depot| depot.files.len()).sum();
+        show::done(
+            "app",
+            &format!(
+                "{}, {}, {}, checked",
+                report.app_id.unwrap_or_default(),
+                show::counted(report.depots.len(), "depot"),
+                show::counted(files, "file"),
+            ),
+        );
+        return Ok(report);
+    }
+    for problem in &report.problems {
+        show::failure("refused", &problem.to_string(), None);
+    }
+    Err(ExitCode::from(REFUSED))
+}
+
+struct Upload<'command> {
+    script: &'command Path,
+    version: &'command str,
+    preview: bool,
+    account: Option<&'command str>,
+}
+
+fn run_upload(upload: &Upload<'_>) -> ExitCode {
+    match try_upload(upload) {
+        Ok(code) | Err(code) => code,
+    }
+}
+
+fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
+    show::title(if request.preview {
+        "upload, preview"
+    } else {
+        "upload"
+    });
+    let (account, _) = account(request.account, false)?;
+    drop(checked(request.script)?);
+    let description = upload::commit(request.script)
+        .and_then(|commit| upload::description(request.version, &commit))
+        .map_err(|error| fail(&error, REFUSED))?;
+    show::field("build", &description);
+    let (home, manifest) = ready()?;
+    let prepared = upload::prepare(&home, request.script, &description, request.preview)
+        .map_err(|error| fail(&error, FAILED))?;
+    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
+    let root = home.join(install::FOLDER);
+    let program = steamcmd::program(&root, Platform::THIS);
+    let doing = if request.preview {
+        "computing the build"
+    } else {
+        "uploading"
+    };
+    let spinner = Spinner::start("steam", doing, true);
+    let finished = run::run(
+        &program,
+        &steamcmd::upload(&account, &prepared.script),
+        &steamcmd::environment(&home, Platform::THIS),
+        &root,
+        steamcmd::UPLOAD_LIMIT,
+    );
+    let took = show::took(spinner.elapsed());
+    let finished = match finished {
+        Ok(finished) => finished,
+        Err(error) => {
+            spinner.failed(&format!("could not start after {took}"));
+            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+        }
+    };
+    let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
+    let console = redactor.redact(&finished.output);
+    let saved = prepared.output.join("steamcmd.log");
+    fs::write(&saved, &console)
+        .map_err(|error| fail(&format!("{}: {error}", saved.display()), FAILED))?;
+    let log = fs::read(prepared.log())
+        .ok()
+        .map(|log| redactor.redact(&log));
+    let outcome = upload::judge(
+        prepared.app_id,
+        finished.code,
+        &String::from_utf8_lossy(&console),
+        log.as_deref().map(String::from_utf8_lossy).as_deref(),
+        request.preview,
+    );
+    let code = report(&outcome, spinner, &took, &prepared, &saved);
+    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    Ok(code)
+}
+
+fn report(
+    outcome: &upload::Outcome,
+    spinner: Spinner,
+    took: &str,
+    prepared: &upload::Prepared,
+    saved: &Path,
+) -> ExitCode {
+    let app = prepared.app_id;
+    let logs = format!(
+        "log  {}, and steamcmd's own in {}",
+        saved.display(),
+        prepared.log().display()
+    );
+    match outcome {
+        upload::Outcome::Built { build_id } => {
+            spinner.done(&format!("uploaded in {took}"));
+            let live = prepared
+                .set_live
+                .as_ref()
+                .map(|branch| format!(", set live on {branch}"))
+                .unwrap_or_default();
+            show::success(&format!("app {app}: BuildID {build_id}{live}"), &logs);
+            ExitCode::SUCCESS
+        }
+        upload::Outcome::Previewed => {
+            spinner.done(&format!("preview finished in {took}"));
+            show::success("nothing was uploaded, as asked", &logs);
+            ExitCode::SUCCESS
+        }
+        upload::Outcome::NotLoggedIn(line) => {
+            spinner.failed(&format!("refused after {took}"));
+            let again = Hint {
+                before: "log the build account in again with ",
+                command: "steamship login",
+                after: "",
+            };
+            show::failure("not logged in", line, Some(again));
+            ExitCode::from(LOGIN)
+        }
+        upload::Outcome::Failed(reasons) => {
+            spinner.failed(&format!("failed after {took}"));
+            for reason in reasons {
+                show::failure(reason, "", None);
+            }
+            show::note(&logs);
+            ExitCode::from(FAILED)
+        }
+    }
 }
 
 fn run_check(script: &Path) -> ExitCode {
-    let report = check::check(script);
-    if !report.problems.is_empty() {
-        for problem in &report.problems {
-            eprintln!("refused: {problem}");
+    show::title("check");
+    show::field("script", &script.display().to_string());
+    match checked(script) {
+        Ok(report) => {
+            for depot in &report.depots {
+                show::field(
+                    "depot",
+                    &format!(
+                        "{}, {}",
+                        depot.depot_id,
+                        show::counted(depot.files.len(), "file")
+                    ),
+                );
+            }
+            show::success("nothing refused", "");
+            ExitCode::SUCCESS
         }
-        return ExitCode::from(REFUSED);
+        Err(code) => code,
     }
-    let depots: Vec<String> = report
-        .depots
-        .iter()
-        .map(|depot| {
-            let count = depot.files.len();
-            let noun = if count == 1 { "file" } else { "files" };
-            format!("depot {} ({count} {noun})", depot.depot_id)
-        })
-        .collect();
-    println!(
-        "{}: app {}, {}; nothing refused",
-        script.display(),
-        report.app_id.unwrap_or_default(),
-        depots.join(", ")
-    );
-    ExitCode::SUCCESS
 }

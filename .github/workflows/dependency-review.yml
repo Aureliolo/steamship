@@ -3,9 +3,8 @@ name: Dependency review
 # Refuses a pull request that brings in a dependency with a known advisory of any severity,
 # checked against GitHub's advisory database, beside cargo-deny's RustSec one.
 on:
+  # Every pull request, whatever it targets, so that one stacked on another is checked too.
   pull_request:
-    branches:
-      - main
 
 permissions: {}
 

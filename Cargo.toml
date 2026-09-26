@@ -12,11 +12,17 @@ categories = ["command-line-utilities", "game-development", "development-tools::
 include = ["/src", "/LICENSE-APACHE", "/LICENSE-MIT", "/README.md"]
 
 [dependencies]
-clap = { version = "4.6.7", features = ["derive"] }
+# Already in the tree through clap: colour that turns itself off when the output is not a
+# terminal, or NO_COLOR is set.
+anstream = "1.0.0"
+anstyle = "1.0.14"
+clap = { version = "4.6.7", features = ["derive", "env"] }
 sha2 = "0.11.0"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 # Valve's packages use only stored and deflated entries, so one pure-Rust decoder is all it needs.
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# Wipes the typed password from memory once it has been passed to steamcmd.
+zeroize = "1.9.0"
 
 [target.'cfg(unix)'.dependencies]
 # Already in the tree through ring and sha2; stopping a process group has no std API.
@@ -28,13 +34,17 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Security",
+  "Win32_Security_Authorization",
   "Win32_Security_Cryptography",
   "Win32_Security_Cryptography_Catalog",
   "Win32_Security_Cryptography_Sip",
   "Win32_Security_WinTrust",
   "Win32_System_Diagnostics_Debug",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Console",
   "Win32_System_JobObjects",
   "Win32_System_StationsAndDesktops",
+  "Win32_System_SystemServices",
   "Win32_System_Threading",
 ] }
 
