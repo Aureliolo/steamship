@@ -54,15 +54,126 @@ jobs:
         run: rustup toolchain install
 
       - name: Check formatting
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
+      # The fuzz harness too, so the targets are held to the same lints as the crate.
       - name: Lint
         if: '!cancelled()'
-        run: cargo clippy --locked --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       - name: Test
         if: '!cancelled()'
         run: cargo test --locked
+
+  # A floor on the lines the tests run, measured on Linux, where the Unix-only checks run too. A
+  # change that adds code without tests for it fails here.
+  coverage:
+    name: coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read # Reads the source it measures.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Install cargo-llvm-cov
+        env:
+          # renovate: datasource=github-release-attachments depName=taiki-e/cargo-llvm-cov versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          CARGO_LLVM_COV_TAG: v0.9.1
+          CARGO_LLVM_COV_SHA256: 3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
+            "https://github.com/taiki-e/cargo-llvm-cov/releases/download/${CARGO_LLVM_COV_TAG}/cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
+          echo "${CARGO_LLVM_COV_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Measure
+        run: cargo llvm-cov --locked --fail-under-lines 97
+
+  # Spelling in British English everywhere, the code included.
+  typos:
+    name: typos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the files it checks.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check spelling
+        uses: crate-ci/typos@00f422f3b19c57bc6338715ebfe3316d38768461 # v1.50.3
+
+  # No em dash anywhere, and no en dash standing in for one.
+  dashes:
+    name: dashes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the files it checks.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check for dashes
+        # The dashes are built from their UTF-8 bytes, so this file holds none for the search to
+        # find and the pattern does not depend on the runner's locale.
+        run: |
+          set -euo pipefail
+          em="$(printf '\342\200\224')"
+          en="$(printf '\342\200\223')"
+          if git grep -n -I -F -e "${em}" -e "${en}"; then
+            echo "::error::Em and en dashes are not used here; use a colon, semicolon, comma, full stop or brackets."
+            exit 1
+          fi
+
+  # A dependency the code no longer uses is attack surface for nothing.
+  machete:
+    name: machete
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the manifests it checks.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install cargo-machete
+        env:
+          # renovate: datasource=github-release-attachments depName=bnjbvr/cargo-machete versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          CARGO_MACHETE_TAG: v0.9.2
+          CARGO_MACHETE_SHA256: 48200087f54c55aabcd4db4af1e25742b49846c02a1b1bfa134711945b35b2e9
+        run: |
+          set -euo pipefail
+          name="cargo-machete-${CARGO_MACHETE_TAG}-x86_64-unknown-linux-musl"
+          archive="${RUNNER_TEMP}/${name}.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
+            "https://github.com/bnjbvr/cargo-machete/releases/download/${CARGO_MACHETE_TAG}/${name}.tar.gz"
+          echo "${CARGO_MACHETE_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/${name}" >> "${GITHUB_PATH}"
+
+      - name: Check for unused dependencies
+        run: cargo machete
 
   # The parsers read files steamship did not write, so each gets a minute of libFuzzer per run.
   # Linux only: on Windows the coverage instrumentation links only against the AddressSanitizer
@@ -145,13 +256,9 @@ jobs:
           tar -xzf "${archive}" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}/${name}" >> "${GITHUB_PATH}"
 
-      - name: Check the crate
-        run: cargo deny --locked check
-
-      # Held to fuzz/deny.toml, the one beside its manifest, which says where it differs and why.
-      - name: Check the fuzz crate
-        if: '!cancelled()'
-        run: cargo deny --manifest-path fuzz/Cargo.toml --locked check
+      # The whole workspace: without --workspace only the default member would be checked.
+      - name: Check
+        run: cargo deny --workspace --locked check
 
   markdown:
     name: markdown

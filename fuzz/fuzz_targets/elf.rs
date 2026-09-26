@@ -1,9 +1,18 @@
-//! Any bytes are either a program or not; reading them never panics or runs away.
+//! Any bytes are either a program or not; reading them never panics or runs away, and reading
+//! from memory never fails.
 #![no_main]
+#![expect(
+    clippy::panic,
+    reason = "a panic is how a fuzz target reports what it found"
+)]
+
+use std::io::Cursor;
 
 use libfuzzer_sys::fuzz_target;
 use steamship::elf;
 
 fuzz_target!(|data: &[u8]| {
-    let _ = elf::is_program(&mut std::io::Cursor::new(data));
+    if let Err(error) = elf::is_program(&mut Cursor::new(data)) {
+        panic!("reading from memory failed: {error}");
+    }
 });

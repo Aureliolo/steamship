@@ -17,33 +17,41 @@ pub fn matches(pattern: &str, text: &str) -> bool {
 pub fn matches_folding(pattern: &str, text: &str, fold: bool) -> bool {
     let pattern: Vec<char> = pattern.chars().collect();
     let text: Vec<char> = text.chars().collect();
-    let (mut p, mut t) = (0, 0);
-    let mut fallback: Option<(usize, usize)> = None;
-    while t < text.len() {
-        match pattern.get(p) {
-            Some('*') => {
-                fallback = Some((p, t));
-                p += 1;
+    let mut wanted: &[char] = &pattern;
+    let mut given: &[char] = &text;
+    // What follows the latest `*`, and the text that `*` has not yet swallowed.
+    let mut fallback: Option<(&[char], &[char])> = None;
+    loop {
+        match (wanted.split_first(), given.split_first()) {
+            (Some((&'*', after_star)), _) => {
+                fallback = Some((after_star, given));
+                wanted = after_star;
             }
-            Some(&wanted) if wanted == '?' || same(wanted, text[t], fold) => {
-                p += 1;
-                t += 1;
+            (Some((&one, wanted_rest)), Some((&other, given_rest)))
+                if one == '?' || same(one, other, fold) =>
+            {
+                wanted = wanted_rest;
+                given = given_rest;
             }
-            _ => match fallback {
-                Some((star, from)) => {
-                    p = star + 1;
-                    t = from + 1;
-                    fallback = Some((star, from + 1));
-                }
-                None => return false,
-            },
+            (None, None) => return true,
+            _ => {
+                // The last `*` swallows one more character and matching resumes after it.
+                let Some((after_star, unswallowed)) = fallback else {
+                    return false;
+                };
+                let Some((_, swallowed_one_more)) = unswallowed.split_first() else {
+                    return false;
+                };
+                fallback = Some((after_star, swallowed_one_more));
+                wanted = after_star;
+                given = swallowed_one_more;
+            }
         }
     }
-    pattern[p..].iter().all(|&rest| rest == '*')
 }
 
-fn same(a: char, b: char, fold: bool) -> bool {
-    a == b || (fold && a.to_lowercase().eq(b.to_lowercase()))
+fn same(one: char, other: char, fold: bool) -> bool {
+    one == other || (fold && one.to_lowercase().eq(other.to_lowercase()))
 }
 
 #[cfg(test)]
@@ -60,8 +68,8 @@ mod tests {
             ("bin/tools*", "bin/tools/a/b.exe", true),
             ("bin/server.exe", "bin/server.exe", true),
             ("bin/server.exe", "bin/server.exe2", false),
-            ("gam?.exe", "game.exe", true),
-            ("gam?.exe", "gam.exe", false),
+            ("data?.pck", "data1.pck", true),
+            ("data?.pck", "data.pck", false),
             ("a*b*c", "aXbYbZc", true),
             ("a*b*c", "aXbYbZ", false),
             ("**", "anything", true),

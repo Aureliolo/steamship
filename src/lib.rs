@@ -5,4 +5,6 @@ pub mod check;
 pub mod elf;
 pub mod pattern;
 pub mod scripts;
+#[cfg(unix)]
+pub mod unix;
 pub mod vdf;

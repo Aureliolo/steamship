@@ -17,7 +17,10 @@ pub struct Problem {
 }
 
 impl Problem {
-    pub fn new(file: &Path, message: impl Into<String>) -> Self {
+    pub fn new<Message>(file: &Path, message: Message) -> Self
+    where
+        Message: Into<String>,
+    {
         Self {
             file: file.to_path_buf(),
             message: message.into(),
@@ -26,8 +29,8 @@ impl Problem {
 }
 
 impl fmt::Display for Problem {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.file.display(), self.message)
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}: {}", self.file.display(), self.message)
     }
 }
 
@@ -146,7 +149,7 @@ fn depot(
     let Ok(listed) = listed_id.parse::<u32>() else {
         return Err(vec![Problem::new(
             app_path,
-            format!("depot ID {listed_id:?} in \"Depots\" is not a number"),
+            format!("depot ID \"{listed_id}\" in \"Depots\" is not a number"),
         )]);
     };
     let depot_id = if block.get("DepotID").is_some() {
@@ -172,13 +175,17 @@ fn depot(
         ));
     }
     let mappings = mappings(&block, &path, &mut problems);
-    let exclusions = block
-        .all("FileExclusion")
-        .filter_map(|value| match value {
-            Value::Text(pattern) => Some(pattern.clone()),
-            Value::Block(_) => None,
-        })
-        .collect();
+    let mut exclusions = Vec::new();
+    for exclusion in block.all("FileExclusion") {
+        match exclusion {
+            Value::Text(pattern) => exclusions.push(pattern.clone()),
+            // Ignoring it would upload the very files it was written to keep out.
+            Value::Block(_) => problems.push(Problem::new(
+                &path,
+                "a \"FileExclusion\" is a block, where a pattern belongs",
+            )),
+        }
+    }
     match (depot_id, content_root) {
         (Some(depot_id), Some(content_root)) if problems.is_empty() => Ok(DepotScript {
             path,
@@ -226,7 +233,7 @@ fn number(block: &Block, key: &str, path: &Path, problems: &mut Vec<Problem>) ->
     if parsed.is_none() {
         problems.push(Problem::new(
             path,
-            format!("\"{key}\" {text:?} is not a number"),
+            format!("\"{key}\" \"{text}\" is not a number"),
         ));
     }
     parsed
