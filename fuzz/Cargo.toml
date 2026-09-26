@@ -12,8 +12,8 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4.13"
 steamship = { path = ".." }
 
-# Its own workspace, so libFuzzer never enters the published crate's build or lock file.
-[workspace]
+[lints]
+workspace = true
 
 [[bin]]
 name = "vdf"

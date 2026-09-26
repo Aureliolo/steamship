@@ -12,9 +12,17 @@ version = 2
 allow = ["Apache-2.0", "MIT", "Unicode-3.0"]
 confidence-threshold = 0.93
 
+# libFuzzer is LLVM's, under the NCSA licence. It reaches only the fuzz harness, which is never
+# published or shipped.
+[[licenses.exceptions]]
+crate = "libfuzzer-sys"
+allow = ["NCSA"]
+
 [bans]
 multiple-versions = "deny"
 wildcards = "deny"
+# The fuzz harness reaches the crate by path, which carries no version; it is never published.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

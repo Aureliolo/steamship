@@ -1,0 +1,28 @@
+name: Dependency review
+
+# Refuses a pull request that brings in a dependency with a known advisory of any severity,
+# checked against GitHub's advisory database, beside cargo-deny's RustSec one.
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: dependency-review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the dependency graph of both sides of the pull request.
+
+    steps:
+      - name: Review
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: low

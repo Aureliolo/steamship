@@ -1,0 +1,8 @@
+[default]
+# British spelling everywhere: colour, behaviour, licence as the noun.
+locale = "en-gb"
+
+[files]
+# Valve's own files, kept byte for byte as Valve serves them, and the licence texts, which are
+# legal wording that must not change by a letter.
+extend-exclude = ["fuzz/seeds/", "pins/", "LICENSE-APACHE", "LICENSE-MIT"]

@@ -5,8 +5,7 @@
     reason = "this is the layer whose output is the interface"
 )]
 
-use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -38,7 +37,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_check(script: &std::path::Path) -> ExitCode {
+fn run_check(script: &Path) -> ExitCode {
     let report = check::check(script);
     if !report.problems.is_empty() {
         for problem in &report.problems {
@@ -46,16 +45,20 @@ fn run_check(script: &std::path::Path) -> ExitCode {
         }
         return ExitCode::from(REFUSED);
     }
-    let mut summary = format!(
-        "{}: app {}",
+    let depots: Vec<String> = report
+        .depots
+        .iter()
+        .map(|depot| {
+            let count = depot.files.len();
+            let noun = if count == 1 { "file" } else { "files" };
+            format!("depot {} ({count} {noun})", depot.depot_id)
+        })
+        .collect();
+    println!(
+        "{}: app {}, {}; nothing refused",
         script.display(),
-        report.app_id.unwrap_or_default()
+        report.app_id.unwrap_or_default(),
+        depots.join(", ")
     );
-    for depot in &report.depots {
-        let count = depot.files.len();
-        let noun = if count == 1 { "file" } else { "files" };
-        let _ = write!(summary, ", depot {} ({count} {noun})", depot.depot_id);
-    }
-    println!("{summary}; nothing refused");
     ExitCode::SUCCESS
 }
