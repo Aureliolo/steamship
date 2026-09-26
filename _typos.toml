@@ -1,8 +1,21 @@
 [default]
 # British spelling everywhere: colour, behaviour, licence as the noun.
 locale = "en-gb"
-# steamcmd's own messages, quoted as it prints them, which steamship matches and tests against.
-extend-ignore-re = ["Failed to initialize build on server"]
+# Spellings that are not ours, each matched whole so that prose around them is still checked:
+# steamcmd's own messages, quoted as it prints them, which steamship matches and tests against;
+# flags and settings of actionlint, cargo, cargo-fuzz and syft; GitHub's upload-artifact action;
+# and the in-toto file extension.
+extend-ignore-re = [
+  'Failed to initialize build on server',
+  '-color\b',
+  'CARGO_TERM_COLOR',
+  '--sanitizer',
+  'AddressSanitizer',
+  'select-catalogers',
+  '[a-z-]+-cataloger\b',
+  'upload-artifact',
+  '\.intoto\.jsonl',
+]
 
 [default.extend-identifiers]
 # Other crates' names, which are not ours to spell: sha2's `finalize`, and Windows' own API as
@@ -19,6 +32,8 @@ AnsiColor = "AnsiColor"
 NO_COLOR = "NO_COLOR"
 
 [files]
-# Valve's own files, kept byte for byte as Valve serves them, and the licence texts, which are
-# legal wording that must not change by a letter.
-extend-exclude = ["fuzz/seeds/", "pins/", "LICENSE-APACHE", "LICENSE-MIT"]
+# Hidden paths too: the workflows' comments are prose like any other.
+ignore-hidden = false
+# Git's own folder; Valve's files, kept byte for byte as Valve serves them; and the licence
+# texts, which are legal wording that must not change by a letter.
+extend-exclude = [".git/", "fuzz/seeds/", "pins/", "LICENSE-APACHE", "LICENSE-MIT"]
