@@ -1,0 +1,84 @@
+name: Tag release
+
+# The second half of the button. A merged release pull request leaves main carrying a version
+# that has no tag; this creates it, which is what the release workflow waits for. Keyed on the
+# version in Cargo.toml rather than on the pull request, so a version that arrives some other way
+# still gets tagged exactly once.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Cargo.toml
+  # The way back when a tag was made and the release behind it did not happen: run by hand, it
+  # starts the release on the existing tag if that tag is at this commit.
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # Creates the tag.
+      actions: write # Starts the release workflow on it, since a tag made with this token starts nothing by itself.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2 # The parent too, so the step below can see whether the version moved.
+          persist-credentials: false
+
+      - name: Tag the version if it has no tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          version_of() { sed -n 's/^version = "\(.*\)"$/\1/p' | head -n 1; }
+          version="$(version_of < Cargo.toml)"
+          test -n "${version}"
+
+          # Cargo.toml changes for all sorts of reasons: a dependency, a lint. Only a change to the
+          # version is a release. Skipped when run by hand, which is the recovery case.
+          if [[ "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+            previous="$(git show "${GITHUB_SHA}^:Cargo.toml" 2> /dev/null | version_of || true)"
+            if [[ "${previous}" == "${version}" ]]; then
+              echo "Cargo.toml changed, but the version is still ${version}. Not a release."
+              exit 0
+            fi
+          fi
+
+          taken="$(gh api "repos/${GITHUB_REPOSITORY}/git/matching-refs/tags/v${version}" \
+            --jq "map(select(.ref == \"refs/tags/v${version}\")) | length")"
+          if [[ "${taken}" != 0 ]]; then
+            # Resolved through commits/ so an annotated tag answers with its commit too.
+            tagged="$(gh api "repos/${GITHUB_REPOSITORY}/commits/v${version}" --jq .sha)"
+            if [[ "${tagged}" != "${GITHUB_SHA}" ]]; then
+              echo "v${version} is tagged at ${tagged}, not ${GITHUB_SHA}, so this version cannot" >&2
+              echo "be released. Nothing can move that tag; raise the version past it." >&2
+              exit 1
+            fi
+            if [[ "${EVENT_NAME}" != "workflow_dispatch" ]]; then
+              echo "v${version} already points at this commit; nothing to do."
+              exit 0
+            fi
+            # By hand with the tag already made: the tag is not what was missing, so the release
+            # is started below, which is the whole point of pressing the button in this state.
+            echo "v${version} is already tagged at this commit."
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f "ref=refs/tags/v${version}" -f "sha=${GITHUB_SHA}" > /dev/null
+            echo "Tagged v${version} at ${GITHUB_SHA}."
+          fi
+
+          # An event caused by the job token starts no workflow, so the tag above is invisible to
+          # the release workflow's trigger; a dispatch is not.
+          gh workflow run release.yml --repo "${GITHUB_REPOSITORY}" --ref "v${version}"
+          echo "Started the release workflow on v${version}."

@@ -293,7 +293,7 @@ jobs:
   # The parsers read files and output steamship did not write, so each gets a minute of libFuzzer
   # per run.
   # Linux only: on Windows the coverage instrumentation links only against the AddressSanitizer
-  # runtime, and a sanitizer adds nothing here, where no fuzzed code is unsafe.
+  # runtime, and a sanitiser adds nothing here, where no fuzzed code is unsafe.
   fuzz:
     name: fuzz (${{ matrix.target }})
     strategy:
