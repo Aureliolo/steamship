@@ -18,6 +18,16 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 # Valve's packages use only stored and deflated entries, so one pure-Rust decoder is all it needs.
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
+[target.'cfg(windows)'.dependencies]
+# Already in the tree through clap, so Windows' own APIs cost no crate that was not there.
+windows-sys = { version = "0.61.2", features = [
+  "Win32_Foundation",
+  "Win32_Security_Cryptography",
+  "Win32_Security_Cryptography_Catalog",
+  "Win32_Security_Cryptography_Sip",
+  "Win32_Security_WinTrust",
+] }
+
 [dev-dependencies]
 proptest = "1.11.0"
 tempfile = "3.27.0"

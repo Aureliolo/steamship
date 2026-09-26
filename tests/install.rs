@@ -97,11 +97,13 @@ fn changes(result: Result<Outcome, Error>) -> Vec<String> {
     }
 }
 
+/// A stand-in for steamcmd. Its program is not called `.exe`: on Windows an installed `.exe` must
+/// carry Valve's signature, which nothing built here can, and that check has tests of its own.
 fn steamcmd(setup: &Setup) -> Manifest {
     let tool = setup.package(
         "steamcmd_test",
         &[
-            ("steamcmd.exe", Entry::File(b"MZ steamcmd")),
+            ("steamcmd.bin", Entry::File(b"MZ steamcmd")),
             ("steamcmd.sh", Entry::File(b"#!/bin/sh\n")),
         ],
     );
@@ -141,7 +143,7 @@ fn installs_once_then_verifies_without_fetching_again() {
     ));
     assert_eq!(fetched.get(), 2);
     assert_eq!(
-        fs::read(setup.root().join("steamcmd.exe")).unwrap(),
+        fs::read(setup.root().join("steamcmd.bin")).unwrap(),
         b"MZ steamcmd"
     );
     assert_eq!(
@@ -166,7 +168,7 @@ fn every_change_to_the_install_is_named() {
     let manifest = steamcmd(&setup);
     let fetched = Cell::new(0);
     let _: Outcome = setup.install(&manifest, &fetched).unwrap();
-    fs::write(setup.root().join("steamcmd.exe"), b"MZ newer").unwrap();
+    fs::write(setup.root().join("steamcmd.bin"), b"MZ newer").unwrap();
     fs::remove_file(setup.root().join("public/strings.txt")).unwrap();
     fs::write(setup.root().join("update.dll"), b"MZ arrived").unwrap();
     fs::write(setup.root().join("logs.txt"), b"steamcmd writes these").unwrap();
@@ -178,7 +180,7 @@ fn every_change_to_the_install_is_named() {
         found,
         [
             "public/strings.txt is missing",
-            "steamcmd.exe has changed",
+            "steamcmd.bin has changed",
             "update.dll is new"
         ]
     );
@@ -195,7 +197,7 @@ fn a_new_version_replaces_the_install_and_keeps_the_login() {
     let _: Outcome = setup.install(&steamcmd(&setup), &fetched).unwrap();
     fs::create_dir_all(setup.root().join("config")).unwrap();
     fs::write(setup.root().join("config/config.vdf"), b"token").unwrap();
-    let newer = setup.package("steamcmd_newer", &[("steamcmd.exe", Entry::File(b"MZ v2"))]);
+    let newer = setup.package("steamcmd_newer", &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
     let manifest = Setup::manifest(2, vec![newer]);
     assert!(matches!(
         setup.install(&manifest, &fetched),
@@ -206,7 +208,7 @@ fn a_new_version_replaces_the_install_and_keeps_the_login() {
         b"token"
     );
     assert_eq!(
-        fs::read(setup.root().join("steamcmd.exe")).unwrap(),
+        fs::read(setup.root().join("steamcmd.bin")).unwrap(),
         b"MZ v2"
     );
     assert!(
@@ -225,7 +227,7 @@ fn a_swap_cut_short_is_finished_with_the_login_intact() {
     fs::write(setup.root().join("config/config.vdf"), b"token").unwrap();
     // As if the process ended between moving the old install aside and moving the new one in.
     fs::rename(setup.root(), setup.home.join("steamcmd.old")).unwrap();
-    let newer = setup.package("steamcmd_newer", &[("steamcmd.exe", Entry::File(b"MZ v2"))]);
+    let newer = setup.package("steamcmd_newer", &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
     let _: Outcome = setup
         .install(&Setup::manifest(2, vec![newer]), &fetched)
         .unwrap();
@@ -337,7 +339,7 @@ fn programs_are_made_executable_and_the_rest_is_not() {
             & 0o777
     };
     assert_eq!(mode("steamcmd.sh"), 0o755);
-    assert_eq!(mode("steamcmd.exe"), 0o755);
+    assert_eq!(mode("steamcmd.bin"), 0o755);
     assert_eq!(mode("public/strings.txt"), 0o644);
 }
 

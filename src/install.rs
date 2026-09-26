@@ -424,6 +424,12 @@ impl Inventory {
                 changes.push(format!("{relative} is new"));
             }
         }
+        // With every file as recorded, what remains to ask is whether the pinned files are
+        // Valve's at all, which a tampered pin would otherwise carry through unnoticed.
+        #[cfg(windows)]
+        if changes.is_empty() {
+            changes.extend(native::unsigned(root, self.files.keys()));
+        }
         if changes.is_empty() {
             Ok(())
         } else {
