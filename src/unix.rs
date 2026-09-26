@@ -1,8 +1,9 @@
-//! What only a Unix file system can answer. Kept in a module of its own so that everything here
-//! is compiled, tested and mutation-tested on the systems where it runs.
+//! What only a Unix file system can answer or do. Kept in a module of its own so that everything
+//! here is compiled, tested and mutation-tested on the systems where it runs.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt as _;
+use std::io;
+use std::os::unix::fs::{PermissionsExt as _, symlink as make_symlink};
 use std::path::Path;
 
 use crate::elf;
@@ -25,4 +26,22 @@ pub fn missing_executable_bit(file: &Path) -> Option<String> {
         },
         Err(error) => Some(format!("cannot be read: {error}")),
     }
+}
+
+/// Sets `path`'s permission bits to exactly `mode`.
+///
+/// # Errors
+///
+/// When the file system refuses.
+pub fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+}
+
+/// Makes `link` a symbolic link to `target`, which is written as given.
+///
+/// # Errors
+///
+/// When the file system refuses, or `link` exists.
+pub fn symlink(target: &str, link: &Path) -> io::Result<()> {
+    make_symlink(target, link)
 }

@@ -27,11 +27,26 @@
       "groupSlug": "all"
     },
     {
+      "description": "steamcmd's version is a Unix timestamp, so every raise is a jump of thousands; best-practices refuses any major jump above 500 as a guard against date-like versions, which this is on purpose.",
+      "matchDatasources": ["custom.steamcmd"],
+      "maxMajorIncrement": 0
+    },
+    {
       "description": "Cargo.toml names the version tested, not a floor, so a raise moves it along with the lock file.",
       "matchManagers": ["cargo"],
       "rangeStrategy": "bump"
     }
   ],
+  "customDatasources": {
+    "steamcmd": {
+      "description": "Valve's manifest is KeyValues, not JSON, so it is read as plain text, one release per line, and the transform keeps the one line that holds the version.",
+      "defaultRegistryUrlTemplate": "https://cdn.steamstatic.com/client/{{packageName}}",
+      "format": "plain",
+      "transformTemplates": [
+        "{\"releases\": [{\"version\": $match($filter(releases, function($release) { $contains($release.version, '\"version\"') })[0].version, /[0-9]+/)[0].match}]}"
+      ]
+    }
+  },
   "customManagers": [
     {
       "description": "Rust: the toolchain CI and developers build with, and the rust-version the crate declares, which is the same version on purpose.",
@@ -44,6 +59,16 @@
       "depNameTemplate": "rust-lang/rust",
       "datasourceTemplate": "github-releases",
       "versioningTemplate": "semver"
+    },
+    {
+      "description": "Valve's steamcmd manifests, one per system, pinned byte for byte in pins/. Only the version inside a pin can be raised here; the pins check in CI then fails on the stale packages and says to run `cargo run --example pins`, which rewrites the pin from Valve's live manifest for review.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^pins/steam_cmd_(win32|linux|osx)\\.vdf$/"],
+      "matchStrings": ["^\"(?<system>win32|linux|osx)\"\\s*\\{\\s*\"version\"\\s+\"(?<currentValue>\\d+)\""],
+      "depNameTemplate": "steamcmd {{{system}}}",
+      "packageNameTemplate": "steam_cmd_{{{system}}}",
+      "datasourceTemplate": "custom.steamcmd",
+      "versioningTemplate": "regex:^(?<major>\\d+)$"
     },
     {
       "description": "A release tag with the SHA-256 of the asset downloaded on the next line: actionlint and cargo-deny. The tag and the digest move together.",

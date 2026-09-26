@@ -2,6 +2,10 @@
 # British spelling everywhere: colour, behaviour, licence as the noun.
 locale = "en-gb"
 
+[default.extend-identifiers]
+# Other crates' names, which are not ours to spell: sha2's `finalize`.
+finalize = "finalize"
+
 [files]
 # Valve's own files, kept byte for byte as Valve serves them, and the licence texts, which are
 # legal wording that must not change by a letter.
