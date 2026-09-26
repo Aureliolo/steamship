@@ -348,8 +348,9 @@ const SECRETS: [&str; 2] = [
 
 /// A home with a saved login holding [`SECRETS`], where steamcmd is a script that does what the
 /// setup-steamcmd action once did (GHSA-mj96-mh85-r574): prints steamcmd's login files, into its
-/// console and its build log. Then it reports the build finished, or, with
-/// `STEAMSHIP_FAKE_LOGGED_OUT` set, that it has no login.
+/// console and its build log. Then it reports the build finished; or, with
+/// `STEAMSHIP_FAKE_LOGGED_OUT` set, that it has no login; or, with `STEAMSHIP_FAKE_FAIL` set,
+/// that the server refused the build.
 #[cfg(unix)]
 fn leaking() -> tempfile::TempDir {
     let home = faked_with(
@@ -361,6 +362,11 @@ fn leaking() -> tempfile::TempDir {
            echo 'Cached credentials not found.'\n\
            echo 'FAILED (No cached credentials and @NoPromptForPassword is set)'\n\
            exit 5\n\
+         fi\n\
+         if [ -n \"$STEAMSHIP_FAKE_FAIL\" ]; then\n\
+           echo '[..]: ERROR! Failed to initialize build on server (Access Denied)' \
+             > \"$output/app_build_1000.log\"\n\
+           exit 6\n\
          fi\n\
          { cat \"$HOME/Steam/config/config.vdf\"; \
            echo 'Successfully finished AppID 1000 build (BuildID 4242).'; } \
@@ -467,5 +473,54 @@ fn an_upload_without_a_login_says_to_log_in_and_exits_3() {
         "Cached credentials not found.\nrun `steamship login --account build_bot` to log in again\n"
     );
     assert_no_secret_in("stdout", stdout.as_bytes());
+    assert_no_secret_in("stderr", stderr.as_bytes());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_preview_says_nothing_was_uploaded() {
+    let home = leaking();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--preview"],
+        &[],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
+    assert!(
+        stdout.starts_with("building a preview of app 1000 as \"1.4.0 "),
+        "{stdout}"
+    );
+    assert!(
+        stdout.ends_with("app 1000: the preview finished; nothing was uploaded\n"),
+        "{stdout}"
+    );
+    let copy = fs::read_to_string(home.path().join("apps/1000/app_build.vdf")).unwrap();
+    assert!(copy.contains("\t\"Preview\"\t\t\"1\"\n"), "{copy}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_refused_build_names_every_reason_and_where_the_logs_are_and_exits_1() {
+    let home = leaking();
+    let (_project, script) = project(true);
+    let (code, _, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_FAKE_FAIL", "1")],
+    );
+    assert_eq!(code, Some(1_i32));
+    let output = home.path().join("apps/1000/output");
+    assert_eq!(
+        stderr,
+        format!(
+            "failed: Failed to initialize build on server (Access Denied)\n\
+             steamcmd's output is in {}, and its build log in {}\n",
+            output.join("steamcmd.log").display(),
+            output.join("app_build_1000.log").display()
+        )
+    );
     assert_no_secret_in("stderr", stderr.as_bytes());
 }

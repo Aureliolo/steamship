@@ -292,6 +292,26 @@ mod tests {
     }
 
     #[test]
+    fn a_user_folder_that_cannot_be_listed_is_an_error() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir_all(home.path().join("Steam")).unwrap();
+        fs::write(home.path().join("Steam/userdata"), "not a folder").unwrap();
+        let error = Redactor::for_home(home.path()).unwrap_err();
+        assert_ne!(error.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn answers_its_secrets_longest_first() {
+        let redactor = Redactor::from_texts(&[
+            b"\"a\" \"sixteen_letters_\" \"b\" \"seventeen_letters\"".to_vec(),
+        ]);
+        assert_eq!(
+            redactor.secrets(),
+            [b"seventeen_letters".to_vec(), b"sixteen_letters_".to_vec()]
+        );
+    }
+
+    #[test]
     fn a_file_that_is_there_but_cannot_be_read_is_an_error() {
         let home = tempfile::tempdir().unwrap();
         fs::create_dir_all(home.path().join("Steam/config/config.vdf")).unwrap();

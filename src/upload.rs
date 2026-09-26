@@ -416,24 +416,42 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_that_says_nothing_is_described_by_how_steamcmd_ended() {
-        let failed = |code| match judge(1, code, "", None, false) {
-            Outcome::Failed(reasons) => reasons,
-            other @ (Outcome::Built { .. } | Outcome::Previewed | Outcome::NotLoggedIn(_)) => {
-                panic!("{other:?}")
-            }
+    fn says_what_went_wrong_and_keeps_the_cause() {
+        let io = Error::Io {
+            path: PathBuf::from("home"),
+            error: io::Error::new(io::ErrorKind::PermissionDenied, "denied"),
         };
+        assert_eq!(io.to_string(), "home: denied");
+        assert_eq!(
+            error::Error::source(&io).map(ToString::to_string),
+            Some("denied".to_owned())
+        );
+        let script = Error::Script {
+            path: PathBuf::from("app.vdf"),
+            reason: "no".to_owned(),
+        };
+        assert_eq!(script.to_string(), "app.vdf: no");
+        assert!(error::Error::source(&script).is_none());
+        let description = Error::Description("bad".to_owned());
+        assert_eq!(description.to_string(), "bad");
+        assert!(error::Error::source(&description).is_none());
+    }
+
+    #[test]
+    fn a_failure_that_says_nothing_is_described_by_how_steamcmd_ended() {
+        let failed = |code| judge(1, code, "", None, false);
+        let reason = |text: &str| Outcome::Failed(vec![text.to_owned()]);
         assert_eq!(
             failed(Some(3_i32)),
-            ["steamcmd exited 3 without saying why"]
+            reason("steamcmd exited 3 without saying why")
         );
         assert_eq!(
             failed(None),
-            ["steamcmd did not finish in time and was stopped"]
+            reason("steamcmd did not finish in time and was stopped")
         );
         assert_eq!(
             failed(Some(0_i32)),
-            ["steamcmd exited 0, but its build log does not say the build finished"]
+            reason("steamcmd exited 0, but its build log does not say the build finished")
         );
     }
 }

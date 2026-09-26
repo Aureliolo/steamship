@@ -160,6 +160,18 @@ fn a_script_steamship_cannot_rewrite_is_refused_with_why() {
 }
 
 #[test]
+fn a_last_log_that_cannot_be_cleared_is_an_error() {
+    let project = Project::new();
+    let original = project.file("steam/app_build.vdf", APP);
+    let first = upload::prepare(&project.home, &original, "1 abc", false).unwrap();
+    fs::create_dir_all(first.log()).unwrap();
+    assert!(matches!(
+        upload::prepare(&project.home, &original, "1 abc", false),
+        Err(Error::Io { path, .. }) if path == first.log()
+    ));
+}
+
+#[test]
 fn a_script_that_is_not_there_is_an_error() {
     let project = Project::new();
     let missing = project.root.join("steam/app_build.vdf");
