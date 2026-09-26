@@ -10,7 +10,7 @@ use std::error;
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{self, Path, PathBuf};
 use std::process::Command;
 
 use crate::scripts;
@@ -152,9 +152,12 @@ pub fn prepare(
     let Some(app_id) = app.text("AppID").and_then(|id| id.parse::<u32>().ok()) else {
         return Err(problem("there is no numeric \"AppID\""));
     };
-    let folder = original
+    // steamcmd reads a relative path in the copy against the copy's folder, so every path is
+    // made absolute from where the original is.
+    let absolute = path::absolute(original).map_err(at(original))?;
+    let folder = absolute
         .parent()
-        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        .map_or_else(|| absolute.clone(), Path::to_path_buf);
     let content_root = app
         .text("ContentRoot")
         .map_or_else(|| folder.clone(), |root| scripts::resolve(&folder, root));

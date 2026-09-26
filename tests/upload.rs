@@ -97,6 +97,23 @@ fn steamcmd_gets_a_copy_with_every_path_absolute_and_steamships_keys_set() {
 }
 
 #[test]
+fn a_script_named_by_a_relative_path_gets_absolute_paths_in_its_copy() {
+    let home = tempfile::tempdir().unwrap();
+    let relative = Path::new("tests/fixtures/spacewar/steam/app_build.vdf");
+    let prepared = upload::prepare(home.path(), relative, "1 abc", true).unwrap();
+    let app = app_block(&prepared.script);
+    let steam = std::path::absolute(relative.parent().unwrap()).unwrap();
+    assert_eq!(
+        app.text("ContentRoot"),
+        Some(format!("{}/../content/", slashed(&steam)).as_str())
+    );
+    assert_eq!(
+        app.block("Depots").unwrap().text("481"),
+        Some(format!("{}/depot_build.vdf", slashed(&steam)).as_str())
+    );
+}
+
+#[test]
 fn a_preview_is_set_in_the_file() {
     let project = Project::new();
     let original = project.file("steam/app_build.vdf", APP);
