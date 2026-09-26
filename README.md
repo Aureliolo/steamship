@@ -66,6 +66,15 @@ approval in the Steam Mobile app; what you type is passed directly to steamcmd, 
 saved. steamcmd keeps a token, and later runs use it without a password. When it expires, an
 upload stops and tells you to run this again.
 
+### `logout`
+
+```sh
+steamship logout
+```
+
+Forgets the login: the token steamcmd saved and the account steamship remembered. The next upload
+needs `steamship login` first.
+
 ### `check`
 
 ```sh

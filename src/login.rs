@@ -33,6 +33,9 @@ pub trait Person {
     /// The login was approved.
     fn approved(&mut self);
 
+    /// steamcmd logged in with the login it saved, asking for nothing.
+    fn saved(&mut self);
+
     /// steamcmd said something steamship has no meaning for.
     fn said(&mut self, line: &str);
 }
@@ -89,6 +92,7 @@ where
                 }
                 Step::Approve => person.approving(),
                 Step::Approved => person.approved(),
+                Step::Saved => person.saved(),
                 Step::Refused(reason) => {
                     if refused.is_none() {
                         refused = Some(reason);
@@ -143,6 +147,10 @@ mod tests {
 
         fn approved(&mut self) {
             self.seen.push("approved".to_owned());
+        }
+
+        fn saved(&mut self) {
+            self.seen.push("saved".to_owned());
         }
 
         fn said(&mut self, line: &str) {
@@ -213,6 +221,20 @@ mod tests {
         );
         assert_eq!(input, b"hunter2\rAB12C\r");
         assert_eq!(person.seen, ["password", "code", "said Some later line"]);
+    }
+
+    #[test]
+    fn a_saved_login_asks_for_nothing() {
+        let mut output = Chunks(vec![
+            b"Logging in using cached credentials.\r\n",
+            b"Logging in user 'build_bot' [U:1:0] to Steam Public...OK\r\n",
+        ]);
+        let mut input = Vec::new();
+        let mut person = Scripted::default();
+        let ending = converse(&mut output, &mut input, &mut person).unwrap();
+        assert_eq!(ending, Ending::Finished);
+        assert!(input.is_empty());
+        assert_eq!(person.seen, ["saved"]);
     }
 
     #[test]

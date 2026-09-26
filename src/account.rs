@@ -66,6 +66,19 @@ impl Account {
         }
     }
 
+    /// Forgets the account `login` remembered in `home`, and says whether there was one.
+    ///
+    /// # Errors
+    ///
+    /// When the file is there but cannot be removed.
+    pub fn forget(home: &Path) -> io::Result<bool> {
+        match fs::remove_file(home.join(REMEMBERED)) {
+            Ok(()) => Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
     /// Remembers this account in `home` for later runs.
     ///
     /// # Errors
@@ -128,6 +141,22 @@ mod tests {
         let account = Account::parse("build_bot").unwrap();
         account.remember(home.path()).unwrap();
         assert_eq!(Account::remembered(home.path()).unwrap(), Some(account));
+        assert!(Account::forget(home.path()).unwrap());
+        assert_eq!(Account::remembered(home.path()).unwrap(), None);
+        assert!(
+            !Account::forget(home.path()).unwrap(),
+            "nothing left to forget"
+        );
+    }
+
+    #[test]
+    fn a_remembered_account_that_cannot_be_removed_is_an_error() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir_all(home.path().join(REMEMBERED).join("inside")).unwrap();
+        assert_ne!(
+            Account::forget(home.path()).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
     }
 
     #[test]
