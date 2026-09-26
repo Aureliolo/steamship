@@ -11,6 +11,7 @@ pub mod magic;
 pub mod manifest;
 pub mod pattern;
 pub mod platform;
+pub mod redact;
 pub mod run;
 pub mod scripts;
 pub mod steamcmd;

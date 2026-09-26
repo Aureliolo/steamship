@@ -261,7 +261,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [vdf, elf, pattern]
+        target: [vdf, elf, pattern, redact]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
