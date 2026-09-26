@@ -25,19 +25,22 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::System::Diagnostics::Debug::{
     SEM_FAILCRITICALERRORS, SEM_NOGPFAULTERRORBOX, SEM_NOOPENFILEERRORBOX, SetErrorMode,
+    THREAD_ERROR_MODE,
 };
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT,
+    JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject,
 };
 use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, CreateDesktopW, HDESK};
 use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
     DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE,
     InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
-    STARTUPINFOEXW, STARTUPINFOW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ResumeThread,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, TerminateProcess,
+    UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 use crate::run::Finished;
@@ -98,15 +101,29 @@ pub fn run(
     Ok(Finished { code, output })
 }
 
-/// Windows shows a dialogue when a program crashes, or cannot find a disk or a file it was about to
-/// open. The setting is per process and inherited, so set here it reaches steamcmd and everything
+/// Keeps Windows from showing a dialogue when a program crashes or cannot find a disk or file.
+///
+/// The setting is per process and inherited, so set here it reaches steamcmd and everything
 /// steamcmd starts: those failures are then only returned as errors.
-fn silence_error_dialogues() {
+pub fn silence_error_dialogues() {
     // SAFETY: changes one process-wide flag and returns the previous one; no memory is involved.
-    let _: u32 = unsafe {
-        SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX)
-    };
+    let _: u32 = unsafe { SetErrorMode(NO_DIALOGUES) };
 }
+
+/// No dialogue for a crash, for a disk that is not there, or for a file that cannot be opened.
+pub const NO_DIALOGUES: THREAD_ERROR_MODE =
+    SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX;
+
+/// A job that ends every process in it when steamship lets go of it, however steamship ends, and
+/// ends a process that crashes rather than leaving it at Windows' crash handling.
+const JOB_LIMITS: JOB_OBJECT_LIMIT =
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+
+/// How a program is started: suspended until it is in the job, so that nothing it does happens
+/// outside it; with no console window, which on a desktop nobody sees would only be waste; with
+/// an environment block of UTF-16; and with the attribute list that limits what it inherits.
+const CREATION: PROCESS_CREATION_FLAGS =
+    CREATE_SUSPENDED | CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
 
 /// The desktop a program runs on. Nobody switches to it, so nothing on it is ever seen, and
 /// Windows keeps the keyboard focus from crossing from one desktop to another.
@@ -158,8 +175,7 @@ impl Job {
         // SAFETY: `job` is a new handle that nothing else owns.
         let job = Self(unsafe { OwnedHandle::from_raw_handle(job) });
         let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-        limits.BasicLimitInformation.LimitFlags =
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
+        limits.BasicLimitInformation.LimitFlags = JOB_LIMITS;
         // SAFETY: `limits` is initialised and its size is the one passed.
         let set = unsafe {
             SetInformationJobObject(
@@ -255,10 +271,7 @@ fn spawn(
             ptr::null(),
             ptr::null(),
             1,
-            CREATE_SUSPENDED
-                | CREATE_NO_WINDOW
-                | CREATE_UNICODE_ENVIRONMENT
-                | EXTENDED_STARTUPINFO_PRESENT,
+            CREATION,
             ptr::null(),
             directory.as_ptr(),
             (&raw const info).cast(),
@@ -282,10 +295,19 @@ fn spawn(
         return Err(error);
     }
     // SAFETY: the thread handle is open; it was created suspended once, so one resume starts it.
-    if unsafe { ResumeThread(thread.as_raw_handle()) } == u32::MAX {
-        return Err(io::Error::last_os_error());
+    match unsafe { ResumeThread(thread.as_raw_handle()) } {
+        // The count it was suspended by before this resume: once, since it was made that way.
+        1 => Ok(process),
+        u32::MAX => Err(io::Error::last_os_error()),
+        // It was running already, so it may have done something before it was in the job.
+        count => {
+            // SAFETY: as above; the program is ended rather than left running outside the rules.
+            let _: i32 = unsafe { TerminateProcess(process.0.as_raw_handle(), 1) };
+            Err(io::Error::other(format!(
+                "the program was not held suspended until it was in its job (count {count})"
+            )))
+        }
     }
-    Ok(process)
 }
 
 /// A process-thread attribute list naming the only handles a new process inherits.
@@ -433,8 +455,8 @@ pub const VALVE: &str = "Valve Corp.";
 const NOT_VALVES: &str = "siteserverui/";
 
 /// Every one of `files` under `root` that is steamcmd's own program or library and does not carry
-/// a valid signature from Valve, each said as a change to the install.
-pub fn unsigned<'file, Files>(root: &Path, files: Files) -> Vec<String>
+/// a valid signature from `signer`, [`VALVE`] for steamcmd, each said as a change to the install.
+pub fn unsigned<'file, Files>(root: &Path, files: Files, signer: &str) -> Vec<String>
 where
     Files: IntoIterator<Item = &'file String>,
 {
@@ -449,8 +471,10 @@ where
                 })
         })
         .filter_map(|relative| match signature(&root.join(relative)) {
-            Signature::Signed(name) if name == VALVE => None,
-            Signature::Signed(name) => Some(format!("{relative} is signed by {name}, not {VALVE}")),
+            Signature::Signed(name) if name == signer => None,
+            Signature::Signed(name) => {
+                Some(format!("{relative} is signed by {name}, not {signer}"))
+            }
             Signature::Refused(status) => Some(format!(
                 "{relative} has no valid signature (Windows says {status:#010x})"
             )),
@@ -466,8 +490,18 @@ pub enum Signature {
     Refused(u32),
 }
 
-/// What Windows makes of `path`'s Authenticode signature. No window is ever shown, and the
-/// revocation of every certificate in the chain but its root is checked.
+/// Sets how a signature is checked: with no window, ever, and with the revocation of every
+/// certificate in the chain checked but its root's. Neither shows in what Windows answers for a
+/// file that is signed or not, only with a certificate that has been revoked, or with someone
+/// there to answer a dialogue.
+const fn quietly_to_the_root(data: &mut WINTRUST_DATA) {
+    data.dwUIChoice = WTD_UI_NONE;
+    data.fdwRevocationChecks = WTD_REVOKE_WHOLECHAIN;
+    data.dwProvFlags = WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT;
+}
+
+/// What Windows makes of `path`'s Authenticode signature, checked as [`quietly_to_the_root`]
+/// sets out.
 #[must_use]
 pub fn signature(path: &Path) -> Signature {
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
@@ -478,16 +512,14 @@ pub fn signature(path: &Path) -> Signature {
     };
     let mut data = WINTRUST_DATA {
         cbStruct: size_of_u32::<WINTRUST_DATA>(),
-        dwUIChoice: WTD_UI_NONE,
-        fdwRevocationChecks: WTD_REVOKE_WHOLECHAIN,
         dwUnionChoice: WTD_CHOICE_FILE,
         Anonymous: WINTRUST_DATA_0 {
             pFile: &raw mut file,
         },
         dwStateAction: WTD_STATEACTION_VERIFY,
-        dwProvFlags: WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT,
         ..WINTRUST_DATA::default()
     };
+    quietly_to_the_root(&mut data);
     let mut action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
     // SAFETY: `data` and the `file` it points to are fully initialised and outlive the call, and
     // `wide` is a NUL-terminated path that outlives both. An invalid window handle and
@@ -578,6 +610,7 @@ mod tests {
     use windows_sys::Win32::Foundation::{HLOCAL, HWND, LPARAM, LocalFree};
     use windows_sys::Win32::Globalization::lstrlenW;
     use windows_sys::Win32::System::StationsAndDesktops::EnumDesktopWindows;
+    use windows_sys::Win32::System::StationsAndDesktops::{DESKTOP_READOBJECTS, OpenDesktopW};
     use windows_sys::Win32::System::Threading::GetProcessId;
     use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindowVisible};
@@ -630,7 +663,7 @@ mod tests {
         ]
         .map(str::to_owned)
         .into();
-        let found = unsigned(root.path(), &files);
+        let found = unsigned(root.path(), &files, VALVE);
         let [microsoft, bare] = found.as_slice() else {
             panic!("expected two findings, got {found:?}");
         };
@@ -639,10 +672,12 @@ mod tests {
             "{microsoft}"
         );
         assert!(microsoft.ends_with(", not Valve Corp."), "{microsoft}");
-        assert_eq!(
-            bare,
-            "bin/unsigned.DLL has no valid signature (Windows says 0x800b0100)"
-        );
+        let refused = "bin/unsigned.DLL has no valid signature (Windows says 0x800b0100)";
+        assert_eq!(bare, refused);
+        let Signature::Signed(signer) = signature(&signed_by_microsoft()) else {
+            panic!("the Microsoft library is not signed");
+        };
+        assert_eq!(unsigned(root.path(), &files, &signer), [refused]);
     }
 
     /// The arguments Windows' own parser reads out of `line`, a NUL-terminated command line.
@@ -725,6 +760,27 @@ mod tests {
         });
         assert!(shown, "winver never showed its window");
         assert_eq!(visible_windows(ptr::null_mut(), id), 0);
+    }
+
+    /// Whether a desktop called `name` exists.
+    fn desktop_exists(name: &[u16]) -> bool {
+        // SAFETY: `name` is NUL-terminated and outlives the call.
+        let handle = unsafe { OpenDesktopW(name.as_ptr(), 0, 0, DESKTOP_READOBJECTS) };
+        if handle.is_null() {
+            return false;
+        }
+        // SAFETY: the handle was just opened, and is closed once, here.
+        let _: BOOL = unsafe { CloseDesktop(handle) };
+        true
+    }
+
+    #[test]
+    fn a_desktop_goes_away_once_steamship_lets_go_of_it() {
+        let desktop = Desktop::create().unwrap();
+        let name = desktop.name.clone();
+        assert!(desktop_exists(&name));
+        drop(desktop);
+        assert!(!desktop_exists(&name));
     }
 
     /// Mostly the units that quoting is about, with anything else mixed in.

@@ -43,19 +43,26 @@ mod tests {
     use std::env;
     use std::time::Instant;
 
-    /// A shell, what makes it run the one line that follows, and the line that, in it, starts a
-    /// grandchild that holds the output open for a minute. `cmd` keeps the quotes around a line
-    /// holding `&` or `>` unless told `/s`, `/d` keeps it from running anything set up to run
-    /// whenever it starts, and its own path is written with backslashes because it reads any
-    /// `/` on its command line, its own path included, as the start of a switch.
+    /// A shell, what makes it run the one line that follows, a line that starts a grandchild
+    /// holding the output open for a minute and then waits a minute itself, and one that starts
+    /// such a grandchild and exits 4 at once. `cmd` keeps the quotes around a line holding `&` or
+    /// `>` unless told `/s`, `/d` keeps it from running anything set up to run whenever it
+    /// starts, and its own path is written with backslashes because it reads any `/` on its
+    /// command line, its own path included, as the start of a switch.
     #[cfg(windows)]
-    const SHELL: (&str, &[&str], &str) = (
+    const SHELL: (&str, &[&str], &str, &str) = (
         r"C:\Windows\System32\cmd.exe",
         &["/d", "/s", "/c"],
         "start /b ping -n 60 127.0.0.1 > nul & ping -n 60 127.0.0.1",
+        "start /b ping -n 60 127.0.0.1 > nul & exit 4",
     );
     #[cfg(unix)]
-    const SHELL: (&str, &[&str], &str) = ("/bin/sh", &["-c"], "sleep 60 & sleep 60");
+    const SHELL: (&str, &[&str], &str, &str) = (
+        "/bin/sh",
+        &["-c"],
+        "sleep 60 & sleep 60",
+        "sleep 60 & exit 4",
+    );
 
     fn shell(line: &str, limit: Duration) -> Finished {
         let args: Vec<OsString> = SHELL
@@ -86,6 +93,37 @@ mod tests {
         // The grandchild holds the output open: reading it to the end only finishes once the
         // grandchild has been stopped as well.
         assert_eq!(finished.code, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A line that reads its input to the end and exits 0 only when that input was empty.
+    #[cfg(windows)]
+    const READS_INPUT: &str = "findstr /r \"^\" > nul && exit 3 || exit 0";
+    #[cfg(unix)]
+    const READS_INPUT: &str = "test -z \"$(cat)\"";
+
+    #[test]
+    fn a_program_is_given_nothing_to_read() {
+        let finished = shell(READS_INPUT, Duration::from_secs(20));
+        assert_eq!(
+            finished.code,
+            Some(0_i32),
+            "{}",
+            String::from_utf8_lossy(&finished.output)
+        );
+    }
+
+    #[test]
+    fn stops_what_a_program_left_running_when_it_ends() {
+        let started = Instant::now();
+        let finished = shell(SHELL.3, Duration::from_secs(50));
+        // Again the grandchild holds the output open, so the run ends before the grandchild's
+        // minute is up only if the grandchild was stopped when its parent ended.
+        assert_eq!(finished.code, Some(4_i32));
         assert!(
             started.elapsed() < Duration::from_secs(30),
             "took {:?}",
