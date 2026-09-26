@@ -1,3 +1,5 @@
 /target/
 /drafts/
 /mutants.out*/
+# What a binary built for coverage writes when the tests run it.
+*.profraw
