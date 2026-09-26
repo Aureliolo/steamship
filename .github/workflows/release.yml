@@ -90,7 +90,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.build.outputs.version }}
-          CRATES_IO: ${{ vars.CRATES_IO }}
         run: |
           set -euo pipefail
           mapfile -t assets < <(find dist -maxdepth 1 -type f -print | sort)
@@ -134,12 +133,14 @@ jobs:
           # yet answers an empty list; a request that fails fails the job.
           previous="$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')"
           {
-            printf '%s\n' '## Install' '' 'Download the archive for your system below.'
-            # Named only once crates.io has the crate: the notes of a published release stay.
-            if [[ "${CRATES_IO}" == "publish" ]]; then
-              printf '%s\n' '' 'Or:' '' '```sh' "cargo install --locked steamship@${VERSION}" '```'
-            fi
             printf '%s\n' \
+              '## Install' \
+              '' \
+              'Download the archive for your system below, or:' \
+              '' \
+              '```sh' \
+              "cargo install --locked steamship@${VERSION}" \
+              '```' \
               '' \
               'Check an archive came from this repository'"'"'s release workflow:' \
               '' \
