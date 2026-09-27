@@ -183,6 +183,11 @@ jobs:
           $env:SCOOP = "$env:RUNNER_TEMP\scoop"
           $scoop = "$env:SCOOP\apps\scoop\current\bin\scoop.ps1"
           $version = (Get-Content bucket/steamship.json -Raw | ConvertFrom-Json).version
+          # scoop.ps1 is a script, not a program, so a failure shows only in its exit code.
+          function Scoop {
+            & $scoop @args
+            if ($LASTEXITCODE -ne 0) { throw "scoop $args failed with $LASTEXITCODE." }
+          }
           function Check {
             $said = & "$env:SCOOP\shims\steamship.exe" --version
             if ($said -ne "steamship $version") { throw "steamship said '$said' rather than version $version." }
@@ -193,15 +198,16 @@ jobs:
           } else {
             (Resolve-Path bucket/steamship.json).Path
           }
-          & $scoop install --no-update-scoop $address
+          Scoop install --no-update-scoop $address
           Check
-          & $scoop uninstall steamship
+          Scoop uninstall steamship
 
           git switch --quiet --create packages-check
           git add bucket/steamship.json
           git -c user.name=packages -c user.email=packages@localhost commit --quiet --allow-empty `
             --message 'The manifest under test'
-          & $scoop bucket add aureliolo $env:GITHUB_WORKSPACE
-          & $scoop install --no-update-scoop aureliolo/steamship
+          # Scoop takes a bucket only by a Git URL, which a plain path is not.
+          Scoop bucket add aureliolo ("file:///" + ($env:GITHUB_WORKSPACE -replace '\\', '/'))
+          Scoop install --no-update-scoop aureliolo/steamship
           Check
-          & $scoop uninstall steamship
+          Scoop uninstall steamship
