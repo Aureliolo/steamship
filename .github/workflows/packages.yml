@@ -1,0 +1,213 @@
+name: Packages
+
+# The Homebrew formula and the Scoop manifest, installed the way a user installs them, on the
+# systems they are for. On a pull request that touches them, the committed files, checked first
+# against what the release they name is signed over. Called by the release, the files it wrote
+# for itself, before they reach main.
+on:
+  pull_request:
+    paths:
+      - Formula/**
+      - bucket/**
+      - .github/packages.sh
+      - .github/workflows/packages.yml
+      - .github/workflows/release.yml
+      - .github/workflows/release-build.yml
+  workflow_call:
+    inputs:
+      files:
+        description: The uploaded files holding Formula/ and bucket/, installed in place of the committed ones
+        type: string
+        required: true
+      tag:
+        description: The release whose attached steamship.json Scoop also installs from, by its address
+        type: string
+        required: true
+
+permissions: {}
+
+# Its own group: called by the release, `github.workflow` is the release's name, and a group
+# matching the release's own would hold this run behind the run that called it.
+concurrency:
+  group: packages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Scoop's own code, pinned by commit; its installer always fetches the tip of master, so it is
+  # not used. The pin is raised by Renovate from the tag.
+  # renovate: datasource=github-tags depName=ScoopInstaller/Scoop
+  SCOOP_TAG: v0.5.3
+  SCOOP_COMMIT: b588a06e41d920d2123ec70aee682bae14935939
+
+jobs:
+  # A pull request can change the files by hand; what reaches users has to be exactly what the
+  # release's own signed checksums say.
+  signed:
+    name: packages (signed)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the files, and the public release they name.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the files are what the release they name is signed over
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version bucket/steamship.json)"
+          tag="v${version}"
+          mkdir release written
+          gh release download "${tag}" --repo "${GITHUB_REPOSITORY}" --dir release \
+            --pattern '*.sha256' --pattern "steamship-${version}.intoto.jsonl"
+          for sum in release/*.sha256; do
+            gh attestation verify "${sum}" --bundle "release/steamship-${version}.intoto.jsonl" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release-build.yml" \
+              --source-ref "refs/tags/${tag}" --deny-self-hosted-runners
+          done
+          .github/packages.sh "${version}" release written
+          diff -u written/Formula/steamship.rb Formula/steamship.rb
+          diff -u written/bucket/steamship.json bucket/steamship.json
+
+  homebrew:
+    name: packages (homebrew ${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            # renovate: datasource=github-runners depName=ubuntu
+            runner: ubuntu-26.04
+          - platform: macos
+            # renovate: datasource=github-runners depName=macos
+            runner: macos-26
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read # Reads the formula.
+    env:
+      # Homebrew as the runner image ships it: it has no version to pin, and an update would
+      # change it between runs.
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      HOMEBREW_NO_ANALYTICS: 1
+      HOMEBREW_NO_ENV_HINTS: 1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Take the release's formula
+        if: inputs.files != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.files }}
+
+      # Homebrew clones a tap, so the formula has to be committed, on a branch the clone checks
+      # out; a user's tap is the same repository at its default branch.
+      - name: Tap this repository and install from it
+        run: |
+          set -euo pipefail
+          if ! command -v brew > /dev/null; then
+            eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+          fi
+          brew --version
+          git switch --quiet --create packages-check
+          git add Formula/steamship.rb
+          git -c user.name=packages -c user.email=packages@localhost commit --quiet --allow-empty \
+            --message 'The formula under test'
+          version="$(jq -r .version bucket/steamship.json)"
+          brew tap aureliolo/steamship "${GITHUB_WORKSPACE}"
+          brew install aureliolo/steamship/steamship
+          test "$(steamship --version)" = "steamship ${version}"
+          brew test aureliolo/steamship/steamship
+          brew audit --strict aureliolo/steamship/steamship
+          # The other systems' archives, downloaded and checked against their SHA-256 here, since
+          # no runner is each of them.
+          brew fetch --force --os=macos --arch=intel aureliolo/steamship/steamship
+          brew fetch --force --os=macos --arch=arm aureliolo/steamship/steamship
+          brew fetch --force --os=linux --arch=intel aureliolo/steamship/steamship
+          brew uninstall aureliolo/steamship/steamship
+          brew untap aureliolo/steamship
+
+  scoop:
+    name: packages (scoop)
+    runs-on: windows-2025
+    timeout-minutes: 20
+    permissions:
+      contents: read # Reads the manifest.
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Take the release's manifest
+        if: inputs.files != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.files }}
+
+      - name: Install Scoop at its pinned commit
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $core = "$env:RUNNER_TEMP\scoop\apps\scoop\current"
+          git init --quiet $core
+          git -C $core fetch --quiet --depth 1 https://github.com/ScoopInstaller/Scoop.git $env:SCOOP_COMMIT
+          git -C $core checkout --quiet FETCH_HEAD
+          if ((git -C $core rev-parse HEAD) -ne $env:SCOOP_COMMIT) { throw 'Scoop is not at its pinned commit.' }
+          # The folders Scoop's installer makes that Scoop itself expects to find.
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\scoop\shims", "$env:RUNNER_TEMP\scoop\buckets" | Out-Null
+
+      # By address first, as the README gives it: from the release itself when there is one, the
+      # file when there is not. Then as a bucket, this repository added the way a user adds it.
+      - name: Install by address, then from this repository as a bucket
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $env:SCOOP = "$env:RUNNER_TEMP\scoop"
+          $scoop = "$env:SCOOP\apps\scoop\current\bin\scoop.ps1"
+          $version = (Get-Content bucket/steamship.json -Raw | ConvertFrom-Json).version
+          # scoop.ps1 is a script, not a program, so a failure shows only in its exit code.
+          function Scoop {
+            & $scoop @args
+            if ($LASTEXITCODE -ne 0) { throw "scoop $args failed with $LASTEXITCODE." }
+          }
+          function Check {
+            $said = & "$env:SCOOP\shims\steamship.exe" --version
+            if ($said -ne "steamship $version") { throw "steamship said '$said' rather than version $version." }
+          }
+
+          $address = if ($env:TAG) {
+            "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:TAG/steamship.json"
+          } else {
+            (Resolve-Path bucket/steamship.json).Path
+          }
+          Scoop install --no-update-scoop $address
+          Check
+          Scoop uninstall steamship
+
+          git switch --quiet --create packages-check
+          git add bucket/steamship.json
+          git -c user.name=packages -c user.email=packages@localhost commit --quiet --allow-empty `
+            --message 'The manifest under test'
+          # Scoop takes a bucket only by a Git URL, which a plain path is not.
+          Scoop bucket add aureliolo ("file:///" + ($env:GITHUB_WORKSPACE -replace '\\', '/'))
+          Scoop install --no-update-scoop aureliolo/steamship
+          Check
+          Scoop uninstall steamship

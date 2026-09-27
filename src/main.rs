@@ -226,8 +226,9 @@ fn main() -> ExitCode {
         }),
     };
     if let Some(latest) = update.and_then(update::Check::newer) {
+        // Homebrew and winget run steamship through a link to where they keep it.
         let installed = env::current_exe().map_or(Installed::Archive, |program| {
-            Installed::of(&program, Path::exists)
+            Installed::of(&fs::canonicalize(&program).unwrap_or(program), Path::exists)
         });
         show::upgrade(
             &latest.to_string(),
