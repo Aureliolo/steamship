@@ -223,6 +223,40 @@ fn help_lists_every_command_with_one_short_line() {
     }
 }
 
+/// What Explorer, Properties and Task Manager show for steamship.exe, as Windows reads it back.
+#[cfg(windows)]
+#[test]
+fn the_windows_program_carries_its_icon_and_version_details() {
+    let script = "$ErrorActionPreference = 'Stop'
+        Add-Type -Namespace Shell -Name Icons -MemberDefinition '
+          [DllImport(\"shell32.dll\", CharSet = CharSet.Unicode)]
+          public static extern uint ExtractIconExW(string file, int index, IntPtr[] large, IntPtr[] small, uint count);'
+        $v = (Get-Item -LiteralPath $env:PROGRAM).VersionInfo
+        $v.FileDescription, $v.ProductName, $v.ProductVersion, $v.FileVersionRaw.ToString(),
+          $v.LegalCopyright, $v.OriginalFilename, [Shell.Icons]::ExtractIconExW($env:PROGRAM, -1, $null, $null, 0)";
+    let output = Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .env("PROGRAM", env!("CARGO_BIN_EXE_steamship"))
+        .output()
+        .unwrap();
+    let said = String::from_utf8(output.stdout).unwrap();
+    let version = env!("CARGO_PKG_VERSION");
+    assert_eq!(
+        said.lines().collect::<Vec<_>>(),
+        [
+            "steamship",
+            "steamship",
+            version,
+            &format!("{version}.0"),
+            "MIT OR Apache-2.0",
+            "steamship.exe",
+            "1",
+        ],
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn status_with_nothing_saved_says_to_log_in_changes_nothing_and_exits_3() {
     let home = tempfile::tempdir().unwrap();
