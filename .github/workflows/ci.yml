@@ -64,6 +64,18 @@ jobs:
         if: '!cancelled()'
         run: cargo test --locked
 
+      # The Linux release binary is the static musl build, so it is tested as such on every change
+      # rather than first at a release. musl-gcc, for the C and assembly in ring, comes from the
+      # image's own signed Ubuntu archive.
+      - name: Test the static Linux build
+        if: matrix.platform == 'linux' && !cancelled()
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+          rustup target add x86_64-unknown-linux-musl
+          cargo test --locked --target x86_64-unknown-linux-musl
+
       # The crate as crates.io would receive it, built from its package alone: a file the build
       # reads but the package leaves out fails here rather than at publishing.
       - name: Build the published package

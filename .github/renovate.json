@@ -32,6 +32,11 @@
       "maxMajorIncrement": 0
     },
     {
+      "description": "The toolchain is raised by the Rust manager below, together with the crate's rust-version from the same release list; Renovate's own rust-toolchain manager would raise the same line a second time.",
+      "matchManagers": ["rust-toolchain"],
+      "enabled": false
+    },
+    {
       "description": "Cargo.toml names the version tested, not a floor, so a raise moves it along with the lock file.",
       "matchManagers": ["cargo"],
       "rangeStrategy": "bump"
@@ -79,11 +84,11 @@
       ]
     },
     {
-      "description": "A crate installed by version in a workflow: cargo-fuzz.",
+      "description": "A tool fetched by version in a workflow, under the comment naming where its versions come from: cargo-fuzz and cargo-auditable as `..._VERSION:`, syft as an action's `...-version:` input.",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>crate) depName=(?<depName>\\S+)\\n\\s*[A-Z0-9_]+_VERSION: (?<currentValue>\\S+)"
+        "# renovate: datasource=(?<datasource>crate|github-releases) depName=(?<depName>\\S+)\\n\\s*(?:[A-Z0-9_]+_VERSION|[a-z0-9-]+-version): (?<currentValue>\\S+)"
       ]
     },
     {
