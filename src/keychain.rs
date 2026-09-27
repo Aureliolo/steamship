@@ -26,6 +26,18 @@ pub const STORE: &str = "the macOS Keychain";
 #[cfg(target_os = "linux")]
 pub const STORE: &str = "the Secret Service";
 
+/// What to know about the store once a key is kept in it, a line at a time. The Keychain trusts
+/// only the binary that kept the key, and an ad-hoc signed steamship is another binary after each
+/// upgrade.
+#[cfg(target_os = "macos")]
+pub const KEPT_NOTE: &[&str] = &[
+    "after each steamship upgrade, macOS asks once whether it may use the key; Always Allow",
+    "holds until the next upgrade",
+    "a way around that question is welcome as a pull request: github.com/Aureliolo/steamship",
+];
+#[cfg(not(target_os = "macos"))]
+pub const KEPT_NOTE: &[&str] = &[];
+
 /// What the key is called where the store shows it.
 pub const LABEL: &str = "steamship Web API key";
 

@@ -2169,6 +2169,14 @@ fn login_with_web_api_key_keeps_a_key_steam_takes_and_logout_forgets_it() {
         )),
         "{stdout}"
     );
+    let keeping: Vec<String> =
+        iter::once(format!("  api key   \u{2713} kept in {}", keychain::STORE))
+            .chain(keychain::KEPT_NOTE.iter().map(|line| format!("    {line}")))
+            .collect();
+    assert!(
+        stdout.contains(&format!("{}\n", keeping.join("\n"))),
+        "what to know about the store, right after: {stdout}"
+    );
     assert!(stdout.contains("\u{2713} Web API key kept\n"), "{stdout}");
     assert!(!format!("{stdout}{stderr}").contains(KEY), "never shown");
     let request = requests.recv_timeout(Duration::from_secs(10)).unwrap();

@@ -998,6 +998,9 @@ fn keep_key(home: &Path, key: &webapi::Key) -> bool {
     match keychain::keep(home, key) {
         Ok(()) => {
             show::done("api key", &format!("kept in {}", keychain::STORE));
+            for line in keychain::KEPT_NOTE {
+                show::aside(line);
+            }
             true
         }
         Err(error) => {
