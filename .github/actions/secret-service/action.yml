@@ -1,0 +1,17 @@
+name: Secret Service
+description: >-
+  Installs D-Bus and GNOME Keyring, which provide the Secret Service a Linux desktop keeps
+  secrets in and steamship keeps the Web API key in. Tests and steps start a bus and a keyring of
+  their own from these.
+
+runs:
+  using: composite
+  steps:
+    # From the image's own signed Ubuntu archive, as musl-tools is. secret-tool is libsecret's,
+    # a second client of the same store for steps that check what steamship kept.
+    - name: Install D-Bus and GNOME Keyring
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends dbus-daemon gnome-keyring libsecret-tools

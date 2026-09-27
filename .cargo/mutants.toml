@@ -9,6 +9,9 @@ exclude_re = [
   # LocalFree gives back the memory a security descriptor was read into, and nothing else; a leak
   # changes no behaviour a test could see.
   'replace <impl Drop for Security>::drop with \(\)',
+  # CredFree likewise gives back only the memory a credential was read into, which steamship has
+  # already copied the key out of and wiped; a leak changes nothing a test could see.
+  'replace <impl Drop for Credential>::drop with \(\)',
   # Windows gives each program the console's input mode as it was before any other program
   # changed it, so a mode left unrestored never reaches the shell; and within steamship nothing
   # reads the keyboard after a prompt but the next prompt, which sets its own. On Unix the
