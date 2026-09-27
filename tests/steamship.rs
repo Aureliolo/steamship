@@ -17,7 +17,7 @@ use std::process::Command;
 use std::process::Stdio;
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use steamship::install;
 use steamship::manifest::Manifest;
@@ -465,8 +465,13 @@ struct Session {
 
 impl Session {
     /// Starts `line` in the system's shell on a terminal, in a home of its own with no account in
-    /// the environment.
+    /// the environment and GitHub never asked for a newer steamship.
     fn start(line: &str, home: &Path) -> Self {
+        Self::start_with(line, home, ("STEAMSHIP_NO_UPDATE_CHECK", "1"))
+    }
+
+    /// [`Session::start`], with `variable` set.
+    fn start_with(line: &str, home: &Path, (name, value): (&str, &str)) -> Self {
         #[cfg(windows)]
         let (shell, args) = (r"C:\Windows\System32\cmd.exe", ["/d", "/s", "/c"]);
         #[cfg(unix)]
@@ -477,10 +482,13 @@ impl Session {
             .chain([line])
             .map(OsString::from)
             .collect();
-        let environment = [(
-            OsString::from("STEAMSHIP_HOME"),
-            home.as_os_str().to_owned(),
-        )];
+        let environment = [
+            (
+                OsString::from("STEAMSHIP_HOME"),
+                home.as_os_str().to_owned(),
+            ),
+            (OsString::from(name), OsString::from(value)),
+        ];
         let (terminal, mut output, input) =
             Terminal::start(Path::new(shell), &args, &environment, home).unwrap();
         let (sender, chunks) = mpsc::channel();
@@ -571,6 +579,49 @@ fn login_on_a_terminal_asks_for_the_account_shows_it_as_typed_and_refuses_a_bad_
     session.wait_for("\"+quit\u{e9}\u{20ac}\u{1f600}\" is not a Steam account name");
     looks_as_it_was(&mut session, "exited 2");
     assert!(!home.path().join("account").exists());
+}
+
+/// A home in which GitHub was last found, a moment ago, to have steamship 99.0.0 out.
+fn told_of_99() -> tempfile::TempDir {
+    let home = tempfile::tempdir().unwrap();
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap();
+    fs::write(
+        home.path().join("latest-release"),
+        format!("{} 99.0.0\n", now.as_secs()),
+    )
+    .unwrap();
+    home
+}
+
+#[test]
+fn a_newer_steamship_is_told_at_a_terminal_with_how_to_get_it() {
+    let home = told_of_99();
+    let steamship = env!("CARGO_BIN_EXE_steamship");
+    #[cfg(windows)]
+    let line = format!("{steamship} logout");
+    #[cfg(unix)]
+    let line = format!("'{steamship}' logout");
+    let mut session = Session::start_with(&line, home.path(), ("CI", ""));
+    session.wait_for("download it from https://github.com/Aureliolo/steamship/releases/latest");
+    let _: Option<i32> = session.end().wait().unwrap();
+    assert!(
+        session.seen().contains(&format!(
+            "\n\n  \u{2191} steamship 99.0.0 is out, this is {}\n",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{}",
+        session.seen()
+    );
+}
+
+#[test]
+fn a_newer_steamship_is_not_told_in_a_log() {
+    let home = told_of_99();
+    let (code, stdout, stderr) = steamship(&["logout"], Some(home.path()), &[("CI", "")]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(!stdout.contains("99.0.0"), "{stdout}");
 }
 
 /// Checks that `session`'s terminal is as steamship found it, once steamship has `exited` so.
