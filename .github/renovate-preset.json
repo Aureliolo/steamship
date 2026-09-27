@@ -1,0 +1,22 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": [
+    "Raises steamship where a repository pins its release archives: a \"steamship\" object in any JSON file, holding for each target the release's tag and the archive's SHA-256.",
+    "Renovate rewrites the tag and the digest, and finds the new digest in the .sha256 each release publishes beside each archive. The archive's name is the tool's to derive from the tag and the target, as steamship-<version>-<target>.tar.gz, or .zip on Windows; written beside them it would not be raised."
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The steamship object first, then each target's tag and digest in it.",
+      "managerFilePatterns": ["/\\.json$/"],
+      "matchStringsStrategy": "recursive",
+      "matchStrings": [
+        "\"steamship\"\\s*:\\s*\\{(?:[^{}]|\\{[^{}]*\\})*\\}",
+        "\"tag\"\\s*:\\s*\"(?<currentValue>v\\d+\\.\\d+\\.\\d+)\"\\s*,\\s*\"sha256\"\\s*:\\s*\"(?<currentDigest>[0-9a-f]{64})\""
+      ],
+      "depNameTemplate": "Aureliolo/steamship",
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "semver"
+    }
+  ]
+}
