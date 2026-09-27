@@ -44,16 +44,30 @@ pub const HELP: Styles = Styles::styled()
     .invalid(YELLOW)
     .error(RED.bold());
 
+/// steamship's ship, a line at a time, as the banner draws it: mast, sail, deck, hull and sea.
+/// The documentation site draws the same one.
+pub const SHIP: [&str; 5] = [
+    "      |\\",
+    "      | \\",
+    "   ___|__\\___",
+    "   \\_________/",
+    " ~~~~~~~~~~~~~~~",
+];
+
+/// What steamship does, beside the ship.
+pub const TAGLINE: &str = "uploads your build to Steam";
+
 /// A ship beside the name, the version and what steamship does.
 #[must_use]
 pub fn banner() -> String {
     let version = env!("CARGO_PKG_VERSION");
+    let [mast, sail, deck, hull, sea] = SHIP;
     format!(
-        "{BLUE}      |\\{BLUE:#}\n\
-         {BLUE}      | \\{BLUE:#}         {BOLD}steamship{BOLD:#} {DIM}{version}{DIM:#}\n\
-         {BLUE}   ___|__\\___{BLUE:#}     {DIM}uploads your build to Steam{DIM:#}\n\
-         {BLUE}   \\_________/{BLUE:#}\n\
-         {BLUE}{DIM} ~~~~~~~~~~~~~~~{DIM:#}{BLUE:#}"
+        "{BLUE}{mast}{BLUE:#}\n\
+         {BLUE}{sail}{BLUE:#}         {BOLD}steamship{BOLD:#} {DIM}{version}{DIM:#}\n\
+         {BLUE}{deck}{BLUE:#}     {DIM}{TAGLINE}{DIM:#}\n\
+         {BLUE}{hull}{BLUE:#}\n\
+         {BLUE}{DIM}{sea}{DIM:#}{BLUE:#}"
     )
 }
 

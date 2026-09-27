@@ -75,7 +75,7 @@ workspace = true
 # Plain cargo commands build only this crate; the harness needs libFuzzer and is built by
 # cargo-fuzz.
 [workspace]
-members = [".", "fuzz"]
+members = [".", "docs-site", "fuzz"]
 default-members = ["."]
 
 # Every lint group is on, the restriction group included, and CI turns every warning into an
