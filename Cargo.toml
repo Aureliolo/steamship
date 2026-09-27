@@ -1,6 +1,6 @@
 [package]
 name = "steamship"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.98.1"
 description = "Uploads game builds to Steam with Valve's steamcmd, set up pinned and verified, with a clear result and no passwords."
