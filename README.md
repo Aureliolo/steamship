@@ -41,8 +41,8 @@ winget install Aureliolo.steamship
 cargo binstall steamship
 ```
 
-Scoop, the signed release archives and how to verify them are in
-[Install](https://aureliolo.github.io/steamship/install.html).
+Every way to install, and how to verify a download, is on the
+[install page](https://aureliolo.github.io/steamship/install.html).
 
 ## Quick start
 
