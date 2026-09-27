@@ -28,6 +28,8 @@ Authorization = "Authorization"
 Win32_Security_Authorization = "Win32_Security_Authorization"
 Globalization = "Globalization"
 Win32_Globalization = "Win32_Globalization"
+# security-framework's name for Apple's iCloud Keychain setting.
+set_access_synchronized = "set_access_synchronized"
 # anstyle's colour type, and the variable the no-color.org convention names.
 AnsiColor = "AnsiColor"
 NO_COLOR = "NO_COLOR"

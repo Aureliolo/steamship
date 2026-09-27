@@ -2,7 +2,7 @@
 //! and mutation-tested on the systems where it runs.
 #![expect(
     unsafe_code,
-    reason = "stopping a process group, catching the signals that end steamship, opening a pseudo terminal and changing terminal modes are libc calls"
+    reason = "stopping a process group, catching the signals that end steamship, opening a pseudo terminal, changing terminal modes and asking which user steamship runs as are libc calls"
 )]
 
 use std::ffi::OsString;
@@ -437,6 +437,13 @@ pub fn restrict(folder: &Path) -> io::Result<bool> {
 /// When the file system refuses, or `link` exists.
 pub fn make_link(target: &str, link: &Path) -> io::Result<()> {
     make_symlink(target, link)
+}
+
+/// The user steamship runs as, by number, which is how the session bus knows its users.
+#[must_use]
+pub fn user_id() -> u32 {
+    // SAFETY: geteuid reads the process's own credentials; it takes nothing and cannot fail.
+    unsafe { libc::geteuid() }
 }
 
 #[cfg(test)]

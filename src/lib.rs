@@ -5,11 +5,15 @@ pub mod account;
 pub mod check;
 pub mod ci;
 pub mod conversation;
+pub mod dbus;
 pub mod digest;
 pub mod download;
 pub mod elf;
 pub mod install;
+pub mod keychain;
 pub mod login;
+#[cfg(target_os = "macos")]
+pub mod macos;
 pub mod magic;
 pub mod manifest;
 pub mod pattern;
@@ -17,6 +21,8 @@ pub mod platform;
 pub mod redact;
 pub mod run;
 pub mod scripts;
+#[cfg(target_os = "linux")]
+pub mod secret_service;
 pub mod show;
 pub mod steamcmd;
 pub mod terminal;
