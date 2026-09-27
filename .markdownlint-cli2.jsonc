@@ -1,7 +1,9 @@
 {
   "config": {
     // Prose wraps at 100, like the code; tables and code blocks are as wide as their content.
-    "MD013": { "line_length": 100, "tables": false, "code_blocks": false }
+    "MD013": { "line_length": 100, "tables": false, "code_blocks": false },
+    // Markdown has no way to size an image, so the README's icon is the one HTML element allowed.
+    "MD033": { "allowed_elements": ["img"] }
   },
   // Every Markdown file, so a run on a developer's machine lints what CI lints.
   "globs": ["**/*.md"],

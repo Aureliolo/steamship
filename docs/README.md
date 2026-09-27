@@ -9,7 +9,7 @@ it into `target/site`, and each release publishes that from its tag through
 | `install.md`   | `install.html`                  |
 | `uploading.md` | `uploading.html`                |
 | `ci.md`        | `ci.html`                       |
-| `theme/`       | the template and the stylesheet |
+| `theme/`       | the template, stylesheet, icon  |
 
 The front page and the command reference have no file here: `docs-site/` makes them, the
 reference from the command line's own definitions in `src/cli.rs`, so it says what
