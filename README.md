@@ -154,6 +154,22 @@ it also gives the BuildID as the step's `build-id` output.
 `--preview` is Valve's dry run: the whole build is computed and logged, nothing is uploaded and
 nothing is set live.
 
+### `workshop`
+
+```sh
+steamship workshop <item.vdf> [--account <name>]
+```
+
+Uploads a Workshop item from Valve's `workshopitem` script, with the saved login. It refuses,
+before anything is sent, an `appid` or `publishedfileid` that is not a number, a
+`contentfolder` that is missing or empty, a `previewfile` that is missing or larger than the
+1 MB Steam takes, a `visibility` other than 0 (public), 1 (friends only), 2 (private) or 3
+(unlisted), and a title, description or change note longer than Steam takes. Paths are relative
+to the script, as for `upload`.
+
+A script with no `publishedfileid`, or `0`, makes a new item: steamship prints its ID and the line
+to add to the script, so that later uploads update the same item. Your script is never rewritten.
+
 ### `ci`
 
 ```sh
@@ -210,7 +226,6 @@ holding only the apps it uploads. Its token can do everything those permissions 
 
 Before 1.0:
 
-- Workshop items (`workshop_build_item`);
 - branch status and moving a build between beta branches, through the partner Web API;
 - a Renovate preset that raises steamship pins, and Scoop, winget and Homebrew packages.
 

@@ -21,7 +21,7 @@ use steamship::unix::Terminal;
 use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
-use steamship::{check, ci, conversation, run, steamcmd, upload};
+use steamship::{check, ci, conversation, run, steamcmd, upload, workshop};
 use zeroize::Zeroizing;
 
 /// Something failed; what, and why, is printed.
@@ -92,6 +92,18 @@ enum Command {
         #[arg(long, env = "STEAMSHIP_ACCOUNT")]
         account: Option<String>,
     },
+    /// Upload a Workshop item, then print its ID.
+    ///
+    /// Checks a `workshopitem` script and what it names, then has steamcmd upload the item with
+    /// the saved login. A script with no `publishedfileid` makes a new item, whose ID is printed
+    /// to add to the script so that later uploads update the same item.
+    Workshop {
+        /// The item script, such as `workshop/item.vdf`.
+        script: PathBuf,
+        /// The build account, if not the one the last login remembered.
+        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
+        account: Option<String>,
+    },
     /// Set up uploads from CI, the login kept as a secret.
     ///
     /// Finds the GitHub repository, its app build script and the saved login, checks the script,
@@ -157,6 +169,11 @@ fn main() -> ExitCode {
             Ok(code) | Err(code) => code,
         },
         Command::Install => run_install(),
+        Command::Workshop { script, account } => {
+            match try_workshop(&script, named(account.as_deref())) {
+                Ok(code) | Err(code) => code,
+            }
+        }
         Command::Login { account } => match try_login(named(account.as_deref())) {
             Ok(code) | Err(code) => code,
         },
@@ -803,6 +820,107 @@ fn run_check(script: &Path) -> ExitCode {
         }
         Err(code) => code,
     }
+}
+
+fn try_workshop(script: &Path, named: Option<&str>) -> Result<ExitCode, ExitCode> {
+    show::title("workshop");
+    show::field("script", &script.display().to_string());
+    let packed = packed_login()?;
+    let account = match (&packed, named) {
+        (Some(packed), None) => packed.account().clone(),
+        _ => account(named, false)?.0,
+    };
+    let item = workshop::check(script).map_err(|problems| {
+        for problem in &problems {
+            show::failure("refused", &problem.to_string(), None);
+        }
+        ExitCode::from(REFUSED)
+    })?;
+    let which = item.published.map_or_else(
+        || "a new item".to_owned(),
+        |published| format!("item {published}"),
+    );
+    show::done(
+        "item",
+        &format!(
+            "app {}, {which}, {}, checked",
+            item.app_id,
+            show::counted(item.files, "file")
+        ),
+    );
+    let (home, manifest) = ready()?;
+    restore(packed.as_ref(), &home)?;
+    let copy =
+        workshop::prepare(&home, script, item.app_id).map_err(|error| fail(&error, FAILED))?;
+    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
+    let root = home.join(install::FOLDER);
+    let program = steamcmd::program(&root, Platform::THIS);
+    let spinner = Spinner::start("steam", "uploading", true);
+    let finished = run::run(
+        &program,
+        &steamcmd::workshop(&account, &copy),
+        &steamcmd::environment(&home, Platform::THIS),
+        &root,
+        steamcmd::UPLOAD_LIMIT,
+    );
+    let took = show::took(spinner.elapsed());
+    let finished = match finished {
+        Ok(finished) => finished,
+        Err(error) => {
+            spinner.failed(&format!("could not start after {took}"));
+            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+        }
+    };
+    let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
+    let console = redactor.redact(&finished.output);
+    let saved = copy.with_file_name("steamcmd.log");
+    fs::write(&saved, &console)
+        .map_err(|error| fail(&format!("{}: {error}", saved.display()), FAILED))?;
+    let outcome = workshop::judge(
+        finished.code,
+        &String::from_utf8_lossy(&console),
+        workshop::published(&copy),
+    );
+    let log = format!("log  {}", saved.display());
+    let code = match outcome {
+        workshop::Outcome::Published { published } => {
+            spinner.done(&format!("uploaded in {took}"));
+            let detail = if item.published.is_none() {
+                format!(
+                    "a new item: add \"publishedfileid\" \"{published}\" to {} so that later \
+                     uploads update it",
+                    script.display()
+                )
+            } else {
+                log
+            };
+            show::success(
+                &format!("app {}: Workshop item {published}", item.app_id),
+                &detail,
+            );
+            ExitCode::SUCCESS
+        }
+        workshop::Outcome::NotLoggedIn(reason) => {
+            spinner.failed(&format!("refused after {took}"));
+            let again = Hint {
+                before: "log the build account in again with ",
+                command: "steamship login",
+                after: "",
+            };
+            show::failure("not logged in", &reason, Some(again));
+            ExitCode::from(LOGIN)
+        }
+        workshop::Outcome::Failed(reasons) => {
+            spinner.failed(&format!("failed after {took}"));
+            for reason in &reasons {
+                show::failure(reason, "", None);
+            }
+            show::note(&log);
+            ExitCode::from(FAILED)
+        }
+    };
+    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    Ok(code)
 }
 
 /// Hands `build_id` on as the `build-id` output of the GitHub Actions step steamship runs in,

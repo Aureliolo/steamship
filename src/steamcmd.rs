@@ -128,6 +128,26 @@ pub fn check_login(account: &Account) -> Vec<OsString> {
     .into()
 }
 
+/// The commands that log `account` in with the login steamcmd saved, upload the Workshop item
+/// `script` describes and quit. Like [`upload`], it never waits at a prompt.
+#[must_use]
+pub fn workshop(account: &Account, script: &Path) -> Vec<OsString> {
+    let mut args: Vec<OsString> = [
+        "+@ShutdownOnFailedCommand",
+        "1",
+        "+@NoPromptForPassword",
+        "1",
+        "+login",
+        account.name(),
+        "+workshop_build_item",
+    ]
+    .map(OsString::from)
+    .into();
+    args.push(script.as_os_str().to_owned());
+    args.push(OsString::from("+quit"));
+    args
+}
+
 /// The longest a check of the saved login may run: logging in takes seconds.
 pub const CHECK_LIMIT: Duration = Duration::from_mins(2);
 
@@ -202,6 +222,26 @@ mod tests {
                 "build_bot",
                 "+run_app_build",
                 "home (x86)/apps/1/app_build.vdf",
+                "+quit"
+            ]
+        );
+    }
+
+    #[test]
+    fn uploads_a_workshop_item_with_the_saved_login_and_never_waits_at_a_prompt() {
+        let account = Account::parse("build_bot").unwrap();
+        let script = Path::new("home (x86)/workshop/480/workshop_item.vdf");
+        assert_eq!(
+            workshop(&account, script),
+            [
+                "+@ShutdownOnFailedCommand",
+                "1",
+                "+@NoPromptForPassword",
+                "1",
+                "+login",
+                "build_bot",
+                "+workshop_build_item",
+                "home (x86)/workshop/480/workshop_item.vdf",
                 "+quit"
             ]
         );

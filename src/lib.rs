@@ -28,3 +28,4 @@ pub mod upload;
 pub mod vdf;
 #[cfg(windows)]
 pub mod windows;
+pub mod workshop;
