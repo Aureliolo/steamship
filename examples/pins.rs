@@ -1,8 +1,8 @@
 //! Rewrites `pins/` from the steamcmd manifests Valve serves now: `cargo run --example pins`.
 //!
-//! This is how the steamcmd pin is raised. Renovate raises only the version inside a pin, which
-//! leaves its packages stale; the pins check in CI then fails and says to run this, and the
-//! result is reviewed and committed like any other change.
+//! Renovate raises only the version inside a pin, and `.github/workflows/pins.yml` finishes the
+//! raise on Renovate's branch the same way. This is that step by hand, for a pin raised any other
+//! way; the result is reviewed and committed like any other change.
 #![expect(
     clippy::print_stdout,
     clippy::print_stderr,

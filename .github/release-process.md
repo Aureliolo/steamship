@@ -35,7 +35,8 @@ and then publishes:
 
 ## What a release carries
 
-- An archive per system, holding the binary, the README and both licences.
+- An archive per system, holding the binary, the README and both licences. The Linux binary is
+  linked statically against musl, so it runs on any x86-64 Linux, whatever its glibc.
 - A SHA-256 checksum for each archive.
 - An SPDX SBOM of the four binaries.
 - A Sigstore build-provenance attestation over all of these, and an SBOM attestation tying the
@@ -49,7 +50,7 @@ moved or deleted.
 
 ```sh
 VERSION=X.Y.Z
-ARCHIVE=steamship-${VERSION}-x86_64-unknown-linux-gnu.tar.gz
+ARCHIVE=steamship-${VERSION}-x86_64-unknown-linux-musl.tar.gz
 gh release download "v${VERSION}" --repo Aureliolo/steamship
 sha256sum -c "${ARCHIVE}.sha256"
 gh attestation verify "${ARCHIVE}" --repo Aureliolo/steamship \
