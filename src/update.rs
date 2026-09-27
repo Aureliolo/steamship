@@ -190,6 +190,12 @@ impl Check {
 /// How this steamship was installed, which is how it is upgraded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Installed {
+    /// By Homebrew, which keeps each version in its Cellar.
+    Homebrew,
+    /// By Scoop, which keeps each app in its `apps` folder.
+    Scoop,
+    /// By winget, which keeps a portable program in a folder named for its package.
+    Winget,
     /// By cargo-binstall, or by Cargo with cargo-binstall at hand.
     Binstall,
     /// By Cargo, from source.
@@ -199,12 +205,37 @@ pub enum Installed {
 }
 
 impl Installed {
-    /// How the steamship at `program` was installed: into a folder Cargo keeps its record of
-    /// installs beside, or anywhere else.
+    /// How the steamship at `program`, with any link to it followed, was installed: by where a
+    /// package manager puts it, into a folder Cargo keeps its record of installs beside, or
+    /// anywhere else.
     pub fn of<Exists>(program: &Path, exists: Exists) -> Self
     where
         Exists: Fn(&Path) -> bool,
     {
+        // The folders the program is in, nearest first, as the systems that matter here compare
+        // names: without regard to case.
+        let folders: Vec<String> = program
+            .ancestors()
+            .skip(1)
+            .filter_map(Path::file_name)
+            .map(|name| name.to_string_lossy().to_ascii_lowercase())
+            .collect();
+        let within = |inner: &dyn Fn(&str) -> bool, outer: &str| {
+            folders
+                .windows(2)
+                .any(|pair| matches!(pair, [name, parent] if inner(name) && parent == outer))
+        };
+        // Cellar/steamship/<version>/bin, apps/steamship/<version or current>, and
+        // Packages/Aureliolo.steamship_<source>/<the archive's folder>.
+        if within(&|name| name == "steamship", "cellar") {
+            return Self::Homebrew;
+        }
+        if within(&|name| name == "steamship", "apps") {
+            return Self::Scoop;
+        }
+        if within(&|name| name.starts_with("aureliolo.steamship_"), "packages") {
+            return Self::Winget;
+        }
         let Some(bin) = program.parent() else {
             return Self::Archive;
         };
@@ -228,6 +259,9 @@ impl Installed {
     #[must_use]
     pub const fn hint(self) -> Hint<'static> {
         let (before, command) = match self {
+            Self::Homebrew => ("upgrade with ", "brew upgrade steamship"),
+            Self::Scoop => ("upgrade with ", "scoop update steamship"),
+            Self::Winget => ("upgrade with ", "winget upgrade Aureliolo.steamship"),
             Self::Binstall => ("upgrade with ", "cargo binstall steamship"),
             Self::Cargo => ("upgrade with ", "cargo install --locked steamship"),
             Self::Archive => ("download it from ", LATEST),
@@ -504,5 +538,55 @@ mod tests {
             "cargo install --locked steamship"
         );
         assert_eq!(Installed::Archive.hint().command, LATEST);
+    }
+
+    #[test]
+    fn knows_each_package_managers_folders_and_says_its_upgrade() {
+        let nothing = |_: &Path| false;
+        for (program, installed, command) in [
+            (
+                "/opt/homebrew/Cellar/steamship/0.4.0/bin/steamship",
+                Installed::Homebrew,
+                "brew upgrade steamship",
+            ),
+            (
+                "/home/linuxbrew/.linuxbrew/Cellar/steamship/0.4.0_1/bin/steamship",
+                Installed::Homebrew,
+                "brew upgrade steamship",
+            ),
+            (
+                r"C:\Users\someone\scoop\apps\steamship\current\steamship.exe",
+                Installed::Scoop,
+                "scoop update steamship",
+            ),
+            (
+                r"D:\Tools\Scoop\Apps\Steamship\0.4.0\steamship.exe",
+                Installed::Scoop,
+                "scoop update steamship",
+            ),
+            (
+                r"C:\Users\someone\AppData\Local\Microsoft\WinGet\Packages\Aureliolo.steamship__DefaultSource\steamship-0.4.0-x86_64-pc-windows-msvc\steamship.exe",
+                Installed::Winget,
+                "winget upgrade Aureliolo.steamship",
+            ),
+        ] {
+            // Written with the separators of the system that runs the test.
+            let program: PathBuf = program.split(['/', '\\']).collect();
+            assert_eq!(Installed::of(&program, nothing), installed, "{program:?}");
+            assert_eq!(installed.hint().command, command);
+        }
+        for elsewhere in [
+            "/opt/Cellar/other/0.4.0/bin/steamship",
+            "/home/someone/apps/steamship.d/steamship",
+            "/home/someone/Packages/Other.steamship_x/steamship",
+            "/home/someone/steamship/Cellar/bin/steamship",
+        ] {
+            let program: PathBuf = elsewhere.split('/').collect();
+            assert_eq!(
+                Installed::of(&program, nothing),
+                Installed::Archive,
+                "{elsewhere}"
+            );
+        }
     }
 }
