@@ -25,9 +25,15 @@ Only the latest release gets fixes.
   hands it to `gh` on its input, never on a command line or the screen, or writes it to a file
   readable by its owner alone. In CI, `upload` and `status` write it back where steamcmd reads it,
   and a value that is not one is refused without being repeated.
-- **The Web API key.** `builds` and `promote` read the publisher key from `STEAMSHIP_WEB_API_KEY`
-  alone and send it in the `x-webapi-key` header, never in an address, so that no error which
-  names an address can name the key; a value that is not a key is refused without being repeated.
+- **The Web API key.** `builds` and `promote` take the publisher key from `STEAMSHIP_WEB_API_KEY`,
+  or else from the system's credential store, and send it in the `x-webapi-key` header, never in
+  an address, so that no error which names an address can name the key; a value that is not a key
+  is refused without being repeated. A typed key is shown as dots and kept only after Steam has
+  accepted it, in Windows Credential Manager (this machine only, never roaming), the macOS
+  Keychain (never synchronised to iCloud) or the Linux Secret Service, one for each steamship home;
+  `logout` removes it. On Linux steamship reaches the Secret Service with its own small D-Bus
+  client, fuzzed, rather than a large third-party stack; the key crosses only the local socket to
+  the session bus, which the kernel keeps to your user.
 - **Nothing secret on the command line.** A password or Steam Guard code reaches steamship only as
   typed at `login`, or piped to it, never as a command-line argument, which other users of the
   machine can list.

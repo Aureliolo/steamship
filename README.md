@@ -143,6 +143,7 @@ together:
 
 ```sh
 steamship login [--account <name>]
+steamship login --web-api-key
 ```
 
 Logs the account in with steamcmd. Without `--account`, steamship uses the account you logged in
@@ -151,15 +152,21 @@ approval in the Steam Mobile app; what you type is passed directly to steamcmd, 
 saved. steamcmd keeps a token, and later runs use it without a password. When it expires, an
 upload stops and tells you to run this again.
 
+At a terminal, `login` then offers to keep the publisher Web API key that `builds` and `promote`
+use; Enter skips it. `--web-api-key` does only that, without logging in to Steam: it asks for the
+key, has Steam check it by listing the apps it reaches, and keeps it in your system's credential
+store (Windows Credential Manager, the macOS Keychain, or GNOME Keyring or KWallet on Linux).
+
 ### `status`
 
 ```sh
 steamship status [--account <name>]
 ```
 
-Shows the home, the build account and steamcmd, then logs in with the saved login as an upload
-does and says whether Steam takes it. Nothing is asked for, and the account's name is never
-printed. It exits 0 when an upload would log in, and 3 when it would not.
+Shows the home, where the Web API key comes from, the build account and steamcmd, then logs in
+with the saved login as an upload does and says whether Steam takes it. Nothing is asked for,
+and neither the account's name nor the key is ever printed. It exits 0 when an upload would log
+in, and 3 when it would not.
 
 ### `logout`
 
@@ -167,8 +174,8 @@ printed. It exits 0 when an upload would log in, and 3 when it would not.
 steamship logout
 ```
 
-Forgets the login: the token steamcmd saved and the account steamship remembered. The next upload
-needs `steamship login` first.
+Forgets the login: the token steamcmd saved, the account steamship remembered and the Web API key
+it kept. The next upload needs `steamship login` first.
 
 ### `check`
 
@@ -231,8 +238,11 @@ uploaded build live on a beta branch without uploading it again; the default bra
 in Steamworks only, so `promote` refuses it. `<app>` is the app's ID or its app build script.
 
 Both use Steam's partner Web API, which steamcmd cannot reach, with the publisher Web API key of a
-group that holds the app, from Steamworks under Users & Permissions, Manage Groups. The key is
-read from `STEAMSHIP_WEB_API_KEY` alone and sent in a request header, never in an address.
+group that holds the app, from Steamworks under Users & Permissions, Manage Groups. The key comes
+from `STEAMSHIP_WEB_API_KEY`, or else from the one `steamship login` kept; at a terminal with
+neither, it is asked for, and after the command works, offered to be kept. It is sent in a
+request header, never in an address. The key can do everything its group may, for every app the
+group holds, so give it a group of its own with only the apps and permissions it needs.
 
 ### `ci`
 
@@ -275,7 +285,7 @@ for example in CI, and verifies an existing install.
 | `STEAMSHIP_HOME`            | Where steamcmd, its token and build output live; a per-user folder by default |
 | `STEAMSHIP_ACCOUNT`         | The build account, if not the one `login` remembered                          |
 | `STEAMSHIP_LOGIN`           | In CI, the login `steamship ci` set as a secret; `upload` and `status` use it |
-| `STEAMSHIP_WEB_API_KEY`     | The publisher Web API key `builds` and `promote` use                          |
+| `STEAMSHIP_WEB_API_KEY`     | The publisher Web API key `builds` and `promote` use, before any kept one     |
 | `STEAMSHIP_NO_UPDATE_CHECK` | Set to anything to never ask GitHub for a newer release                       |
 
 There is no password setting anywhere.
