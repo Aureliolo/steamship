@@ -245,7 +245,11 @@ fn depots(listed: &Value, folder: &Path) -> Result<Value, String> {
 
 /// `path` as a script value. Forward slashes work for steamcmd on every system, and avoid a
 /// backslash before the closing quote, which some `KeyValues` readers take as an escape.
-fn written(path: &Path) -> Result<String, String> {
+///
+/// # Errors
+///
+/// When `path` is not valid Unicode, which a script cannot carry.
+pub fn written(path: &Path) -> Result<String, String> {
     path.to_str()
         .map(|text| text.replace('\\', "/"))
         .ok_or_else(|| format!("{} is not valid Unicode", path.display()))
@@ -341,7 +345,8 @@ pub fn judge_login(code: Option<i32>, console: &str) -> Login {
 
 /// Every error steamcmd reported, from the log and the console, once each, and what its exit
 /// said when nothing else did.
-fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<String> {
+#[must_use]
+pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     for line in log.into_iter().flat_map(str::lines).chain(console.lines()) {
         if let Some((_, error)) = line.split_once("ERROR!") {
