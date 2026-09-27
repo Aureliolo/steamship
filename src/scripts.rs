@@ -254,16 +254,26 @@ fn parent(path: &Path) -> PathBuf {
         .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
 }
 
-/// Joins a path written in a script onto `base`. Scripts are usually written on Windows, so
-/// elsewhere a backslash is read as the separator it was meant as.
+/// Joins a path written in a script onto `base`.
+///
+/// Scripts are usually written on Windows, so elsewhere a backslash is read as the separator it
+/// was meant as. The result is rebuilt from its parts, so it is shown with the system's own
+/// separator throughout, however `base` and the script were written; a trailing separator, which
+/// marks a folder in `ContentRoot`, is kept.
 #[must_use]
 pub fn resolve(base: &Path, written: &str) -> PathBuf {
-    let written = native(written);
-    let written = Path::new(&written);
-    if written.is_absolute() {
-        written.to_path_buf()
+    let native = native(written);
+    let path = Path::new(&native);
+    let joined = if path.is_absolute() {
+        path.to_path_buf()
     } else {
-        base.join(written)
+        base.join(path)
+    };
+    let rebuilt: PathBuf = joined.components().collect();
+    if native.ends_with(['/', '\\']) {
+        rebuilt.join("")
+    } else {
+        rebuilt
     }
 }
 
@@ -274,5 +284,63 @@ pub fn native(written: &str) -> String {
         written.to_owned()
     } else {
         written.replace('\\', "/")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::MAIN_SEPARATOR;
+
+    use super::*;
+
+    fn separators(path: &Path) -> Vec<char> {
+        let mut found: Vec<char> = path
+            .to_string_lossy()
+            .chars()
+            .filter(|character| ['/', '\\'].contains(character))
+            .collect();
+        found.dedup();
+        found
+    }
+
+    #[test]
+    fn a_resolved_path_has_the_systems_separator_throughout() {
+        for (base, written) in [
+            ("scratch/steam", "depot_build_windows.vdf"),
+            ("scratch/steam", "..\\export\\windows"),
+            ("scratch/./steam", "./depot.vdf"),
+        ] {
+            let resolved = resolve(Path::new(base), written);
+            assert_eq!(
+                separators(&resolved),
+                [MAIN_SEPARATOR],
+                "{}",
+                resolved.display()
+            );
+        }
+        assert_eq!(
+            resolve(Path::new("scratch/./steam"), "./depot.vdf"),
+            ["scratch", "steam", "depot.vdf"]
+                .iter()
+                .collect::<PathBuf>()
+        );
+    }
+
+    #[test]
+    fn a_folder_written_with_a_trailing_separator_keeps_it() {
+        for written in ["../export/", "..\\export\\"] {
+            let resolved = resolve(Path::new("steam"), written);
+            assert!(
+                resolved.to_string_lossy().ends_with(MAIN_SEPARATOR),
+                "{}",
+                resolved.display()
+            );
+            assert_eq!(separators(&resolved), [MAIN_SEPARATOR]);
+        }
+        assert!(
+            !resolve(Path::new("steam"), "../export")
+                .to_string_lossy()
+                .ends_with(MAIN_SEPARATOR)
+        );
     }
 }
