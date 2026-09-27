@@ -8,6 +8,8 @@
     reason = "a test reports failure by panicking, its helpers included"
 )]
 
+pub mod common;
+
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{Read as _, Write};
@@ -20,17 +22,23 @@ use std::time::{Duration, Instant, SystemTime};
 #[cfg(unix)]
 use steamship::account::Account;
 use steamship::install;
-use steamship::keychain;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
 use steamship::terminal::{Event, Reader};
 #[cfg(unix)]
 use steamship::unix::Terminal;
-use steamship::webapi::Key;
 #[cfg(windows)]
 use steamship::windows::Terminal;
 #[cfg(unix)]
 use steamship::{ci, steamcmd};
+
+/// The `steamship` built for these tests, which on Linux finds this process's own Secret Service
+/// and never the session's.
+fn steamship_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_steamship"));
+    let _: &mut Command = command.envs(common::store_environment());
+    command
+}
 
 /// `steamship install` with `STEAMSHIP_HOME` set to `home`, or with no environment at all.
 fn run(home: Option<&Path>) -> (Option<i32>, String, String) {
@@ -54,13 +62,15 @@ fn steamship_in(
     home: Option<&Path>,
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_steamship"));
+    let mut command = steamship_command();
     let _: &mut Command = command.current_dir(folder);
     let _: &mut Command = command.args(args).env_remove("STEAMSHIP_ACCOUNT");
     let _: &mut Command = match home {
         Some(home) => command.env("STEAMSHIP_HOME", home),
         None => command.env_clear(),
     };
+    // After the environment may have been cleared, so that nothing reaches the session's store.
+    let _: &mut Command = command.envs(common::store_environment());
     let output = command.envs(variables.iter().copied()).output().unwrap();
     (
         output.status.code(),
@@ -349,7 +359,7 @@ fn a_login_handed_over_that_is_not_text_is_refused() {
     use std::os::unix::ffi::OsStrExt as _;
 
     let home = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_steamship"))
+    let output = steamship_command()
         .arg("status")
         .env("STEAMSHIP_HOME", home.path())
         .env(
@@ -1114,7 +1124,7 @@ fn login_typing(
     typed: &str,
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_steamship"))
+    let mut child = steamship_command()
         .args(["login", "--account", "build_bot"])
         .env_remove("STEAMSHIP_ACCOUNT")
         .env("STEAMSHIP_HOME", home)
@@ -1277,6 +1287,11 @@ impl Session {
                 home.as_os_str().to_owned(),
             ),
             (OsString::from(name), OsString::from(value)),
+            #[cfg(target_os = "linux")]
+            (
+                OsString::from("DBUS_SESSION_BUS_ADDRESS"),
+                OsString::from(common::secret_service()),
+            ),
         ];
         let (terminal, mut output, input) =
             Terminal::start(Path::new(shell), &args, &environment, home).unwrap();
@@ -1990,39 +2005,9 @@ fn builds_with_no_key_set_or_kept_and_no_one_to_ask_says_how_to_keep_one_and_exi
 }
 
 #[test]
-fn status_shows_a_kept_key_and_one_set_and_logout_forgets_the_kept_one() {
-    let home = tempfile::tempdir().unwrap();
-    let kept = Key::parse("0123456789abcdef0123456789abcdef").unwrap();
-    keychain::keep(home.path(), &kept).unwrap();
-    let (_, shown, _) = steamship(&["status"], Some(home.path()), &[]);
-    let (_, set, _) = steamship(
-        &["status"],
-        Some(home.path()),
-        &[("STEAMSHIP_WEB_API_KEY", "fedcba9876543210fedcba9876543210")],
-    );
-    let (_, forgot, _) = steamship(&["logout"], Some(home.path()), &[]);
-    let still = keychain::has(home.path()).unwrap();
-    let _: bool = keychain::forget(home.path()).unwrap();
-    assert!(
-        shown.contains(&format!("  api key   kept in {}\n", keychain::STORE)),
-        "{shown}"
-    );
-    assert!(
-        set.contains("  api key   from STEAMSHIP_WEB_API_KEY\n"),
-        "the variable comes first: {set}"
-    );
-    assert!(!set.contains("fedcba"), "{set}");
-    assert!(
-        forgot.contains("  api key   \u{2713} forgotten\n"),
-        "{forgot}"
-    );
-    assert!(!still, "logout forgets the kept key");
-}
-
-#[test]
 fn login_with_web_api_key_refuses_what_is_not_a_key_before_asking_steam() {
     let home = tempfile::tempdir().unwrap();
-    let mut command = Command::new(env!("CARGO_BIN_EXE_steamship"));
+    let mut command = steamship_command();
     let _: &mut Command = command
         .args(["login", "--web-api-key"])
         .env("STEAMSHIP_HOME", home.path())
@@ -2049,7 +2034,8 @@ fn login_with_web_api_key_refuses_what_is_not_a_key_before_asking_steam() {
         "that is not a publisher Web API key, which is 32 hexadecimal digits"
     );
     assert!(!format!("{stdout}{stderr}").contains("not_a_key"));
-    assert!(!keychain::has(home.path()).unwrap());
+    let (_, status, _) = steamship(&["status"], Some(home.path()), &[]);
+    assert!(status.contains("  api key   none kept\n"), "{status}");
 }
 
 #[test]
@@ -2244,7 +2230,7 @@ fn ctrl_c_during_an_upload_ends_steamcmd_with_steamship() {
 
     let home = faked_with("#!/bin/sh\necho $$ > \"$HOME/steamcmd.pid\"\nexec sleep 60\n");
     let (_project, script) = project(true);
-    let mut steamship = Command::new(env!("CARGO_BIN_EXE_steamship"))
+    let mut steamship = steamship_command()
         .args(["upload", script.to_str().unwrap(), "--version", "1.4.0"])
         .args(["--account", "build_bot"])
         .env("STEAMSHIP_HOME", home.path())

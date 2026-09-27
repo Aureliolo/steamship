@@ -1035,6 +1035,69 @@ mod tests {
         assert!(read.body.is_empty());
     }
 
+    /// Worked out by hand from the specification, so that a mistake the writer and the reader
+    /// share, which a round trip cannot see, shows here.
+    #[test]
+    fn a_call_is_exactly_the_bytes_the_specification_gives() {
+        let bytes = call(
+            1,
+            "d",
+            "/p",
+            "i.f",
+            "M",
+            &[Value::Str("ab".to_owned()), Value::u32(7)],
+        )
+        .unwrap();
+        let expected: &[u8] = &[
+            b'l', 1, 0, 1, 12, 0, 0, 0, 1, 0, 0, 0, 72, 0, 0, 0, // head, fields 72 long
+            1, 1, b'o', 0, 2, 0, 0, 0, b'/', b'p', 0, 0, 0, 0, 0, 0, // path, padded to 8
+            2, 1, b's', 0, 3, 0, 0, 0, b'i', b'.', b'f', 0, 0, 0, 0, 0, // interface
+            3, 1, b's', 0, 1, 0, 0, 0, b'M', 0, 0, 0, 0, 0, 0, 0, // member
+            6, 1, b's', 0, 1, 0, 0, 0, b'd', 0, 0, 0, 0, 0, 0, 0, // destination
+            8, 1, b'g', 0, 2, b's', b'u', 0, // signature, ending on 8
+            2, 0, 0, 0, b'a', b'b', 0, 0, 7, 0, 0, 0, // "ab", then 7 on 4
+        ];
+        assert_eq!(bytes.as_slice(), expected);
+    }
+
+    #[test]
+    fn each_type_is_aligned_as_the_specification_gives() {
+        // The body is the message's last bytes, as many as its header says.
+        let body = |values: &[Value]| {
+            let bytes = call(1, "d", "/p", "i.f", "M", values).unwrap();
+            let length: [u8; 4] = bytes.get(4..8).unwrap().try_into().unwrap();
+            let length = usize::try_from(u32::from_le_bytes(length)).unwrap();
+            let start = bytes.len().checked_sub(length).unwrap();
+            bytes.get(start..).unwrap().to_vec()
+        };
+        assert_eq!(
+            body(&[Value::texts(&[("k", "v")])]),
+            [
+                14, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, b'k', 0, 0, 0, 1, 0, 0, 0, b'v', 0
+            ],
+            "an array's length, then its entries from the next 8"
+        );
+        assert_eq!(
+            body(&[
+                Value::Byte(1),
+                Value::Number(b'n', 0x0203),
+                Value::Number(b'x', 5)
+            ]),
+            [1, 0, 3, 2, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 0, 0],
+            "numbers on their own width"
+        );
+        assert_eq!(
+            body(&[Value::Bool(true), Value::Variant(Box::new(Value::Byte(9)))]),
+            [1, 0, 0, 0, 1, b'y', 0, 9],
+            "a boolean as 4 bytes, a variant as its signature then its value"
+        );
+        assert_eq!(
+            body(&[Value::paths(&[])]),
+            [0, 0, 0, 0],
+            "an empty array of paths is only its length"
+        );
+    }
+
     #[test]
     fn every_type_the_secret_service_uses_reads_back_as_written() {
         let secret = Value::Struct(vec![
