@@ -54,7 +54,6 @@ cat > "${out}/Formula/steamship.rb" << FORMULA
 class Steamship < Formula
   desc "Uploads game builds to Steam with Valve's steamcmd"
   homepage "${repository}"
-  version "${version}"
   license any_of: ["MIT", "Apache-2.0"]
 
   on_macos do
