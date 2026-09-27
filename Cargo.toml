@@ -3,13 +3,21 @@ name = "steamship"
 version = "0.5.1"
 edition = "2024"
 rust-version = "1.98.1"
-description = "Uploads game builds to Steam with Valve's steamcmd, set up pinned and verified, with a clear result and no passwords."
+description = "Uploads game builds to Steam with Valve's steamcmd, from your machine or CI: steamcmd pinned and verified, scripts checked before anything is sent, a clear result, and no password kept."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Aureliolo/steamship"
 readme = "README.md"
 keywords = ["steam", "steamworks", "steamcmd", "gamedev", "deploy"]
 categories = ["command-line-utilities", "game-development", "development-tools::build-utils"]
-include = ["/src", "/pins", "/LICENSE-APACHE", "/LICENSE-MIT", "/README.md"]
+include = [
+  "/src",
+  "/pins",
+  "/build.rs",
+  "/assets/steamship.ico",
+  "/LICENSE-APACHE",
+  "/LICENSE-MIT",
+  "/README.md",
+]
 
 [dependencies]
 # Already in the tree through clap: colour that turns itself off when the output is not a
