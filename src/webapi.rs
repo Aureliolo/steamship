@@ -92,7 +92,8 @@ pub struct Branch {
     pub name: String,
     pub build_id: u64,
     pub description: String,
-    pub password: bool,
+    /// Whether players need the branch's password to opt into it.
+    pub locked: bool,
 }
 
 /// A build uploaded to an app.
@@ -175,7 +176,7 @@ pub fn branches_from(answer: &Value) -> Result<Vec<Branch>, Error> {
                 name,
                 build_id: number(field(entry, &["buildid"])).unwrap_or(0),
                 description: text(entry, &["description"]),
-                password: field(entry, &["reqpassword"]).is_some_and(|value| {
+                locked: field(entry, &["reqpassword"]).is_some_and(|value| {
                     value
                         .as_bool()
                         .unwrap_or_else(|| number(Some(value)) == Some(1))
@@ -237,7 +238,7 @@ pub fn branch_line(branch: &Branch) -> String {
     if !branch.description.is_empty() {
         parts.push(branch.description.clone());
     }
-    if branch.password {
+    if branch.locked {
         parts.push("password".to_owned());
     }
     parts.join(", ")
@@ -471,7 +472,7 @@ mod tests {
     #[test]
     fn a_key_is_32_hexadecimal_digits_and_never_shown() {
         let key = Key::parse(" 0123456789ABCDEF0123456789abcdef\n").unwrap();
-        assert!(!format!("{key:?}").contains("0123"));
+        assert_eq!(format!("{key:?}"), "Key { .. }");
         for wrong in [
             "",
             "0123",
@@ -497,13 +498,13 @@ mod tests {
                 name: "default".to_owned(),
                 build_id: 1200,
                 description: "0.0.9".to_owned(),
-                password: false,
+                locked: false,
             },
             Branch {
                 name: "testing".to_owned(),
                 build_id: 1234,
                 description: "0.1.0 9b3d543".to_owned(),
-                password: true,
+                locked: true,
             },
         ];
         assert_eq!(branches_from(&map).unwrap(), expected);
@@ -515,6 +516,17 @@ mod tests {
             ]}}"#,
         );
         assert_eq!(branches_from(&list).unwrap(), expected);
+        let empty =
+            answer(r#"{"response": {"betas": {"new": {"BuildID": null, "Description": 7}}}}"#);
+        assert_eq!(
+            branches_from(&empty).unwrap(),
+            [Branch {
+                name: "new".to_owned(),
+                build_id: 0,
+                description: String::new(),
+                locked: false,
+            }]
+        );
         assert_eq!(
             branches_from(&answer(r#"{"response": {"result": 1}}"#)).unwrap(),
             []
@@ -602,12 +614,12 @@ mod tests {
         assert!(!is_default("testing"));
     }
 
-    fn branch(name: &str, build_id: u64, password: bool) -> Branch {
+    fn branch(name: &str, build_id: u64, locked: bool) -> Branch {
         Branch {
             name: name.to_owned(),
             build_id,
             description: format!("{build_id} description"),
-            password,
+            locked,
         }
     }
 
@@ -702,6 +714,12 @@ mod tests {
 
     fn api(host: &str) -> Api {
         Api::at(Key::parse(KEY_TEXT).unwrap(), host)
+    }
+
+    #[test]
+    fn the_api_is_steams_partner_host_unless_a_test_names_another() {
+        assert_eq!(Api::new(Key::parse(KEY_TEXT).unwrap()).host, HOST);
+        assert_eq!(HOST, "https://partner.steam-api.com");
     }
 
     #[test]
@@ -831,7 +849,8 @@ mod tests {
     fn a_refused_key_a_failed_status_and_an_answer_that_is_not_json_are_errors() {
         for (status, body, expected) in [
             ("403 Forbidden", "", Error::Refused),
-            ("401 Unauthorized", "", Error::Refused),
+            // Only the code is read; the phrase after it is the server's to choose.
+            ("401 Refused", "", Error::Refused),
             ("500 Internal Server Error", "", Error::Status(500)),
             ("200 OK", "<html>", Error::Unreadable("JSON")),
         ] {
