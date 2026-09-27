@@ -60,11 +60,8 @@ jobs:
         if: '!cancelled()'
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
-      # Windows' Credential Manager and the macOS Keychain are there on their runners already; on
-      # Linux the tests start a keyring of their own from these.
-      - name: Install D-Bus and GNOME Keyring
-        if: matrix.platform == 'linux'
-        uses: ./.github/actions/secret-service # zizmor: ignore[self-repository]
+      - name: Install the test prerequisites
+        uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
 
       - name: Test
         if: '!cancelled()'
@@ -120,8 +117,8 @@ jobs:
           tar -xzf "${archive}" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 
-      - name: Install D-Bus and GNOME Keyring
-        uses: ./.github/actions/secret-service # zizmor: ignore[self-repository]
+      - name: Install the test prerequisites
+        uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
 
       - name: Measure
         run: cargo llvm-cov --locked --fail-under-lines 97
@@ -271,7 +268,7 @@ jobs:
 
       - name: Install D-Bus and GNOME Keyring
         if: matrix.platform == 'linux'
-        uses: ./.github/actions/secret-service # zizmor: ignore[self-repository]
+        uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
 
       # A key kept as a Linux desktop keeps one: libsecret's own secret-tool stores it in GNOME
       # Keyring, steamship finds it for its home and has Steam refuse it as above, then `logout`
