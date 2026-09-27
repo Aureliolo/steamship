@@ -26,6 +26,15 @@ fn failed(status: Status) -> Error {
     }
 }
 
+/// What the Keychain answered, with `missing` standing for an item it has not got.
+fn answered<Found>(answer: Result<Found, Status>, missing: Found) -> Result<Found, Error> {
+    match answer {
+        Ok(found) => Ok(found),
+        Err(status) if status.code() == NOT_FOUND => Ok(missing),
+        Err(status) => Err(failed(status)),
+    }
+}
+
 /// Whether the Keychain keeps a secret for the steamship home `account`.
 ///
 /// # Errors
@@ -40,11 +49,7 @@ pub fn has_secret(account: &str) -> Result<bool, Error> {
         .load_attributes(true)
         .limit(1)
         .search();
-    match found {
-        Ok(items) => Ok(!items.is_empty()),
-        Err(status) if status.code() == NOT_FOUND => Ok(false),
-        Err(status) => Err(failed(status)),
-    }
+    answered(found.map(|items| !items.is_empty()), false)
 }
 
 /// The secret the Keychain keeps for `account`, if it keeps one.
@@ -53,11 +58,10 @@ pub fn has_secret(account: &str) -> Result<bool, Error> {
 ///
 /// When the Keychain cannot be read.
 pub fn kept_secret(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
-    match get_generic_password(LABEL, account) {
-        Ok(secret) => Ok(Some(Zeroizing::new(secret))),
-        Err(status) if status.code() == NOT_FOUND => Ok(None),
-        Err(status) => Err(failed(status)),
-    }
+    answered(
+        get_generic_password(LABEL, account).map(|secret| Some(Zeroizing::new(secret))),
+        None,
+    )
 }
 
 /// Keeps `secret` for `account`, in place of any kept before.
@@ -79,28 +83,45 @@ pub fn keep_secret(account: &str, secret: &[u8]) -> Result<(), Error> {
 ///
 /// When the Keychain refuses.
 pub fn forget_secret(account: &str) -> Result<bool, Error> {
-    match delete_generic_password(LABEL, account) {
-        Ok(()) => Ok(true),
-        Err(status) if status.code() == NOT_FOUND => Ok(false),
-        Err(status) => Err(failed(status)),
-    }
+    answered(
+        delete_generic_password(LABEL, account).map(|()| true),
+        false,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The codes as Apple's Security framework defines them, written out so that a wrong constant
+    /// shows.
     #[test]
     fn no_keychain_to_use_is_no_store_and_anything_else_a_failure() {
-        for code in UNAVAILABLE {
+        for code in [-25_307, -25_308] {
             assert!(
                 matches!(failed(Status::from_code(code)), Error::Unavailable(_)),
                 "{code}"
             );
         }
+        for code in [-25_300, -25_299, 25_307] {
+            assert!(
+                matches!(failed(Status::from_code(code)), Error::Failed(_)),
+                "{code}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_item_not_found_is_what_is_missing_and_any_other_answer_an_error() {
+        assert_eq!(answered(Ok(true), false), Ok(true));
+        assert_eq!(answered(Err(Status::from_code(-25_300)), false), Ok(false));
         assert!(matches!(
-            failed(Status::from_code(NOT_FOUND)),
-            Error::Failed(_)
+            answered(Err(Status::from_code(-25_299)), false),
+            Err(Error::Failed(_))
+        ));
+        assert!(matches!(
+            answered(Err(Status::from_code(-25_308)), None::<u8>),
+            Err(Error::Unavailable(_))
         ));
     }
 }

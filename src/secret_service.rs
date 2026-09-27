@@ -268,6 +268,7 @@ pub fn forget_secret(account: &str) -> Result<bool, Error> {
 #[cfg(test)]
 mod tests {
     use std::io::{Read as _, Write as _};
+    use std::iter;
     use std::os::linux::net::SocketAddrExt as _;
     use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
     use std::process;
@@ -275,6 +276,7 @@ mod tests {
     use std::thread::{self, JoinHandle};
 
     use super::*;
+    use crate::dbus::session::LOGIN_LINE;
     use crate::dbus::{Kind, Message};
 
     const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
@@ -291,7 +293,15 @@ mod tests {
         AfterNoise(usize, Vec<Value>),
         /// A return, then the connection closed.
         ThenHangUp(Vec<Value>),
+        /// A return that answers another call.
+        ToAnother(Vec<Value>),
+        /// A call to steamship, then the return.
+        AfterCall(Vec<Value>),
     }
+
+    /// How long the stand-in waits for steamship to say something before hanging up, as a bus
+    /// drops a peer that has stalled; steamship waiting for what never comes then fails at once.
+    const STALLED: Duration = Duration::from_secs(10);
 
     fn read_line(stream: &mut UnixStream) -> Vec<u8> {
         let mut line = Vec::new();
@@ -356,6 +366,47 @@ mod tests {
         (folder, format!("unix:path={}", socket.display()), serving)
     }
 
+    /// What the stand-in sends, in order, to answer `call` as `answered` says.
+    fn replies(call: &Message, answered: Answer) -> Vec<Message> {
+        let returned = |body| reply(call, Kind::Return, None, body);
+        let elsewhere = || completed("/elsewhere", Vec::new());
+        match answered {
+            Answer::Return(body) | Answer::ThenHangUp(body) => vec![returned(body)],
+            Answer::Error(name) => {
+                let why = vec![Value::Str("the stand-in says no".to_owned())];
+                vec![reply(call, Kind::Error, Some(name), why)]
+            }
+            // Another prompt completes while this one is waited for.
+            Answer::ThenCompleted(body, prompt, signal) => {
+                vec![returned(body), elsewhere(), completed(prompt, signal)]
+            }
+            Answer::CompletedFirst(body, prompt, signal) => {
+                vec![completed(prompt, signal), returned(body)]
+            }
+            Answer::AfterNoise(noise, body) => iter::repeat_with(elsewhere)
+                .take(noise)
+                .chain(iter::once(returned(body)))
+                .collect(),
+            Answer::ToAnother(body) => vec![Message {
+                reply_to: Some(call.serial.saturating_add(1000)),
+                ..returned(body)
+            }],
+            Answer::AfterCall(body) => {
+                let ping = Message {
+                    kind: Kind::Call,
+                    serial: 0,
+                    reply_to: None,
+                    path: Some(NONE.to_owned()),
+                    interface: Some("org.freedesktop.DBus.Peer".to_owned()),
+                    member: Some("Ping".to_owned()),
+                    error: None,
+                    body: Vec::new(),
+                };
+                vec![ping, returned(body)]
+            }
+        }
+    }
+
     /// The stand-in bus of [`standing_in`], answering on `listener`.
     fn serve<Answering>(
         listener: UnixListener,
@@ -367,11 +418,13 @@ mod tests {
     {
         thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
+            stream.set_read_timeout(Some(STALLED)).unwrap();
             let login = read_line(&mut stream);
             assert!(login.starts_with(b"\0AUTH EXTERNAL "), "{login:?}");
             stream.write_all(greeting).unwrap();
             let mut calls = Vec::new();
-            if !greeting.starts_with(b"OK ") {
+            // steamship hangs up on a refusal, and on an answer longer than it reads.
+            if !greeting.starts_with(b"OK ") || greeting.len() > LOGIN_LINE {
                 return calls;
             }
             assert_eq!(read_line(&mut stream), b"BEGIN\r\n");
@@ -391,63 +444,14 @@ mod tests {
                 } else {
                     answer(&call)
                 };
-                match answered {
-                    Answer::Return(body) => {
-                        send(
-                            &mut stream,
-                            &mut serial,
-                            reply(&call, Kind::Return, None, body),
-                        );
-                    }
-                    Answer::Error(name) => {
-                        let why = vec![Value::Str("the stand-in says no".to_owned())];
-                        send(
-                            &mut stream,
-                            &mut serial,
-                            reply(&call, Kind::Error, Some(name), why),
-                        );
-                    }
-                    Answer::ThenCompleted(body, prompt, signal) => {
-                        send(
-                            &mut stream,
-                            &mut serial,
-                            reply(&call, Kind::Return, None, body),
-                        );
-                        send(&mut stream, &mut serial, completed(prompt, signal));
-                    }
-                    Answer::CompletedFirst(body, prompt, signal) => {
-                        send(&mut stream, &mut serial, completed(prompt, signal));
-                        send(
-                            &mut stream,
-                            &mut serial,
-                            reply(&call, Kind::Return, None, body),
-                        );
-                    }
-                    Answer::AfterNoise(noise, body) => {
-                        for _ in 0..noise {
-                            send(
-                                &mut stream,
-                                &mut serial,
-                                completed("/elsewhere", Vec::new()),
-                            );
-                        }
-                        send(
-                            &mut stream,
-                            &mut serial,
-                            reply(&call, Kind::Return, None, body),
-                        );
-                    }
-                    Answer::ThenHangUp(body) => {
-                        send(
-                            &mut stream,
-                            &mut serial,
-                            reply(&call, Kind::Return, None, body),
-                        );
-                        calls.push(call);
-                        return calls;
-                    }
+                let hang_up = matches!(answered, Answer::ThenHangUp(_));
+                for message in replies(&call, answered) {
+                    send(&mut stream, &mut serial, message);
                 }
                 calls.push(call);
+                if hang_up {
+                    return calls;
+                }
             }
         })
     }
@@ -465,10 +469,14 @@ mod tests {
     }
 
     fn session() -> Answer {
-        Answer::Return(vec![
+        Answer::Return(opened_session())
+    }
+
+    fn opened_session() -> Vec<Value> {
+        vec![
             Value::Variant(Box::new(Value::Str(String::new()))),
             Value::Path("/org/freedesktop/secrets/session/1".to_owned()),
-        ])
+        ]
     }
 
     fn found(unlocked: &[&str], locked: &[&str]) -> Answer {
@@ -574,9 +582,11 @@ mod tests {
             match call.member.as_deref().unwrap_or_default() {
                 "OpenSession" => session(),
                 "ReadAlias" => Answer::Return(vec![Value::Path("/collection/login".to_owned())]),
-                "Unlock" => {
-                    Answer::Return(vec![Value::paths(&[]), Value::Path("/prompt/3".to_owned())])
-                }
+                // Another prompt completing first, which must not be taken for this one.
+                "Unlock" => Answer::AfterNoise(
+                    1,
+                    vec![Value::paths(&[]), Value::Path("/prompt/3".to_owned())],
+                ),
                 "Prompt" => Answer::ThenCompleted(
                     Vec::new(),
                     "/prompt/3",
@@ -816,6 +826,25 @@ mod tests {
     }
 
     #[test]
+    fn a_call_to_steamship_is_passed_over_and_an_answer_to_another_call_refused() {
+        let (_folder, address, serving) = standing_in(b"OK 0123\r\n", |call| {
+            match call.member.as_deref().unwrap_or_default() {
+                "OpenSession" => Answer::AfterCall(opened_session()),
+                _ => Answer::ToAnother(Vec::new()),
+            }
+        });
+        let mut service = opened(&address).unwrap();
+        assert_eq!(
+            service.has("/home"),
+            Err(Error::Failed(
+                "a message from the session bus: an answer to another call".to_owned()
+            ))
+        );
+        drop(service);
+        drop(serving.join().unwrap());
+    }
+
+    #[test]
     fn with_no_session_bus_there_is_no_store() {
         let none = Some(Error::Unavailable("no D-Bus session bus".to_owned()));
         assert_eq!(opened("unix:path=/nonexistent/steamship/bus").err(), none);
@@ -851,13 +880,21 @@ mod tests {
 
     #[test]
     fn a_login_answer_longer_than_any_bus_gives_is_refused() {
-        let (_folder, address, serving) = standing_in(&[b'x'; 600], |_| session());
+        let answer = |length: usize| -> &'static [u8] {
+            let filler = "a".repeat(length.saturating_sub(5));
+            Box::leak(format!("OK {filler}\r\n").into_bytes().into_boxed_slice())
+        };
+        let (_folder, address, serving) = standing_in(answer(LOGIN_LINE), |_| session());
+        assert!(opened(&address).is_ok(), "as long as steamship reads");
+        drop(serving.join().unwrap());
+        let (_other, elsewhere, answering) =
+            standing_in(answer(LOGIN_LINE.saturating_add(1)), |_| session());
         assert_eq!(
-            opened(&address).err(),
+            opened(&elsewhere).err(),
             Some(Error::Failed(
                 "the session bus refused this user".to_owned()
             ))
         );
-        drop(serving.join().unwrap());
+        drop(answering.join().unwrap());
     }
 }

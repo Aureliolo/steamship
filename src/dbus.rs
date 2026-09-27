@@ -274,6 +274,21 @@ fn complete(signature: &[u8], at: usize, depth: usize) -> Result<usize, Error> {
     }
 }
 
+/// Whether `path` is an object path as D-Bus allows one: `/`, or `/` before each of one or more
+/// non-empty elements of ASCII letters, digits and `_`. A bus drops a connection that sends any
+/// other, so none is sent or taken.
+fn is_object_path(path: &str) -> bool {
+    path == "/"
+        || path.strip_prefix('/').is_some_and(|elements| {
+            elements.split('/').all(|element| {
+                !element.is_empty()
+                    && element
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+            })
+        })
+}
+
 #[derive(Default)]
 struct Writer {
     bytes: Zeroizing<Vec<u8>>,
@@ -327,7 +342,9 @@ impl Writer {
                 self.bytes
                     .extend_from_slice(bytes.get(..width).unwrap_or_default());
             }
-            Value::Str(text) | Value::Path(text) => self.text(text)?,
+            Value::Str(text) => self.text(text)?,
+            Value::Path(path) if is_object_path(path) => self.text(path)?,
+            Value::Path(_) => return Err(Error::Malformed("an object path")),
             Value::Signature(signature) => self.signature(signature)?,
             Value::Bytes(bytes) => {
                 self.u32(Self::length(bytes.len())?);
@@ -549,8 +566,10 @@ impl<'bytes> Reader<'bytes> {
                 let text = self.text(length)?;
                 if code == b's' {
                     Value::Str(text)
-                } else {
+                } else if is_object_path(&text) {
                     Value::Path(text)
+                } else {
+                    return Err(Error::Malformed("an object path"));
                 }
             }
             b'g' => {
@@ -833,6 +852,9 @@ pub mod session {
     /// Signals held while a call is answered, in case one is waited for next.
     const HELD: usize = 64;
 
+    /// The longest answer to the login read, its line end included; a bus's is under 50 bytes.
+    pub const LOGIN_LINE: usize = 512;
+
     /// A connection to the session bus.
     #[derive(Debug)]
     pub struct Connection {
@@ -894,7 +916,7 @@ pub mod session {
                 .write_all(format!("\0AUTH EXTERNAL {user}\r\n").as_bytes())?;
             let mut line = Vec::new();
             while !line.ends_with(b"\r\n") {
-                if line.len() > 512 {
+                if line.len() == LOGIN_LINE {
                     return Err(Error::Refused);
                 }
                 let mut byte = [0_u8; 1];
@@ -931,9 +953,15 @@ pub mod session {
             self.stream.write_all(&sent)?;
             loop {
                 let answer = self.read()?;
-                if answer.reply_to == Some(serial) {
-                    return match answer.kind {
-                        Kind::Error => Err(Error::Failed {
+                match answer.kind {
+                    // steamship makes one call at a time, so any other answer is the bus gone
+                    // wrong, and waiting on would only wait for nothing.
+                    Kind::Return | Kind::Error if answer.reply_to != Some(serial) => {
+                        return Err(Error::Malformed("an answer to another call"));
+                    }
+                    Kind::Return => return Ok(answer.body),
+                    Kind::Error => {
+                        return Err(Error::Failed {
                             name: answer.error.unwrap_or_default(),
                             message: answer
                                 .body
@@ -941,15 +969,16 @@ pub mod session {
                                 .and_then(Value::text)
                                 .unwrap_or_default()
                                 .to_owned(),
-                        }),
-                        Kind::Call | Kind::Return | Kind::Signal => Ok(answer.body),
-                    };
-                }
-                if answer.kind == Kind::Signal {
-                    if self.held.len() >= HELD {
-                        drop(self.held.remove(0));
+                        });
                     }
-                    self.held.push(answer);
+                    Kind::Signal => {
+                        if self.held.len() >= HELD {
+                            drop(self.held.remove(0));
+                        }
+                        self.held.push(answer);
+                    }
+                    // steamship offers nothing to call, and a caller given no answer gives up.
+                    Kind::Call => {}
                 }
             }
         }
@@ -1265,9 +1294,15 @@ mod tests {
                 .is_ok_and(|end| end == signature.len() && !signature.starts_with('{'));
             assert!(!whole, "{signature}");
         }
-        let deep = format!("{}y", "a".repeat(DEEPEST.saturating_add(2)));
+        let deepest = format!("{}y", "a".repeat(DEEPEST));
+        assert_eq!(
+            complete(deepest.as_bytes(), 0, 0).ok(),
+            Some(deepest.len()),
+            "nesting as deep as steamship reads"
+        );
+        let deeper = format!("a{deepest}");
         assert!(matches!(
-            complete(deep.as_bytes(), 0, 0),
+            complete(deeper.as_bytes(), 0, 0),
             Err(Error::Malformed("nesting"))
         ));
     }
@@ -1303,6 +1338,18 @@ mod tests {
             sent(Value::Signature("y".repeat(256))),
             Err(Error::Malformed("a signature"))
         ));
+        for path in ["", "xyzzy", "//", "/a/", "/a//b", "/a-b", "/\u{e9}"] {
+            assert!(
+                matches!(
+                    sent(Value::Path(path.to_owned())),
+                    Err(Error::Malformed("an object path"))
+                ),
+                "{path:?}"
+            );
+        }
+        for path in ["/", "/a", "/org/freedesktop/secrets/collection/login_2"] {
+            assert!(sent(Value::Path(path.to_owned())).is_ok(), "{path:?}");
+        }
     }
 
     /// A message of type `kind` with the header fields `fields` and the body `body`, from serial 1.
@@ -1369,8 +1416,9 @@ mod tests {
             }
             .value(signature, 0)
         };
-        let too_long = u32::try_from((1_usize << 26_u32).saturating_add(1)).unwrap();
-        let cases: [(&[u8], Vec<u8>, &str); 10] = [
+        let longest = u32::try_from(1_usize << 26_u32).unwrap();
+        let too_long = longest.saturating_add(1);
+        let cases: [(&[u8], Vec<u8>, &str); 12] = [
             (b"b", vec![2, 0, 0, 0], "a boolean that is neither 0 nor 1"),
             (b"s", vec![1, 0, 0, 0, b'x', 1], "text not ended by one NUL"),
             (b"s", vec![1, 0, 0, 0, 0, 0], "text not ended by one NUL"),
@@ -1381,12 +1429,14 @@ mod tests {
                 "a variant of more than one type",
             ),
             (b"z", vec![0], "a type"),
+            (b"o", vec![1, 0, 0, 0, b'x', 0], "an object path"),
             (b"", vec![0], "a signature"),
             (
                 b"ay",
                 too_long.to_le_bytes().to_vec(),
                 "an array longer than D-Bus allows",
             ),
+            (b"ay", longest.to_le_bytes().to_vec(), "cut short"),
             (
                 b"au",
                 vec![5, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0],
@@ -1410,6 +1460,12 @@ mod tests {
             empty_element.array(b"", 0),
             Err(Error::Malformed("a signature"))
         ));
+        let mut deepest = Reader {
+            bytes: &[7],
+            at: 0,
+            big: false,
+        };
+        assert!(matches!(deepest.value(b"y", DEEPEST), Ok(Value::Byte(7))));
         let mut deep = Reader {
             bytes: &[0],
             at: 0,
