@@ -21,7 +21,9 @@ use steamship::unix::Terminal;
 use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
-use steamship::{check, ci, conversation, run, scripts, steamcmd, upload, webapi, workshop};
+use steamship::{
+    check, ci, conversation, keychain, run, scripts, steamcmd, upload, webapi, workshop,
+};
 use zeroize::Zeroizing;
 
 /// Something failed; what, and why, is printed.
@@ -52,11 +54,15 @@ enum Command {
     ///
     /// Asks for the account's name when none is given or remembered, then the password, and a
     /// Steam Guard code or approval in the Steam Mobile app. What you type is passed directly to
-    /// steamcmd, never logged or saved.
+    /// steamcmd, never logged or saved. At a terminal it then offers to keep the publisher Web
+    /// API key that `builds` and `promote` use, in the system's credential store.
     Login {
         /// The build account, if not the one the last login remembered.
         #[arg(long, env = "STEAMSHIP_ACCOUNT")]
         account: Option<String>,
+        /// Only keep the publisher Web API key, checked with Steam first, without logging in.
+        #[arg(long)]
+        web_api_key: bool,
     },
     /// Show the login and steamcmd, checking the login with Steam.
     ///
@@ -107,7 +113,8 @@ enum Command {
     /// Show an app's branches and last builds.
     ///
     /// Lists each branch with the build live on it, then the last builds uploaded, through
-    /// Steam's partner Web API, with the publisher key in `STEAMSHIP_WEB_API_KEY`.
+    /// Steam's partner Web API, with the publisher key from `STEAMSHIP_WEB_API_KEY`, or else the
+    /// one `login` kept; at a terminal, one is asked for when there is neither.
     Builds {
         /// The app, by its ID or its app build script.
         app: String,
@@ -118,8 +125,8 @@ enum Command {
     /// Set an uploaded build live on a branch.
     ///
     /// Sets a build live on a beta branch without uploading it again, through Steam's partner
-    /// Web API, with the publisher key in `STEAMSHIP_WEB_API_KEY`. The default branch is set
-    /// live in Steamworks only.
+    /// Web API, with the publisher key as `builds` finds it. The default branch is set live in
+    /// Steamworks only.
     Promote {
         /// The app, by its ID or its app build script.
         app: String,
@@ -155,8 +162,8 @@ enum Command {
     },
     /// Forget the saved login.
     ///
-    /// Removes the login steamcmd saved and the account steamship remembered; the next upload
-    /// needs `steamship login` first.
+    /// Removes the login steamcmd saved, the account steamship remembered and the Web API key
+    /// kept for `builds` and `promote`; the next upload needs `steamship login` first.
     Logout,
     /// Install or verify the pinned steamcmd.
     ///
@@ -206,7 +213,12 @@ fn main() -> ExitCode {
                 Ok(code) | Err(code) => code,
             }
         }
-        Command::Login { account } => match try_login(named(account.as_deref())) {
+        Command::Login {
+            web_api_key: true, ..
+        } => match try_key_login() {
+            Ok(code) | Err(code) => code,
+        },
+        Command::Login { account, .. } => match try_login(named(account.as_deref())) {
             Ok(code) | Err(code) => code,
         },
         Command::Logout => run_logout(),
@@ -433,6 +445,20 @@ fn run_logout() -> ExitCode {
     } else {
         show::field("account", "none remembered");
     }
+    let key = home().and_then(|home| {
+        keychain::forget(&home).or_else(|error| match error {
+            keychain::Error::Unavailable(_) => Ok(false),
+            keychain::Error::Failed(_) | keychain::Error::NotAKey => {
+                show::failed("api key", "not forgotten");
+                Err(fail(&error, FAILED))
+            }
+        })
+    });
+    match key {
+        Ok(true) => show::done("api key", "forgotten"),
+        Ok(false) => show::field("api key", "none kept"),
+        Err(code) => return code,
+    }
     show::success(
         "logged out",
         "the next upload needs `steamship login` first",
@@ -496,6 +522,7 @@ fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     show::field("version", env!("CARGO_PKG_VERSION"));
     let home = home()?;
     show::field("home", &home.display().to_string());
+    status_key(&home);
     let packed = packed_login()?;
     let account = match (&packed, named) {
         (Some(packed), None) => {
@@ -530,6 +557,22 @@ fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
         show::success("ready to upload", "");
     }
     Ok(verdict(judged))
+}
+
+/// Where `builds` and `promote` would find the Web API key, found out without unlocking anything.
+fn status_key(home: &Path) {
+    if key_variable().is_some() {
+        show::field("api key", &format!("from {}", webapi::KEY));
+        return;
+    }
+    match keychain::has(home) {
+        Ok(true) => show::field("api key", &format!("kept in {}", keychain::STORE)),
+        Ok(false) => show::field("api key", "none kept"),
+        Err(keychain::Error::Unavailable(_)) => show::field("api key", "no credential store here"),
+        Err(error @ (keychain::Error::Failed(_) | keychain::Error::NotAKey)) => {
+            show::failed("api key", &error.to_string());
+        }
+    }
 }
 
 /// The account named, or else the one remembered, shown by where it came from and never by
@@ -672,6 +715,7 @@ fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     account
         .remember(&home)
         .map_err(|error| fail(&format!("{}: {error}", home.display()), FAILED))?;
+    offer_key(&home);
     if typist.saved {
         show::success(
             "already logged in",
@@ -855,20 +899,187 @@ fn run_check(script: &Path) -> ExitCode {
     }
 }
 
-/// The partner Web API, with the publisher key from `STEAMSHIP_WEB_API_KEY`.
-fn web_api() -> Result<webapi::Api, ExitCode> {
-    let Some(text) = env::var(webapi::KEY).ok().filter(|text| !text.is_empty()) else {
-        let key = Hint {
-            before: "set ",
-            command: webapi::KEY,
-            after: " to the publisher Web API key from Steamworks, under Users & Permissions, \
-                    Manage Groups",
+/// The key set in `STEAMSHIP_WEB_API_KEY`, where an empty one is none, as for the account.
+fn key_variable() -> Option<Zeroizing<String>> {
+    env::var(webapi::KEY)
+        .ok()
+        .filter(|text| !text.is_empty())
+        .map(Zeroizing::new)
+}
+
+/// Where Steamworks shows the key, said before it is asked for.
+const WHERE_KEY: &str = "the publisher Web API key is in Steamworks under Users & Permissions, \
+                         Manage Groups: the group that holds the app";
+
+/// How the Web API key for a command was found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyFrom {
+    Variable,
+    Kept,
+    Typed,
+}
+
+/// The partner Web API, with the key from `STEAMSHIP_WEB_API_KEY`, or else the one kept in the
+/// credential store, or else, at a terminal, one typed in.
+fn web_api(home: &Path) -> Result<(webapi::Api, KeyFrom), ExitCode> {
+    if let Some(text) = key_variable() {
+        let key = webapi::Key::parse(&text).map_err(|_not_a_key| {
+            fail(
+                &format!(
+                    "{} does not hold a publisher Web API key, which is 32 hexadecimal digits",
+                    webapi::KEY
+                ),
+                REFUSED,
+            )
+        })?;
+        show::field("api key", &format!("from {}", webapi::KEY));
+        return Ok((webapi::Api::new(key), KeyFrom::Variable));
+    }
+    match keychain::kept(home) {
+        Ok(Some(key)) => {
+            show::field("api key", &format!("kept in {}", keychain::STORE));
+            return Ok((webapi::Api::new(key), KeyFrom::Kept));
+        }
+        Ok(None) | Err(keychain::Error::Unavailable(_)) => {}
+        Err(error @ (keychain::Error::Failed(_) | keychain::Error::NotAKey)) => {
+            show::failed("api key", "not read");
+            return Err(fail(&error, FAILED));
+        }
+    }
+    if !io::stdin().is_terminal() {
+        let keep = Hint {
+            before: "run ",
+            command: "steamship login --web-api-key",
+            after: " at a terminal to keep one, or set STEAMSHIP_WEB_API_KEY",
         };
-        show::failure("no Web API key", "", Some(key));
+        show::failure("no Web API key", "", Some(keep));
         return Err(ExitCode::from(REFUSED));
+    }
+    show::aside(WHERE_KEY);
+    let key = typed_key()?.ok_or_else(|| fail(&"no Web API key typed", REFUSED))?;
+    Ok((webapi::Api::new(key), KeyFrom::Typed))
+}
+
+/// The key typed at the prompt, shown as dots; none when only Enter was pressed.
+fn typed_key() -> Result<Option<webapi::Key>, ExitCode> {
+    let typed = typing::ask("api key", Echo::Dots)
+        .map_err(|error| fail(&format!("the Web API key: {error}"), FAILED))?;
+    if typed.trim().is_empty() {
+        return Ok(None);
+    }
+    webapi::Key::parse(&typed).map(Some).map_err(|_not_a_key| {
+        fail(
+            &"that is not a publisher Web API key, which is 32 hexadecimal digits",
+            REFUSED,
+        )
+    })
+}
+
+/// Has Steam list the apps the key reaches, the one check a key can be given, and shows them.
+fn check_key(api: &webapi::Api) -> Result<(), ExitCode> {
+    let spinner = Spinner::start("steam", "checking the Web API key", false);
+    match api.apps() {
+        Ok(apps) => {
+            spinner.done(&format!(
+                "Steam takes the key, for {}",
+                show::counted(apps.len(), "app")
+            ));
+            for app in &apps {
+                show::field(&app.app_id.to_string(), &app.name);
+            }
+            Ok(())
+        }
+        Err(error) => Err(web_api_failed(spinner, &error)),
+    }
+}
+
+/// Keeps `key` for `home` in the credential store, and says whether it did; why not is shown.
+fn keep_key(home: &Path, key: &webapi::Key) -> bool {
+    match keychain::keep(home, key) {
+        Ok(()) => {
+            show::done("api key", &format!("kept in {}", keychain::STORE));
+            true
+        }
+        Err(error) => {
+            show::failed("api key", "not kept");
+            show::failure(&error.to_string(), "", None);
+            false
+        }
+    }
+}
+
+/// `login --web-api-key`: asks for the key, has Steam check it, and keeps it.
+fn try_key_login() -> Result<ExitCode, ExitCode> {
+    show::banner_on_terminal();
+    show::title("login");
+    let home = home()?;
+    show::aside(WHERE_KEY);
+    let key = typed_key()?.ok_or_else(|| fail(&"no Web API key typed", REFUSED))?;
+    let api = webapi::Api::new(key);
+    check_key(&api)?;
+    if !keep_key(&home, api.key()) {
+        return Err(ExitCode::from(FAILED));
+    }
+    show::success(
+        "Web API key kept",
+        "`steamship builds` and `promote` use it; `steamship logout` forgets it",
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// At the end of `login`, at a terminal: offers to keep the Web API key too, when none is set or
+/// kept and there is a store to keep it in. Only Enter skips it; nothing here fails the login.
+fn offer_key(home: &Path) {
+    if !io::stdin().is_terminal() || key_variable().is_some() {
+        return;
+    }
+    match keychain::has(home) {
+        Ok(false) => {}
+        Ok(true) => {
+            show::field("api key", &format!("kept in {}", keychain::STORE));
+            return;
+        }
+        Err(_) => return,
+    }
+    show::aside("`steamship builds` and `promote` also need the publisher Web API key;");
+    show::aside(&format!("{WHERE_KEY}. Enter skips it"));
+    let key = match typed_key() {
+        Ok(Some(key)) => key,
+        Ok(None) => {
+            show::field(
+                "api key",
+                "skipped; `steamship login --web-api-key` keeps one",
+            );
+            return;
+        }
+        Err(_) => return,
     };
-    let key = webapi::Key::parse(&text).map_err(|error| fail(&error, REFUSED))?;
-    Ok(webapi::Api::new(key))
+    let api = webapi::Api::new(key);
+    if check_key(&api).is_ok() {
+        let _kept = keep_key(home, api.key());
+    }
+}
+
+/// After a command that worked with a key typed at its prompt, offers to keep that key.
+fn offer_to_keep(home: &Path, api: &webapi::Api, from: KeyFrom) {
+    if from != KeyFrom::Typed {
+        return;
+    }
+    show::aside(&format!(
+        "Enter keeps the key in {} for next time; n does not",
+        keychain::STORE
+    ));
+    let Ok(answer) = typing::ask("keep it", Echo::Typed) else {
+        return;
+    };
+    if matches!(
+        answer.trim().to_ascii_lowercase().as_str(),
+        "" | "y" | "yes"
+    ) {
+        let _kept = keep_key(home, api.key());
+    } else {
+        show::field("api key", "not kept");
+    }
 }
 
 /// The app named by its ID, or by the app build script that names it.
@@ -898,7 +1109,8 @@ fn web_api_failed(spinner: Spinner, error: &webapi::Error) -> ExitCode {
 fn try_builds(app: &str, count: u32) -> Result<ExitCode, ExitCode> {
     show::title("builds");
     let app_id = app_named(app)?;
-    let api = web_api()?;
+    let home = home()?;
+    let (api, from) = web_api(&home)?;
     let spinner = Spinner::start("steam", "asking for the branches and builds", false);
     let overview = match api.overview(app_id, count) {
         Ok(overview) => overview,
@@ -908,6 +1120,7 @@ fn try_builds(app: &str, count: u32) -> Result<ExitCode, ExitCode> {
     for (label, line) in overview.lines() {
         show::field(&label, &line);
     }
+    offer_to_keep(&home, &api, from);
     Ok(ExitCode::SUCCESS)
 }
 
@@ -922,12 +1135,14 @@ fn try_promote(app: &str, build: u64, branch: &str) -> Result<ExitCode, ExitCode
     }
     show::field("build", &build.to_string());
     show::field("branch", branch);
-    let api = web_api()?;
+    let home = home()?;
+    let (api, from) = web_api(&home)?;
     let spinner = Spinner::start("steam", "setting it live", false);
     if let Err(error) = api.set_live(app_id, build, branch) {
         return Err(web_api_failed(spinner, &error));
     }
     spinner.done("set live");
+    offer_to_keep(&home, &api, from);
     show::success(
         &format!("app {app_id}: BuildID {build} live on {branch}"),
         "",

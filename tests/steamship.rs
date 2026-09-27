@@ -12,9 +12,7 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{Read as _, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-#[cfg(unix)]
-use std::process::Stdio;
+use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -22,11 +20,13 @@ use std::time::{Duration, Instant, SystemTime};
 #[cfg(unix)]
 use steamship::account::Account;
 use steamship::install;
+use steamship::keychain;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
 use steamship::terminal::{Event, Reader};
 #[cfg(unix)]
 use steamship::unix::Terminal;
+use steamship::webapi::Key;
 #[cfg(windows)]
 use steamship::windows::Terminal;
 #[cfg(unix)]
@@ -162,6 +162,7 @@ fn logout_forgets_steamcmds_saved_login_on_every_system_and_the_account() {
         "steamship logout\n  \
          login     \u{2713} forgotten\n  \
          account   \u{2713} forgotten\n  \
+         api key   none kept\n  \
          \u{2713} logged out\n    \
          the next upload needs `steamship login` first\n"
     );
@@ -217,6 +218,7 @@ fn status_with_nothing_saved_says_to_log_in_changes_nothing_and_exits_3() {
             "steamship status\n  \
              version   {}\n  \
              home      {}\n  \
+             api key   none kept\n  \
              account   none remembered\n  \
              steamcmd  not installed; `steamship login` installs it\n  \
              login     none saved\n",
@@ -1478,8 +1480,15 @@ fn login_on_a_terminal_hides_the_password_and_waits_for_approval_with_a_spinner(
     // Drawn over and over on a terminal, with how long it has been, where elsewhere it would be
     // written once, ending in "...".
     session.wait_for(" waiting for you in the Steam Mobile app ");
+    // Then the Web API key is offered, and Enter alone skips it.
+    session.wait_for("Enter skips it");
+    session.type_in("\r");
     session.wait_for("exited 0");
     let seen = session.seen();
+    assert!(
+        seen.contains("  api key   skipped; `steamship login --web-api-key` keeps one\n"),
+        "{seen}"
+    );
     assert!(!seen.contains("Mobile app..."), "{seen}");
     assert!(seen.contains("  account   build_bot\n"), "{seen}");
     assert!(
@@ -1961,7 +1970,7 @@ fn a_failed_workshop_upload_names_why_and_where_the_log_is_and_exits_1() {
 }
 
 #[test]
-fn builds_without_a_web_api_key_says_where_to_get_one_and_exits_2() {
+fn builds_with_no_key_set_or_kept_and_no_one_to_ask_says_how_to_keep_one_and_exits_2() {
     let home = tempfile::tempdir().unwrap();
     let (code, stdout, stderr) = steamship(
         &["builds", "5335950"],
@@ -1973,11 +1982,74 @@ fn builds_without_a_web_api_key_says_where_to_get_one_and_exits_2() {
     assert_eq!(failure(&stderr), "no Web API key");
     assert!(
         stderr.ends_with(
-            "set STEAMSHIP_WEB_API_KEY to the publisher Web API key from Steamworks, under Users \
-             & Permissions, Manage Groups\n"
+            "run steamship login --web-api-key at a terminal to keep one, or set \
+             STEAMSHIP_WEB_API_KEY\n"
         ),
         "{stderr}"
     );
+}
+
+#[test]
+fn status_shows_a_kept_key_and_one_set_and_logout_forgets_the_kept_one() {
+    let home = tempfile::tempdir().unwrap();
+    let kept = Key::parse("0123456789abcdef0123456789abcdef").unwrap();
+    keychain::keep(home.path(), &kept).unwrap();
+    let (_, shown, _) = steamship(&["status"], Some(home.path()), &[]);
+    let (_, set, _) = steamship(
+        &["status"],
+        Some(home.path()),
+        &[("STEAMSHIP_WEB_API_KEY", "fedcba9876543210fedcba9876543210")],
+    );
+    let (_, forgot, _) = steamship(&["logout"], Some(home.path()), &[]);
+    let still = keychain::has(home.path()).unwrap();
+    let _: bool = keychain::forget(home.path()).unwrap();
+    assert!(
+        shown.contains(&format!("  api key   kept in {}\n", keychain::STORE)),
+        "{shown}"
+    );
+    assert!(
+        set.contains("  api key   from STEAMSHIP_WEB_API_KEY\n"),
+        "the variable comes first: {set}"
+    );
+    assert!(!set.contains("fedcba"), "{set}");
+    assert!(
+        forgot.contains("  api key   \u{2713} forgotten\n"),
+        "{forgot}"
+    );
+    assert!(!still, "logout forgets the kept key");
+}
+
+#[test]
+fn login_with_web_api_key_refuses_what_is_not_a_key_before_asking_steam() {
+    let home = tempfile::tempdir().unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_steamship"));
+    let _: &mut Command = command
+        .args(["login", "--web-api-key"])
+        .env("STEAMSHIP_HOME", home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(b"not_a_key_1234\n")
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("Manage Groups"),
+        "says where the key is: {stdout}"
+    );
+    assert_eq!(
+        failure(&stderr),
+        "that is not a publisher Web API key, which is 32 hexadecimal digits"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("not_a_key"));
+    assert!(!keychain::has(home.path()).unwrap());
 }
 
 #[test]

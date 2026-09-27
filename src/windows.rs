@@ -17,16 +17,21 @@ use std::panic;
 use std::path::Path;
 use std::process;
 use std::ptr::{self, NonNull};
+use std::slice;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use windows_sys::Win32::Foundation::{
-    ERROR_SUCCESS, GENERIC_ALL, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL, INVALID_HANDLE_VALUE,
-    LocalFree, SetHandleInformation, WAIT_TIMEOUT, WIN32_ERROR,
+    ERROR_NOT_FOUND, ERROR_SUCCESS, GENERIC_ALL, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL,
+    INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation, WAIT_TIMEOUT, WIN32_ERROR,
 };
 use windows_sys::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+};
+use windows_sys::Win32::Security::Credentials::{
+    CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree, CredReadW,
+    CredWriteW,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAceEx, CONTAINER_INHERIT_ACE,
@@ -60,7 +65,9 @@ use windows_sys::Win32::System::Threading::{
     PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
     STARTUPINFOEXW, STARTUPINFOW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
+use zeroize::{Zeroize as _, Zeroizing};
 
+use crate::keychain;
 use crate::run::Finished;
 use windows_sys::Win32::Security::Cryptography::{
     CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
@@ -728,6 +735,125 @@ fn environment_block(changes: &[(OsString, OsString)]) -> Option<Vec<u16>> {
 
 fn wide(text: &OsStr) -> Vec<u16> {
     text.encode_wide().chain([0]).collect()
+}
+
+/// Whether Windows answered that there is no such credential.
+fn not_found(error: &io::Error) -> bool {
+    error.raw_os_error() == i32::try_from(ERROR_NOT_FOUND).ok()
+}
+
+/// The generic credential the Web API key for the steamship home `account` is kept as.
+fn key_target(account: &str) -> Vec<u16> {
+    wide(OsStr::new(&format!("steamship:web-api-key:{account}")))
+}
+
+fn store_failed(error: &io::Error) -> keychain::Error {
+    keychain::Error::Failed(error.to_string())
+}
+
+/// Whether the Credential Manager keeps a secret for the steamship home `account`.
+///
+/// # Errors
+///
+/// When the Credential Manager cannot be read.
+pub fn has_secret(account: &str) -> Result<bool, keychain::Error> {
+    Ok(kept_secret(account)?.is_some())
+}
+
+/// The secret the Credential Manager keeps for `account`, if it keeps one.
+///
+/// # Errors
+///
+/// When the Credential Manager cannot be read.
+pub fn kept_secret(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, keychain::Error> {
+    let target = key_target(account);
+    let mut found: *mut CREDENTIALW = ptr::null_mut();
+    // SAFETY: `target` is NUL-terminated and outlives the call; on success Windows points `found`
+    // at a credential it allocated.
+    if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &raw mut found) } == 0_i32 {
+        let error = io::Error::last_os_error();
+        return if not_found(&error) {
+            Ok(None)
+        } else {
+            Err(store_failed(&error))
+        };
+    }
+    let found = Credential(found);
+    // SAFETY: CredReadW succeeded, so this is one credential, left alone until it is freed.
+    let credential = unsafe { &*found.0 };
+    let size = usize::try_from(credential.CredentialBlobSize).unwrap_or_default();
+    let secret = if credential.CredentialBlob.is_null() {
+        Zeroizing::new(Vec::new())
+    } else {
+        // SAFETY: the blob is `CredentialBlobSize` bytes, which nothing else is using.
+        let blob = unsafe { slice::from_raw_parts_mut(credential.CredentialBlob, size) };
+        let secret = Zeroizing::new(blob.to_vec());
+        // Windows frees the blob without wiping it.
+        blob.zeroize();
+        secret
+    };
+    Ok(Some(secret))
+}
+
+/// A credential `CredReadW` allocated, freed once it is dropped.
+#[derive(Debug)]
+struct Credential(*mut CREDENTIALW);
+
+impl Drop for Credential {
+    fn drop(&mut self) {
+        // SAFETY: the credential came from CredReadW and is freed once, here.
+        unsafe {
+            CredFree(self.0.cast_const().cast());
+        }
+    }
+}
+
+/// Keeps `secret` for `account`, in place of any kept before, for this user on this machine only.
+///
+/// # Errors
+///
+/// When the Credential Manager refuses it.
+pub fn keep_secret(account: &str, secret: &[u8]) -> Result<(), keychain::Error> {
+    let mut target = key_target(account);
+    let mut label = wide(OsStr::new(keychain::LABEL));
+    let credential = CREDENTIALW {
+        Type: CRED_TYPE_GENERIC,
+        TargetName: target.as_mut_ptr(),
+        CredentialBlobSize: u32::try_from(secret.len())
+            .ok()
+            .ok_or_else(|| keychain::Error::Failed("the key is too long".to_owned()))?,
+        CredentialBlob: secret.as_ptr().cast_mut(),
+        // Kept for this user on this machine, never carried along with a roaming profile.
+        Persist: CRED_PERSIST_LOCAL_MACHINE,
+        UserName: label.as_mut_ptr(),
+        ..CREDENTIALW::default()
+    };
+    // SAFETY: every pointer in `credential` is valid for the call, which copies what it keeps
+    // and writes through none of them.
+    if unsafe { CredWriteW(&raw const credential, 0) } == 0_i32 {
+        Err(store_failed(&io::Error::last_os_error()))
+    } else {
+        Ok(())
+    }
+}
+
+/// Removes the secret kept for `account`, and says whether there was one.
+///
+/// # Errors
+///
+/// When the Credential Manager refuses.
+pub fn forget_secret(account: &str) -> Result<bool, keychain::Error> {
+    let target = key_target(account);
+    // SAFETY: `target` is NUL-terminated and outlives the call.
+    if unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) } == 0_i32 {
+        let error = io::Error::last_os_error();
+        return if not_found(&error) {
+            Ok(false)
+        } else {
+            Err(store_failed(&error))
+        };
+    }
+    Ok(true)
 }
 
 /// Leaves `folder` to the current user alone, and says whether it had to change anything.

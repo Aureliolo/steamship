@@ -1,8 +1,8 @@
 //! Steam's partner Web API: an app's branches and the builds live on them, its recent builds, and
 //! setting a build live on a branch after it was uploaded, which steamcmd cannot do.
 //!
-//! The publisher key comes from `STEAMSHIP_WEB_API_KEY` alone and travels in the `x-webapi-key`
-//! header, never in an address, so that nothing which names an address can name the key. Valve
+//! The publisher key travels in the `x-webapi-key` header, never in an address, so that nothing
+//! which names an address can name the key. Valve
 //! documents what each method takes but not what it answers, so answers are read leniently:
 //! a list or a map of entries, and numbers written as numbers or as text.
 
@@ -47,6 +47,12 @@ impl Key {
             Err(Error::NotAKey)
         }
     }
+
+    /// The key's text, for the credential store that keeps it.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,10 +74,9 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotAKey => write!(
-                formatter,
-                "{KEY} does not hold a publisher Web API key, which is 32 hexadecimal digits"
-            ),
+            Self::NotAKey => {
+                formatter.write_str("not a publisher Web API key, which is 32 hexadecimal digits")
+            }
             Self::Refused => formatter.write_str(
                 "Steam refused the Web API key; it must be the publisher key of a group that \
                  holds the app",
@@ -222,6 +227,46 @@ pub fn set_live_from(answer: &Value) -> Result<(), Error> {
     succeeded(response)
 }
 
+/// An app a key reaches.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct App {
+    pub app_id: u64,
+    pub name: String,
+}
+
+/// The apps `GetPartnerAppListForWebAPIKey` answered the key reaches, by ID.
+///
+/// # Errors
+///
+/// When the answer is not one.
+pub fn apps_from(answer: &Value) -> Result<Vec<App>, Error> {
+    let apps = field(answer, &["applist"])
+        .and_then(|list| field(list, &["apps"]))
+        .ok_or(Error::Unreadable("applist"))?;
+    let listed = if apps.is_array() {
+        Some(apps)
+    } else {
+        field(apps, &["app"])
+    };
+    let entries: Vec<&Value> = match listed {
+        Some(Value::Array(list)) => list.iter().collect(),
+        Some(Value::Object(map)) => map.values().collect(),
+        None => Vec::new(),
+        Some(_) => return Err(Error::Unreadable("apps")),
+    };
+    let mut found: Vec<App> = entries
+        .into_iter()
+        .filter_map(|entry| {
+            Some(App {
+                app_id: number(field(entry, &["appid"]))?,
+                name: text(entry, &["app_name", "name"]),
+            })
+        })
+        .collect();
+    found.sort_by_key(|app| app.app_id);
+    Ok(found)
+}
+
 /// Whether `branch` names the default branch.
 #[must_use]
 pub fn is_default(branch: &str) -> bool {
@@ -327,6 +372,21 @@ impl Api {
             key,
             host: host.to_owned(),
         }
+    }
+
+    /// The key the calls are made with.
+    #[must_use]
+    pub const fn key(&self) -> &Key {
+        &self.key
+    }
+
+    /// The apps the key reaches, which says whether Steam takes it at all.
+    ///
+    /// # Errors
+    ///
+    /// When Steam cannot be reached, refuses the key, or answers with something else.
+    pub fn apps(&self) -> Result<Vec<App>, Error> {
+        apps_from(&self.get("GetPartnerAppListForWebAPIKey/v2", &[])?)
     }
 
     /// The branches of `app`, by name.
@@ -850,6 +910,73 @@ mod tests {
             request.matches(KEY_TEXT).count(),
             1,
             "the header alone: {request}"
+        );
+    }
+
+    #[test]
+    fn a_key_is_checked_by_the_apps_it_reaches_asked_for_with_the_key_in_a_header() {
+        let (host, requests) = answering(
+            "200 OK",
+            r#"{"applist": {"apps": {"app": [
+                {"appid": 5335970, "app_type": "game", "app_name": "Ostinato"},
+                {"appid": 5335950, "app_type": "game", "app_name": "Fantasy Guild Manager"}
+            ]}}}"#,
+        );
+        let checked = api(&host);
+        assert_eq!(checked.key().text(), KEY_TEXT);
+        let apps = checked.apps().unwrap();
+        assert_eq!(
+            apps,
+            [
+                App {
+                    app_id: 5_335_950,
+                    name: "Fantasy Guild Manager".to_owned()
+                },
+                App {
+                    app_id: 5_335_970,
+                    name: "Ostinato".to_owned()
+                },
+            ]
+        );
+        let request = received(&requests);
+        assert!(
+            request.starts_with("GET /ISteamApps/GetPartnerAppListForWebAPIKey/v2/ "),
+            "{request}"
+        );
+        assert_eq!(
+            request.matches(KEY_TEXT).count(),
+            1,
+            "the header alone: {request}"
+        );
+    }
+
+    #[test]
+    fn apps_are_read_from_a_list_or_a_map_and_none_is_none() {
+        let app = |id| App {
+            app_id: id,
+            name: String::new(),
+        };
+        assert_eq!(
+            apps_from(&answer(r#"{"applist": {"apps": [{"appid": "7"}]}}"#)),
+            Ok(vec![app(7)])
+        );
+        assert_eq!(
+            apps_from(&answer(
+                r#"{"applist": {"apps": {"app": {"a": {"appid": 9}, "b": {}}}}}"#
+            )),
+            Ok(vec![app(9)])
+        );
+        assert_eq!(
+            apps_from(&answer(r#"{"applist": {"apps": {}}}"#)),
+            Ok(Vec::new())
+        );
+        assert_eq!(
+            apps_from(&answer(r#"{"applist": {"apps": {"app": 3}}}"#)),
+            Err(Error::Unreadable("apps"))
+        );
+        assert_eq!(
+            apps_from(&answer(r#"{"response": {}}"#)),
+            Err(Error::Unreadable("applist"))
         );
     }
 

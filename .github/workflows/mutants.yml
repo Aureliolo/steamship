@@ -6,9 +6,9 @@ name: Mutants
 # run weekly, which is where anything the diffs never touched turns up.
 #
 # Code for one system is compiled only there, and mutating code that is not compiled would always
-# look missed. So Linux mutates everything but the Windows module, and Windows mutates that module
-# alone: the code both systems share is mutated once, on Linux, where the tests that run the whole
-# command against a stand-in steamcmd can run.
+# look missed. So Linux mutates everything but the Windows and macOS modules, and Windows and macOS
+# each mutate their own module alone: the code the systems share is mutated once, on Linux, where
+# the tests that run the whole command against a stand-in steamcmd can run.
 #
 # A mutant that makes the downloader retry sits through its real waits, about a minute in all,
 # before the test fails; the minimum timeout is set above that so such a mutant counts as caught
@@ -36,11 +36,15 @@ jobs:
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
             runner: ubuntu-26.04
-            scope: --exclude
+            mutate: --exclude src/windows.rs --exclude src/macos.rs
           - platform: windows
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
-            scope: --file
+            mutate: --file src/windows.rs
+          - platform: macos
+            # renovate: datasource=github-runners depName=macos
+            runner: macos-26
+            mutate: --file src/macos.rs
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     permissions:
@@ -89,22 +93,39 @@ jobs:
           unzip -q "${archive}" -d "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 
+      # No arm64 macOS build is released, so it is built from source at an exact version, every
+      # dependency held to the hashes in its lock file.
+      - name: Install cargo-mutants
+        if: runner.os == 'macOS'
+        env:
+          # renovate: datasource=crate depName=cargo-mutants
+          CARGO_MUTANTS_VERSION: 27.1.0
+        run: cargo install cargo-mutants --version "${CARGO_MUTANTS_VERSION}" --locked
+
+      - name: Start a Secret Service
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/secret-service
+
       - name: Mutate what the pull request changed
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          SCOPE: ${{ matrix.scope }}
+          MUTATE: ${{ matrix.mutate }}
         run: |
           set -euo pipefail
+          read -ra mutate <<< "${MUTATE}"
           git diff "${BASE_SHA}...HEAD" > "${RUNNER_TEMP}/change.diff"
-          cargo mutants --in-diff "${RUNNER_TEMP}/change.diff" "${SCOPE}" src/windows.rs \
+          cargo mutants --in-diff "${RUNNER_TEMP}/change.diff" "${mutate[@]}" \
             --no-shuffle --minimum-test-timeout 120 --jobs 2
 
       - name: Mutate everything
         if: github.event_name == 'schedule'
         env:
-          SCOPE: ${{ matrix.scope }}
-        run: cargo mutants "${SCOPE}" src/windows.rs --no-shuffle --minimum-test-timeout 120 --jobs 2
+          MUTATE: ${{ matrix.mutate }}
+        run: |
+          set -euo pipefail
+          read -ra mutate <<< "${MUTATE}"
+          cargo mutants "${mutate[@]}" --no-shuffle --minimum-test-timeout 120 --jobs 2
 
       - name: Keep the report
         if: failure()
