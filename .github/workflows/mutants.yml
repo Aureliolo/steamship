@@ -104,9 +104,8 @@ jobs:
 
       # Each run of the tests starts a keyring of its own from these, so that one a mutant brings
       # down cannot take the runs after it down too.
-      - name: Install D-Bus and GNOME Keyring
-        if: runner.os == 'Linux'
-        uses: ./.github/actions/secret-service # zizmor: ignore[self-repository]
+      - name: Install the test prerequisites
+        uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
 
       - name: Mutate what the pull request changed
         if: github.event_name == 'pull_request'
