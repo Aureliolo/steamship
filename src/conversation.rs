@@ -87,7 +87,8 @@ fn line_step(line: &str) -> Step {
 
 /// The reason in a line where steamcmd says the login failed: `FAILED (reason)` or, as it says
 /// for a wrong password, `ERROR (reason)`.
-fn refusal(line: &str) -> Option<&str> {
+#[must_use]
+pub fn refusal(line: &str) -> Option<&str> {
     ["FAILED (", "ERROR ("].iter().find_map(|marker| {
         let (_, after) = line.split_once(marker)?;
         after.split_once(')').map(|(reason, _)| reason.trim())

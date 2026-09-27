@@ -53,14 +53,14 @@ pub fn banner() -> String {
          {BLUE}      | \\{BLUE:#}         {BOLD}steamship{BOLD:#} {DIM}{version}{DIM:#}\n\
          {BLUE}   ___|__\\___{BLUE:#}     {DIM}uploads your build to Steam{DIM:#}\n\
          {BLUE}   \\_________/{BLUE:#}\n\
-         {BLUE}{DIM} ~~~~~~~~~~~~~~~{DIM:#}{BLUE:#}\n"
+         {BLUE}{DIM} ~~~~~~~~~~~~~~~{DIM:#}{BLUE:#}"
     )
 }
 
-/// The banner, on a terminal only: a log has no use for it.
+/// The banner and a blank line, on a terminal only: a log has no use for it.
 pub fn banner_on_terminal() {
     if io::stdout().is_terminal() {
-        anstream::println!("{}", banner());
+        anstream::println!("{}\n", banner());
     }
 }
 
@@ -77,6 +77,11 @@ pub fn field(label: &str, value: &str) {
 /// A step that went as it should.
 pub fn done(label: &str, value: &str) {
     field(label, &format!("{GREEN}\u{2713}{GREEN:#} {value}"));
+}
+
+/// A step that did not go as it should.
+pub fn failed(label: &str, value: &str) {
+    field(label, &format!("{RED}\u{2717}{RED:#} {value}"));
 }
 
 /// The label of a prompt, left for what is typed to follow on the same line.
@@ -299,7 +304,7 @@ impl Spinner {
     /// Ends the step as failed.
     pub fn failed(self, value: &str) {
         let label = self.stop();
-        field(&label, &format!("{RED}\u{2717}{RED:#} {value}"));
+        failed(&label, value);
     }
 
     /// Stops the spinner while something else is shown, and starts it again after.

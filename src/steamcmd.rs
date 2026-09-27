@@ -94,6 +94,26 @@ pub fn login(account: &Account) -> Vec<OsString> {
     .into()
 }
 
+/// The commands that log `account` in with the login steamcmd saved and quit, which is how the
+/// saved login is checked with Steam. Like [`upload`], it never waits at a prompt.
+#[must_use]
+pub fn check_login(account: &Account) -> Vec<OsString> {
+    [
+        "+@ShutdownOnFailedCommand",
+        "1",
+        "+@NoPromptForPassword",
+        "1",
+        "+login",
+        account.name(),
+        "+quit",
+    ]
+    .map(OsString::from)
+    .into()
+}
+
+/// The longest a check of the saved login may run: logging in takes seconds.
+pub const CHECK_LIMIT: Duration = Duration::from_mins(2);
+
 /// The longest an upload may run before it is taken to have hung and is stopped. A large first
 /// upload over a slow line takes hours; steamcmd waiting at a prompt would wait forever.
 pub const UPLOAD_LIMIT: Duration = Duration::from_hours(6);
@@ -165,6 +185,23 @@ mod tests {
                 "build_bot",
                 "+run_app_build",
                 "home (x86)/apps/1/app_build.vdf",
+                "+quit"
+            ]
+        );
+    }
+
+    #[test]
+    fn checks_the_saved_login_and_never_waits_at_a_prompt() {
+        let account = Account::parse("build_bot").unwrap();
+        assert_eq!(
+            check_login(&account),
+            [
+                "+@ShutdownOnFailedCommand",
+                "1",
+                "+@NoPromptForPassword",
+                "1",
+                "+login",
+                "build_bot",
                 "+quit"
             ]
         );
