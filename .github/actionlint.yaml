@@ -1,0 +1,6 @@
+# actionlint checks `runs-on:` against a list of GitHub-hosted images built into each release,
+# which trails the images GitHub offers. An image GitHub runs that the pinned actionlint does not
+# list yet is named here, so that Renovate can raise a runner as soon as GitHub has it.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
