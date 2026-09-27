@@ -108,7 +108,12 @@ pub fn load(path: &Path) -> Result<AppScript, Vec<Problem>> {
     }
 }
 
-fn read(path: &Path) -> Result<Block, Problem> {
+/// The script at `path`, parsed.
+///
+/// # Errors
+///
+/// When it does not exist, cannot be read, or is not `KeyValues` text.
+pub fn read(path: &Path) -> Result<Block, Problem> {
     let text = fs::read_to_string(path).map_err(|error| {
         Problem::new(
             path,
