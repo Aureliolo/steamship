@@ -316,7 +316,8 @@ fn an_upload_in_ci_logs_in_as_the_account_handed_over() {
         Some(home.path()),
         &[("STEAMSHIP_LOGIN", &packed_login())],
     );
-    assert!(stdout.contains(" +login build_bot "), "{stdout}");
+    let console = fs::read_to_string(home.path().join("apps/1000/output/steamcmd.log")).unwrap();
+    assert!(console.contains(" +login build_bot "), "{stdout}{console}");
     assert!(steamcmd::saved_login(home.path(), Platform::Linux).exists());
 }
 
