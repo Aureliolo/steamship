@@ -13,6 +13,7 @@ use std::io;
 use std::path::{self, Path, PathBuf};
 use std::process::Command;
 
+use crate::conversation;
 use crate::scripts;
 use crate::vdf::{self, Block, Pair, Value};
 
@@ -274,13 +275,8 @@ pub fn judge(
     log: Option<&str>,
     preview: bool,
 ) -> Outcome {
-    let login = console.lines().find(|line| {
-        line.contains("Cached credentials not found")
-            || line.contains("FAILED (No cached credentials")
-            || (line.contains("Logging in") && line.contains("FAILED"))
-    });
-    if let Some(line) = login {
-        return Outcome::NotLoggedIn(line.trim().to_owned());
+    if let Some(reason) = refused_login(console) {
+        return Outcome::NotLoggedIn(reason);
     }
     let finished = format!("Successfully finished AppID {app_id} build (BuildID ");
     let build_id = log.and_then(|log| {
@@ -295,6 +291,52 @@ pub fn judge(
         (Some(0_i32), Some(build_id)) if build_id > 0 => Outcome::Built { build_id },
         _ => Outcome::Failed(reasons(code, console, log)),
     }
+}
+
+/// Why steamcmd could not log in with the login it saved, when that is what its `console` says.
+/// The reason is taken from the line and not the line itself, which names the account.
+#[must_use]
+pub fn refused_login(console: &str) -> Option<String> {
+    console.lines().find_map(|line| {
+        if line.contains("Cached credentials not found") {
+            Some(line.trim().to_owned())
+        } else if line.contains("FAILED (No cached credentials")
+            || (line.contains("Logging in") && line.contains("FAILED"))
+        {
+            Some(conversation::refusal(line).map_or_else(
+                || "Steam refused the saved login".to_owned(),
+                ToOwned::to_owned,
+            ))
+        } else {
+            None
+        }
+    })
+}
+
+/// What checking the saved login with Steam came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Login {
+    /// Steam took it: an upload now would be logged in.
+    Taken,
+    /// Steam refused it, for this reason.
+    Refused(String),
+    /// The check itself failed, for every reason steamcmd gave.
+    Failed(Vec<String>),
+}
+
+/// Reads steamcmd's exit `code` and `console` from a run that only logged in and quit.
+#[must_use]
+pub fn judge_login(code: Option<i32>, console: &str) -> Login {
+    refused_login(console).map_or_else(
+        || {
+            if code == Some(0_i32) {
+                Login::Taken
+            } else {
+                Login::Failed(reasons(code, console, None))
+            }
+        },
+        Login::Refused,
+    )
 }
 
 /// Every error steamcmd reported, from the log and the console, once each, and what its exit
@@ -400,19 +442,49 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_or_refused_login_is_named_by_the_line_that_said_so() {
+    fn a_missing_or_refused_login_is_named_by_its_reason_and_never_the_account() {
         let console = "Loading Steam API...OK\r\nCached credentials not found.\r\n\
                        FAILED (No cached credentials and @NoPromptForPassword is set)\r\n";
         assert_eq!(
             judge(1, Some(5_i32), console, None, false),
             Outcome::NotLoggedIn("Cached credentials not found.".to_owned())
         );
+        assert_eq!(
+            refused_login("FAILED (No cached credentials and @NoPromptForPassword is set)"),
+            Some("No cached credentials and @NoPromptForPassword is set".to_owned())
+        );
         let expired =
             "Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)";
         assert_eq!(
             judge(1, Some(5_i32), expired, None, false),
-            Outcome::NotLoggedIn(expired.to_owned())
+            Outcome::NotLoggedIn("Expired Login Auth Code".to_owned())
         );
+        assert_eq!(
+            refused_login("Logging in user 'build_bot' to Steam Public...FAILED"),
+            Some("Steam refused the saved login".to_owned())
+        );
+        assert_eq!(refused_login(LOGGED_IN), None);
+    }
+
+    #[test]
+    fn a_login_check_is_taken_refused_or_failed() {
+        assert_eq!(judge_login(Some(0_i32), LOGGED_IN), Login::Taken);
+        assert_eq!(
+            judge_login(
+                Some(5_i32),
+                "Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)"
+            ),
+            Login::Refused("Expired Login Auth Code".to_owned())
+        );
+        assert_eq!(
+            judge_login(Some(0_i32), "Cached credentials not found.\r\n"),
+            Login::Refused("Cached credentials not found.".to_owned())
+        );
+        assert!(matches!(
+            judge_login(Some(6_i32), "ERROR! Timed out waiting for Steam\r\n"),
+            Login::Failed(reasons) if reasons == ["Timed out waiting for Steam"]
+        ));
+        assert!(matches!(judge_login(None, ""), Login::Failed(reasons) if !reasons.is_empty()));
     }
 
     #[test]

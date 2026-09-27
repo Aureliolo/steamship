@@ -12,7 +12,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
 use steamship::digest;
-use steamship::install::{self, Error, Outcome};
+use steamship::install::{self, Error, Outcome, State};
 use steamship::manifest::{Manifest, Package};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
@@ -161,6 +161,36 @@ fn installs_once_then_verifies_without_fetching_again() {
     ));
     assert_eq!(fetched.get(), 2);
     install::verify(&setup.home, &manifest).unwrap();
+}
+
+#[test]
+fn the_state_of_an_install_is_read_without_changing_it() {
+    let setup = Setup::new();
+    let manifest = steamcmd(&setup);
+    assert!(matches!(
+        install::state(&setup.home, &manifest),
+        Ok(State::Missing)
+    ));
+    assert!(!setup.home.exists(), "nothing is made to read the state");
+    let _: Outcome = setup.install(&manifest, &Cell::new(0)).unwrap();
+    assert!(matches!(
+        install::state(&setup.home, &manifest),
+        Ok(State::Pinned)
+    ));
+    let raised = Setup::manifest(2, manifest.packages.clone());
+    assert!(matches!(
+        install::state(&setup.home, &raised),
+        Ok(State::Earlier)
+    ));
+    fs::write(setup.root().join("steamcmd.bin"), b"MZ newer").unwrap();
+    assert_eq!(
+        changes(install::state(&setup.home, &manifest).map(|_| Outcome::Verified)),
+        ["steamcmd.bin has changed"]
+    );
+    assert!(matches!(
+        install::state(&setup.home, &raised),
+        Ok(State::Earlier)
+    ));
 }
 
 #[test]

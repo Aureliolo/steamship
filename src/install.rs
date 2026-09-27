@@ -149,6 +149,32 @@ pub fn verify(home: &Path, manifest: &Manifest) -> Result<(), Error> {
     }
 }
 
+/// What the steamcmd in a home is, against the one a manifest pins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum State {
+    /// Nothing installed yet; the first login or upload installs it.
+    Missing,
+    /// Another version, installed under an earlier pin; the next login or upload replaces it.
+    Earlier,
+    /// Exactly the pinned one.
+    Pinned,
+}
+
+/// What the steamcmd in `home` is against the one `manifest` pins, changing nothing.
+///
+/// # Errors
+///
+/// When the pinned version is installed but has been altered since.
+pub fn state(home: &Path, manifest: &Manifest) -> Result<State, Error> {
+    match Inventory::read(&home.join(INVENTORY)) {
+        None => Ok(State::Missing),
+        Some(inventory) if inventory.describes(manifest) => {
+            inventory.check(&home.join(FOLDER)).map(|()| State::Pinned)
+        }
+        Some(_) => Ok(State::Earlier),
+    }
+}
+
 /// Held for as long as the returned file is open; the system releases it when the process ends,
 /// however it ends, so a crash never leaves the home locked.
 fn lock(home: &Path) -> Result<File, Error> {
