@@ -241,9 +241,10 @@ jobs:
             fi
           done
 
-  # Each pin against the manifest Valve serves now. At the same version they must be the same bytes,
-  # which is how a Renovate raise, which moves only the version, shows it needs finishing. When
-  # Valve is ahead, Renovate raises the pin, so that is a notice rather than a failure.
+  # Each pin against the manifest Valve serves now. At the same version they must be the same bytes:
+  # a Renovate raise moves only the version, and pins.yml finishes it on Renovate's branch, so a
+  # pin that still differs is one that was not finished. When Valve is ahead, Renovate raises the
+  # pin, so that is a notice rather than a failure.
   pins:
     name: pins
     runs-on: ubuntu-24.04

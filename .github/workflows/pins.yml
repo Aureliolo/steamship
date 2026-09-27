@@ -1,0 +1,95 @@
+name: Pins
+
+# Renovate raises only the version inside a steamcmd pin; the packages the pin holds come from
+# the manifest Valve serves for that version. This finishes the raise on Renovate's own branch,
+# so its one pull request is complete: each manifest is fetched, kept only when it is the one for
+# that system and names exactly the version Renovate wrote, and committed through GitHub's API,
+# which signs the commit. Nothing from the branch runs here, so no raised dependency's build
+# script ever sees the write token.
+on:
+  push:
+    branches:
+      - renovate/**
+    paths:
+      - pins/**
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  finish:
+    name: finish
+    if: github.repository == 'Aureliolo/steamship' && github.actor == 'renovate[bot]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # Commits the finished pins to Renovate's branch.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Fetch the manifest each raised pin names
+        id: fetch
+        run: |
+          set -euo pipefail
+          version() { grep -m1 -oE '"version"[[:space:]]+"[0-9]+"' "$1" | grep -oE '[0-9]+'; }
+          changed=()
+          for system in win64 linux osx; do
+            pinned="pins/steam_cmd_${system}.vdf"
+            live="${RUNNER_TEMP}/steam_cmd_${system}"
+            curl -fsS --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${live}" \
+              "https://cdn.steamstatic.com/client/steam_cmd_${system}"
+            if cmp -s "${pinned}" "${live}"; then
+              continue
+            fi
+            if [[ "$(head -n1 "${live}" | tr -d '\r')" != "\"${system}\"" ]]; then
+              echo "::error file=${pinned}::Valve's steam_cmd_${system} is not the manifest for ${system}."
+              exit 1
+            fi
+            if [[ "$(version "${pinned}")" != "$(version "${live}")" ]]; then
+              # Valve moved again after Renovate looked; its next run raises the pin to match.
+              echo "::notice file=${pinned}::Valve serves $(version "${live}") for ${system}, not the $(version "${pinned}") the pin names; left for Renovate to raise again."
+              continue
+            fi
+            cp "${live}" "${pinned}"
+            changed+=("${pinned}")
+          done
+          echo "files=${changed[*]}" >> "${GITHUB_OUTPUT}"
+
+      # Committed through the API rather than pushed, as release-prepare.yml does: GitHub signs
+      # what it commits itself. The commit is made only on the head this run checked, so a newer
+      # push from Renovate is never overwritten; that push runs this again.
+      - name: Commit the finished pins
+        if: steps.fetch.outputs.files != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ github.ref_name }}
+          FILES: ${{ steps.fetch.outputs.files }}
+        run: |
+          set -euo pipefail
+          additions='[]'
+          for file in ${FILES}; do
+            additions="$(jq --arg path "${file}" --arg contents "$(base64 -w0 "${file}")" \
+              '. + [{path: $path, contents: $contents}]' <<< "${additions}")"
+          done
+          jq -n \
+            --arg repository "${GITHUB_REPOSITORY}" \
+            --arg branch "${BRANCH}" \
+            --arg head "${GITHUB_SHA}" \
+            --argjson additions "${additions}" \
+            '{
+              query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
+              variables: {input: {
+                branch: {repositoryNameWithOwner: $repository, branchName: $branch},
+                expectedHeadOid: $head,
+                message: {headline: "Finish the steamcmd pin raise"},
+                fileChanges: {additions: $additions}
+              }}
+            }' > commit.json
+          gh api graphql --input commit.json --jq .data.createCommitOnBranch.commit.oid

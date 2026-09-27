@@ -3,10 +3,14 @@
   "extends": ["config:best-practices", "security:openssf-scorecard", ":semanticCommitsDisabled"],
   "timezone": "Europe/Zurich",
   "schedule": ["before 6am on monday"],
-  "description": "The dependency dashboard is on: it is the only place that shows what Renovate tried and could not land, which the weekly pull request never mentions.",
+  "description": [
+    "The dependency dashboard is on: it is the only place that shows what Renovate tried and could not land, which the weekly pull request never mentions.",
+    "The commit pins.yml adds to finish a steamcmd raise is not taken as someone else's edit, so Renovate still rebases and updates its branch."
+  ],
   "dependencyDashboard": true,
   "dependencyDashboardLabels": ["renovate"],
   "separateMajorMinor": false,
+  "gitIgnoredAuthors": ["41898282+github-actions[bot]@users.noreply.github.com"],
   "commitMessageAction": "Raise",
   "commitMessageTopic": "{{depName}}",
   "commitMessageExtra": "to {{newVersion}}",
@@ -66,7 +70,7 @@
       "versioningTemplate": "semver"
     },
     {
-      "description": "Valve's steamcmd manifests, one per system, pinned byte for byte in pins/. Only the version inside a pin can be raised here; the pins check in CI then fails on the stale packages and says to run `cargo run --example pins`, which rewrites the pin from Valve's live manifest for review.",
+      "description": "Valve's steamcmd manifests, one per system, pinned byte for byte in pins/. Only the version inside a pin can be raised here; .github/workflows/pins.yml then commits Valve's manifest for that version to the branch, so the pull request carries the whole pin.",
       "customType": "regex",
       "managerFilePatterns": ["/^pins/steam_cmd_(win64|linux|osx)\\.vdf$/"],
       "matchStrings": ["^\"(?<system>win64|linux|osx)\"\\s*\\{\\s*\"version\"\\s+\"(?<currentValue>\\d+)\""],
