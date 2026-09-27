@@ -1,4 +1,5 @@
-name: steamship
+# The Marketplace refuses a name any GitHub account holds, and an organisation holds `steamship`.
+name: Upload to Steam with steamship
 description: Uploads a game build to Steam with Valve's steamcmd, logged in with the secret `steamship ci` set.
 branding:
   icon: upload-cloud
