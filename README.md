@@ -32,20 +32,47 @@ It works with any engine: anything that ends in a folder of files per platform c
 
 ## Install
 
-Download the archive for your system from the
-[latest release](https://github.com/Aureliolo/steamship/releases/latest) (Windows x86-64, Linux
-x86-64, macOS arm64 and x86-64) and put `steamship` on your `PATH`, or let Cargo do it:
+With Homebrew, on macOS and Linux:
 
 ```sh
-cargo binstall steamship          # that same archive, in seconds
+brew tap aureliolo/steamship https://github.com/Aureliolo/steamship
+brew install aureliolo/steamship/steamship
+```
+
+On Windows, with Scoop or winget:
+
+```sh
+scoop install https://github.com/Aureliolo/steamship/releases/latest/download/steamship.json
+winget install Aureliolo.steamship
+```
+
+or with this repository as a Scoop bucket:
+
+```sh
+scoop bucket add aureliolo https://github.com/Aureliolo/steamship
+scoop install aureliolo/steamship
+```
+
+With Cargo, anywhere:
+
+```sh
+cargo binstall steamship          # the release's archive, in seconds
 cargo install --locked steamship  # or built from source
 ```
 
+Or download the archive for your system from the
+[latest release](https://github.com/Aureliolo/steamship/releases/latest) (Windows x86-64, Linux
+x86-64, macOS arm64 and x86-64) and put `steamship` on your `PATH`. Homebrew, Scoop and winget
+install that archive only if it matches the SHA-256 the release is signed over.
+
 ## Upgrade
 
-The same commands replace the steamship you have with the newest release:
+Upgrade the way you installed:
 
 ```sh
+brew upgrade steamship
+scoop update steamship
+winget upgrade Aureliolo.steamship
 cargo binstall steamship
 cargo install --locked steamship
 ```
@@ -259,12 +286,6 @@ Valve recommends a dedicated Steam account for uploads with only **Edit App Meta
 **Publish App Changes To Steam**, in a [permission group](https://partner.steamgames.com/pub/groups/)
 holding only the apps it uploads. Its token can do everything those permissions allow, so treat
 `$STEAMSHIP_HOME` like a password.
-
-## Roadmap
-
-Before 1.0:
-
-- Scoop, winget and Homebrew packages.
 
 ## Licence
 

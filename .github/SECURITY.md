@@ -37,3 +37,9 @@ Only the latest release gets fixes.
 - **Releases.** Built by GitHub Actions from a signed, tagged commit on main, at SLSA Build
   Level 3, with a SHA-256, an SPDX SBOM and Sigstore attestations for every file. A published
   release and its tag cannot be changed.
+- **Packages.** The Homebrew formula and the Scoop manifest are written by the release from its
+  checksums, each verified against the release's attestation first, and installed on each system
+  before they reach main; winget's manifest is sent only once its hash matches too. The GitHub
+  App that lands them on main can change this repository's contents and pull requests and
+  nothing else, and the winget token belongs to an account that owns nothing but a fork of
+  winget-pkgs. Both are secrets of an environment only release tags can use.
