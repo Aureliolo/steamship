@@ -1,4 +1,10 @@
-//! What more than one test file needs: on Linux, a Secret Service of the tests' own.
+//! What more than one test file needs: a lock on the credential store, and on Linux a Secret
+//! Service of the tests' own.
+//!
+//! Windows' Credential Manager loses changes that different processes make at the same moment: a
+//! credential one deletes can come back when another writes its own, which its own `cmdkey` shows
+//! with a few processes at once. So every test that keeps or forgets a key holds [`store_lock`],
+//! which also holds off the test runs cargo-mutants starts side by side.
 //!
 //! One gnome-keyring shared by every test run falls over under many at once (it has been seen to
 //! fail its own assertions and exit), and would hold a person's real keys besides. So each test
@@ -6,8 +12,10 @@
 //! with no display for any prompt to open on, and both end when the process does: the script
 //! holding them waits on its input, which closes as the process exits.
 
+use std::env;
 #[cfg(target_os = "linux")]
 use std::ffi::OsString;
+use std::fs::{File, OpenOptions};
 #[cfg(target_os = "linux")]
 use std::io::{BufRead as _, BufReader};
 #[cfg(target_os = "linux")]
@@ -45,6 +53,23 @@ keyring=$!
 echo "$DBUS_SESSION_BUS_ADDRESS"
 cat >/dev/null
 "#;
+
+/// Holds every other test, in this process or another, off the credential store until dropped.
+///
+/// # Panics
+///
+/// When the lock file cannot be opened or locked.
+#[must_use]
+pub fn store_lock() -> File {
+    let file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(env::temp_dir().join("steamship-tests-credentials.lock"))
+        .unwrap();
+    file.lock().unwrap();
+    file
+}
 
 /// What a `steamship` run by the tests needs set: on Linux this process's own Secret Service.
 #[cfg(target_os = "linux")]

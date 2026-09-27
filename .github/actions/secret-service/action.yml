@@ -1,21 +1,17 @@
 name: Secret Service
 description: >-
-  Starts a D-Bus session bus with GNOME Keyring's Secret Service on it, unlocked, as a Linux
-  desktop has, for the steps after this one. steamship keeps the Web API key there, and its tests
-  keep and forget keys in it.
+  Installs D-Bus and GNOME Keyring, which provide the Secret Service a Linux desktop keeps
+  secrets in and steamship keeps the Web API key in. Tests and steps start a bus and a keyring of
+  their own from these.
 
 runs:
   using: composite
   steps:
     # From the image's own signed Ubuntu archive, as musl-tools is. secret-tool is libsecret's,
     # a second client of the same store for steps that check what steamship kept.
-    - name: Start a session bus and GNOME Keyring
+    - name: Install D-Bus and GNOME Keyring
       shell: bash
       run: |
         set -euo pipefail
         sudo apt-get update
         sudo apt-get install --yes --no-install-recommends dbus-daemon gnome-keyring libsecret-tools
-        address="$(dbus-daemon --session --fork --print-address)"
-        echo "DBUS_SESSION_BUS_ADDRESS=${address}" >> "${GITHUB_ENV}"
-        printf 'ci' | DBUS_SESSION_BUS_ADDRESS="${address}" \
-          gnome-keyring-daemon --unlock --components=secrets --daemonize > /dev/null

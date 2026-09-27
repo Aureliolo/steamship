@@ -102,9 +102,11 @@ jobs:
           CARGO_MUTANTS_VERSION: 27.1.0
         run: cargo install cargo-mutants --version "${CARGO_MUTANTS_VERSION}" --locked
 
-      - name: Start a Secret Service
+      # Each run of the tests starts a keyring of its own from these, so that one a mutant brings
+      # down cannot take the runs after it down too.
+      - name: Install D-Bus and GNOME Keyring
         if: runner.os == 'Linux'
-        uses: ./.github/actions/secret-service
+        uses: ./.github/actions/secret-service # zizmor: ignore[self-repository]
 
       - name: Mutate what the pull request changed
         if: github.event_name == 'pull_request'

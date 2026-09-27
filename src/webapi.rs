@@ -7,6 +7,7 @@
 //! a list or a map of entries, and numbers written as numbers or as text.
 
 use std::cmp::Reverse;
+use std::env;
 use std::error;
 use std::fmt;
 use std::time::Duration;
@@ -347,6 +348,30 @@ impl Overview {
     }
 }
 
+/// Where a debug build, as the tests run, may be sent instead of Steam.
+///
+/// It names a stand-in on this machine, so that what follows a key Steam takes can be tested
+/// without one. A release build has no such place and can reach Steam alone.
+pub const STAND_IN: &str = "STEAMSHIP_WEB_API_STAND_IN";
+
+/// The host the Web API is called at, where `lookup` reads the environment.
+fn host<Lookup>(lookup: Lookup) -> String
+where
+    Lookup: Fn(&str) -> Option<String>,
+{
+    // A port and nothing after it: `http://127.0.0.1:80@example.com` names example.com.
+    let loopback = |host: &String| {
+        host.strip_prefix("http://127.0.0.1:")
+            .is_some_and(|port| !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()))
+    };
+    if cfg!(debug_assertions)
+        && let Some(stand_in) = lookup(STAND_IN).filter(loopback)
+    {
+        return stand_in;
+    }
+    HOST.to_owned()
+}
+
 /// The partner Web API, called with one key.
 #[derive(Debug)]
 pub struct Api {
@@ -358,7 +383,7 @@ pub struct Api {
 impl Api {
     #[must_use]
     pub fn new(key: Key) -> Self {
-        Self::at(key, HOST)
+        Self::at(key, &host(|name| env::var(name).ok()))
     }
 
     fn at(key: Key, host: &str) -> Self {
@@ -786,8 +811,22 @@ mod tests {
 
     #[test]
     fn the_api_is_steams_partner_host_unless_a_test_names_another() {
-        assert_eq!(Api::new(Key::parse(KEY_TEXT).unwrap()).host, HOST);
         assert_eq!(HOST, "https://partner.steam-api.com");
+        assert_eq!(host(|_| None), HOST);
+        let named =
+            |value: &'static str| host(move |name| (name == STAND_IN).then(|| value.to_owned()));
+        assert_eq!(named("http://127.0.0.1:4321"), "http://127.0.0.1:4321");
+        for elsewhere in [
+            "https://partner.steam-api.com.example",
+            "http://127.0.0.2:80",
+            "http://localhost:80",
+            "https://127.0.0.1:443",
+            "http://127.0.0.1:80@partner.steam-api.com.example",
+            "http://127.0.0.1:",
+            "http://127.0.0.1:80/",
+        ] {
+            assert_eq!(named(elsewhere), HOST, "{elsewhere}");
+        }
     }
 
     #[test]

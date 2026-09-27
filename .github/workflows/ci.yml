@@ -60,10 +60,11 @@ jobs:
         if: '!cancelled()'
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
-      # Windows' Credential Manager and the macOS Keychain are there on their runners already.
-      - name: Start a Secret Service
+      # Windows' Credential Manager and the macOS Keychain are there on their runners already; on
+      # Linux the tests start a keyring of their own from these.
+      - name: Install D-Bus and GNOME Keyring
         if: matrix.platform == 'linux'
-        uses: ./.github/actions/secret-service
+        uses: ./.github/actions/secret-service # zizmor: ignore[self-repository]
 
       - name: Test
         if: '!cancelled()'
@@ -119,8 +120,8 @@ jobs:
           tar -xzf "${archive}" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 
-      - name: Start a Secret Service
-        uses: ./.github/actions/secret-service
+      - name: Install D-Bus and GNOME Keyring
+        uses: ./.github/actions/secret-service # zizmor: ignore[self-repository]
 
       - name: Measure
         run: cargo llvm-cov --locked --fail-under-lines 97
@@ -268,17 +269,19 @@ jobs:
           test "${status}" -eq 1
           grep -q '^  ✗ Steam refused the Web API key; ' "${RUNNER_TEMP}/builds.txt"
 
-      - name: Start a Secret Service
+      - name: Install D-Bus and GNOME Keyring
         if: matrix.platform == 'linux'
-        uses: ./.github/actions/secret-service
+        uses: ./.github/actions/secret-service # zizmor: ignore[self-repository]
 
       # A key kept as a Linux desktop keeps one: libsecret's own secret-tool stores it in GNOME
       # Keyring, steamship finds it for its home and has Steam refuse it as above, then `logout`
-      # forgets it, which secret-tool must see too.
+      # forgets it, which secret-tool must see too. The bus and the keyring are this step's own.
       - name: Use a key GNOME Keyring keeps, then forget it
         if: matrix.platform == 'linux'
         run: |
+          dbus-run-session -- bash <<'SESSION'
           set -euo pipefail
+          printf 'ci' | gnome-keyring-daemon --unlock --components=secrets --daemonize > /dev/null
           export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
           printf '00000000000000000000000000000000' | secret-tool store \
             --label='steamship Web API key' \
@@ -295,6 +298,7 @@ jobs:
             echo "logout left the key in GNOME Keyring." >&2
             exit 1
           fi
+          SESSION
 
       # The login the anonymous run saved, packed by `steamship ci` as for a CI secret, then handed
       # to an upload in a home of its own through STEAMSHIP_LOGIN alone: the account comes from

@@ -65,6 +65,7 @@ fn steamship(args: &[&str], home: &Path, variables: &[(&str, &str)]) -> String {
 #[test]
 fn a_key_is_kept_replaced_read_back_and_forgotten_for_its_home_alone() {
     store();
+    let _store = common::store_lock();
     let home = tempfile::tempdir().unwrap();
     let other = tempfile::tempdir().unwrap();
     let home = home.path();
@@ -92,6 +93,7 @@ fn a_key_is_kept_replaced_read_back_and_forgotten_for_its_home_alone() {
 #[test]
 fn what_is_kept_that_is_not_a_key_is_refused_not_used() {
     store();
+    let _store = common::store_lock();
     let home = tempfile::tempdir().unwrap();
     let account = home.path().display().to_string();
     for kept in [&b"not a key"[..], &[0xff, 0xfe][..]] {
@@ -107,6 +109,7 @@ fn what_is_kept_that_is_not_a_key_is_refused_not_used() {
 #[test]
 fn status_shows_a_kept_key_and_one_set_and_logout_forgets_the_kept_one() {
     store();
+    let _store = common::store_lock();
     let home = tempfile::tempdir().unwrap();
     let kept = Key::parse("0123456789abcdef0123456789abcdef").unwrap();
     keychain::keep(home.path(), &kept).unwrap();
