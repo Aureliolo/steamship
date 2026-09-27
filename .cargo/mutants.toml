@@ -20,4 +20,7 @@ exclude_re = [
   # Revocation checking shows only with a revoked certificate, and asking for no window only
   # when Windows would otherwise wait on someone to answer one.
   'replace quietly_to_the_root with \(\)',
+  # Reached only when Steam's partner Web API fails, which no test may call; CI's install job
+  # has the real API refuse a key that is not one, and checks the exit code there.
+  'replace web_api_failed -> ExitCode with Default::default\(\)',
 ]

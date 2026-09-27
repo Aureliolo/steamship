@@ -25,6 +25,9 @@ Only the latest release gets fixes.
   hands it to `gh` on its input, never on a command line or the screen, or writes it to a file
   readable by its owner alone. In CI, `upload` and `status` write it back where steamcmd reads it,
   and a value that is not one is refused without being repeated.
+- **The Web API key.** `builds` and `promote` read the publisher key from `STEAMSHIP_WEB_API_KEY`
+  alone and send it in the `x-webapi-key` header, never in an address, so that no error which
+  names an address can name the key; a value that is not a key is refused without being repeated.
 - **Nothing secret on the command line.** A password or Steam Guard code reaches steamship only as
   typed at `login`, or piped to it, never as a command-line argument, which other users of the
   machine can list.
