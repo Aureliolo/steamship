@@ -19,6 +19,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
+#[cfg(unix)]
+use steamship::account::Account;
 use steamship::install;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
@@ -27,6 +29,8 @@ use steamship::terminal::{Event, Reader};
 use steamship::unix::Terminal;
 #[cfg(windows)]
 use steamship::windows::Terminal;
+#[cfg(unix)]
+use steamship::{ci, steamcmd};
 
 /// `steamship install` with `STEAMSHIP_HOME` set to `home`, or with no environment at all.
 fn run(home: Option<&Path>) -> (Option<i32>, String, String) {
@@ -40,7 +44,18 @@ fn steamship(
     home: Option<&Path>,
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
+    steamship_in(Path::new("."), args, home, variables)
+}
+
+/// [`steamship`], run in `folder`.
+fn steamship_in(
+    folder: &Path,
+    args: &[&str],
+    home: Option<&Path>,
+    variables: &[(&str, &str)],
+) -> (Option<i32>, String, String) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_steamship"));
+    let _: &mut Command = command.current_dir(folder);
     let _: &mut Command = command.args(args).env_remove("STEAMSHIP_ACCOUNT");
     let _: &mut Command = match home {
         Some(home) => command.env("STEAMSHIP_HOME", home),
@@ -180,6 +195,7 @@ fn help_lists_every_command_with_one_short_line() {
         "  status   Show the login and steamcmd, checking the login with Steam\n",
         "  check    Check the build scripts, without logging in\n",
         "  upload   Check, build and upload, then print the build ID\n",
+        "  ci       Set up uploads from CI, the login kept as a secret\n",
         "  logout   Forget the saved login\n",
         "  install  Install or verify the pinned steamcmd\n",
     ] {
@@ -214,23 +230,641 @@ fn status_with_nothing_saved_says_to_log_in_changes_nothing_and_exits_3() {
     );
 }
 
-/// A home with a login saved where steamcmd keeps it on Linux, for `build_bot`, remembered.
+/// A home with a login saved where steamcmd keeps it on this system, for `build_bot`, remembered.
 #[cfg(unix)]
 fn saved_login(home: &Path) {
-    let config = home.join("Steam/config/config.vdf");
+    let config = steamcmd::saved_login(home, Platform::THIS);
     fs::create_dir_all(config.parent().unwrap()).unwrap();
     fs::write(config, "\"token\" \"a_saved_login_token_0123456789\"").unwrap();
     fs::write(home.join("account"), "build_bot\n").unwrap();
 }
 
-/// A home whose steamcmd keeps what it was started with in `args`, says `said` and exits `code`.
+/// A home with the login `saved_login` makes, whose steamcmd keeps what it was started with in
+/// `args`, says `said` and exits `code`.
 #[cfg(unix)]
 fn checking(said: &str, code: u8) -> tempfile::TempDir {
-    let home = faked_with(&format!(
-        "#!/bin/sh\necho \"$*\" > \"$HOME/args\"\nprintf '%s\\r\\n' '{said}'\nexit {code}\n"
-    ));
+    let home = answering(said, code);
     saved_login(home.path());
     home
+}
+
+/// [`checking`] with no login saved.
+#[cfg(unix)]
+fn answering(said: &str, code: u8) -> tempfile::TempDir {
+    faked_with(&format!(
+        "#!/bin/sh\necho \"$*\" > \"$HOME/args\"\nprintf '%s\\r\\n' '{said}'\nexit {code}\n"
+    ))
+}
+
+/// The login `saved_login` makes, packed as `steamship ci` packs it.
+#[cfg(unix)]
+fn packed_login() -> String {
+    let home = tempfile::tempdir().unwrap();
+    let config = steamcmd::saved_login(home.path(), Platform::THIS);
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(config, "\"token\" \"a_saved_login_token_0123456789\"").unwrap();
+    let account = Account::parse("build_bot").unwrap();
+    let login = ci::Login::saved(home.path(), Platform::THIS, account).unwrap();
+    login.packed().to_string()
+}
+
+#[cfg(unix)]
+#[test]
+fn status_in_ci_logs_in_with_the_login_handed_over_and_puts_it_where_steamcmd_looks() {
+    let home = answering(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let packed = packed_login();
+    let (code, stdout, stderr) = steamship(
+        &["status"],
+        Some(home.path()),
+        &[("STEAMSHIP_LOGIN", &packed), ("STEAMSHIP_ACCOUNT", "")],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  account   from STEAMSHIP_LOGIN\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("  login     from STEAMSHIP_LOGIN\n"),
+        "{stdout}"
+    );
+    assert!(stdout.ends_with("  \u{2713} ready to upload\n"), "{stdout}");
+    assert!(
+        !stdout.contains(&packed) && !stdout.contains("build_bot"),
+        "{stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(home.path().join("args")).unwrap(),
+        "+@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 +login build_bot +quit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(steamcmd::saved_login(home.path(), Platform::THIS)).unwrap(),
+        "\"token\" \"a_saved_login_token_0123456789\""
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_in_ci_logs_in_as_the_account_handed_over() {
+    let home = faked();
+    let (_project, script) = project(true);
+    let script = script.to_str().unwrap();
+    let (_, stdout, _) = steamship(
+        &["upload", script, "--version", "1.4.0", "--preview"],
+        Some(home.path()),
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    let console = fs::read_to_string(home.path().join("apps/1000/output/steamcmd.log")).unwrap();
+    assert!(console.contains(" +login build_bot "), "{stdout}{console}");
+    assert!(steamcmd::saved_login(home.path(), Platform::THIS).exists());
+}
+
+#[test]
+fn a_login_handed_over_that_is_not_one_is_refused_without_repeating_it() {
+    let home = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["status"],
+        Some(home.path()),
+        &[("STEAMSHIP_LOGIN", "steamship-login-1:secret_name:zz")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}");
+    assert_eq!(
+        failure(&stderr),
+        "STEAMSHIP_LOGIN does not hold a login packed by `steamship ci`"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("secret_name"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_login_handed_over_that_is_not_text_is_refused() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let home = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_steamship"))
+        .arg("status")
+        .env("STEAMSHIP_HOME", home.path())
+        .env(
+            "STEAMSHIP_LOGIN",
+            OsStr::from_bytes(b"steamship-login-1:\xff"),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2_i32));
+    assert_eq!(
+        failure(&String::from_utf8_lossy(&output.stderr)),
+        "STEAMSHIP_LOGIN does not hold a login packed by `steamship ci`"
+    );
+}
+
+#[test]
+fn ci_with_the_script_named_goes_on_to_the_account() {
+    let (_project, root) = github_project();
+    let home = tempfile::tempdir().unwrap();
+    let script = root.join("steam").join("app_build.vdf");
+    let (code, stdout, stderr) = steamship(
+        &[
+            "ci",
+            "--script",
+            script.to_str().unwrap(),
+            "--output",
+            "unused",
+        ],
+        Some(home.path()),
+        &[("STEAMSHIP_ACCOUNT", "")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(&format!("  script    {}\n", script.display())),
+        "{stdout}"
+    );
+    assert_eq!(
+        failure(&stderr),
+        "name the build account with --account or STEAMSHIP_ACCOUNT"
+    );
+}
+
+#[test]
+fn ci_in_a_repository_without_an_app_build_script_says_so_and_exits_2() {
+    let empty = tempfile::tempdir().unwrap();
+    git(empty.path(), &["init", "--quiet"]);
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship_in(empty.path(), &["ci"], Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(
+        failure(&stderr).starts_with("no app build script in "),
+        "{stderr}"
+    );
+    assert!(stderr.contains("; name one with --script"), "{stderr}");
+}
+
+#[test]
+fn an_empty_account_variable_names_no_account() {
+    let home = tempfile::tempdir().unwrap();
+    let (code, stdout, _) = steamship(&["status"], Some(home.path()), &[("STEAMSHIP_ACCOUNT", "")]);
+    assert_eq!(code, Some(3_i32), "{stdout}");
+    assert!(stdout.contains("  account   none remembered\n"), "{stdout}");
+}
+
+#[test]
+fn ci_refuses_a_secret_github_would_not_take_and_exits_2() {
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship(&["ci", "--secret", "GITHUB_LOGIN"], Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32));
+    assert!(
+        failure(&stderr).starts_with("GITHUB_LOGIN cannot name a GitHub secret"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn ci_outside_a_repository_asks_for_the_script_and_exits_2() {
+    let home = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship_in(outside.path(), &["ci"], Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "this is not a Git repository; run it in the game's, or name the script with --script"
+    );
+}
+
+#[test]
+fn ci_finds_the_script_but_needs_a_github_origin_and_exits_2() {
+    let (project, _) = project(true);
+    let root = project.path().join("fgm gate (x86) 1a2b");
+    let home = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = steamship_in(&root, &["ci"], Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    let found = Path::new("steam").join("app_build.vdf");
+    assert!(
+        stdout.contains(&format!("  script    {}, found\n", found.display())),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\u{2713} 1000, 1 depot, 1 file, checked"),
+        "{stdout}"
+    );
+    assert!(
+        failure(&stderr).starts_with("the script's repository has no GitHub origin"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn ci_with_several_scripts_and_nobody_to_ask_names_them_and_exits_2() {
+    let (project, _) = project(true);
+    let root = project.path().join("fgm gate (x86) 1a2b");
+    let _: u64 = fs::copy(
+        root.join("steam/app_build.vdf"),
+        root.join("steam/app_build_demo.vdf"),
+    )
+    .unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship_in(&root, &["ci"], Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    let steam = Path::new("steam");
+    assert_eq!(
+        failure(&stderr),
+        format!(
+            "several app build scripts, {}, {}; name one with --script",
+            steam.join("app_build.vdf").display(),
+            steam.join("app_build_demo.vdf").display()
+        )
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_writes_the_checked_login_to_a_file_for_another_ci() {
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let (project, _) = project(true);
+    let root = project.path().join("fgm gate (x86) 1a2b");
+    let output = project.path().join("login.txt");
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["ci", "--output", output.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  steam     \u{2713} Steam takes the saved login\n"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("\u{2713} ready for CI\n"), "{stdout}");
+    let written = fs::read_to_string(&output).unwrap();
+    assert_eq!(written, packed_login());
+    assert!(!stdout.contains(&written), "the login is never shown");
+    let unpacked = ci::Login::unpack(&written).unwrap();
+    assert_eq!(unpacked.account().name(), "build_bot");
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_with_no_saved_login_says_to_log_in_first_and_exits_3() {
+    let home = answering("", 0);
+    fs::write(home.path().join("account"), "build_bot\n").unwrap();
+    let (project, _) = project(true);
+    let root = project.path().join("fgm gate (x86) 1a2b");
+    let output = project.path().join("login.txt");
+    let (code, _, stderr) = steamship_in(
+        &root,
+        &["ci", "--output", output.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(3_i32), "{stderr}");
+    assert!(
+        stderr.ends_with("log in here first with steamship login\n"),
+        "{stderr}"
+    );
+    assert!(!output.exists());
+}
+
+/// The game's repository from [`project`], cloned from GitHub as far as its `origin` says.
+fn github_project() -> (tempfile::TempDir, PathBuf) {
+    let (project, _) = project(true);
+    let root = project.path().join("fgm gate (x86) 1a2b");
+    git(
+        &root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/Aureliolo/some-game.git",
+        ],
+    );
+    (project, root)
+}
+
+/// A stand-in for the GitHub command line, first on a `PATH` that is otherwise the test's own.
+/// `gh secret set` keeps what it was given and how beside itself, and refuses when
+/// `STEAMSHIP_FAKE_GH_REFUSE` is set; `gh api` answers a commit, `STEAMSHIP_FAKE_GH_COMMIT` if
+/// set, or fails when `STEAMSHIP_FAKE_GH_OFFLINE` is set.
+#[cfg(unix)]
+fn fake_gh() -> (tempfile::TempDir, String) {
+    use std::env;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let bin = tempfile::tempdir().unwrap();
+    let gh = bin.path().join("gh");
+    fs::write(
+        &gh,
+        "#!/bin/sh\n\
+         here=\"$(dirname \"$0\")\"\n\
+         case \"$1\" in\n\
+         secret)\n\
+         echo \"$*\" > \"$here/args\"\n\
+         cat > \"$here/secret\"\n\
+         [ -z \"$STEAMSHIP_FAKE_GH_REFUSE\" ] || { echo 'HTTP 403: Resource not accessible' >&2; exit 1; } ;;\n\
+         api)\n\
+         [ -z \"$STEAMSHIP_FAKE_GH_OFFLINE\" ] || exit 1\n\
+         echo \"${STEAMSHIP_FAKE_GH_COMMIT:-0123456789abcdef0123456789abcdef01234567}\" ;;\n\
+         esac\n",
+    )
+    .unwrap();
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!("{}:{}", bin.path().display(), env::var("PATH").unwrap());
+    (bin, path)
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_sets_the_secret_through_gh_and_shows_the_step_pinned_by_commit() {
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let (_project, root) = github_project();
+    let (gh, path) = fake_gh();
+    let (code, stdout, stderr) =
+        steamship_in(&root, &["ci"], Some(home.path()), &[("PATH", &path)]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  repo      Aureliolo/some-game, from origin\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("  secret    \u{2713} STEAMSHIP_LOGIN set on Aureliolo/some-game\n"),
+        "{stdout}"
+    );
+    let version = env!("CARGO_PKG_VERSION");
+    assert!(
+        stdout.ends_with(&format!(
+            "\n      - name: Upload to Steam\n        \
+             uses: Aureliolo/steamship@0123456789abcdef0123456789abcdef01234567 # v{version}\n        \
+             with:\n          \
+             script: steam/app_build.vdf\n          \
+             version: ${{{{ github.ref_name }}}}\n          \
+             login: ${{{{ secrets.STEAMSHIP_LOGIN }}}}\n"
+        )),
+        "{stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(gh.path().join("args")).unwrap(),
+        "secret set STEAMSHIP_LOGIN --repo Aureliolo/some-game\n"
+    );
+    let secret = fs::read_to_string(gh.path().join("secret")).unwrap();
+    assert_eq!(secret, packed_login());
+    assert!(!stdout.contains(&secret), "the login is never shown");
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_takes_the_repository_and_secret_named_and_pins_the_tag_when_github_cannot_be_asked() {
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let (_project, root) = github_project();
+    let (gh, path) = fake_gh();
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &[
+            "ci",
+            "--repo",
+            "Aureliolo/other-game",
+            "--secret",
+            "STEAM_UPLOAD",
+        ],
+        Some(home.path()),
+        &[("PATH", &path), ("STEAMSHIP_FAKE_GH_OFFLINE", "1")],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  repo      Aureliolo/other-game, as named\n"),
+        "{stdout}"
+    );
+    let version = env!("CARGO_PKG_VERSION");
+    assert!(
+        stdout.contains(&format!(
+            "uses: Aureliolo/steamship@v{version} # v{version}\n"
+        )),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("login: ${{ secrets.STEAM_UPLOAD }}\n"),
+        "{stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(gh.path().join("args")).unwrap(),
+        "secret set STEAM_UPLOAD --repo Aureliolo/other-game\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_says_what_gh_answered_when_it_cannot_set_the_secret_and_exits_1() {
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let (_project, root) = github_project();
+    let (_gh, path) = fake_gh();
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["ci"],
+        Some(home.path()),
+        &[("PATH", &path), ("STEAMSHIP_FAKE_GH_REFUSE", "1")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}");
+    assert!(
+        stdout.ends_with("  secret    \u{2717} not set\n"),
+        "{stdout}"
+    );
+    assert_eq!(
+        failure(&stderr),
+        "gh could not set the secret: HTTP 403: Resource not accessible"
+    );
+    assert!(
+        stderr.ends_with("if gh is not logged in, run gh auth login\n"),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_without_gh_says_where_to_get_it_and_exits_1() {
+    use std::os::unix::fs::symlink;
+
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let (_project, root) = github_project();
+    let bin = tempfile::tempdir().unwrap();
+    let git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    let git = String::from_utf8(git.stdout).unwrap();
+    symlink(git.trim(), bin.path().join("git")).unwrap();
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["ci"],
+        Some(home.path()),
+        &[("PATH", bin.path().to_str().unwrap())],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}");
+    assert!(
+        stdout.ends_with("  secret    \u{2717} gh is not installed\n"),
+        "{stdout}"
+    );
+    assert_eq!(failure(&stderr), "the GitHub command line is needed");
+    assert!(
+        stderr.ends_with(
+            "install it from https://cli.github.com, or write the login to a file with --output\n"
+        ),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_with_a_gh_that_cannot_start_says_so_and_exits_1() {
+    use std::os::unix::fs::symlink;
+
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let (_project, root) = github_project();
+    let bin = tempfile::tempdir().unwrap();
+    let git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    symlink(
+        String::from_utf8(git.stdout).unwrap().trim(),
+        bin.path().join("git"),
+    )
+    .unwrap();
+    fs::write(bin.path().join("gh"), "not a program").unwrap();
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["ci"],
+        Some(home.path()),
+        &[("PATH", bin.path().to_str().unwrap())],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}");
+    assert!(
+        stdout.ends_with("  secret    \u{2717} gh could not start\n"),
+        "{stdout}"
+    );
+    assert!(failure(&stderr).starts_with("gh: "), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_pins_the_tag_when_github_answers_something_that_is_not_a_commit() {
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let (_project, root) = github_project();
+    let (_gh, path) = fake_gh();
+    let version = env!("CARGO_PKG_VERSION");
+    for answer in ["0123abc", &"g".repeat(40)] {
+        let (code, stdout, _) = steamship_in(
+            &root,
+            &["ci"],
+            Some(home.path()),
+            &[("PATH", &path), ("STEAMSHIP_FAKE_GH_COMMIT", answer)],
+        );
+        assert_eq!(code, Some(0_i32), "{stdout}");
+        assert!(
+            stdout.contains(&format!(
+                "uses: Aureliolo/steamship@v{version} # v{version}\n"
+            )),
+            "{answer}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn ci_run_outside_the_repository_reads_origin_where_the_script_is() {
+    let (_project, root) = github_project();
+    let outside = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let script = root.join("steam").join("app_build.vdf");
+    let (code, stdout, stderr) = steamship_in(
+        outside.path(),
+        &["ci", "--script", script.to_str().unwrap()],
+        Some(home.path()),
+        &[("STEAMSHIP_ACCOUNT", "")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  repo      Aureliolo/some-game, from origin\n"),
+        "{stdout}"
+    );
+    assert_eq!(
+        failure(&stderr),
+        "name the build account with --account or STEAMSHIP_ACCOUNT"
+    );
+}
+
+#[test]
+fn ci_refuses_a_repository_that_is_not_an_owner_and_name_and_exits_2() {
+    let (_project, root) = github_project();
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship_in(
+        &root,
+        &["ci", "--repo", "Aureliolo/some-game/extra"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "Aureliolo/some-game/extra is not a repository's owner/name"
+    );
+}
+
+#[test]
+fn ci_on_a_terminal_asks_which_script_when_there_are_several() {
+    let (_project, root) = github_project();
+    let _: u64 = fs::copy(
+        root.join("steam/app_build.vdf"),
+        root.join("steam/app_build_demo.vdf"),
+    )
+    .unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let steamship = env!("CARGO_BIN_EXE_steamship");
+    // As in login_then_look: `cmd` reads no quoting, so the path is written without.
+    #[cfg(windows)]
+    let line = format!(
+        "cd /d {} & {steamship} ci --account build_bot",
+        root.display()
+    );
+    #[cfg(unix)]
+    let line = format!(
+        "cd '{}' && '{steamship}' ci --account build_bot",
+        root.display()
+    );
+    let mut session = Session::start(&line, home.path());
+    session.wait_for("script");
+    session.wait_for("2");
+    session.type_in("2\r");
+    session.wait_for("log in here first");
+    let _: Option<i32> = session.end().wait().unwrap();
+    let seen = session.seen();
+    let demo = Path::new("steam").join("app_build_demo.vdf");
+    assert!(
+        seen.contains(&format!("  2         {}\n", demo.display())),
+        "{seen}"
+    );
+    assert!(
+        seen.contains("\u{2713} 1000, 1 depot, 1 file, checked"),
+        "{seen}"
+    );
 }
 
 #[cfg(unix)]
@@ -1147,6 +1781,38 @@ fn nothing_upload_prints_or_writes_holds_the_login() {
     for (path, contents) in files {
         assert_no_secret_in(&path, &contents);
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_in_a_github_actions_step_hands_the_build_id_on_as_its_output() {
+    let home = leaking();
+    let (project, script) = project(true);
+    let outputs = project.path().join("github_output");
+    fs::write(&outputs, "earlier=kept\n").unwrap();
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("GITHUB_OUTPUT", outputs.to_str().unwrap())],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(&outputs).unwrap(),
+        "earlier=kept\nbuild-id=4242\n"
+    );
+    let missing = project.path().join("no such folder").join("output");
+    let (still, _, said) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("GITHUB_OUTPUT", missing.to_str().unwrap())],
+    );
+    assert_eq!(still, Some(0_i32), "the upload is done: {said}");
+    assert!(
+        said.contains("the BuildID could not be handed to the workflow"),
+        "{said}"
+    );
 }
 
 #[cfg(unix)]
