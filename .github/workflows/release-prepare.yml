@@ -3,13 +3,13 @@ name: Prepare release
 # Cutting a tag by hand is the one release step nobody can check afterwards, and it is the step
 # most often done at the wrong time, from the wrong branch, against the wrong version. This puts
 # it behind a button: pick the bump, and out comes a branch with the signed version commit and a
-# pull request for it. Merge that and the tagging and publishing follow, with nobody typing a
-# version again.
+# pull request for it, which merges itself once every required check has passed. The tagging and
+# publishing follow, with nobody typing a version again.
 #
-# The checks on that pull request are created in an approval-required state and wait for a click.
-# That is GitHub's rule for anything a workflow opens with the job token. Getting them to start by
-# themselves would mean a GitHub App or a personal access token, which is a standing credential
-# bought to save one click.
+# The pull request is opened as the packaging app rather than with the job token: GitHub holds the
+# checks of anything a workflow opens with its own token until someone approves them, and a merge
+# made with that token starts no workflow on main, so the tag would never come. Only the
+# repository's owner may start it, since what it starts ends in a published release.
 on:
   workflow_dispatch:
     inputs:
@@ -38,11 +38,33 @@ jobs:
     name: prepare
     runs-on: ubuntu-26.04
     timeout-minutes: 15
+    # The app's key is a secret of this environment, which only main can deploy to.
+    environment: release-prepare
     permissions:
-      contents: write # Creates the release branch and the signed version commit on it.
-      pull-requests: write # Opens the release pull request for that branch.
+      contents: read # Reads main, and whether a version's tag is taken; the app does the writing.
 
     steps:
+      - name: Refuse anyone but the repository's owner
+        env:
+          STARTED_BY: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          if [[ "${STARTED_BY}" != "${GITHUB_REPOSITORY_OWNER}" ]]; then
+            echo "::error::Only ${GITHUB_REPOSITORY_OWNER} prepares releases; this run was started by ${STARTED_BY}." >&2
+            exit 1
+          fi
+
+      - name: Refuse to go on without the packaging app
+        env:
+          CLIENT_ID: ${{ vars.PACKAGING_APP_CLIENT_ID }}
+          KEY_SET: ${{ secrets.PACKAGING_APP_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLIENT_ID}" || "${KEY_SET}" != true ]]; then
+            echo "::error::The packaging app is not set up: the variable PACKAGING_APP_CLIENT_ID and the secret PACKAGING_APP_KEY in the release-prepare environment are needed. See .github/release-process.md." >&2
+            exit 1
+          fi
+
       - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -106,11 +128,21 @@ jobs:
             exit 1
           fi
 
+      - name: Act as the packaging app
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PACKAGING_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PACKAGING_APP_KEY }}
+          repositories: steamship
+          permission-contents: write
+          permission-pull-requests: write
+
       # Committed through the API rather than pushed: GitHub signs what it commits itself, and the
       # branch ruleset on main takes only signed commits.
       - name: Commit the bump on a branch of its own
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
           BRANCH: ${{ steps.bump.outputs.branch }}
           VERSION: ${{ steps.bump.outputs.version }}
         run: |
@@ -144,9 +176,11 @@ jobs:
           gh api graphql --input commit.json --jq .data.createCommitOnBranch.commit.oid
           rm commit.json
 
-      - name: Open the release pull request
+      # Auto-merge waits for every check the ruleset on main requires, and merges only when all
+      # have passed; one that fails leaves the pull request open, and nothing is released.
+      - name: Open the release pull request, to merge itself once its checks pass
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
           GH_REPO: ${{ github.repository }}
           BRANCH: ${{ steps.bump.outputs.branch }}
           VERSION: ${{ steps.bump.outputs.version }}
@@ -156,13 +190,13 @@ jobs:
           url="$(gh pr list --head "${BRANCH}" --state open --json url --jq '.[0].url // empty')"
           if [[ -z "${url}" ]]; then
             url="$(gh pr create --base main --head "${BRANCH}" --title "Release v${VERSION}" \
-              --body "Raises the version to ${VERSION}. Merging this tags v${VERSION}, which builds, signs and publishes the release.")"
+              --body "Raises the version to ${VERSION}. This merges itself once every required check has passed, which tags v${VERSION} and builds, signs and publishes the release.")"
           fi
+          gh pr merge "${url}" --auto --squash
           {
             echo "## Release v${VERSION}"
             echo
             echo "${url}"
             echo
-            echo 'Its checks are waiting on **Approve workflows to run** in the merge box.'
-            echo 'Approve them, and merge once they are green: that tags and publishes.'
+            echo 'It merges itself once every required check has passed: that tags and publishes.'
           } >> "${GITHUB_STEP_SUMMARY}"
