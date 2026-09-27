@@ -231,6 +231,10 @@ impl Job {
         // SAFETY: the job handle is open; ending its processes is what it is for.
         let _: i32 = unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) };
     }
+
+    fn try_clone(&self) -> io::Result<Self> {
+        self.0.try_clone().map(Self)
+    }
 }
 
 #[derive(Debug)]
@@ -314,8 +318,13 @@ impl Terminal {
             Streams::Console(console.0),
         )?;
         let watched = Process(process.0.try_clone()?);
+        let leftovers = job.try_clone()?;
+        // Whatever the program left running is still attached to the console, and closing the
+        // console only asks it to go, which a busy machine can leave unanswered for as long as
+        // it likes; so it is ended first, and the output ends with the program.
         let closing = thread::spawn(move || {
             watched.ended();
+            leftovers.stop_all();
             drop(console);
         });
         let terminal = Self {
@@ -339,6 +348,14 @@ impl Terminal {
                 .unwrap_or_else(|panic| panic::resume_unwind(panic));
         }
         self.process.wait(Duration::MAX, &self.job)
+    }
+}
+
+impl Drop for Terminal {
+    /// Ends the job outright: the thread closing the console holds the job open too, so its
+    /// ending cannot be left to the last handle closing.
+    fn drop(&mut self) {
+        self.job.stop_all();
     }
 }
 
