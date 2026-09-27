@@ -97,8 +97,11 @@ alone, whose pull requests run their checks like anyone's. Setting it up, once:
    secret only on a release tag.
 2. Create a GitHub App under Settings, Developer settings, GitHub Apps. It needs no webhook.
    Its repository permissions are **Contents: read and write** and **Pull requests: read and
-   write**, and nothing else; it subscribes to no events and installs only on this account.
-3. Install it on `Aureliolo/steamship` only.
+   write**, and nothing else; it subscribes to no events and installs only on this account. The
+   app can serve other repositories too; each run takes a token for this repository alone, with
+   those two permissions.
+3. Install it on the repositories it serves, chosen one by one, never on all of them; here that
+   includes `Aureliolo/steamship`.
 4. Generate a private key. Put the app's client ID in the environment's variable
    `PACKAGING_APP_CLIENT_ID` and the key's contents in its secret `PACKAGING_APP_KEY`, then
    delete the key file.
