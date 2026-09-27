@@ -44,6 +44,11 @@
       "description": "Cargo.toml names the version tested, not a floor, so a raise moves it along with the lock file.",
       "matchManagers": ["cargo"],
       "rangeStrategy": "bump"
+    },
+    {
+      "description": "The Homebrew formula and the Scoop manifest are written by each release from its own signed checksums; Renovate's homebrew manager would raise one of the formula's archives and leave the others.",
+      "matchFileNames": ["Formula/**", "bucket/**"],
+      "enabled": false
     }
   ],
   "customDatasources": {
@@ -80,11 +85,19 @@
       "versioningTemplate": "regex:^(?<major>\\d+)$"
     },
     {
-      "description": "A release tag with the SHA-256 of the asset downloaded on the next line: actionlint and cargo-deny. The tag and the digest move together.",
+      "description": "A release tag with the SHA-256 of the asset downloaded on the next line: actionlint, cargo-deny and wingetcreate. The tag and the digest move together.",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>\\S+) versioning=(?<versioning>\\S+)\\n\\s*[A-Z0-9_]+_TAG: (?<currentValue>\\S+)\\n\\s*[A-Z0-9_]+_SHA256: (?<currentDigest>[0-9a-f]{64})"
+      ]
+    },
+    {
+      "description": "A tag with the commit it names on the next line: Scoop's own code, which the packages workflow fetches by commit. The tag and the commit move together.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-tags) depName=(?<depName>\\S+)\\n\\s*[A-Z0-9_]+_TAG: (?<currentValue>\\S+)\\n\\s*[A-Z0-9_]+_COMMIT: (?<currentDigest>[0-9a-f]{40})"
       ]
     },
     {
