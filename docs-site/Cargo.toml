@@ -1,0 +1,16 @@
+[package]
+name = "steamship-docs-site"
+version = "0.0.0"
+edition = "2024"
+description = "Builds steamship's documentation site from docs/ and the command line itself."
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+clap = "4.6.7"
+# Markdown to HTML, without the command-line tool its default features build.
+pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
+steamship = { path = ".." }
+
+[lints]
+workspace = true

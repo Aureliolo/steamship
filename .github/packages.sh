@@ -24,28 +24,39 @@ fi
 repository="https://github.com/Aureliolo/steamship"
 download="${repository}/releases/download/v${version}"
 
-# The hash in a target's .sha256, refused unless the file names that target's archive: a sidecar
-# for another archive, renamed, would otherwise pass for this one.
-hash_of() {
-  local archive="steamship-${version}-$1.$2"
-  local file="${sums}/${archive}.sha256"
-  local hash name
-  if [[ ! -f "${file}" ]]; then
-    echo "${file} does not exist." >&2
+# The one archive of this version whose name ends in $1, as the release's checksums name it: the
+# names are the release's to choose, and an older release named its Linux archive differently.
+archive_of() {
+  local found=("${sums}/steamship-${version}-"*"$1.sha256")
+  if [[ ${#found[@]} -ne 1 || ! -f "${found[0]}" ]]; then
+    echo "${sums} holds no single checksum for an archive ending in $1." >&2
     exit 1
   fi
+  basename "${found[0]}" .sha256
+}
+
+# The hash in an archive's .sha256, refused unless the file names that archive: a sidecar for
+# another archive, renamed, would otherwise pass for this one.
+hash_of() {
+  local file="${sums}/$1.sha256"
+  local hash name
   read -r hash name < "${file}"
-  if [[ ! "${hash}" =~ ^[0-9a-f]{64}$ || "${name#\*}" != "${archive}" ]]; then
-    echo "${file} does not hold the SHA-256 of ${archive}." >&2
+  if [[ ! "${hash}" =~ ^[0-9a-f]{64}$ || "${name#\*}" != "$1" ]]; then
+    echo "${file} does not hold the SHA-256 of $1." >&2
     exit 1
   fi
   printf '%s' "${hash}"
 }
 
-macos_arm="$(hash_of aarch64-apple-darwin tar.gz)"
-macos_intel="$(hash_of x86_64-apple-darwin tar.gz)"
-linux="$(hash_of x86_64-unknown-linux-musl tar.gz)"
-windows="$(hash_of x86_64-pc-windows-msvc zip)"
+macos_arm_archive="$(archive_of aarch64-apple-darwin.tar.gz)"
+macos_intel_archive="$(archive_of x86_64-apple-darwin.tar.gz)"
+linux_archive="$(archive_of linux-musl.tar.gz)"
+windows_archive="$(archive_of windows-msvc.zip)"
+macos_arm="$(hash_of "${macos_arm_archive}")"
+macos_intel="$(hash_of "${macos_intel_archive}")"
+linux="$(hash_of "${linux_archive}")"
+windows="$(hash_of "${windows_archive}")"
+windows_folder="${windows_archive%.zip}"
 
 mkdir -p "${out}/Formula" "${out}/bucket"
 
@@ -58,18 +69,18 @@ class Steamship < Formula
 
   on_macos do
     on_arm do
-      url "${download}/steamship-${version}-aarch64-apple-darwin.tar.gz"
+      url "${download}/${macos_arm_archive}"
       sha256 "${macos_arm}"
     end
     on_intel do
-      url "${download}/steamship-${version}-x86_64-apple-darwin.tar.gz"
+      url "${download}/${macos_intel_archive}"
       sha256 "${macos_intel}"
     end
   end
 
   on_linux do
     on_intel do
-      url "${download}/steamship-${version}-x86_64-unknown-linux-musl.tar.gz"
+      url "${download}/${linux_archive}"
       sha256 "${linux}"
     end
   end
@@ -89,10 +100,11 @@ FORMULA
 jq -n \
   --arg version "${version}" \
   --arg homepage "${repository}" \
-  --arg url "${download}/steamship-${version}-x86_64-pc-windows-msvc.zip" \
+  --arg url "${download}/${windows_archive}" \
   --arg hash "${windows}" \
-  --arg folder "steamship-${version}-x86_64-pc-windows-msvc" \
-  --arg next "${repository}/releases/download/v\$version/steamship-\$version-x86_64-pc-windows-msvc.zip" \
+  --arg folder "${windows_folder}" \
+  --arg next "${repository}/releases/download/v\$version/${windows_archive//${version}/\$version}" \
+  --arg next_folder "${windows_folder//${version}/\$version}" \
   '{
     version: $version,
     description: "Uploads game builds to Steam with Valve'"'"'s steamcmd.",
@@ -105,7 +117,7 @@ jq -n \
       architecture: {"64bit": {
         url: $next,
         hash: {url: "$url.sha256"},
-        extract_dir: "steamship-$version-x86_64-pc-windows-msvc"
+        extract_dir: $next_folder
       }}
     }
   }' > "${out}/bucket/steamship.json"

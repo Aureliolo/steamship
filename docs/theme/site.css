@@ -1,0 +1,851 @@
+/*
+ * Midnight and signal.
+ *
+ * One accent, cyan, and it means the same thing everywhere: this is the thing you came for.
+ * Midnight blue carries everything else, so the cyan is never decoration. Archivo sets the
+ * prose, IBM Plex Mono every name you can type, and nothing that is not a name is set in mono,
+ * so a monospaced word on this site is always something you can type.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --ground: #0b1224;
+  --raised: #111a33;
+  --sunken: #070c1a;
+  --rule: #1f2a47;
+  --rule-soft: #16213d;
+
+  --ink: #eef4ff;
+  --body: #c8d3e6;
+  --muted: #8795ad;
+  --faint: #6f7d96;
+
+  --signal: #22d3ee;
+  --signal-ink: #062a33;
+  --warn: #f5b94a;
+
+  --sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --gutter: clamp(20px, 4vw, 40px);
+  /*
+   * One width, for everything, on every page: the header bar, the content under it, the front
+   * page's cards, the footer. There were five of these, and `ch` was one of them, which resolves
+   * against each element's own font size: a heading's rule, the table beside it and the paragraph
+   * under it all stopped in three different places on the same page, and the front page and the
+   * rest read as two different sites. Wide enough that the front page's headline stands on one
+   * line and a command reference sits beside its explanation, rather than every page reading as
+   * a narrow column down the middle of the screen.
+   */
+  --frame: 1160px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+
+    --ground: #f5f8fc;
+    --raised: #ffffff;
+    --sunken: #e8eef6;
+    --rule: #d6dfeb;
+    --rule-soft: #e2e9f2;
+
+    --ink: #0b1224;
+    --body: #2c3a52;
+    --muted: #56657d;
+    --faint: #6b7a92;
+
+    --signal: #0e7490;
+    --signal-ink: #e6fbff;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--body);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--signal);
+  color: var(--signal-ink);
+  padding: 10px 16px;
+  z-index: 10;
+}
+
+.skip:focus {
+  left: 0;
+}
+
+a {
+  color: var(--ink);
+  text-decoration-color: color-mix(in srgb, var(--signal) 55%, transparent);
+  text-underline-offset: 3px;
+}
+
+a:hover {
+  text-decoration-color: var(--signal);
+}
+
+:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ chrome */
+
+.top {
+  border-bottom: 1px solid var(--rule);
+}
+
+.top > .bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px 24px;
+  flex-wrap: wrap;
+  max-width: var(--frame);
+  margin: 0 auto;
+  padding: 16px var(--gutter);
+}
+
+.wordmark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+/*
+ * The ship steamship draws at a terminal, from the same lines, in the signal: the one element
+ * that stands for the project itself. Never wrapped, since a drawing made of characters falls
+ * apart when its lines break.
+ */
+.wordmark .ship {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: 0;
+  white-space: pre;
+  color: var(--signal);
+}
+
+.wordmark .version {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+
+.links {
+  display: flex;
+  gap: 18px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.links a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.links a:hover {
+  color: var(--ink);
+}
+
+.links a.on {
+  color: var(--signal);
+  font-weight: 500;
+}
+
+/* The two that leave the site, kept together and marked as leaving it. */
+.links .off {
+  width: 1px;
+  height: 15px;
+  background: var(--rule);
+}
+
+.links a.out::after {
+  content: " \2197";
+  color: var(--faint);
+}
+
+main {
+  max-width: var(--frame);
+  margin: 0 auto;
+  padding: 28px var(--gutter) 80px;
+  min-width: 0;
+}
+
+.foot {
+  border-top: 1px solid var(--rule);
+}
+
+.foot > .bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+  max-width: var(--frame);
+  margin: 0 auto;
+  padding: 18px var(--gutter);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--faint);
+}
+
+@media (max-width: 560px) {
+  .links {
+    gap: 8px 14px;
+    flex-wrap: wrap;
+  }
+}
+
+/* ------------------------------------------------------------------ prose */
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--ink);
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(30px, 4.4vw, 38px);
+  font-weight: 700;
+  line-height: 1.12;
+  margin-bottom: 18px;
+}
+
+h2 {
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.25;
+  margin-top: 44px;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+h3 {
+  font-size: 17px;
+  font-weight: 600;
+  margin-top: 30px;
+  margin-bottom: 10px;
+}
+
+h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin-top: 22px;
+  margin-bottom: 8px;
+}
+
+p,
+ul,
+ol {
+  margin: 0 0 16px;
+}
+
+ul,
+ol {
+  padding-left: 22px;
+}
+
+li {
+  margin-bottom: 6px;
+}
+
+li::marker {
+  color: var(--faint);
+}
+
+strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.lede {
+  font-size: 17.5px;
+  line-height: 1.6;
+  color: var(--body);
+}
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 36px 0;
+}
+
+blockquote {
+  margin: 0 0 16px;
+  padding: 2px 0 2px 18px;
+  border-left: 3px solid var(--signal);
+  color: var(--muted);
+}
+
+/* ------------------------------------------------------------------ code */
+
+code {
+  font-family: var(--mono);
+  font-size: 0.875em;
+  color: var(--ink);
+  background: var(--sunken);
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  padding: 0.08em 0.34em;
+  /*
+   * Never broken across lines. A flag or a path split in the middle of a word reads as two
+   * different things, and in a narrow table cell every one of them was being split. A cell too
+   * narrow for its content is the table's problem to solve, not the word's.
+   */
+  white-space: nowrap;
+}
+
+/*
+ * A code block is a figure, with the caption the fence's info string carries. Browsers indent a
+ * figure by 40px of their own, which put every block on the site one step to the right of the
+ * prose above it.
+ */
+figure {
+  margin: 0 0 18px;
+}
+
+/*
+ * One label, wherever something small and quiet names the thing under it: a code block's caption,
+ * a table's column, a card's kicker, a step on the front page. They were four near-identical
+ * rules at three sizes and two families, which is the sort of difference a reader cannot name
+ * but can see.
+ */
+figcaption,
+th,
+.card .kicker,
+.step {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--faint);
+}
+
+figcaption {
+  margin-bottom: 8px;
+}
+
+pre {
+  margin: 0 0 18px;
+  padding: 15px 17px;
+  background: var(--sunken);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  max-width: 100%;
+}
+
+figure > pre {
+  margin-bottom: 0;
+}
+
+pre code {
+  font-size: 13px;
+  /*
+   * Tight, because a diagram drawn out of characters only reads as one when the lines are close
+   * enough for its verticals to join up. At the 1.62 prose uses, a tree came apart into a column
+   * of loose pipes with daylight between them.
+   */
+  line-height: 1.4;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--body);
+  /*
+   * Wrapped, never scrolled. A block that slides sideways hides half of itself behind a gesture
+   * nobody makes, and on a phone every block would be one. The documents are written to fit the
+   * column instead, so this is the guard rather than the everyday behaviour.
+   */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ tables */
+
+.scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  margin-bottom: 18px;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+
+th {
+  text-align: left;
+  padding: 0 14px 8px 0;
+  border-bottom: 1px solid var(--rule);
+}
+
+td {
+  padding: 9px 14px 9px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+}
+
+td:last-child,
+th:last-child {
+  padding-right: 0;
+}
+
+/* ------------------------------------------------------------------ the flow */
+
+/*
+ * One command in, three ways out, one thing at the end.
+ *
+ * Drawn in elements rather than in characters. As ASCII art in a code block it came apart twice:
+ * the box-drawing glyphs are not in the mono face, so the browser found them in some other font
+ * at some other width, and even once it was plain ASCII the verticals could not join across the
+ * line height code is set at. Here the rules are elements, placed exactly, in the theme, and the
+ * whole thing stacks into a column on a narrow screen instead of overflowing.
+ */
+.flow {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0 0 20px;
+}
+
+.flow p {
+  margin: 0;
+  text-align: center;
+}
+
+code.cmd {
+  font-size: 14px;
+  padding: 8px 14px;
+  color: var(--signal);
+  border-color: color-mix(in srgb, var(--signal) 45%, transparent);
+}
+
+/* The stem out of the command, and the one into the line at the end. */
+.flow .start::after,
+.flow .end::before {
+  content: "";
+  display: block;
+  width: 1px;
+  height: 24px;
+  margin: 0 auto;
+  background: var(--rule);
+}
+
+.flow .fan {
+  position: relative;
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  /* The stem zone above and below, inside the box, so the bars have somewhere to sit. */
+  padding: 24px 0;
+}
+
+/* The two bars, drawn centre to centre of the outer lanes rather than edge to edge. */
+.flow .fan::before,
+.flow .fan::after {
+  content: "";
+  position: absolute;
+  left: calc(100% / 6);
+  right: calc(100% / 6);
+  height: 1px;
+  background: var(--rule);
+}
+
+.flow .fan::before {
+  top: 0;
+}
+
+.flow .fan::after {
+  bottom: 0;
+}
+
+.flow .lane {
+  position: relative;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--raised);
+  padding: 14px 16px;
+}
+
+/* Each lane's own stem, up to the first bar and down to the second. */
+.flow .lane::before,
+.flow .lane::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 1px;
+  height: 24px;
+  background: var(--rule);
+}
+
+.flow .lane::before {
+  top: -24px;
+}
+
+.flow .lane::after {
+  bottom: -24px;
+}
+
+.flow .when {
+  margin-bottom: 8px;
+  text-align: left;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.flow .then {
+  text-align: left;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.flow .end {
+  font-size: 13px;
+  color: var(--faint);
+}
+
+@media (max-width: 720px) {
+  .flow .fan {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+
+  /* Stacked, the bars have nothing to span and each lane hangs off the one above it. */
+  .flow .fan::before,
+  .flow .fan::after,
+  .flow .lane:first-child::before,
+  .flow .lane:last-child::after {
+    display: none;
+  }
+
+  .flow .lane::before {
+    top: -24px;
+    height: 24px;
+  }
+
+  .flow .lane::after {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------------------ the tool reference */
+
+.tool {
+  margin: 0 0 34px;
+  padding-left: 16px;
+  border-left: 2px solid var(--rule);
+}
+
+.tool:target,
+.tool:hover {
+  border-left-color: var(--signal);
+}
+
+.tool h2,
+.tool h3 {
+  margin-top: 0;
+}
+
+.tool h2 code,
+.tool h3 code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 1em;
+  color: var(--ink);
+}
+
+.tool .needs {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--signal);
+  border: 1px solid color-mix(in srgb, var(--signal) 40%, transparent);
+  border-radius: 2px;
+  padding: 1px 5px;
+  vertical-align: 1px;
+}
+
+details {
+  margin-bottom: 10px;
+}
+
+summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+  font-family: var(--mono);
+}
+
+summary:hover {
+  color: var(--ink);
+}
+
+.args {
+  margin: 12px 0 0;
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 6px 18px;
+  font-size: 14px;
+}
+
+.args dt {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.args dt code {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 1em;
+}
+
+.args dd {
+  margin: 0;
+  color: var(--muted);
+}
+
+.args .type {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+@media (max-width: 560px) {
+  .args {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+
+  .args dd {
+    margin-bottom: 10px;
+  }
+}
+
+/*
+ * The front page. A statement, the two ways in, and three cards that route you onward. Same
+ * width as every other page, because it is the same site; what differs is that this one is
+ * looked at rather than read, so it opens on a hero instead of a heading.
+ */
+
+.home main {
+  padding: 0 var(--gutter) 64px;
+}
+
+.hero {
+  padding: 60px 0 6px;
+}
+
+.hero h1 {
+  font-size: clamp(38px, 6vw, 52px);
+  font-weight: 700;
+  line-height: 1.08;
+  margin: 0 0 18px;
+}
+
+.hero .sub {
+  font-size: 18.5px;
+  line-height: 1.55;
+  color: var(--body);
+  margin: 0;
+}
+
+.install {
+  padding-bottom: 34px;
+}
+
+.step {
+  margin: 30px 0 10px;
+}
+
+.install .step:first-child {
+  margin-top: 0;
+}
+
+.note {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 10px 0 0;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  padding: 34px 0 40px;
+}
+
+.card {
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+}
+
+.card .kicker {
+  margin-bottom: 9px;
+}
+
+.card h3 {
+  margin: 0 0 7px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.card p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted);
+  flex: 1;
+}
+
+.card .go {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--signal);
+  text-decoration: none;
+}
+
+/*
+ * The escape rather than the character. A literal arrow here was mangled into a control byte by
+ * a tool that wrote this file once already, and it rendered as a tofu box on the live site for
+ * as long as nobody looked; an escape is plain ASCII and cannot be damaged that way.
+ */
+.card .go::after {
+  content: " \2192";
+}
+
+.card .go:hover {
+  text-decoration: underline;
+}
+
+.smallprint {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--faint);
+  margin: 0;
+}
+
+/*
+ * The install picker: radio inputs, sibling selectors, no script. The inputs sit before the chips
+ * and the panels so that a :checked sibling selector can reach both, and are taken out of the flow
+ * rather than hidden, because display:none takes them out of the keyboard order with it.
+ */
+
+.picker {
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--raised);
+  margin: 0;
+}
+
+.picker > input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.picker .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.picker label {
+  font-size: 13px;
+  padding: 6px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.picker label:hover {
+  color: var(--ink);
+  border-color: var(--faint);
+}
+
+.picker .panel {
+  display: none;
+  padding: 16px;
+}
+
+/*
+ * The same code block as everywhere else, in the accent: this one is the command the reader came
+ * for, which is what the accent is reserved for. Everything about its shape stays shared, so it
+ * reads as the same object emphasised rather than as a second kind of code block.
+ */
+.picker .panel pre {
+  margin: 0 0 10px;
+}
+
+.picker .panel pre code {
+  color: var(--signal);
+}
+
+.picker .panel p {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.picker .panel p code {
+  color: var(--body);
+}
+
+@media (max-width: 820px) {
+  .cards {
+    grid-template-columns: 1fr;
+  }
+}

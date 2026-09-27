@@ -24,13 +24,14 @@ fail() {
 open_pr() {
   local version="$1" folder="$2"
   local branch="packages/v${version}"
-  local main path have changed=0
+  local main path have want changed=0
   main="$(gh api "repos/${GH_REPO}/git/ref/heads/main" --jq .object.sha)"
   for path in "${files[@]}"; do
     if ! have="$(gh api "repos/${GH_REPO}/contents/${path}?ref=${main}" --jq .content 2> /dev/null | base64 -d)"; then
       have=""
     fi
-    if [[ "${have}" != "$(cat "${folder}/${path}")" ]]; then
+    want="$(cat "${folder}/${path}")"
+    if [[ "${have}" != "${want}" ]]; then
       changed=1
     fi
   done
@@ -47,15 +48,17 @@ open_pr() {
   fi
 
   # Committed through the API, which GitHub signs; main takes only signed commits.
-  local head request
+  local head request formula manifest
+  formula="$(base64 -w0 "${folder}/Formula/steamship.rb")"
+  manifest="$(base64 -w0 "${folder}/bucket/steamship.json")"
   request="$(mktemp)"
   jq -n \
     --arg repository "${GH_REPO}" \
     --arg branch "${branch}" \
     --arg main "${main}" \
     --arg headline "Package v${version} for Homebrew and Scoop" \
-    --arg formula "$(base64 -w0 "${folder}/Formula/steamship.rb")" \
-    --arg manifest "$(base64 -w0 "${folder}/bucket/steamship.json")" \
+    --arg formula "${formula}" \
+    --arg manifest "${manifest}" \
     '{
       query: "mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }",
       variables: {input: {
@@ -86,7 +89,7 @@ open_pr() {
 wait_for() {
   local pr="$1"
   local deadline=$((SECONDS + 100 * 60))
-  local view state head held failed
+  local view state head held failed decision merge
   while ((SECONDS < deadline)); do
     view="$(gh pr view "${pr}" --json state,mergeStateStatus,reviewDecision,headRefOid,statusCheckRollup)"
     state="$(jq -r .state <<< "${view}")"
@@ -96,6 +99,8 @@ wait_for() {
         return
         ;;
       CLOSED) fail "Pull request #${pr} was closed without merging." ;;
+      OPEN) ;;
+      *) fail "Pull request #${pr} is in a state GitHub does not document: ${state}." ;;
     esac
     head="$(jq -r .headRefOid <<< "${view}")"
     held="$(gh api "repos/${GH_REPO}/actions/runs?head_sha=${head}" \
@@ -108,12 +113,15 @@ wait_for() {
           or ((.state // "") | IN("FAILURE", "ERROR")))
       | .name // .context' <<< "${view}")"
     if [[ -n "${failed}" ]]; then
-      fail "Pull request #${pr} failed: $(tr '\n' ',' <<< "${failed}" | sed 's/,$//')."
+      failed="$(paste -sd, - <<< "${failed}")"
+      fail "Pull request #${pr} failed: ${failed}."
     fi
-    if [[ "$(jq -r .reviewDecision <<< "${view}")" == "REVIEW_REQUIRED" ]]; then
+    decision="$(jq -r .reviewDecision <<< "${view}")"
+    if [[ "${decision}" == "REVIEW_REQUIRED" ]]; then
       fail "Pull request #${pr} needs an approving review before it can merge; see .github/release-process.md."
     fi
-    case "$(jq -r .mergeStateStatus <<< "${view}")" in
+    merge="$(jq -r .mergeStateStatus <<< "${view}")"
+    case "${merge}" in
       CLEAN)
         echo "state=clean"
         return
@@ -123,6 +131,8 @@ wait_for() {
         return
         ;;
       DIRTY) fail "Pull request #${pr} conflicts with main." ;;
+      # Checks still running, or GitHub still working out whether it can merge.
+      *) ;;
     esac
     sleep 30
   done

@@ -7,8 +7,9 @@ use std::io::{self, IsTerminal as _};
 use std::path::{self, Path, PathBuf};
 use std::process::{self, ExitCode};
 
-use clap::{CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
+use clap::{CommandFactory as _, FromArgMatches as _};
 use steamship::account::Account;
+use steamship::cli::{Cli, Command, FAILED, LOGIN, REFUSED, STEAMCMD};
 use steamship::install::{self, Outcome, State};
 use steamship::login::{self, Ending, Person};
 use steamship::manifest::Manifest;
@@ -25,151 +26,6 @@ use steamship::{
     check, ci, conversation, keychain, run, scripts, steamcmd, upload, webapi, workshop,
 };
 use zeroize::Zeroizing;
-
-/// Something failed; what, and why, is printed.
-const FAILED: u8 = 1;
-/// `check` refused the scripts, or the command line was wrong (clap uses 2 for the latter too).
-const REFUSED: u8 = 2;
-/// steamcmd has no login it can use; `login` again.
-const LOGIN: u8 = 3;
-/// steamcmd is missing or has been altered.
-const STEAMCMD: u8 = 4;
-
-#[derive(Debug, Parser)]
-#[command(
-    name = "steamship",
-    bin_name = "steamship",
-    version,
-    about = "Uploads game builds to Steam with Valve's steamcmd.",
-    styles = show::HELP
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Debug, Subcommand)]
-enum Command {
-    /// Log in to Steam, once, for uploads.
-    ///
-    /// Asks for the account's name when none is given or remembered, then the password, and a
-    /// Steam Guard code or approval in the Steam Mobile app. What you type is passed directly to
-    /// steamcmd, never logged or saved. At a terminal it then offers to keep the publisher Web
-    /// API key that `builds` and `promote` use, in the system's credential store.
-    Login {
-        /// The build account, if not the one the last login remembered.
-        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
-        account: Option<String>,
-        /// Only keep the publisher Web API key, checked with Steam first, without logging in.
-        #[arg(long)]
-        web_api_key: bool,
-    },
-    /// Show the login and steamcmd, checking the login with Steam.
-    ///
-    /// Shows the home, the build account and steamcmd, then logs in with the login steamcmd
-    /// saved, as an upload does, and says whether Steam takes it. Nothing is asked for.
-    Status {
-        /// The build account, if not the one the last login remembered.
-        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
-        account: Option<String>,
-    },
-    /// Check the build scripts, without logging in.
-    ///
-    /// Reads an app build script and every depot script it names, and refuses anything that
-    /// would upload the wrong thing.
-    Check {
-        /// The app build script, such as `steam/app_build.vdf`.
-        script: PathBuf,
-    },
-    /// Check, build and upload, then print the build ID.
-    ///
-    /// Runs `check`, then the build, with steamcmd out of sight, and says the build's ID and
-    /// the branch it was set live on.
-    Upload {
-        /// The app build script, such as `steam/app_build.vdf`.
-        script: PathBuf,
-        /// The version being shipped, which with the commit becomes the build's description.
-        #[arg(long)]
-        version: String,
-        /// Valve's dry run: the whole build is computed and logged, and nothing is uploaded.
-        #[arg(long)]
-        preview: bool,
-        /// The build account, if not the one the last login remembered.
-        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
-        account: Option<String>,
-    },
-    /// Upload a Workshop item, then print its ID.
-    ///
-    /// Checks a `workshopitem` script and what it names, then has steamcmd upload the item with
-    /// the saved login. A script with no `publishedfileid` makes a new item, whose ID is printed
-    /// to add to the script so that later uploads update the same item.
-    Workshop {
-        /// The item script, such as `workshop/item.vdf`.
-        script: PathBuf,
-        /// The build account, if not the one the last login remembered.
-        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
-        account: Option<String>,
-    },
-    /// Show an app's branches and last builds.
-    ///
-    /// Lists each branch with the build live on it, then the last builds uploaded, through
-    /// Steam's partner Web API, with the publisher key from `STEAMSHIP_WEB_API_KEY`, or else the
-    /// one `login` kept; at a terminal, one is asked for when there is neither.
-    Builds {
-        /// The app, by its ID or its app build script.
-        app: String,
-        /// How many of the last builds to list.
-        #[arg(long, default_value_t = 10)]
-        count: u32,
-    },
-    /// Set an uploaded build live on a branch.
-    ///
-    /// Sets a build live on a beta branch without uploading it again, through Steam's partner
-    /// Web API, with the publisher key as `builds` finds it. The default branch is set live in
-    /// Steamworks only.
-    Promote {
-        /// The app, by its ID or its app build script.
-        app: String,
-        /// The build, by its build ID.
-        #[arg(long)]
-        build: u64,
-        /// The branch to set it live on.
-        #[arg(long)]
-        branch: String,
-    },
-    /// Set up uploads from CI, the login kept as a secret.
-    ///
-    /// Finds the GitHub repository, its app build script and the saved login, checks the script,
-    /// and the login with Steam, then sets the login as a secret with the GitHub command line,
-    /// `gh`, and shows the workflow step that uploads. What it cannot find it asks for, and each
-    /// option answers ahead. The secret holds the token steamcmd saved, never a password.
-    Ci {
-        /// The app build script, if not the one found in the repository.
-        #[arg(long)]
-        script: Option<PathBuf>,
-        /// The GitHub repository as owner/name, if not the one `origin` points at.
-        #[arg(long)]
-        repo: Option<String>,
-        /// The build account, if not the one the last login remembered.
-        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
-        account: Option<String>,
-        /// The name of the secret the login is kept in.
-        #[arg(long, default_value = ci::VARIABLE)]
-        secret: String,
-        /// Write the login to this file instead, for a CI other than GitHub Actions.
-        #[arg(long)]
-        output: Option<PathBuf>,
-    },
-    /// Forget the saved login.
-    ///
-    /// Removes the login steamcmd saved, the account steamship remembered and the Web API key
-    /// kept for `builds` and `promote`; the next upload needs `steamship login` first.
-    Logout,
-    /// Install or verify the pinned steamcmd.
-    ///
-    /// `login` and `upload` do this themselves; this does it ahead of time, as in CI.
-    Install,
-}
 
 fn main() -> ExitCode {
     let mut cli = Cli::command();

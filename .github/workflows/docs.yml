@@ -1,0 +1,82 @@
+name: Docs
+
+# The site at https://aureliolo.github.io/steamship, built from docs/ and the command line itself
+# by docs-site/. Every pull request builds it, which refuses a page nothing publishes and any
+# link or anchor that goes nowhere. Only a release publishes it, from its tag, so the site never
+# describes a version whose archives are not out; the github-pages environment admits v* tags and
+# nothing else.
+on:
+  pull_request:
+  workflow_call:
+    inputs:
+      publish:
+        description: Publish the site built from the calling ref.
+        type: boolean
+        default: false
+
+permissions: {}
+
+# Its own group: called by the release, `github.workflow` is the release's name, and a group
+# matching the release's own would hold this run behind the run that called it.
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  site:
+    name: site
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # Reads the pages and the command line they are built from.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The toolchain rust-toolchain.toml pins, fetched by the runner's rustup, which checks every
+      # component against the hashes in Rust's release manifest.
+      - name: Install Rust
+        run: rustup toolchain install
+
+      - name: Test the generator
+        run: cargo test --locked -p steamship-docs-site
+
+      - name: Build the site
+        run: cargo run --locked -p steamship-docs-site
+
+      - name: Package it for Pages
+        if: inputs.publish
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: target/site
+
+  deploy:
+    name: deploy
+    if: inputs.publish
+    needs: site
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+
+    # One deployment at a time, and never a cancelled one: a half-published site is worse than an
+    # old one, so a superseded run waits rather than being killed.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    # Only this job can publish, and only through the OIDC token Pages mints for it: nothing
+    # here holds a credential that outlives the run.
+    permissions:
+      pages: write # Publishes the built site.
+      id-token: write # Pages verifies the deployment against this token.
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
