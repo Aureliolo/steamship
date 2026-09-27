@@ -348,7 +348,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -z "${CLIENT_ID}" || "${KEY_SET}" != true ]]; then
-            echo "::error::The packaging app is not set up: the repository variable PACKAGING_APP_CLIENT_ID and the secret PACKAGING_APP_KEY are needed. See .github/release-process.md." >&2
+            echo "::error::The packaging app is not set up: the variable PACKAGING_APP_CLIENT_ID and the secret PACKAGING_APP_KEY in the packages environment are needed. See .github/release-process.md." >&2
             exit 1
           fi
 
