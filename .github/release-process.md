@@ -3,13 +3,10 @@
 ## What a person does
 
 Run **Prepare release** from the Actions tab and pick the bump. It raises the version in
-`Cargo.toml` and `Cargo.lock` on a `release/vX.Y.Z` branch, in a commit GitHub signs, opens the
-pull request, and links it in the run summary.
-
-That pull request's checks wait for **Approve workflows to run** in the merge box, which is
-GitHub's rule for anything a workflow opens itself. Approve them, and merge once they are green.
-Everything after the merge is automatic. Nobody types a version twice and nobody makes a tag by
-hand.
+`Cargo.toml` and `Cargo.lock` on a `release/vX.Y.Z` branch, in a commit GitHub signs, and opens
+the pull request as the packaging app with auto-merge on: it merges itself once every required
+check has passed. Nobody types a version twice, nobody makes a tag by hand, and nothing waits on
+a click once the run starts.
 
 ## What happens on the merge
 
@@ -89,12 +86,14 @@ release build restores no cache, which is the one way another run could reach in
 
 A pull request a workflow opens with its own token has its checks held until someone with write
 access approves them, and a merge made with that token starts no workflow on `main`. So the
-**packages** job opens and merges its pull request as a GitHub App installed on this repository
-alone, whose pull requests run their checks like anyone's. Setting it up, once:
+**packages** job opens and merges its pull request, and **Prepare release** opens the release pull
+request with auto-merge on, as a GitHub App installed on this repository, whose pull requests run
+their checks like anyone's. Setting it up, once:
 
-1. Create an environment named `packages` under Settings, Environments, and limit its
-   deployments to tags matching `v*`, before anything goes into it: a job can then read its
-   secret only on a release tag.
+1. Create two environments under Settings, Environments, before anything goes into them:
+   `packages`, limited to tags matching `v*`, and `release-prepare`, limited to the branch
+   `main`. A job can then read the app's key only on a release tag, or when preparing a release
+   from main.
 2. Create a GitHub App under Settings, Developer settings, GitHub Apps. It needs no webhook.
    Its repository permissions are **Contents: read and write** and **Pull requests: read and
    write**, and nothing else; it subscribes to no events and installs only on this account. The
@@ -102,9 +101,9 @@ alone, whose pull requests run their checks like anyone's. Setting it up, once:
    those two permissions.
 3. Install it on the repositories it serves, chosen one by one, never on all of them; here that
    includes `Aureliolo/steamship`.
-4. Generate a private key. Put the app's client ID in the environment's variable
-   `PACKAGING_APP_CLIENT_ID` and the key's contents in its secret `PACKAGING_APP_KEY`, then
-   delete the key file.
+4. Generate a private key. Put the app's client ID in each environment's variable
+   `PACKAGING_APP_CLIENT_ID` and the key's contents in each one's secret `PACKAGING_APP_KEY`,
+   then delete the key file.
 
 Each run makes installation tokens for this repository with those two permissions, which last an
 hour, one for each change it makes; the waiting in between uses the job's own token, which only
