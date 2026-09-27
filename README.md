@@ -67,6 +67,28 @@ steamship upload steam/app_build.vdf --version 1.4.0
 `steam/app_build.vdf` and its `depot_build` files are Valve's own format, the same ones the
 Steamworks SDK's ContentBuilder uses. If you already upload with steamcmd, you already have them.
 
+## Uploading from CI
+
+```sh
+steamship ci    # once, in your game's repository, after steamship login
+```
+
+`steamship ci` sets your login as the repository secret `STEAMSHIP_LOGIN` and shows the step to
+add to your workflow, after the step that builds your content:
+
+```yaml
+- name: Upload to Steam
+  uses: Aureliolo/steamship@<commit> # vX.Y.Z
+  with:
+    script: steam/app_build.vdf
+    version: ${{ github.ref_name }}
+    login: ${{ secrets.STEAMSHIP_LOGIN }}
+```
+
+The action installs the steamship release it is pinned to, refusing it unless its SHA-256 and
+its attestation check out, uploads, and gives the BuildID as its `build-id` output;
+`preview: true` makes it Valve's dry run. It runs on Linux, Windows and macOS runners.
+
 ## Commands
 
 ### `login`
@@ -126,10 +148,30 @@ Runs `check`, then the build. Build output (logs, manifests, chunk cache) goes t
 folder per app, never into your content, and is kept between runs so later uploads are faster.
 The build description is `<version> <commit>`, the commit being the Git commit your scripts are
 in. A failure or an expired token ends the run instead of waiting at a prompt. It prints the
-BuildID and, when the script names one, the branch it was set live on.
+BuildID and, when the script names one, the branch it was set live on; in a GitHub Actions step
+it also gives the BuildID as the step's `build-id` output.
 
 `--preview` is Valve's dry run: the whole build is computed and logged, nothing is uploaded and
 nothing is set live.
+
+### `ci`
+
+```sh
+steamship ci [--script <app_build.vdf>] [--repo <owner/name>] [--account <name>]
+             [--secret <name>] [--output <file>]
+```
+
+Sets up uploads from GitHub Actions, run once in your game's repository after `steamship login`.
+It finds the repository from `origin` and the app build script by what it holds, checks the
+script, and logs in with the saved login to be sure Steam takes it. Then it sets the login as a
+repository secret, `STEAMSHIP_LOGIN` unless `--secret` names another, through the GitHub command
+line ([`gh`](https://cli.github.com)), and shows the workflow step that uploads, to add after the
+step that builds your content. Anything it cannot find it asks for; the options answer ahead.
+
+The secret holds the token steamcmd saved and the account's name, never a password or a Steam
+Guard secret; nothing of it is shown. When the token expires, an upload in CI exits 3; run
+`steamship login` and `steamship ci` again. For another CI, `--output <file>` writes the login to
+a file instead: give its contents to the CI as `STEAMSHIP_LOGIN`, then delete the file.
 
 ### `install`
 
@@ -152,6 +194,7 @@ for example in CI, and verifies an existing install.
 | --------------------------- | ----------------------------------------------------------------------------- |
 | `STEAMSHIP_HOME`            | Where steamcmd, its token and build output live; a per-user folder by default |
 | `STEAMSHIP_ACCOUNT`         | The build account, if not the one `login` remembered                          |
+| `STEAMSHIP_LOGIN`           | In CI, the login `steamship ci` set as a secret; `upload` and `status` use it |
 | `STEAMSHIP_NO_UPDATE_CHECK` | Set to anything to never ask GitHub for a newer release                       |
 
 There is no password setting anywhere.
@@ -165,9 +208,8 @@ holding only the apps it uploads. Its token can do everything those permissions 
 
 ## Roadmap
 
-After 1.0:
+Before 1.0:
 
-- a GitHub Action;
 - Workshop items (`workshop_build_item`);
 - branch status and moving a build between beta branches, through the partner Web API;
 - a Renovate preset that raises steamship pins, and Scoop, winget and Homebrew packages.

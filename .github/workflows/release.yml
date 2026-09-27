@@ -177,6 +177,68 @@ jobs:
           echo "The release could not be created in three attempts." >&2
           exit 1
 
+  # The action as a workflow in a game's repository uses it, from this tag on each system: it
+  # installs the release just published, checked by SHA-256 and attestation, and uploads with a
+  # login handed over. The login is an anonymous one, which Steam refuses a build, so the upload
+  # fails; what this checks is that the action installs this release and runs it. That a login
+  # handed over reaches Steam's refusal is checked in CI, with steamship built from source.
+  action:
+    name: action (${{ matrix.platform }})
+    if: github.repository == 'Aureliolo/steamship'
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            # renovate: datasource=github-runners depName=ubuntu
+            runner: ubuntu-26.04
+          - platform: windows
+            # renovate: datasource=github-runners depName=windows
+            runner: windows-2025
+          - platform: macos
+            # renovate: datasource=github-runners depName=macos
+            runner: macos-26
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read # Reads the tagged action and downloads the release it installs.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Pack an anonymous login
+        id: login
+        run: |
+          set -euo pipefail
+          config="$(printf '"InstallConfigStore"\n{\n}\n' | od -An -tx1 | tr -d ' \n')"
+          echo "packed=steamship-login-1:anonymous:${config}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload a preview with the action
+        id: action
+        continue-on-error: true
+        uses: ./
+        with:
+          script: tests/fixtures/spacewar/steam/app_build.vdf
+          version: ${{ github.ref_name }}
+          login: ${{ steps.login.outputs.packed }}
+          preview: true
+
+      - name: Check the action installed this release and ran it
+        env:
+          OUTCOME: ${{ steps.action.outcome }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          test "$(steamship --version)" = "steamship ${TAG#v}"
+          test "${OUTCOME}" = failure
+
   # crates.io, through trusted publishing: the OIDC token below is the whole credential, and no
   # crates.io token exists anywhere. A crate nobody has published cannot have a trusted publisher
   # yet, so the first publish is done by hand and this job only runs once the repository variable

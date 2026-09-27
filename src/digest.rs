@@ -71,16 +71,23 @@ pub fn hex(digest: &[u8]) -> String {
 /// Exactly 64 hexadecimal digits, as 32 bytes.
 #[must_use]
 pub fn from_hex(text: &str) -> Option<[u8; 32]> {
-    // The length first: an odd count would leave a last pair of one digit, which parses.
-    if text.len() != 64 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+    if text.len() != 64 {
         return None;
     }
-    let bytes: Option<Vec<u8>> = text
-        .as_bytes()
+    bytes_from_hex(text)?.try_into().ok()
+}
+
+/// Hexadecimal digits in pairs, as the bytes they spell.
+#[must_use]
+pub fn bytes_from_hex(text: &str) -> Option<Vec<u8>> {
+    // An odd count would leave a last pair of one digit, which parses.
+    if !text.len().is_multiple_of(2) || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    text.as_bytes()
         .chunks(2)
         .map(|pair| u8::from_str_radix(str::from_utf8(pair).ok()?, 16).ok())
-        .collect();
-    bytes?.try_into().ok()
+        .collect()
 }
 
 #[cfg(test)]
@@ -146,6 +153,17 @@ mod tests {
         let signed = EMPTY.replacen('e', "+", 1);
         for wrong in ["", "e", short, &long, &longer, &not_hex, &signed] {
             assert_eq!(from_hex(wrong), None, "{wrong}");
+        }
+    }
+
+    #[test]
+    fn reads_any_even_count_of_hexadecimal_digits_back_to_its_bytes() {
+        for bytes in [&b""[..], b"\x00", b"\xff\x10", b"config.vdf"] {
+            assert_eq!(bytes_from_hex(&hex(bytes)).as_deref(), Some(bytes));
+        }
+        assert_eq!(bytes_from_hex("0A").as_deref(), Some(&b"\n"[..]));
+        for wrong in ["0", "abc", "0g", "+1", " 01", "0\u{e9}"] {
+            assert_eq!(bytes_from_hex(wrong), None, "{wrong}");
         }
     }
 }

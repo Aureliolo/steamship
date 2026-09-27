@@ -32,6 +32,8 @@ and then publishes:
    the GitHub release.
 6. **crates** publishes the same tagged source to crates.io with no stored token: crates.io
    trusts this workflow, and a short-lived token is the whole credential.
+7. **action** uses the GitHub Action from the tag on each system, as a game's workflow would: it
+   installs the release just published, checked by SHA-256 and attestation, and runs it.
 
 ## What a release carries
 

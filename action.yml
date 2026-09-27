@@ -1,0 +1,93 @@
+name: steamship
+description: Uploads a game build to Steam with Valve's steamcmd, logged in with the secret `steamship ci` set.
+branding:
+  icon: upload-cloud
+  color: blue
+
+inputs:
+  script:
+    description: The app build script, such as steam/app_build.vdf, from the repository's root.
+    required: true
+  version:
+    description: The version being shipped, which with the commit becomes the build's description.
+    required: true
+  login:
+    description: The login `steamship ci` set as a secret, passed as secrets.STEAMSHIP_LOGIN.
+    required: true
+  preview:
+    description: Valve's dry run, which computes and logs the whole build and uploads nothing.
+    required: false
+    default: "false"
+
+outputs:
+  build-id:
+    description: The BuildID Steam gave the upload; empty for a preview.
+    value: ${{ steps.upload.outputs.build-id }}
+
+runs:
+  using: composite
+  steps:
+    # The release this action is pinned to, from its own Cargo.toml, so that pinning the action
+    # by commit pins the binary too. The archive is refused unless its SHA-256 matches and its
+    # Sigstore attestation says steamship's release workflow built it from that tag.
+    - name: Install steamship
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        version="$(grep -m1 -E '^version = "' "${ACTION_PATH}/Cargo.toml" | cut -d '"' -f 2)"
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64) target=x86_64-unknown-linux-musl extension=tar.gz ;;
+          Windows-X64) target=x86_64-pc-windows-msvc extension=zip ;;
+          macOS-ARM64) target=aarch64-apple-darwin extension=tar.gz ;;
+          macOS-X64) target=x86_64-apple-darwin extension=tar.gz ;;
+          *)
+            echo "::error::steamship has no release for ${RUNNER_OS} on ${RUNNER_ARCH}."
+            exit 1
+            ;;
+        esac
+        name="steamship-${version}-${target}"
+        folder="${RUNNER_TEMP}/steamship-${version}"
+        mkdir -p "${folder}"
+        gh release download "v${version}" --repo Aureliolo/steamship --dir "${folder}" --clobber \
+          --pattern "${name}.${extension}" --pattern "${name}.${extension}.sha256"
+        if command -v sha256sum > /dev/null; then
+          (cd "${folder}" && sha256sum --check --strict "${name}.${extension}.sha256")
+        else
+          (cd "${folder}" && shasum -a 256 --check --strict "${name}.${extension}.sha256")
+        fi
+        gh attestation verify "${folder}/${name}.${extension}" --repo Aureliolo/steamship \
+          --signer-workflow Aureliolo/steamship/.github/workflows/release-build.yml \
+          --source-ref "refs/tags/v${version}" --deny-self-hosted-runners > /dev/null
+        if [[ "${extension}" == zip ]]; then
+          unzip -q -o "${folder}/${name}.zip" -d "${folder}"
+        else
+          tar -xzf "${folder}/${name}.tar.gz" -C "${folder}"
+        fi
+        echo "${folder}/${name}" >> "${GITHUB_PATH}"
+
+    # A home of the job's own, into which the login is put back and from which it goes with the
+    # job. steamship reads the secret from its environment, never from its command line.
+    - name: Upload
+      id: upload
+      shell: bash
+      env:
+        STEAMSHIP_LOGIN: ${{ inputs.login }}
+        STEAMSHIP_HOME: ${{ runner.temp }}/steamship-home
+        SCRIPT: ${{ inputs.script }}
+        VERSION: ${{ inputs.version }}
+        PREVIEW: ${{ inputs.preview }}
+      run: |
+        set -euo pipefail
+        if [[ "${PREVIEW}" == true ]]; then
+          steamship upload "${SCRIPT}" --version "${VERSION}" --preview
+        else
+          steamship upload "${SCRIPT}" --version "${VERSION}"
+        fi
+
+    - name: Forget the login
+      if: always()
+      shell: bash
+      run: rm -rf "${RUNNER_TEMP}/steamship-home"
