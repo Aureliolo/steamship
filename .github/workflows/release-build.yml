@@ -22,7 +22,7 @@ jobs:
   verify:
     name: verify
     if: github.repository == 'Aureliolo/steamship'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read # Reads the tagged source, and main to check the tag is on it.
@@ -89,7 +89,7 @@ jobs:
           # glibc, and the runner it is built on sets no floor.
           - target: x86_64-unknown-linux-musl
             # renovate: datasource=github-runners depName=ubuntu
-            runner: ubuntu-24.04
+            runner: ubuntu-26.04
             native: true
           - target: x86_64-pc-windows-msvc
             # renovate: datasource=github-runners depName=windows
@@ -212,7 +212,7 @@ jobs:
   sbom:
     name: sbom
     needs: [verify, build]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read # Reads the lock file at the tag, to know what each binary should list.
@@ -316,7 +316,7 @@ jobs:
   attest:
     name: attest
     needs: [verify, sbom]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       id-token: write # Sigstore signs against this token.
