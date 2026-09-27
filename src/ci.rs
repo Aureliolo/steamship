@@ -325,11 +325,7 @@ mod tests {
 
     #[test]
     fn a_login_is_never_shown_by_debug() {
-        let shown = format!("{:?}", login());
-        assert!(
-            !shown.contains("build_bot") && !shown.contains("token"),
-            "{shown}"
-        );
+        assert_eq!(format!("{:?}", login()), "Login { .. }");
     }
 
     #[test]

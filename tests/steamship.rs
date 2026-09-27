@@ -546,8 +546,8 @@ fn github_project() -> (tempfile::TempDir, PathBuf) {
 
 /// A stand-in for the GitHub command line, first on a `PATH` that is otherwise the test's own.
 /// `gh secret set` keeps what it was given and how beside itself, and refuses when
-/// `STEAMSHIP_FAKE_GH_REFUSE` is set; `gh api` answers a commit, or fails when
-/// `STEAMSHIP_FAKE_GH_OFFLINE` is set.
+/// `STEAMSHIP_FAKE_GH_REFUSE` is set; `gh api` answers a commit, `STEAMSHIP_FAKE_GH_COMMIT` if
+/// set, or fails when `STEAMSHIP_FAKE_GH_OFFLINE` is set.
 #[cfg(unix)]
 fn fake_gh() -> (tempfile::TempDir, String) {
     use std::env;
@@ -566,7 +566,7 @@ fn fake_gh() -> (tempfile::TempDir, String) {
          [ -z \"$STEAMSHIP_FAKE_GH_REFUSE\" ] || { echo 'HTTP 403: Resource not accessible' >&2; exit 1; } ;;\n\
          api)\n\
          [ -z \"$STEAMSHIP_FAKE_GH_OFFLINE\" ] || exit 1\n\
-         echo 0123456789abcdef0123456789abcdef01234567 ;;\n\
+         echo \"${STEAMSHIP_FAKE_GH_COMMIT:-0123456789abcdef0123456789abcdef01234567}\" ;;\n\
          esac\n",
     )
     .unwrap();
@@ -723,6 +723,91 @@ fn ci_without_gh_says_where_to_get_it_and_exits_1() {
             "install it from https://cli.github.com, or write the login to a file with --output\n"
         ),
         "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_with_a_gh_that_cannot_start_says_so_and_exits_1() {
+    use std::os::unix::fs::symlink;
+
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let (_project, root) = github_project();
+    let bin = tempfile::tempdir().unwrap();
+    let git = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .unwrap();
+    symlink(
+        String::from_utf8(git.stdout).unwrap().trim(),
+        bin.path().join("git"),
+    )
+    .unwrap();
+    fs::write(bin.path().join("gh"), "not a program").unwrap();
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["ci"],
+        Some(home.path()),
+        &[("PATH", bin.path().to_str().unwrap())],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}");
+    assert!(
+        stdout.ends_with("  secret    \u{2717} gh could not start\n"),
+        "{stdout}"
+    );
+    assert!(failure(&stderr).starts_with("gh: "), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_pins_the_tag_when_github_answers_something_that_is_not_a_commit() {
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let (_project, root) = github_project();
+    let (_gh, path) = fake_gh();
+    let version = env!("CARGO_PKG_VERSION");
+    for answer in ["0123abc", &"g".repeat(40)] {
+        let (code, stdout, _) = steamship_in(
+            &root,
+            &["ci"],
+            Some(home.path()),
+            &[("PATH", &path), ("STEAMSHIP_FAKE_GH_COMMIT", answer)],
+        );
+        assert_eq!(code, Some(0_i32), "{stdout}");
+        assert!(
+            stdout.contains(&format!(
+                "uses: Aureliolo/steamship@v{version} # v{version}\n"
+            )),
+            "{answer}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn ci_run_outside_the_repository_reads_origin_where_the_script_is() {
+    let (_project, root) = github_project();
+    let outside = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let script = root.join("steam").join("app_build.vdf");
+    let (code, stdout, stderr) = steamship_in(
+        outside.path(),
+        &["ci", "--script", script.to_str().unwrap()],
+        Some(home.path()),
+        &[("STEAMSHIP_ACCOUNT", "")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  repo      Aureliolo/some-game, from origin\n"),
+        "{stdout}"
+    );
+    assert_eq!(
+        failure(&stderr),
+        "name the build account with --account or STEAMSHIP_ACCOUNT"
     );
 }
 
