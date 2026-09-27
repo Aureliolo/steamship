@@ -132,8 +132,10 @@ fn build(docs: &Path, out: &Path) -> Result<PathBuf, String> {
         write(&out.join(format!("{}.md", page.name)), &text)?;
         texts.push(text);
     }
-    let _bytes: u64 = fs::copy(docs.join("theme").join("site.css"), out.join("site.css"))
-        .map_err(|error| format!("site.css: {error}"))?;
+    for asset in ["site.css", "ship.svg"] {
+        let _bytes: u64 = fs::copy(docs.join("theme").join(asset), out.join(asset))
+            .map_err(|error| format!("{asset}: {error}"))?;
+    }
     write(&out.join("llms.txt"), &llms())?;
     write(&out.join("llms-full.txt"), &texts.join("\n---\n\n"))?;
     // Pages would otherwise run the site through Jekyll, which drops some files.
