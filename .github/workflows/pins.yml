@@ -6,6 +6,10 @@ name: Pins
 # that system and names exactly the version Renovate wrote, and committed through GitHub's API,
 # which signs the commit. Nothing from the branch runs here, so no raised dependency's build
 # script ever sees the write token.
+#
+# It does not ask who pushed: all it can ever commit is the manifest Valve serves now, and only
+# when that names the version already on the branch, so whoever pushes can only have a pin made
+# whole. Its own commit, if it runs again for it, finds nothing left to change.
 on:
   push:
     branches:
@@ -22,7 +26,7 @@ concurrency:
 jobs:
   finish:
     name: finish
-    if: github.repository == 'Aureliolo/steamship' && github.actor == 'renovate[bot]'
+    if: github.repository == 'Aureliolo/steamship'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
