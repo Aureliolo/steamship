@@ -191,13 +191,14 @@ fn help_lists_every_command_with_one_short_line() {
         "named as it is typed, on Windows too: {stdout}"
     );
     for line in [
-        "  login    Log in to Steam, once, for uploads\n",
-        "  status   Show the login and steamcmd, checking the login with Steam\n",
-        "  check    Check the build scripts, without logging in\n",
-        "  upload   Check, build and upload, then print the build ID\n",
-        "  ci       Set up uploads from CI, the login kept as a secret\n",
-        "  logout   Forget the saved login\n",
-        "  install  Install or verify the pinned steamcmd\n",
+        "  login     Log in to Steam, once, for uploads\n",
+        "  status    Show the login and steamcmd, checking the login with Steam\n",
+        "  check     Check the build scripts, without logging in\n",
+        "  upload    Check, build and upload, then print the build ID\n",
+        "  workshop  Upload a Workshop item, then print its ID\n",
+        "  ci        Set up uploads from CI, the login kept as a secret\n",
+        "  logout    Forget the saved login\n",
+        "  install   Install or verify the pinned steamcmd\n",
     ] {
         assert!(stdout.contains(line), "{line:?} in {stdout}");
     }
@@ -1812,6 +1813,173 @@ fn an_upload_in_a_github_actions_step_hands_the_build_id_on_as_its_output() {
     assert!(
         said.contains("the BuildID could not be handed to the workflow"),
         "{said}"
+    );
+}
+
+/// A Workshop item's script, content and preview, in a folder named the way a gate worktree is;
+/// `extra` goes into the script as it is.
+fn workshop_item(extra: &str) -> (tempfile::TempDir, PathBuf) {
+    let temp = tempfile::tempdir().unwrap();
+    let folder = temp.path().join("my game (x86)").join("workshop");
+    fs::create_dir_all(folder.join("hat")).unwrap();
+    fs::write(folder.join("hat").join("hat.mdl"), "model").unwrap();
+    fs::write(folder.join("hat.png"), "png").unwrap();
+    let script = folder.join("item.vdf");
+    fs::write(
+        &script,
+        format!(
+            r#""workshopitem" {{ "appid" "480" "contentfolder" "hat" "previewfile" "hat.png" "title" "A green hat" {extra} }}"#
+        ),
+    )
+    .unwrap();
+    (temp, script)
+}
+
+/// A home whose steamcmd, given a Workshop item's script, says `said`, exits `code`, and gives
+/// the item ID 777 in that script when it had none, as steamcmd does with an item it makes.
+#[cfg(unix)]
+fn publishing(said: &str, code: u8) -> tempfile::TempDir {
+    let home = faked_with(&format!(
+        "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
+         grep -q publishedfileid \"$script\" || \
+         printf '\"workshopitem\"\\n{{\\n\"appid\" \"480\"\\n\"publishedfileid\" \"777\"\\n}}\\n' > \"$script\"\n\
+         printf '%s\\r\\n' '{said}'\n\
+         exit {code}\n"
+    ));
+    saved_login(home.path());
+    home
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_workshop_item_is_uploaded_and_its_id_given_to_add_to_the_script() {
+    let home = publishing("Success.", 0);
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  item      \u{2713} app 480, a new item, 1 file, checked\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "  \u{2713} app 480: Workshop item 777\n    a new item: add \"publishedfileid\" \"777\" \
+             to {} so that later uploads update it\n",
+            script.display()
+        )),
+        "{stdout}"
+    );
+    assert!(
+        !fs::read_to_string(&script).unwrap().contains("777"),
+        "the script is left for its author"
+    );
+    let console = fs::read_to_string(home.path().join("workshop/480/steamcmd.log")).unwrap();
+    assert!(console.contains("Success."), "{console}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_workshop_upload_in_ci_logs_in_as_the_account_handed_over() {
+    let home = publishing("Success.", 0);
+    fs::remove_file(home.path().join("account")).unwrap();
+    let saved = steamcmd::saved_login(home.path(), Platform::THIS);
+    fs::remove_file(&saved).unwrap();
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        saved.exists(),
+        "the login is put back where steamcmd reads it"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_workshop_item_named_by_its_id_is_updated() {
+    let home = publishing("Success.", 0);
+    let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
+    let (code, stdout, _) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}");
+    assert!(
+        stdout.contains("app 480, item 5674, 1 file, checked"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\u{2713} app 480: Workshop item 5674\n    log  "),
+        "{stdout}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_workshop_upload_steam_will_not_log_in_for_exits_3() {
+    let home = publishing(
+        "Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)",
+        5,
+    );
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}");
+    assert_eq!(failure(&stderr), "not logged in: Expired Login Auth Code");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_workshop_upload_names_why_and_where_the_log_is_and_exits_1() {
+    let home = publishing("ERROR! Failed to update workshop item (Access Denied).", 8);
+    let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}");
+    assert_eq!(
+        failure(&stderr),
+        "Failed to update workshop item (Access Denied)."
+    );
+    assert!(stderr.contains("log  "), "{stderr}");
+}
+
+#[test]
+fn a_workshop_script_that_would_upload_the_wrong_thing_is_refused_and_exits_2() {
+    let (_temp, script) = workshop_item(r#""visibility" "9""#);
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship(
+        &[
+            "workshop",
+            script.to_str().unwrap(),
+            "--account",
+            "build_bot",
+        ],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        format!(
+            "refused: {}: \"visibility\" is not 0 (public), 1 (friends only), 2 (private) or 3 \
+             (unlisted)",
+            script.display()
+        )
     );
 }
 
