@@ -88,6 +88,27 @@ add to your workflow, after the step that builds your content:
 The action installs the steamship release it is pinned to, refusing it unless its SHA-256 and
 its attestation check out, uploads, and gives the BuildID as its `build-id` output;
 `preview: true` makes it Valve's dry run. It runs on Linux, Windows and macOS runners.
+Renovate raises the action's pin by itself.
+
+## Keeping steamship current
+
+A tool that installs steamship from the release archives can pin it in any JSON file as a
+`"steamship"` object holding, for each target, the release's tag and the archive's SHA-256:
+
+```json
+"steamship": {
+  "x86_64-pc-windows-msvc": { "tag": "v0.4.0", "sha256": "<the .sha256 beside the archive>" },
+  "x86_64-unknown-linux-musl": { "tag": "v0.4.0", "sha256": "<the .sha256 beside the archive>" }
+}
+```
+
+The archive is `steamship-<version>-<target>.tar.gz`, or `.zip` for Windows, from the tag's
+release. With this in your Renovate configuration, Renovate raises the tag and the digest
+together:
+
+```json
+"extends": ["github>Aureliolo/steamship//.github/renovate-preset"]
+```
 
 ## Commands
 
@@ -243,7 +264,7 @@ holding only the apps it uploads. Its token can do everything those permissions 
 
 Before 1.0:
 
-- a Renovate preset that raises steamship pins, and Scoop, winget and Homebrew packages.
+- Scoop, winget and Homebrew packages.
 
 ## Licence
 
