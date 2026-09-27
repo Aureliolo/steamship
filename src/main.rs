@@ -372,6 +372,7 @@ fn steamcmd_state(home: &Path, manifest: &Manifest) -> Result<(), ExitCode> {
 }
 
 fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
+    show::banner_on_terminal();
     show::title("status");
     show::field("version", env!("CARGO_PKG_VERSION"));
     let home = home()?;
