@@ -1398,16 +1398,16 @@ fn an_upload_in_a_github_actions_step_hands_the_build_id_on_as_its_output() {
         "earlier=kept\nbuild-id=4242\n"
     );
     let missing = project.path().join("no such folder").join("output");
-    let (code, _, stderr) = upload(
+    let (still, _, said) = upload(
         &script,
         home.path(),
         &["--version", "1.4.0"],
         &[("GITHUB_OUTPUT", missing.to_str().unwrap())],
     );
-    assert_eq!(code, Some(0_i32), "the upload is done: {stderr}");
+    assert_eq!(still, Some(0_i32), "the upload is done: {said}");
     assert!(
-        stderr.contains("the BuildID could not be handed to the workflow"),
-        "{stderr}"
+        said.contains("the BuildID could not be handed to the workflow"),
+        "{said}"
     );
 }
 

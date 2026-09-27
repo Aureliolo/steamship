@@ -31,6 +31,7 @@ runs:
     # by commit pins the binary too. The archive is refused unless its SHA-256 matches and its
     # Sigstore attestation says steamship's release workflow built it from that tag.
     - name: Install steamship
+      id: install
       shell: bash
       env:
         ACTION_PATH: ${{ github.action_path }}
@@ -63,10 +64,14 @@ runs:
           --source-ref "refs/tags/v${version}" --deny-self-hosted-runners > /dev/null
         if [[ "${extension}" == zip ]]; then
           unzip -q -o "${folder}/${name}.zip" -d "${folder}"
+          program="${folder}/${name}/steamship.exe"
         else
           tar -xzf "${folder}/${name}.tar.gz" -C "${folder}"
+          program="${folder}/${name}/steamship"
         fi
-        echo "${folder}/${name}" >> "${GITHUB_PATH}"
+        # Handed to the next step by name rather than put on the PATH, which every later step of
+        # the job would search.
+        echo "program=${program}" >> "${GITHUB_OUTPUT}"
 
     # A home of the job's own, into which the login is put back and from which it goes with the
     # job. steamship reads the secret from its environment, never from its command line.
@@ -74,6 +79,7 @@ runs:
       id: upload
       shell: bash
       env:
+        STEAMSHIP: ${{ steps.install.outputs.program }}
         STEAMSHIP_LOGIN: ${{ inputs.login }}
         STEAMSHIP_HOME: ${{ runner.temp }}/steamship-home
         SCRIPT: ${{ inputs.script }}
@@ -82,9 +88,9 @@ runs:
       run: |
         set -euo pipefail
         if [[ "${PREVIEW}" == true ]]; then
-          steamship upload "${SCRIPT}" --version "${VERSION}" --preview
+          "${STEAMSHIP}" upload "${SCRIPT}" --version "${VERSION}" --preview
         else
-          steamship upload "${SCRIPT}" --version "${VERSION}"
+          "${STEAMSHIP}" upload "${SCRIPT}" --version "${VERSION}"
         fi
 
     - name: Forget the login
