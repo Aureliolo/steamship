@@ -676,6 +676,14 @@ mod tests {
         (format!("http://{address}"), requests)
     }
 
+    /// The next request the server read. The server thread keeps the sender while it waits to
+    /// accept, so a call that never reaches it would otherwise leave the test waiting forever.
+    fn received(requests: &mpsc::Receiver<String>) -> String {
+        requests
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the server was sent a request")
+    }
+
     fn serve(listener: &TcpListener, status: &str, body: &str, sender: &mpsc::Sender<String>) {
         {
             let (mut stream, _) = listener.accept().unwrap();
@@ -730,7 +738,7 @@ mod tests {
         );
         let branches = api(&host).branches(5_335_950).unwrap();
         assert_eq!(branches.first().map(|branch| branch.build_id), Some(1234));
-        let request = requests.recv().unwrap();
+        let request = received(&requests);
         let first = request.lines().next().unwrap();
         assert_eq!(
             first,
@@ -797,8 +805,8 @@ mod tests {
         ]);
         let overview = api(&host).overview(1, 5).unwrap();
         assert_eq!(overview.summary(), "1 branch and 1 build");
-        assert!(requests.recv().unwrap().contains("GetAppBetas"));
-        assert!(requests.recv().unwrap().contains("GetAppBuilds"));
+        assert!(received(&requests).contains("GetAppBetas"));
+        assert!(received(&requests).contains("GetAppBuilds"));
         let (stopped, _requests) = answering(
             "200 OK",
             r#"{"response": {"betas": {"testing": {"BuildID": 7}}}}"#,
@@ -818,7 +826,7 @@ mod tests {
         );
         let builds = api(&host).builds(5_335_950, 25).unwrap();
         assert_eq!(builds.first().map(|build| build.build_id), Some(1234));
-        let request = requests.recv().unwrap();
+        let request = received(&requests);
         assert!(
             request.starts_with("GET /ISteamApps/GetAppBuilds/v1/?appid=5335950&count=25 "),
             "{request}"
@@ -829,7 +837,7 @@ mod tests {
     fn a_build_is_set_live_with_a_form_that_holds_no_key() {
         let (host, requests) = answering("200 OK", r#"{"response": {"result": 1}}"#);
         api(&host).set_live(5_335_950, 1234, "testing").unwrap();
-        let request = requests.recv().unwrap();
+        let request = received(&requests);
         assert!(
             request.starts_with("POST /ISteamApps/SetAppBuildLive/v2/ "),
             "{request}"
