@@ -3,10 +3,14 @@
   "extends": ["config:best-practices", "security:openssf-scorecard", ":semanticCommitsDisabled"],
   "timezone": "Europe/Zurich",
   "schedule": ["before 6am on monday"],
-  "description": "The dependency dashboard is on: it is the only place that shows what Renovate tried and could not land, which the weekly pull request never mentions.",
+  "description": [
+    "The dependency dashboard is on: it is the only place that shows what Renovate tried and could not land, which the weekly pull request never mentions.",
+    "The commit pins.yml adds to finish a steamcmd raise is not taken as someone else's edit, so Renovate still rebases and updates its branch."
+  ],
   "dependencyDashboard": true,
   "dependencyDashboardLabels": ["renovate"],
   "separateMajorMinor": false,
+  "gitIgnoredAuthors": ["41898282+github-actions[bot]@users.noreply.github.com"],
   "commitMessageAction": "Raise",
   "commitMessageTopic": "{{depName}}",
   "commitMessageExtra": "to {{newVersion}}",
@@ -30,6 +34,11 @@
       "description": "steamcmd's version is a Unix timestamp, so every raise is a jump of thousands; best-practices refuses any major jump above 500 as a guard against date-like versions, which this is on purpose.",
       "matchDatasources": ["custom.steamcmd"],
       "maxMajorIncrement": 0
+    },
+    {
+      "description": "The toolchain is raised by the Rust manager below, together with the crate's rust-version from the same release list; Renovate's own rust-toolchain manager would raise the same line a second time.",
+      "matchManagers": ["rust-toolchain"],
+      "enabled": false
     },
     {
       "description": "Cargo.toml names the version tested, not a floor, so a raise moves it along with the lock file.",
@@ -61,7 +70,7 @@
       "versioningTemplate": "semver"
     },
     {
-      "description": "Valve's steamcmd manifests, one per system, pinned byte for byte in pins/. Only the version inside a pin can be raised here; the pins check in CI then fails on the stale packages and says to run `cargo run --example pins`, which rewrites the pin from Valve's live manifest for review.",
+      "description": "Valve's steamcmd manifests, one per system, pinned byte for byte in pins/. Only the version inside a pin can be raised here; .github/workflows/pins.yml then commits Valve's manifest for that version to the branch, so the pull request carries the whole pin.",
       "customType": "regex",
       "managerFilePatterns": ["/^pins/steam_cmd_(win64|linux|osx)\\.vdf$/"],
       "matchStrings": ["^\"(?<system>win64|linux|osx)\"\\s*\\{\\s*\"version\"\\s+\"(?<currentValue>\\d+)\""],
@@ -79,11 +88,11 @@
       ]
     },
     {
-      "description": "A crate installed by version in a workflow: cargo-fuzz.",
+      "description": "A tool fetched by version in a workflow, under the comment naming where its versions come from: cargo-fuzz and cargo-auditable as `..._VERSION:`, syft as an action's `...-version:` input.",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>crate) depName=(?<depName>\\S+)\\n\\s*[A-Z0-9_]+_VERSION: (?<currentValue>\\S+)"
+        "# renovate: datasource=(?<datasource>crate|github-releases) depName=(?<depName>\\S+)\\n\\s*(?:[A-Z0-9_]+_VERSION|[a-z0-9-]+-version): (?<currentValue>\\S+)"
       ]
     },
     {
