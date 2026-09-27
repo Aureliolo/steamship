@@ -181,6 +181,20 @@ jobs:
           echo "The release could not be created in three attempts." >&2
           exit 1
 
+  # The site, from this tag once its archives are out, so its version, links and command
+  # reference are always the release's own.
+  site:
+    name: site
+    if: github.repository == 'Aureliolo/steamship'
+    needs: publish
+    permissions:
+      contents: read # Reads the tagged pages and the command line they are built from.
+      pages: write # Only docs.yml's deploy job uses it, to publish.
+      id-token: write # Only docs.yml's deploy job uses it; Pages verifies the deployment by it.
+    uses: ./.github/workflows/docs.yml # zizmor: ignore[self-repository]
+    with:
+      publish: true
+
   # The action as a workflow in a game's repository uses it, from this tag on each system: it
   # installs the release just published, checked by SHA-256 and attestation, and uploads with a
   # login handed over. The login is an anonymous one, which Steam refuses a build, so the upload

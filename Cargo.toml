@@ -75,7 +75,7 @@ workspace = true
 # Plain cargo commands build only this crate; the harness needs libFuzzer and is built by
 # cargo-fuzz.
 [workspace]
-members = [".", "fuzz"]
+members = [".", "docs-site", "fuzz"]
 default-members = ["."]
 
 # Every lint group is on, the restriction group included, and CI turns every warning into an
@@ -171,10 +171,15 @@ pkg-fmt = "tgz"
 bin-dir = "{ name }-{ version }-{ target }/{ bin }{ binary-ext }"
 disabled-strategies = ["quick-install"]
 
-# The one Linux archive is static, and serves a glibc system as well.
+# The one Linux archive is static, and serves a glibc system as well. It is named without Rust's
+# placeholder vendor, so no Linux target's name matches it.
 [package.metadata.binstall.overrides.x86_64-unknown-linux-gnu]
-pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-x86_64-unknown-linux-musl.tar.gz"
-bin-dir = "{ name }-{ version }-x86_64-unknown-linux-musl/{ bin }{ binary-ext }"
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-x86_64-linux-musl.tar.gz"
+bin-dir = "{ name }-{ version }-x86_64-linux-musl/{ bin }{ binary-ext }"
+
+[package.metadata.binstall.overrides.x86_64-unknown-linux-musl]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-x86_64-linux-musl.tar.gz"
+bin-dir = "{ name }-{ version }-x86_64-linux-musl/{ bin }{ binary-ext }"
 
 [package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.zip"

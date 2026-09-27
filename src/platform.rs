@@ -6,6 +6,9 @@ use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
 
+/// Where steamship keeps steamcmd, its token and build output, when not in the per-user default.
+pub const HOME: &str = "STEAMSHIP_HOME";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Platform {
     Windows,
@@ -43,7 +46,7 @@ impl Platform {
         Lookup: Fn(&str) -> Option<OsString>,
     {
         let set = |name: &str| lookup(name).filter(|value| !value.is_empty());
-        if let Some(home) = set("STEAMSHIP_HOME") {
+        if let Some(home) = set(HOME) {
             return Ok(PathBuf::from(home));
         }
         let (base, under) = match self {
