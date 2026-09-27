@@ -141,6 +141,10 @@ jobs:
           CARGO_AUDITABLE_VERSION: 0.7.6
         run: cargo install cargo-auditable --version "${CARGO_AUDITABLE_VERSION}" --locked
 
+      - name: Install the test prerequisites
+        if: matrix.native
+        uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
+
       # The tests again, on the tagged commit and the system each binary is for, where that
       # system can run them.
       - name: Test
