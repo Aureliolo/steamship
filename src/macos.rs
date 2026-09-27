@@ -97,13 +97,13 @@ mod tests {
     /// shows.
     #[test]
     fn no_keychain_to_use_is_no_store_and_anything_else_a_failure() {
-        for code in [-25_307, -25_308] {
+        for code in [-25_307_i32, -25_308_i32] {
             assert!(
                 matches!(failed(Status::from_code(code)), Error::Unavailable(_)),
                 "{code}"
             );
         }
-        for code in [-25_300, -25_299, 25_307] {
+        for code in [-25_300_i32, -25_299_i32, 25_307_i32] {
             assert!(
                 matches!(failed(Status::from_code(code)), Error::Failed(_)),
                 "{code}"
