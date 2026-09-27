@@ -170,6 +170,22 @@ to the script, as for `upload`.
 A script with no `publishedfileid`, or `0`, makes a new item: steamship prints its ID and the line
 to add to the script, so that later uploads update the same item. Your script is never rewritten.
 
+### `builds` and `promote`
+
+```sh
+steamship builds <app> [--count <n>]
+steamship promote <app> --build <build-id> --branch <name>
+```
+
+`builds` lists each branch with the build live on it, and the last builds uploaded (10 unless
+`--count` says otherwise) with the day each was uploaded and where it is live. `promote` sets an
+uploaded build live on a beta branch without uploading it again; the default branch is set live
+in Steamworks only, so `promote` refuses it. `<app>` is the app's ID or its app build script.
+
+Both use Steam's partner Web API, which steamcmd cannot reach, with the publisher Web API key of a
+group that holds the app, from Steamworks under Users & Permissions, Manage Groups. The key is
+read from `STEAMSHIP_WEB_API_KEY` alone and sent in a request header, never in an address.
+
 ### `ci`
 
 ```sh
@@ -211,6 +227,7 @@ for example in CI, and verifies an existing install.
 | `STEAMSHIP_HOME`            | Where steamcmd, its token and build output live; a per-user folder by default |
 | `STEAMSHIP_ACCOUNT`         | The build account, if not the one `login` remembered                          |
 | `STEAMSHIP_LOGIN`           | In CI, the login `steamship ci` set as a secret; `upload` and `status` use it |
+| `STEAMSHIP_WEB_API_KEY`     | The publisher Web API key `builds` and `promote` use                          |
 | `STEAMSHIP_NO_UPDATE_CHECK` | Set to anything to never ask GitHub for a newer release                       |
 
 There is no password setting anywhere.
@@ -226,7 +243,6 @@ holding only the apps it uploads. Its token can do everything those permissions 
 
 Before 1.0:
 
-- branch status and moving a build between beta branches, through the partner Web API;
 - a Renovate preset that raises steamship pins, and Scoop, winget and Homebrew packages.
 
 ## Licence

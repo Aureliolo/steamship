@@ -196,6 +196,8 @@ fn help_lists_every_command_with_one_short_line() {
         "  check     Check the build scripts, without logging in\n",
         "  upload    Check, build and upload, then print the build ID\n",
         "  workshop  Upload a Workshop item, then print its ID\n",
+        "  builds    Show an app's branches and last builds\n",
+        "  promote   Set an uploaded build live on a branch\n",
         "  ci        Set up uploads from CI, the login kept as a secret\n",
         "  logout    Forget the saved login\n",
         "  install   Install or verify the pinned steamcmd\n",
@@ -1956,6 +1958,85 @@ fn a_failed_workshop_upload_names_why_and_where_the_log_is_and_exits_1() {
         "Failed to update workshop item (Access Denied)."
     );
     assert!(stderr.contains("log  "), "{stderr}");
+}
+
+#[test]
+fn builds_without_a_web_api_key_says_where_to_get_one_and_exits_2() {
+    let home = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["builds", "5335950"],
+        Some(home.path()),
+        &[("STEAMSHIP_WEB_API_KEY", "")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}");
+    assert!(stdout.contains("  app       5335950\n"), "{stdout}");
+    assert_eq!(failure(&stderr), "no Web API key");
+    assert!(
+        stderr.ends_with(
+            "set STEAMSHIP_WEB_API_KEY to the publisher Web API key from Steamworks, under Users \
+             & Permissions, Manage Groups\n"
+        ),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_web_api_key_that_is_not_one_is_refused_without_repeating_it() {
+    let home = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["builds", "5335950"],
+        Some(home.path()),
+        &[("STEAMSHIP_WEB_API_KEY", "not_a_key_1234")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}");
+    assert_eq!(
+        failure(&stderr),
+        "STEAMSHIP_WEB_API_KEY does not hold a publisher Web API key, which is 32 hexadecimal \
+         digits"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("not_a_key"));
+}
+
+#[test]
+fn promote_leaves_the_default_branch_to_steamworks_and_exits_2() {
+    let (_project, script) = project(false);
+    let home = tempfile::tempdir().unwrap();
+    for default in ["default", "public"] {
+        let (code, stdout, stderr) = steamship(
+            &[
+                "promote",
+                script.to_str().unwrap(),
+                "--build",
+                "1234",
+                "--branch",
+                default,
+            ],
+            Some(home.path()),
+            &[],
+        );
+        assert_eq!(code, Some(2_i32), "{stdout}");
+        assert!(
+            stdout.contains("  app       1000\n"),
+            "the app from its script: {stdout}"
+        );
+        assert_eq!(
+            failure(&stderr),
+            "the default branch is set live in Steamworks, not by steamship"
+        );
+    }
+}
+
+#[test]
+fn an_app_that_is_neither_an_id_nor_a_script_is_refused_and_exits_2() {
+    let home = tempfile::tempdir().unwrap();
+    let (zero, _, said) = steamship(&["builds", "0"], Some(home.path()), &[]);
+    assert_eq!(
+        (zero, failure(&said)),
+        (Some(2_i32), "0 is not an app's ID")
+    );
+    let (missing, _, stderr) = steamship(&["builds", "no_such_app.vdf"], Some(home.path()), &[]);
+    assert_eq!(missing, Some(2_i32));
+    assert_eq!(failure(&stderr), "refused: no_such_app.vdf: does not exist");
 }
 
 #[test]

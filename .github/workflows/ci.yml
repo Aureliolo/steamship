@@ -246,6 +246,20 @@ jobs:
             fi
           done
 
+      # Steam's partner Web API, asked with a key of the right form that no publisher holds: it
+      # refuses the key, which `builds` says, exiting 1. The key travels in a header, so this is
+      # also where Steam shows it reads one there.
+      - name: Have the partner Web API refuse a key that is not one
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          status=0
+          STEAMSHIP_WEB_API_KEY=00000000000000000000000000000000 \
+            cargo run --locked -- builds 480 2> "${RUNNER_TEMP}/builds.txt" || status=$?
+          cat "${RUNNER_TEMP}/builds.txt"
+          test "${status}" -eq 1
+          grep -q '^  ✗ Steam refused the Web API key; ' "${RUNNER_TEMP}/builds.txt"
+
       # The login the anonymous run saved, packed by `steamship ci` as for a CI secret, then handed
       # to an upload in a home of its own through STEAMSHIP_LOGIN alone: the account comes from
       # it, and steamcmd, given it back where it reads it, gets as far as Steam's refusal again.

@@ -26,6 +26,7 @@ pub mod unix;
 pub mod update;
 pub mod upload;
 pub mod vdf;
+pub mod webapi;
 #[cfg(windows)]
 pub mod windows;
 pub mod workshop;

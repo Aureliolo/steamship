@@ -21,7 +21,7 @@ use steamship::unix::Terminal;
 use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
-use steamship::{check, ci, conversation, run, steamcmd, upload, workshop};
+use steamship::{check, ci, conversation, run, scripts, steamcmd, upload, webapi, workshop};
 use zeroize::Zeroizing;
 
 /// Something failed; what, and why, is printed.
@@ -104,6 +104,32 @@ enum Command {
         #[arg(long, env = "STEAMSHIP_ACCOUNT")]
         account: Option<String>,
     },
+    /// Show an app's branches and last builds.
+    ///
+    /// Lists each branch with the build live on it, then the last builds uploaded, through
+    /// Steam's partner Web API, with the publisher key in `STEAMSHIP_WEB_API_KEY`.
+    Builds {
+        /// The app, by its ID or its app build script.
+        app: String,
+        /// How many of the last builds to list.
+        #[arg(long, default_value_t = 10)]
+        count: u32,
+    },
+    /// Set an uploaded build live on a branch.
+    ///
+    /// Sets a build live on a beta branch without uploading it again, through Steam's partner
+    /// Web API, with the publisher key in `STEAMSHIP_WEB_API_KEY`. The default branch is set
+    /// live in Steamworks only.
+    Promote {
+        /// The app, by its ID or its app build script.
+        app: String,
+        /// The build, by its build ID.
+        #[arg(long)]
+        build: u64,
+        /// The branch to set it live on.
+        #[arg(long)]
+        branch: String,
+    },
     /// Set up uploads from CI, the login kept as a secret.
     ///
     /// Finds the GitHub repository, its app build script and the saved login, checks the script,
@@ -169,6 +195,12 @@ fn main() -> ExitCode {
             Ok(code) | Err(code) => code,
         },
         Command::Install => run_install(),
+        Command::Builds { app, count } => match try_builds(&app, count) {
+            Ok(code) | Err(code) => code,
+        },
+        Command::Promote { app, build, branch } => match try_promote(&app, build, &branch) {
+            Ok(code) | Err(code) => code,
+        },
         Command::Workshop { script, account } => {
             match try_workshop(&script, named(account.as_deref())) {
                 Ok(code) | Err(code) => code,
@@ -820,6 +852,86 @@ fn run_check(script: &Path) -> ExitCode {
         }
         Err(code) => code,
     }
+}
+
+/// The partner Web API, with the publisher key from `STEAMSHIP_WEB_API_KEY`.
+fn web_api() -> Result<webapi::Api, ExitCode> {
+    let Some(text) = env::var(webapi::KEY).ok().filter(|text| !text.is_empty()) else {
+        let key = Hint {
+            before: "set ",
+            command: webapi::KEY,
+            after: " to the publisher Web API key from Steamworks, under Users & Permissions, \
+                    Manage Groups",
+        };
+        show::failure("no Web API key", "", Some(key));
+        return Err(ExitCode::from(REFUSED));
+    };
+    let key = webapi::Key::parse(&text).map_err(|error| fail(&error, REFUSED))?;
+    Ok(webapi::Api::new(key))
+}
+
+/// The app named by its ID, or by the app build script that names it.
+fn app_named(app: &str) -> Result<u32, ExitCode> {
+    let app_id = match app.parse::<u32>() {
+        Ok(app_id) if app_id > 0 => app_id,
+        Ok(_) => return Err(fail(&"0 is not an app's ID", REFUSED)),
+        Err(_) => scripts::load(Path::new(app))
+            .map(|script| script.app_id)
+            .map_err(|problems| {
+                for problem in &problems {
+                    show::failure("refused", &problem.to_string(), None);
+                }
+                ExitCode::from(REFUSED)
+            })?,
+    };
+    show::field("app", &app_id.to_string());
+    Ok(app_id)
+}
+
+/// Says why the Web API did not answer, and the exit code for it.
+fn web_api_failed(spinner: Spinner, error: &webapi::Error) -> ExitCode {
+    spinner.failed("no answer");
+    fail(error, FAILED)
+}
+
+fn try_builds(app: &str, count: u32) -> Result<ExitCode, ExitCode> {
+    show::title("builds");
+    let app_id = app_named(app)?;
+    let api = web_api()?;
+    let spinner = Spinner::start("steam", "asking for the branches and builds", false);
+    let overview = match api.overview(app_id, count) {
+        Ok(overview) => overview,
+        Err(error) => return Err(web_api_failed(spinner, &error)),
+    };
+    spinner.done(&overview.summary());
+    for (label, line) in overview.lines() {
+        show::field(&label, &line);
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn try_promote(app: &str, build: u64, branch: &str) -> Result<ExitCode, ExitCode> {
+    show::title("promote");
+    let app_id = app_named(app)?;
+    if webapi::is_default(branch) {
+        return Err(fail(
+            &"the default branch is set live in Steamworks, not by steamship",
+            REFUSED,
+        ));
+    }
+    show::field("build", &build.to_string());
+    show::field("branch", branch);
+    let api = web_api()?;
+    let spinner = Spinner::start("steam", "setting it live", false);
+    if let Err(error) = api.set_live(app_id, build, branch) {
+        return Err(web_api_failed(spinner, &error));
+    }
+    spinner.done("set live");
+    show::success(
+        &format!("app {app_id}: BuildID {build} live on {branch}"),
+        "",
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 fn try_workshop(script: &Path, named: Option<&str>) -> Result<ExitCode, ExitCode> {
