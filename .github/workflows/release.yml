@@ -220,10 +220,12 @@ jobs:
           config="$(printf '"InstallConfigStore"\n{\n}\n' | od -An -tx1 | tr -d ' \n')"
           echo "packed=steamship-login-1:anonymous:${config}" >> "${GITHUB_OUTPUT}"
 
+      # `./` for the action at this tag, as for release-build.yml above: actionlint rejects the
+      # `$/...` form zizmor asks for.
       - name: Upload a preview with the action
         id: action
         continue-on-error: true
-        uses: ./
+        uses: ./ # zizmor: ignore[self-repository]
         with:
           script: tests/fixtures/spacewar/steam/app_build.vdf
           version: ${{ github.ref_name }}
