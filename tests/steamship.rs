@@ -746,6 +746,26 @@ fn told_of_99() -> tempfile::TempDir {
 }
 
 #[test]
+fn status_on_a_terminal_starts_with_the_banner() {
+    let home = tempfile::tempdir().unwrap();
+    let steamship = env!("CARGO_BIN_EXE_steamship");
+    #[cfg(windows)]
+    let line = format!("{steamship} status");
+    #[cfg(unix)]
+    let line = format!("'{steamship}' status");
+    let mut session = Session::start(&line, home.path());
+    session.wait_for("run steamship login");
+    let _: Option<i32> = session.end().wait().unwrap();
+    let seen = session.seen();
+    let banner = seen.find("uploads your build to Steam");
+    let title = seen.find("steamship status");
+    assert!(
+        banner.is_some() && banner < title,
+        "the banner, then the title: {seen}"
+    );
+}
+
+#[test]
 fn a_newer_steamship_is_told_at_a_terminal_with_how_to_get_it() {
     let home = told_of_99();
     let steamship = env!("CARGO_BIN_EXE_steamship");
