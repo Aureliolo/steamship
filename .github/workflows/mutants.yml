@@ -35,7 +35,7 @@ jobs:
         include:
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
-            runner: ubuntu-24.04
+            runner: ubuntu-26.04
             scope: --exclude
           - platform: windows
             # renovate: datasource=github-runners depName=windows

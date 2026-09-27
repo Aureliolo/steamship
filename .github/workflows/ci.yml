@@ -29,7 +29,7 @@ jobs:
         include:
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
-            runner: ubuntu-24.04
+            runner: ubuntu-26.04
           - platform: windows
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
@@ -86,7 +86,7 @@ jobs:
   # change that adds code without tests for it fails here.
   coverage:
     name: coverage
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read # Reads the source it measures.
@@ -120,7 +120,7 @@ jobs:
   # Spelling in British English everywhere, the code included.
   typos:
     name: typos
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read # Reads the files it checks.
@@ -137,7 +137,7 @@ jobs:
   # No em dash anywhere, and no en dash standing in for one.
   dashes:
     name: dashes
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read # Reads the files it checks.
@@ -170,7 +170,7 @@ jobs:
         include:
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
-            runner: ubuntu-24.04
+            runner: ubuntu-26.04
           - platform: windows
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
@@ -247,7 +247,7 @@ jobs:
   # pin, so that is a notice rather than a failure.
   pins:
     name: pins
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read # Reads the pins it compares.
@@ -280,7 +280,7 @@ jobs:
   # A dependency the code no longer uses is attack surface for nothing.
   machete:
     name: machete
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read # Reads the manifests it checks.
@@ -319,7 +319,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [vdf, elf, pattern, redact, terminal]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read # Reads the source it builds.
@@ -361,7 +361,7 @@ jobs:
   # Licences, advisories, duplicate crates and where every crate comes from.
   deny:
     name: deny
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read # Reads the lock file it checks.
@@ -397,7 +397,7 @@ jobs:
 
   markdown:
     name: markdown
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read # Reads the Markdown it lints.

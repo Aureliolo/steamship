@@ -27,7 +27,7 @@ jobs:
   finish:
     name: finish
     if: github.repository == 'Aureliolo/steamship'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: write # Commits the finished pins to Renovate's branch.
