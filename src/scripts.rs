@@ -7,6 +7,7 @@
 
 use std::fmt;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::vdf::{self, Block, Value};
@@ -108,8 +109,16 @@ pub fn load(path: &Path) -> Result<AppScript, Vec<Problem>> {
 }
 
 fn read(path: &Path) -> Result<Block, Problem> {
-    let text = fs::read_to_string(path)
-        .map_err(|error| Problem::new(path, format!("cannot be read: {error}")))?;
+    let text = fs::read_to_string(path).map_err(|error| {
+        Problem::new(
+            path,
+            if error.kind() == io::ErrorKind::NotFound {
+                "does not exist".to_owned()
+            } else {
+                format!("cannot be read: {error}")
+            },
+        )
+    })?;
     vdf::parse(&text).map_err(|error| Problem::new(path, error.to_string()))
 }
 

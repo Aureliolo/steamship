@@ -306,6 +306,21 @@ fn the_command_says_what_it_mapped_and_exits_0() {
 }
 
 #[test]
+fn the_command_says_a_script_that_is_not_there_does_not_exist_and_exits_2() {
+    let project = Project::new();
+    for missing in ["app_build.vdf", "steam/app_build.vdf"] {
+        let script = project.root.join(missing);
+        let (code, _, stderr) = run(&script);
+        assert_eq!(code, Some(2_i32), "{missing}");
+        assert_eq!(
+            stderr,
+            format!("  \u{2717} refused: {}: does not exist\n", script.display()),
+            "{missing}"
+        );
+    }
+}
+
+#[test]
 fn the_command_lists_every_refusal_and_exits_2() {
     let (_project, app) = Project::shipping(r#""Preview" "1""#);
     let (code, stdout, stderr) = run(&app);
