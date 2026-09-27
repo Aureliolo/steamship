@@ -169,8 +169,8 @@ jobs:
           git -C $core fetch --quiet --depth 1 https://github.com/ScoopInstaller/Scoop.git $env:SCOOP_COMMIT
           git -C $core checkout --quiet FETCH_HEAD
           if ((git -C $core rev-parse HEAD) -ne $env:SCOOP_COMMIT) { throw 'Scoop is not at its pinned commit.' }
-          # The one folder Scoop's installer makes that Scoop itself expects to find.
-          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\scoop\shims" | Out-Null
+          # The folders Scoop's installer makes that Scoop itself expects to find.
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\scoop\shims", "$env:RUNNER_TEMP\scoop\buckets" | Out-Null
 
       # By address first, as the README gives it: from the release itself when there is one, the
       # file when there is not. Then as a bucket, this repository added the way a user adds it.
