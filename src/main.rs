@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
 use steamship::account::Account;
-use steamship::install::{self, Outcome};
+use steamship::install::{self, Outcome, State};
 use steamship::login::{self, Ending, Person};
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
@@ -35,6 +35,8 @@ const STEAMCMD: u8 = 4;
 
 #[derive(Debug, Parser)]
 #[command(
+    name = "steamship",
+    bin_name = "steamship",
     version,
     about = "Uploads game builds to Steam with Valve's steamcmd.",
     styles = show::HELP
@@ -52,6 +54,15 @@ enum Command {
     /// Steam Guard code or approval in the Steam Mobile app. What you type is passed directly to
     /// steamcmd, never logged or saved.
     Login {
+        /// The build account, if not the one the last login remembered.
+        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
+        account: Option<String>,
+    },
+    /// Show the login and steamcmd, checking the login with Steam.
+    ///
+    /// Shows the home, the build account and steamcmd, then logs in with the login steamcmd
+    /// saved, as an upload does, and says whether Steam takes it. Nothing is asked for.
+    Status {
         /// The build account, if not the one the last login remembered.
         #[arg(long, env = "STEAMSHIP_ACCOUNT")]
         account: Option<String>,
@@ -112,6 +123,9 @@ fn main() -> ExitCode {
             Ok(code) | Err(code) => code,
         },
         Command::Logout => run_logout(),
+        Command::Status { account } => match try_status(account.as_deref()) {
+            Ok(code) | Err(code) => code,
+        },
         Command::Upload {
             script,
             version,
@@ -330,6 +344,140 @@ fn run_logout() -> ExitCode {
         "the next upload needs `steamship login` first",
     );
     ExitCode::SUCCESS
+}
+
+/// What the steamcmd in `home` is, shown without installing or changing anything.
+fn steamcmd_state(home: &Path, manifest: &Manifest) -> Result<(), ExitCode> {
+    match install::state(home, manifest) {
+        Ok(State::Pinned) => show::done(
+            "steamcmd",
+            &format!(
+                "{} ({}), pinned and verified",
+                manifest.version, manifest.system
+            ),
+        ),
+        Ok(State::Earlier) => show::field(
+            "steamcmd",
+            "an earlier pin; the next login or upload replaces it",
+        ),
+        Ok(State::Missing) => {
+            show::field("steamcmd", "not installed; `steamship login` installs it");
+        }
+        Err(error) => {
+            show::failed("steamcmd", "not as pinned");
+            return Err(steamcmd_failed(&error));
+        }
+    }
+    Ok(())
+}
+
+fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
+    show::title("status");
+    show::field("version", env!("CARGO_PKG_VERSION"));
+    let home = home()?;
+    show::field("home", &home.display().to_string());
+    let account = status_account(named, &home)?;
+    let saved = !steamcmd::login_files(&home)
+        .map_err(|error| fail(&format!("{}: {error}", home.display()), FAILED))?
+        .is_empty();
+    let login = Hint {
+        before: "run ",
+        command: "steamship login",
+        after: "",
+    };
+    let Some(account) = account.filter(|_| saved) else {
+        let manifest = Manifest::pinned(Platform::THIS).map_err(|error| fail(&error, FAILED))?;
+        steamcmd_state(&home, &manifest)?;
+        if saved {
+            show::field("login", "saved");
+            show::failure("no build account", "", Some(login));
+        } else {
+            show::field("login", "none saved");
+            show::failure("not logged in", "", Some(login));
+        }
+        return Ok(ExitCode::from(LOGIN));
+    };
+    check_saved_login(&account)
+}
+
+/// The account named, or else the one remembered, shown by where it came from and never by
+/// name, as `login` shows it.
+fn status_account(named: Option<&str>, home: &Path) -> Result<Option<Account>, ExitCode> {
+    if let Some(name) = named {
+        let account = Account::parse(name).map_err(|error| fail(&error, REFUSED))?;
+        show::field("account", "as named");
+        return Ok(Some(account));
+    }
+    let remembered = Account::remembered(home).map_err(|error| {
+        fail(
+            &format!("the account remembered in {}: {error}", home.display()),
+            FAILED,
+        )
+    })?;
+    show::field(
+        "account",
+        if remembered.is_some() {
+            "remembered"
+        } else {
+            "none remembered"
+        },
+    );
+    Ok(remembered)
+}
+
+/// Logs `account` in with the login steamcmd saved, as an upload does, and says what Steam made
+/// of it.
+fn check_saved_login(account: &Account) -> Result<ExitCode, ExitCode> {
+    let (home, manifest) = ready()?;
+    show::field("login", "saved");
+    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
+    let root = home.join(install::FOLDER);
+    let program = steamcmd::program(&root, Platform::THIS);
+    let spinner = Spinner::start("steam", "checking the saved login", true);
+    let finished = run::run(
+        &program,
+        &steamcmd::check_login(account),
+        &steamcmd::environment(&home, Platform::THIS),
+        &root,
+        steamcmd::CHECK_LIMIT,
+    );
+    let finished = match finished {
+        Ok(finished) => finished,
+        Err(error) => {
+            spinner.failed("could not start");
+            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+        }
+    };
+    let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
+    let console = redactor.redact(&finished.output);
+    let judged = upload::judge_login(finished.code, &String::from_utf8_lossy(&console));
+    match &judged {
+        upload::Login::Taken => spinner.done("Steam takes the saved login"),
+        upload::Login::Refused(_) => spinner.failed("Steam refused the saved login"),
+        upload::Login::Failed(_) => spinner.failed("could not check"),
+    }
+    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    Ok(match judged {
+        upload::Login::Taken => {
+            show::success("ready to upload", "");
+            ExitCode::SUCCESS
+        }
+        upload::Login::Refused(reason) => {
+            let again = Hint {
+                before: "log the build account in again with ",
+                command: "steamship login",
+                after: "",
+            };
+            show::failure("not logged in", &reason, Some(again));
+            ExitCode::from(LOGIN)
+        }
+        upload::Login::Failed(reasons) => {
+            for reason in &reasons {
+                show::failure(reason, "", None);
+            }
+            ExitCode::from(FAILED)
+        }
+    })
 }
 
 fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {

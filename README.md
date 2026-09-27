@@ -58,6 +58,7 @@ that upgrades the way you installed. It never asks in CI, or with `STEAMSHIP_NO_
 
 ```sh
 steamship login                                     # once
+steamship status                                    # is the login still good?
 steamship check steam/app_build.vdf                 # offline, no login
 steamship upload steam/app_build.vdf --version 1.4.0 --preview   # uploads nothing
 steamship upload steam/app_build.vdf --version 1.4.0
@@ -79,6 +80,16 @@ with last, or asks for its name. It then asks for the password, and for a Steam 
 approval in the Steam Mobile app; what you type is passed directly to steamcmd, never logged or
 saved. steamcmd keeps a token, and later runs use it without a password. When it expires, an
 upload stops and tells you to run this again.
+
+### `status`
+
+```sh
+steamship status [--account <name>]
+```
+
+Shows the home, the build account and steamcmd, then logs in with the saved login as an upload
+does and says whether Steam takes it. Nothing is asked for, and the account's name is never
+printed. It exits 0 when an upload would log in, and 3 when it would not.
 
 ### `logout`
 
