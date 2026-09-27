@@ -35,7 +35,7 @@ jobs:
     name: publish
     if: github.repository == 'Aureliolo/steamship'
     needs: build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: write # Creates the release and uploads the assets onto it.
@@ -185,7 +185,7 @@ jobs:
     name: crates
     if: github.repository == 'Aureliolo/steamship' && vars.CRATES_IO == 'publish'
     needs: [build, publish]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     environment: crates-io
     permissions:

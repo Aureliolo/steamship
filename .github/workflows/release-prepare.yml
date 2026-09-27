@@ -36,7 +36,7 @@ concurrency:
 jobs:
   prepare:
     name: prepare
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: write # Creates the release branch and the signed version commit on it.
