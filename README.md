@@ -1,6 +1,10 @@
-# steamship
+# <img src="docs/theme/ship.svg" width="36" alt=""> steamship
 
 [![CI](https://github.com/Aureliolo/steamship/actions/workflows/ci.yml/badge.svg)](https://github.com/Aureliolo/steamship/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/steamship?style=flat)](https://crates.io/crates/steamship)
+[![Latest release](https://img.shields.io/github/v/release/Aureliolo/steamship?style=flat)](https://github.com/Aureliolo/steamship/releases/latest)
+[![Downloads](https://img.shields.io/crates/d/steamship?style=flat)](https://crates.io/crates/steamship)
+[![Docs](https://img.shields.io/badge/docs-aureliolo.github.io-0e7490?style=flat)](https://aureliolo.github.io/steamship/)
 [![Scorecard](https://api.scorecard.dev/projects/github.com/Aureliolo/steamship/badge)](https://scorecard.dev/viewer/?uri=github.com/Aureliolo/steamship)
 [![SLSA Build 3](https://img.shields.io/badge/SLSA-Build%20L3-2f6f4e?style=flat)](.github/release-process.md#slsa)
 [![SBOM](https://img.shields.io/badge/SBOM-SPDX-2f6f4e?style=flat)](.github/release-process.md#what-a-release-carries)
