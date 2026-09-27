@@ -19,8 +19,12 @@ Only the latest release gets fixes.
   code. What you type at `login` is passed directly to steamcmd, never logged or saved. steamcmd
   keeps a token in its `config/config.vdf`.
 - **The token file.** steamship restricts steamcmd's `config` folder to your user. It reads
-  `config.vdf` only to remove the token's values from everything it prints or writes, and a test
-  plants a token and checks every output path.
+  `config.vdf` to remove the token's values from everything it prints or writes, and a test
+  plants a token and checks every output path; `ci` reads it to set it as a secret.
+- **The CI secret.** `steamship ci` packs `config.vdf` and the account's name into one value and
+  hands it to `gh` on its input, never on a command line or the screen, or writes it to a file
+  readable by its owner alone. In CI, `upload` and `status` write it back where steamcmd reads it,
+  and a value that is not one is refused without being repeated.
 - **Nothing secret on the command line.** A password or Steam Guard code reaches steamship only as
   typed at `login`, or piped to it, never as a command-line argument, which other users of the
   machine can list.

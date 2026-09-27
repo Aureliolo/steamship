@@ -218,28 +218,60 @@ jobs:
           test "${status}" -eq 1
           grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/upload.txt"
 
-      # steamcmd keeps its login in a config.vdf whose place differs by system; the redaction
-      # reads it from three places, and this is where each system shows which one it uses. And
-      # nothing of steamcmd's may land in the runner's own home, which would be the user's.
-      - name: Find steamcmd's login file where the redaction looks, and nowhere else
+      # steamcmd keeps its login in a config.vdf whose place differs by system. This is where each
+      # system shows the one it uses, which must be the one steamship reads to redact and to pack
+      # for CI, and writes a login handed over back to. And nothing of steamcmd's may land in the
+      # runner's own home, which would be the user's.
+      - name: Find steamcmd's login file where steamship looks, and nowhere else
+        env:
+          PLATFORM: ${{ matrix.platform }}
         run: |
           set -euo pipefail
           home="${RUNNER_TEMP}/steamship home"
           found="$(cd "${home}" && find . -path '*/config/config.vdf' | sed 's|^\./||')"
           echo "config.vdf: ${found:-none}"
-          case "${found}" in
-            steamcmd/config/config.vdf | Steam/config/config.vdf | "Library/Application Support/Steam/config/config.vdf") ;;
-            *)
-              echo "steamcmd kept its login somewhere the redaction does not look." >&2
-              exit 1
-              ;;
+          case "${PLATFORM}" in
+            windows) expected=steamcmd/config/config.vdf ;;
+            linux) expected=Steam/config/config.vdf ;;
+            macos) expected="Library/Application Support/Steam/config/config.vdf" ;;
           esac
+          if [[ "${found}" != "${expected}" ]]; then
+            echo "steamcmd kept its login in ${found:-no file}, where steamship looks in ${expected}." >&2
+            exit 1
+          fi
           for leaked in "${HOME}/Steam" "${HOME}/.steam" "${HOME}/Library/Application Support/Steam"; do
             if [[ -e "${leaked}" ]]; then
               echo "steamcmd wrote to ${leaked}, outside the steamship home." >&2
               exit 1
             fi
           done
+
+      # The login the anonymous run saved, packed by `steamship ci` as for a CI secret, then handed
+      # to an upload in a home of its own through STEAMSHIP_LOGIN alone: the account comes from
+      # it, and steamcmd, given it back where it reads it, gets as far as Steam's refusal again.
+      - name: Pack the login for CI, then upload with nothing but it
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          script=tests/fixtures/spacewar/steam/app_build.vdf
+          login="${RUNNER_TEMP}/login.txt"
+          STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home" \
+            cargo run --locked -- ci --script "${script}" --account anonymous --output "${login}"
+          export STEAMSHIP_HOME="${RUNNER_TEMP}/ci home"
+          status=0
+          STEAMSHIP_LOGIN="$(cat "${login}")" cargo run --locked -- upload "${script}" \
+            --version ci --preview > "${RUNNER_TEMP}/ci.txt" 2>&1 || status=$?
+          rm -f "${login}"
+          cat "${RUNNER_TEMP}/ci.txt"
+          test "${status}" -eq 1
+          grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/ci.txt"
+          case "${PLATFORM}" in
+            windows) restored=steamcmd/config/config.vdf ;;
+            linux) restored=Steam/config/config.vdf ;;
+            macos) restored="Library/Application Support/Steam/config/config.vdf" ;;
+          esac
+          test -s "${STEAMSHIP_HOME}/${restored}"
 
   # Each pin against the manifest Valve serves now. At the same version they must be the same bytes:
   # a Renovate raise moves only the version, and pins.yml finishes it on Renovate's branch, so a

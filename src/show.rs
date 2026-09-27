@@ -149,6 +149,12 @@ pub fn note(line: &str) {
     anstream::eprintln!("    {DIM}{line}{DIM:#}");
 }
 
+/// Text to be copied elsewhere as it is, after a blank line and without colour or indent added.
+pub fn verbatim(text: &str) {
+    anstream::println!();
+    anstream::print!("{text}");
+}
+
 /// A line of another program's that steamship has no meaning for, passed on, set apart.
 pub fn aside(line: &str) {
     anstream::println!("    {DIM}{line}{DIM:#}");

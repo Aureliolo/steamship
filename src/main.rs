@@ -4,8 +4,8 @@ use std::env;
 use std::fmt::Display;
 use std::fs;
 use std::io::{self, IsTerminal as _};
-use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::path::{self, Path, PathBuf};
+use std::process::{self, ExitCode};
 
 use clap::{CommandFactory as _, FromArgMatches as _, Parser, Subcommand};
 use steamship::account::Account;
@@ -21,7 +21,7 @@ use steamship::unix::Terminal;
 use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
-use steamship::{check, conversation, run, steamcmd, upload};
+use steamship::{check, ci, conversation, run, steamcmd, upload};
 use zeroize::Zeroizing;
 
 /// Something failed; what, and why, is printed.
@@ -92,6 +92,29 @@ enum Command {
         #[arg(long, env = "STEAMSHIP_ACCOUNT")]
         account: Option<String>,
     },
+    /// Set up uploads from CI, the login kept as a secret.
+    ///
+    /// Finds the GitHub repository, its app build script and the saved login, checks the script,
+    /// and the login with Steam, then sets the login as a secret with the GitHub command line,
+    /// `gh`, and shows the workflow step that uploads. What it cannot find it asks for, and each
+    /// option answers ahead. The secret holds the token steamcmd saved, never a password.
+    Ci {
+        /// The app build script, if not the one found in the repository.
+        #[arg(long)]
+        script: Option<PathBuf>,
+        /// The GitHub repository as owner/name, if not the one `origin` points at.
+        #[arg(long)]
+        repo: Option<String>,
+        /// The build account, if not the one the last login remembered.
+        #[arg(long, env = "STEAMSHIP_ACCOUNT")]
+        account: Option<String>,
+        /// The name of the secret the login is kept in.
+        #[arg(long, default_value = ci::VARIABLE)]
+        secret: String,
+        /// Write the login to this file instead, for a CI other than GitHub Actions.
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
     /// Forget the saved login.
     ///
     /// Removes the login steamcmd saved and the account steamship remembered; the next upload
@@ -118,12 +141,27 @@ fn main() -> ExitCode {
     let update = update_check();
     let code = match command {
         Command::Check { script } => run_check(&script),
+        Command::Ci {
+            script,
+            repo,
+            account,
+            secret,
+            output,
+        } => match try_ci(&Setup {
+            script: script.as_deref(),
+            repo: repo.as_deref(),
+            account: named(account.as_deref()),
+            secret: &secret,
+            output: output.as_deref(),
+        }) {
+            Ok(code) | Err(code) => code,
+        },
         Command::Install => run_install(),
-        Command::Login { account } => match try_login(account.as_deref()) {
+        Command::Login { account } => match try_login(named(account.as_deref())) {
             Ok(code) | Err(code) => code,
         },
         Command::Logout => run_logout(),
-        Command::Status { account } => match try_status(account.as_deref()) {
+        Command::Status { account } => match try_status(named(account.as_deref())) {
             Ok(code) | Err(code) => code,
         },
         Command::Upload {
@@ -135,7 +173,7 @@ fn main() -> ExitCode {
             script: &script,
             version: &version,
             preview,
-            account: account.as_deref(),
+            account: named(account.as_deref()),
         }),
     };
     if let Some(latest) = update.and_then(update::Check::newer) {
@@ -149,6 +187,12 @@ fn main() -> ExitCode {
         );
     }
     code
+}
+
+/// The account named with `--account` or `STEAMSHIP_ACCOUNT`, where an empty name is none: a CI
+/// hands a secret it does not have over as an empty variable.
+fn named(account: Option<&str>) -> Option<&str> {
+    account.filter(|name| !name.is_empty())
 }
 
 /// Whether a newer steamship is out, found out while the command runs, when a person at a
@@ -371,16 +415,49 @@ fn steamcmd_state(home: &Path, manifest: &Manifest) -> Result<(), ExitCode> {
     Ok(())
 }
 
+/// The login a CI handed over in `STEAMSHIP_LOGIN`, packed by `steamship ci`, if it did.
+fn packed_login() -> Result<Option<ci::Login>, ExitCode> {
+    let Some(value) = env::var_os(ci::VARIABLE).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let text = value
+        .to_str()
+        .ok_or_else(|| fail(&ci::Error::Unreadable, REFUSED))?;
+    ci::Login::unpack(text)
+        .map(Some)
+        .map_err(|error| fail(&error, REFUSED))
+}
+
+/// Puts a login handed over in `STEAMSHIP_LOGIN` where steamcmd looks for it in `home`.
+fn restore(packed: Option<&ci::Login>, home: &Path) -> Result<(), ExitCode> {
+    if let Some(packed) = packed {
+        drop(
+            packed
+                .restore(home, Platform::THIS)
+                .map_err(|error| fail(&error, FAILED))?,
+        );
+    }
+    Ok(())
+}
+
 fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     show::banner_on_terminal();
     show::title("status");
     show::field("version", env!("CARGO_PKG_VERSION"));
     let home = home()?;
     show::field("home", &home.display().to_string());
-    let account = status_account(named, &home)?;
-    let saved = !steamcmd::login_files(&home)
-        .map_err(|error| fail(&format!("{}: {error}", home.display()), FAILED))?
-        .is_empty();
+    let packed = packed_login()?;
+    let account = match (&packed, named) {
+        (Some(packed), None) => {
+            show::field("account", &format!("from {}", ci::VARIABLE));
+            Some(packed.account().clone())
+        }
+        _ => status_account(named, &home)?,
+    };
+    let saved = packed.is_some()
+        || !steamcmd::login_files(&home)
+            .map_err(|error| fail(&format!("{}: {error}", home.display()), FAILED))?
+            .is_empty();
     let login = Hint {
         before: "run ",
         command: "steamship login",
@@ -398,7 +475,11 @@ fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
         }
         return Ok(ExitCode::from(LOGIN));
     };
-    check_saved_login(&account)
+    let judged = check_saved_login(&account, packed.as_ref())?;
+    if judged == upload::Login::Taken {
+        show::success("ready to upload", "");
+    }
+    Ok(verdict(judged))
 }
 
 /// The account named, or else the one remembered, shown by where it came from and never by
@@ -426,11 +507,19 @@ fn status_account(named: Option<&str>, home: &Path) -> Result<Option<Account>, E
     Ok(remembered)
 }
 
-/// Logs `account` in with the login steamcmd saved, as an upload does, and says what Steam made
-/// of it.
-fn check_saved_login(account: &Account) -> Result<ExitCode, ExitCode> {
+/// Logs `account` in with the login steamcmd saved, or the one handed over in `packed`, as an
+/// upload does, and shows what Steam made of it.
+fn check_saved_login(
+    account: &Account,
+    packed: Option<&ci::Login>,
+) -> Result<upload::Login, ExitCode> {
     let (home, manifest) = ready()?;
-    show::field("login", "saved");
+    restore(packed, &home)?;
+    if packed.is_some() {
+        show::field("login", &format!("from {}", ci::VARIABLE));
+    } else {
+        show::field("login", "saved");
+    }
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
@@ -458,11 +547,13 @@ fn check_saved_login(account: &Account) -> Result<ExitCode, ExitCode> {
         upload::Login::Failed(_) => spinner.failed("could not check"),
     }
     install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
-    Ok(match judged {
-        upload::Login::Taken => {
-            show::success("ready to upload", "");
-            ExitCode::SUCCESS
-        }
+    Ok(judged)
+}
+
+/// The exit code for what Steam made of the saved login, saying why when it did not take it.
+fn verdict(judged: upload::Login) -> ExitCode {
+    match judged {
+        upload::Login::Taken => ExitCode::SUCCESS,
         upload::Login::Refused(reason) => {
             let again = Hint {
                 before: "log the build account in again with ",
@@ -478,7 +569,7 @@ fn check_saved_login(account: &Account) -> Result<ExitCode, ExitCode> {
             }
             ExitCode::from(FAILED)
         }
-    })
+    }
 }
 
 fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
@@ -583,13 +674,18 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
     } else {
         "upload"
     });
-    let (account, _) = account(request.account, false)?;
+    let packed = packed_login()?;
+    let account = match (&packed, request.account) {
+        (Some(packed), None) => packed.account().clone(),
+        _ => account(request.account, false)?.0,
+    };
     drop(checked(request.script)?);
     let description = upload::commit(request.script)
         .and_then(|commit| upload::description(request.version, &commit))
         .map_err(|error| fail(&error, REFUSED))?;
     show::field("build", &description);
     let (home, manifest) = ready()?;
+    restore(packed.as_ref(), &home)?;
     let prepared = upload::prepare(&home, request.script, &description, request.preview)
         .map_err(|error| fail(&error, FAILED))?;
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
@@ -658,6 +754,7 @@ fn report(
                 .map(|branch| format!(", set live on {branch}"))
                 .unwrap_or_default();
             show::success(&format!("app {app}: BuildID {build_id}{live}"), &logs);
+            hand_on(*build_id);
             ExitCode::SUCCESS
         }
         upload::Outcome::Previewed => {
@@ -705,5 +802,314 @@ fn run_check(script: &Path) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(code) => code,
+    }
+}
+
+/// Hands `build_id` on as the `build-id` output of the GitHub Actions step steamship runs in,
+/// through the file GitHub names for a step's outputs. The upload is done by then, so a file that
+/// cannot be written is said and does not fail it.
+fn hand_on(build_id: u64) {
+    let Some(outputs) = env::var_os("GITHUB_OUTPUT").filter(|path| !path.is_empty()) else {
+        return;
+    };
+    let written = fs::OpenOptions::new()
+        .append(true)
+        .open(&outputs)
+        .and_then(|mut file| {
+            io::Write::write_all(&mut file, format!("build-id={build_id}\n").as_bytes())
+        });
+    if let Err(error) = written {
+        show::note(&format!(
+            "the BuildID could not be handed to the workflow: {error}"
+        ));
+    }
+}
+
+struct Setup<'command> {
+    script: Option<&'command Path>,
+    repo: Option<&'command str>,
+    account: Option<&'command str>,
+    secret: &'command str,
+    output: Option<&'command Path>,
+}
+
+fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
+    show::banner_on_terminal();
+    show::title("ci");
+    if !ci::secret_name(setup.secret) {
+        return Err(fail(
+            &format!(
+                "{} cannot name a GitHub secret: letters, digits and underscores, not starting \
+                 with a digit or GITHUB_",
+                setup.secret
+            ),
+            REFUSED,
+        ));
+    }
+    let root = repository_root(Path::new("."));
+    let script = ci_script(setup.script, root.as_deref())?;
+    drop(checked(&script)?);
+    let repository = match setup.output {
+        Some(_) => None,
+        None => Some(ci_repository(setup.repo, &script)?),
+    };
+    let (account, source) = account(setup.account, true)?;
+    match source {
+        Source::Named => show::field("account", "as named"),
+        Source::Remembered => show::field("account", "remembered"),
+        Source::Typed => {}
+    }
+    let home = home()?;
+    let packed = ci::Login::saved(&home, Platform::THIS, account.clone()).map_err(|error| {
+        if matches!(error, ci::Error::NotSaved { .. }) {
+            let login = Hint {
+                before: "log in here first with ",
+                command: "steamship login",
+                after: "",
+            };
+            show::failure("not logged in", "", Some(login));
+            ExitCode::from(LOGIN)
+        } else {
+            fail(&error, FAILED)
+        }
+    })?;
+    let judged = check_saved_login(&account, None)?;
+    if judged != upload::Login::Taken {
+        return Ok(verdict(judged));
+    }
+    let again = "when the login expires, run `steamship login` and `steamship ci` again";
+    match (setup.output, repository) {
+        (Some(output), _) => {
+            ci::write_private(output, packed.packed().as_bytes())
+                .map_err(|error| fail(&format!("{}: {error}", output.display()), FAILED))?;
+            show::done("secret", &format!("written to {}", output.display()));
+            show::success(
+                "ready for CI",
+                &format!(
+                    "give your CI the file's contents as {}, then delete the file; {again}",
+                    ci::VARIABLE
+                ),
+            );
+        }
+        (None, Some(repository)) => {
+            set_secret(&repository, setup.secret, &packed)?;
+            let relative = root
+                .as_deref()
+                .and_then(|root| {
+                    path::absolute(&script)
+                        .ok()?
+                        .strip_prefix(root)
+                        .ok()
+                        .map(Path::to_path_buf)
+                })
+                .unwrap_or_else(|| script.clone());
+            let (pinned, release) = pinned_action();
+            show::success(
+                "ready for CI",
+                &format!("add this step after the one that builds the content; {again}"),
+            );
+            show::verbatim(&ci::step(
+                &relative.to_string_lossy().replace('\\', "/"),
+                &pinned,
+                &release,
+                setup.secret,
+            ));
+        }
+        (None, None) => {}
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The top of the Git repository `folder` is in, if it is in one.
+fn repository_root(folder: &Path) -> Option<PathBuf> {
+    let output = process::Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(folder)
+        .stderr(process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let root = String::from_utf8(output.stdout).ok()?;
+    Some(Path::new(root.trim()).components().collect())
+}
+
+/// The app build script named, or the one found in the repository, asked for when there are
+/// several and a person to ask.
+fn ci_script(named: Option<&Path>, root: Option<&Path>) -> Result<PathBuf, ExitCode> {
+    if let Some(script) = named {
+        show::field("script", &script.display().to_string());
+        return Ok(script.to_path_buf());
+    }
+    let root = root.ok_or_else(|| {
+        fail(
+            &"this is not a Git repository; run it in the game's, or name the script with --script",
+            REFUSED,
+        )
+    })?;
+    let found = ci::app_scripts(root)
+        .map_err(|error| fail(&format!("{}: {error}", root.display()), FAILED))?;
+    let shown = |path: &Path| {
+        path.strip_prefix(root)
+            .unwrap_or(path)
+            .display()
+            .to_string()
+    };
+    match found.as_slice() {
+        [] => Err(fail(
+            &format!(
+                "no app build script in {}; name one with --script",
+                root.display()
+            ),
+            REFUSED,
+        )),
+        [only] => {
+            show::field("script", &format!("{}, found", shown(only)));
+            Ok(only.clone())
+        }
+        several if io::stdin().is_terminal() => {
+            for (number, script) in several.iter().enumerate() {
+                show::field(&number.saturating_add(1).to_string(), &shown(script));
+            }
+            let picked = typing::ask("script", Echo::Typed)
+                .map_err(|error| fail(&format!("the script: {error}"), FAILED))?;
+            picked
+                .trim()
+                .parse::<usize>()
+                .ok()
+                .and_then(|number| several.get(number.checked_sub(1)?))
+                .cloned()
+                .ok_or_else(|| fail(&"pick a script by its number", REFUSED))
+        }
+        several => {
+            let listed: Vec<String> = several.iter().map(|script| shown(script)).collect();
+            Err(fail(
+                &format!(
+                    "several app build scripts, {}; name one with --script",
+                    listed.join(", ")
+                ),
+                REFUSED,
+            ))
+        }
+    }
+}
+
+/// The GitHub repository named, or the one the script's repository's `origin` points at.
+fn ci_repository(named: Option<&str>, script: &Path) -> Result<String, ExitCode> {
+    if let Some(named) = named {
+        let repository =
+            ci::github_repository(&format!("https://github.com/{named}")).ok_or_else(|| {
+                fail(
+                    &format!("{named} is not a repository's owner/name"),
+                    REFUSED,
+                )
+            })?;
+        show::field("repo", &format!("{repository}, as named"));
+        return Ok(repository);
+    }
+    let folder = script
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let origin = process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(folder)
+        .stderr(process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok());
+    let repository = origin
+        .as_deref()
+        .and_then(ci::github_repository)
+        .ok_or_else(|| {
+            fail(
+                &"the script's repository has no GitHub origin; name one with --repo owner/name, \
+                  or write the login to a file with --output",
+                REFUSED,
+            )
+        })?;
+    show::field("repo", &format!("{repository}, from origin"));
+    Ok(repository)
+}
+
+/// Sets `packed` as the secret `secret` of `repository` with the GitHub command line, which
+/// reads it from its input, so that it is never on a command line or on the screen.
+fn set_secret(repository: &str, secret: &str, packed: &ci::Login) -> Result<(), ExitCode> {
+    let spinner = Spinner::start(
+        "secret",
+        &format!("setting {secret} on {repository}"),
+        false,
+    );
+    let started = process::Command::new("gh")
+        .args(["secret", "set", secret, "--repo", repository])
+        .stdin(process::Stdio::piped())
+        .stdout(process::Stdio::null())
+        .stderr(process::Stdio::piped())
+        .spawn();
+    let mut child = match started {
+        Ok(child) => child,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            spinner.failed("gh is not installed");
+            let install = Hint {
+                before: "install it from ",
+                command: "https://cli.github.com",
+                after: ", or write the login to a file with --output",
+            };
+            show::failure("the GitHub command line is needed", "", Some(install));
+            return Err(ExitCode::from(FAILED));
+        }
+        Err(error) => {
+            spinner.failed("gh could not start");
+            return Err(fail(&format!("gh: {error}"), FAILED));
+        }
+    };
+    let written = child.stdin.take().map_or(Ok(()), |mut input| {
+        io::Write::write_all(&mut input, packed.packed().as_bytes())
+    });
+    let finished = child.wait_with_output();
+    match (written, finished) {
+        (Ok(()), Ok(output)) if output.status.success() => {
+            spinner.done(&format!("{secret} set on {repository}"));
+            Ok(())
+        }
+        (_, Ok(output)) => {
+            spinner.failed("not set");
+            let said = String::from_utf8_lossy(&output.stderr);
+            let login = Hint {
+                before: "if gh is not logged in, run ",
+                command: "gh auth login",
+                after: "",
+            };
+            show::failure("gh could not set the secret", said.trim(), Some(login));
+            Err(ExitCode::from(FAILED))
+        }
+        (_, Err(error)) => {
+            spinner.failed("not set");
+            Err(fail(&format!("gh: {error}"), FAILED))
+        }
+    }
+}
+
+/// The commit this release of steamship's action is at, and the release, for a step pinned by
+/// commit; the release's tag alone when GitHub cannot be asked.
+fn pinned_action() -> (String, String) {
+    let release = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let commit = process::Command::new("gh")
+        .args([
+            "api",
+            &format!("repos/Aureliolo/steamship/commits/{release}"),
+            "--jq",
+            ".sha",
+        ])
+        .stderr(process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|sha| sha.trim().to_owned())
+        .filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    match commit {
+        Some(commit) => (commit, release),
+        None => (release.clone(), release),
     }
 }
