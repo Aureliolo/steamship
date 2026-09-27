@@ -318,6 +318,30 @@ mod tests {
     }
 
     #[test]
+    fn what_is_at_each_limit_is_taken() {
+        let folder = sound();
+        drop(folder.put("workshop/hat.png", &vec![0_u8; 1024 * 1024]));
+        let script = folder.script(&format!(
+            r#""appid" "1" "contentfolder" "hat" "previewfile" "hat.png" "visibility" "3"
+            "title" "{}" "description" "{}" "changenote" "{}""#,
+            "t".repeat(128),
+            "d".repeat(8000),
+            "c".repeat(8000)
+        ));
+        assert_eq!(check(&script).map(|item| item.app_id), Ok(1));
+    }
+
+    #[test]
+    fn app_zero_is_no_app() {
+        let folder = sound();
+        let script = folder.script(r#""appid" "0" "contentfolder" "hat""#);
+        assert_eq!(
+            messages(&check(&script).unwrap_err()),
+            ["\"appid\" is not an app's ID"]
+        );
+    }
+
+    #[test]
     fn an_item_to_update_is_named_by_its_id_and_zero_makes_a_new_one() {
         let folder = sound();
         let update = check(&folder.script(&format!("{SOUND} \"publishedfileid\" \"5674\"")));
@@ -420,6 +444,23 @@ mod tests {
         assert_eq!(item.text("title"), Some("A green hat"));
         assert_eq!(item.text("description"), Some("Green."));
         assert_eq!(published(&copy), None);
+    }
+
+    #[test]
+    fn a_copy_that_cannot_be_made_says_why() {
+        let folder = sound();
+        let home = tempfile::tempdir().unwrap();
+        let other = folder.put("workshop/other.vdf", br#""AppBuild" { "AppID" "480" }"#);
+        let error = prepare(home.path(), &other, 480).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .ends_with(": there is no \"workshopitem\" block"),
+            "{error}"
+        );
+        fs::write(home.path().join("workshop"), "a file where the folder goes").unwrap();
+        let blocked = prepare(home.path(), &folder.script(SOUND), 480).unwrap_err();
+        assert!(matches!(blocked, upload::Error::Io { .. }), "{blocked}");
     }
 
     #[test]

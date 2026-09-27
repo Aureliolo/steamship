@@ -1884,6 +1884,26 @@ fn a_new_workshop_item_is_uploaded_and_its_id_given_to_add_to_the_script() {
 
 #[cfg(unix)]
 #[test]
+fn a_workshop_upload_in_ci_logs_in_as_the_account_handed_over() {
+    let home = publishing("Success.", 0);
+    fs::remove_file(home.path().join("account")).unwrap();
+    let saved = steamcmd::saved_login(home.path(), Platform::THIS);
+    fs::remove_file(&saved).unwrap();
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        saved.exists(),
+        "the login is put back where steamcmd reads it"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn a_workshop_item_named_by_its_id_is_updated() {
     let home = publishing("Success.", 0);
     let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
