@@ -211,13 +211,12 @@ impl From<io::Error> for Error {
     }
 }
 
-/// The byte boundary a value of the type starting with `code` begins on.
-const fn alignment(code: u8) -> usize {
+/// The boundary an array's first element of the type starting with `code` begins on. The
+/// elements follow the array's 4-byte length, so only the types on 8 can need padding there.
+const fn element_alignment(code: u8) -> usize {
     match code {
-        b'n' | b'q' => 2,
-        b'b' | b'i' | b'u' | b'h' | b's' | b'o' | b'a' => 4,
         b'x' | b't' | b'd' | b'(' | b'{' => 8,
-        _ => 1,
+        _ => 4,
     }
 }
 
@@ -282,9 +281,8 @@ struct Writer {
 
 impl Writer {
     fn pad(&mut self, to: usize) {
-        while !self.bytes.len().is_multiple_of(to) {
-            self.bytes.push(0);
-        }
+        let padded = self.bytes.len().next_multiple_of(to);
+        self.bytes.resize(padded, 0);
     }
 
     fn u32(&mut self, number: u32) {
@@ -338,7 +336,9 @@ impl Writer {
             Value::Array(element, items) => {
                 self.u32(0);
                 let at = self.bytes.len().saturating_sub(4);
-                self.pad(alignment(element.bytes().next().unwrap_or_default()));
+                self.pad(element_alignment(
+                    element.bytes().next().unwrap_or_default(),
+                ));
                 let start = self.bytes.len();
                 for item in items {
                     self.value(item)?;
@@ -470,10 +470,9 @@ impl<'bytes> Reader<'bytes> {
     }
 
     fn pad(&mut self, to: usize) -> Result<(), Error> {
-        while !self.at.is_multiple_of(to) {
-            if self.byte()? != 0 {
-                return Err(Error::Malformed("padding that is not zero"));
-            }
+        let padding = self.at.next_multiple_of(to).saturating_sub(self.at);
+        if self.take(padding)?.iter().any(|byte| *byte != 0) {
+            return Err(Error::Malformed("padding that is not zero"));
         }
         Ok(())
     }
@@ -603,7 +602,7 @@ impl<'bytes> Reader<'bytes> {
         if length > 1_usize << 26_u32 {
             return Err(Error::Malformed("an array longer than D-Bus allows"));
         }
-        self.pad(alignment(
+        self.pad(element_alignment(
             *element.first().ok_or(Error::Malformed("a signature"))?,
         ))?;
         if element == b"y" {
