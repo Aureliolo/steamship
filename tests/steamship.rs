@@ -171,8 +171,13 @@ fn help_lists_every_command_with_one_short_line() {
         !stdout.contains("uploads your build to Steam"),
         "no banner in a log"
     );
+    assert!(
+        stdout.contains("Usage: steamship <COMMAND>\n"),
+        "named as it is typed, on Windows too: {stdout}"
+    );
     for line in [
         "  login    Log in to Steam, once, for uploads\n",
+        "  status   Show the login and steamcmd, checking the login with Steam\n",
         "  check    Check the build scripts, without logging in\n",
         "  upload   Check, build and upload, then print the build ID\n",
         "  logout   Forget the saved login\n",
@@ -180,6 +185,151 @@ fn help_lists_every_command_with_one_short_line() {
     ] {
         assert!(stdout.contains(line), "{line:?} in {stdout}");
     }
+}
+
+#[test]
+fn status_with_nothing_saved_says_to_log_in_changes_nothing_and_exits_3() {
+    let home = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = steamship(&["status"], Some(home.path()), &[]);
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert_eq!(
+        stdout,
+        format!(
+            "steamship status\n  \
+             version   {}\n  \
+             home      {}\n  \
+             account   none remembered\n  \
+             steamcmd  not installed; `steamship login` installs it\n  \
+             login     none saved\n",
+            env!("CARGO_PKG_VERSION"),
+            home.path().display()
+        )
+    );
+    assert_eq!(failure(&stderr), "not logged in");
+    assert!(stderr.ends_with("    run steamship login\n"), "{stderr}");
+    assert_eq!(
+        fs::read_dir(home.path()).unwrap().count(),
+        0,
+        "nothing written"
+    );
+}
+
+/// A home with a login saved where steamcmd keeps it on Linux, for `build_bot`, remembered.
+#[cfg(unix)]
+fn saved_login(home: &Path) {
+    let config = home.join("Steam/config/config.vdf");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(config, "\"token\" \"a_saved_login_token_0123456789\"").unwrap();
+    fs::write(home.join("account"), "build_bot\n").unwrap();
+}
+
+/// A home whose steamcmd keeps what it was started with in `args`, says `said` and exits `code`.
+#[cfg(unix)]
+fn checking(said: &str, code: u8) -> tempfile::TempDir {
+    let home = faked_with(&format!(
+        "#!/bin/sh\necho \"$*\" > \"$HOME/args\"\nprintf '%s\\r\\n' '{said}'\nexit {code}\n"
+    ));
+    saved_login(home.path());
+    home
+}
+
+#[cfg(unix)]
+#[test]
+fn status_checks_the_saved_login_with_steam_and_says_it_is_ready() {
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let (code, stdout, stderr) = steamship(&["status"], Some(home.path()), &[]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(stdout.contains("  account   remembered\n"), "{stdout}");
+    assert!(stdout.contains("  login     saved\n"), "{stdout}");
+    assert!(
+        stdout.contains("  steam     \u{2713} Steam takes the saved login\n"),
+        "{stdout}"
+    );
+    assert!(stdout.ends_with("  \u{2713} ready to upload\n"), "{stdout}");
+    assert!(
+        !stdout.contains("build_bot"),
+        "the account is never named: {stdout}"
+    );
+    assert_eq!(
+        fs::read_to_string(home.path().join("args")).unwrap(),
+        "+@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 +login build_bot +quit\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn status_with_a_login_steam_refuses_says_why_without_the_account_and_exits_3() {
+    let home = checking(
+        "Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)",
+        5,
+    );
+    let (code, stdout, stderr) = steamship(
+        &["status", "--account", "build_bot"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("  account   as named\n"), "{stdout}");
+    assert!(
+        stdout.contains("  steam     \u{2717} Steam refused the saved login\n"),
+        "{stdout}"
+    );
+    assert_eq!(failure(&stderr), "not logged in: Expired Login Auth Code");
+    assert!(
+        stderr.ends_with("log the build account in again with steamship login\n"),
+        "{stderr}"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("build_bot"));
+}
+
+#[cfg(unix)]
+#[test]
+fn status_that_cannot_reach_steam_names_the_reason_and_exits_1() {
+    let home = checking("ERROR! Timed out waiting for Steam", 6);
+    let (code, stdout, stderr) = steamship(&["status"], Some(home.path()), &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  steam     \u{2717} could not check\n"),
+        "{stdout}"
+    );
+    assert_eq!(failure(&stderr), "Timed out waiting for Steam");
+}
+
+#[cfg(unix)]
+#[test]
+fn status_with_a_saved_login_and_no_account_says_to_log_in_and_exits_3() {
+    let home = faked();
+    saved_login(home.path());
+    fs::remove_file(home.path().join("account")).unwrap();
+    let (code, stdout, stderr) = steamship(&["status"], Some(home.path()), &[]);
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("  account   none remembered\n"), "{stdout}");
+    assert!(
+        stdout.contains("  steamcmd  \u{2713} ") && stdout.ends_with("  login     saved\n"),
+        "{stdout}"
+    );
+    assert_eq!(failure(&stderr), "no build account");
+}
+
+#[cfg(unix)]
+#[test]
+fn status_with_steamcmd_altered_says_so_and_exits_4() {
+    let home = faked();
+    let program = home.path().join(install::FOLDER).join("steamcmd.sh");
+    fs::write(&program, "#!/bin/sh\necho changed\n").unwrap();
+    let (code, stdout, stderr) = steamship(&["status"], Some(home.path()), &[]);
+    assert_eq!(code, Some(4_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.ends_with("  steamcmd  \u{2717} not as pinned\n"),
+        "{stdout}"
+    );
+    assert!(
+        failure(&stderr).contains("steamcmd.sh has changed"),
+        "{stderr}"
+    );
 }
 
 /// A home whose recorded steamcmd is a script that prints what it was started with and exits
