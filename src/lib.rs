@@ -3,6 +3,7 @@
 
 pub mod account;
 pub mod check;
+pub mod ci;
 pub mod conversation;
 pub mod digest;
 pub mod download;

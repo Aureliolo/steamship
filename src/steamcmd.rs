@@ -35,16 +35,33 @@ pub fn environment(home: &Path, platform: Platform) -> Vec<(OsString, OsString)>
     }
 }
 
-/// Where steamcmd keeps its state under `home`: its own folder on Windows, `$HOME/Steam` on
-/// Linux, and the folder macOS keeps application data in.
-fn state_folders(home: &Path) -> [PathBuf; 3] {
-    [
-        home.join(install::FOLDER),
-        home.join("Steam"),
-        home.join("Library")
+/// Where steamcmd keeps its state under `home` on `platform`: its own folder on Windows,
+/// `$HOME/Steam` on Linux, and the folder macOS keeps application data in.
+#[must_use]
+pub fn state_folder(home: &Path, platform: Platform) -> PathBuf {
+    match platform {
+        Platform::Windows => home.join(install::FOLDER),
+        Platform::Linux => home.join("Steam"),
+        Platform::MacOs => home
+            .join("Library")
             .join("Application Support")
             .join("Steam"),
-    ]
+    }
+}
+
+/// The file in which steamcmd keeps the token that logs the account in with no password.
+#[must_use]
+pub fn saved_login(home: &Path, platform: Platform) -> PathBuf {
+    state_folder(home, platform)
+        .join("config")
+        .join("config.vdf")
+}
+
+/// Every place steamcmd could have kept its state under `home`, whichever system wrote it, so that
+/// nothing it saved is overlooked.
+fn state_folders(home: &Path) -> [PathBuf; 3] {
+    [Platform::Windows, Platform::Linux, Platform::MacOs]
+        .map(|platform| state_folder(home, platform))
 }
 
 /// The files that hold steamcmd's saved login in `home`, of those that are there.
