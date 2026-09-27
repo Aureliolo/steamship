@@ -1,6 +1,10 @@
-//! The system's real credential store, as `login --web-api-key`, `builds`, `status` and `logout`
-//! use it. Each test keeps its key for a home of its own, so it never meets a person's real key,
-//! and forgets it again. On Linux the store is a gnome-keyring of this process's own.
+//! The system's real credential store, as the library keeps a key in it. Each test keeps its key
+//! for a home of its own, so it never meets a person's real key, and forgets it again. On Linux the
+//! store is a gnome-keyring of this process's own.
+//!
+//! A key the `steamship` command keeps, shows and forgets is tested in `steamship.rs`, by the
+//! command itself: on macOS a Keychain item answers the program that made it, so a key this test
+//! program kept is not one a `steamship` it runs may remove.
 #![expect(
     clippy::unwrap_used,
     reason = "a test reports failure by panicking, its helpers included"
@@ -10,8 +14,6 @@ pub mod common;
 
 #[cfg(target_os = "linux")]
 use std::env;
-use std::path::Path;
-use std::process::Command;
 #[cfg(target_os = "linux")]
 use std::sync::Once;
 
@@ -27,8 +29,8 @@ use steamship::windows as platform;
 const FIRST: &str = "0123456789ABCDEF0123456789ABCDEF";
 const SECOND: &str = "fedcba9876543210fedcba9876543210";
 
-/// Points this process, and what it runs, at its own store before anything here reads the
-/// environment. Every test calls it first.
+/// Points this process at its own store before anything here reads the environment. Every test
+/// calls it first.
 #[cfg(target_os = "linux")]
 #[expect(
     unsafe_code,
@@ -49,18 +51,6 @@ fn store() {
 
 #[cfg(not(target_os = "linux"))]
 const fn store() {}
-
-fn steamship(args: &[&str], home: &Path, variables: &[(&str, &str)]) -> String {
-    let output = Command::new(env!("CARGO_BIN_EXE_steamship"))
-        .args(args)
-        .env("STEAMSHIP_HOME", home)
-        .env("STEAMSHIP_NO_UPDATE_CHECK", "1")
-        .env_remove("STEAMSHIP_WEB_API_KEY")
-        .envs(variables.iter().copied())
-        .output()
-        .unwrap();
-    String::from_utf8_lossy(&output.stdout).into_owned()
-}
 
 #[test]
 fn a_key_is_kept_replaced_read_back_and_forgotten_for_its_home_alone() {
@@ -104,36 +94,4 @@ fn what_is_kept_that_is_not_a_key_is_refused_not_used() {
         );
     }
     assert!(keychain::forget(home.path()).unwrap());
-}
-
-#[test]
-fn status_shows_a_kept_key_and_one_set_and_logout_forgets_the_kept_one() {
-    store();
-    let _store = common::store_lock();
-    let home = tempfile::tempdir().unwrap();
-    let kept = Key::parse("0123456789abcdef0123456789abcdef").unwrap();
-    keychain::keep(home.path(), &kept).unwrap();
-    let shown = steamship(&["status"], home.path(), &[]);
-    let set = steamship(
-        &["status"],
-        home.path(),
-        &[("STEAMSHIP_WEB_API_KEY", "fedcba9876543210fedcba9876543210")],
-    );
-    let forgot = steamship(&["logout"], home.path(), &[]);
-    let still = keychain::has(home.path()).unwrap();
-    let _: bool = keychain::forget(home.path()).unwrap();
-    assert!(
-        shown.contains(&format!("  api key   kept in {}\n", keychain::STORE)),
-        "{shown}"
-    );
-    assert!(
-        set.contains("  api key   from STEAMSHIP_WEB_API_KEY\n"),
-        "the variable comes first: {set}"
-    );
-    assert!(!set.contains("fedcba"), "{set}");
-    assert!(
-        forgot.contains("  api key   \u{2713} forgotten\n"),
-        "{forgot}"
-    );
-    assert!(!still, "logout forgets the kept key");
 }

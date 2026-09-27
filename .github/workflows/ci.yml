@@ -282,7 +282,8 @@ jobs:
           dbus-run-session -- bash <<'SESSION'
           set -euo pipefail
           printf 'ci' | gnome-keyring-daemon --unlock --components=secrets --daemonize > /dev/null
-          export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
+          # A home of its own: `logout` here must not take the anonymous login the next step packs.
+          export STEAMSHIP_HOME="${RUNNER_TEMP}/key home"
           printf '00000000000000000000000000000000' | secret-tool store \
             --label='steamship Web API key' \
             application steamship kind web-api-key home "${STEAMSHIP_HOME}"

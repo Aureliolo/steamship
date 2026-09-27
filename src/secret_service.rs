@@ -268,7 +268,9 @@ pub fn forget_secret(account: &str) -> Result<bool, Error> {
 #[cfg(test)]
 mod tests {
     use std::io::{Read as _, Write as _};
-    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::os::linux::net::SocketAddrExt as _;
+    use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
+    use std::process;
     use std::sync::Mutex;
     use std::thread::{self, JoinHandle};
 
@@ -285,8 +287,8 @@ mod tests {
         ThenCompleted(Vec<Value>, &'static str, Vec<Value>),
         /// The prompt at the path completing with these, before the return.
         CompletedFirst(Vec<Value>, &'static str, Vec<Value>),
-        /// A signal nothing waits for, then the return.
-        AfterNoise(Vec<Value>),
+        /// As many signals as the count that nothing waits for, then the return.
+        AfterNoise(usize, Vec<Value>),
         /// A return, then the connection closed.
         ThenHangUp(Vec<Value>),
     }
@@ -350,8 +352,20 @@ mod tests {
     {
         let folder = tempfile::tempdir().unwrap();
         let socket = folder.path().join("bus");
-        let listener = UnixListener::bind(&socket).unwrap();
-        let serving = thread::spawn(move || {
+        let serving = serve(UnixListener::bind(&socket).unwrap(), greeting, answer);
+        (folder, format!("unix:path={}", socket.display()), serving)
+    }
+
+    /// The stand-in bus of [`standing_in`], answering on `listener`.
+    fn serve<Answering>(
+        listener: UnixListener,
+        greeting: &'static [u8],
+        answer: Answering,
+    ) -> JoinHandle<Vec<Message>>
+    where
+        Answering: Fn(&Message) -> Answer + Send + 'static,
+    {
+        thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let login = read_line(&mut stream);
             assert!(login.starts_with(b"\0AUTH EXTERNAL "), "{login:?}");
@@ -409,12 +423,14 @@ mod tests {
                             reply(&call, Kind::Return, None, body),
                         );
                     }
-                    Answer::AfterNoise(body) => {
-                        send(
-                            &mut stream,
-                            &mut serial,
-                            completed("/elsewhere", Vec::new()),
-                        );
+                    Answer::AfterNoise(noise, body) => {
+                        for _ in 0..noise {
+                            send(
+                                &mut stream,
+                                &mut serial,
+                                completed("/elsewhere", Vec::new()),
+                            );
+                        }
                         send(
                             &mut stream,
                             &mut serial,
@@ -433,8 +449,7 @@ mod tests {
                 }
                 calls.push(call);
             }
-        });
-        (folder, format!("unix:path={}", socket.display()), serving)
+        })
     }
 
     fn opened(address: &str) -> Result<Service, Error> {
@@ -457,6 +472,10 @@ mod tests {
     }
 
     fn found(unlocked: &[&str], locked: &[&str]) -> Answer {
+        found_after(1, unlocked, locked)
+    }
+
+    fn found_after(noise: usize, unlocked: &[&str], locked: &[&str]) -> Answer {
         let paths = |paths: &[&str]| {
             Value::paths(
                 &paths
@@ -465,7 +484,7 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         };
-        Answer::AfterNoise(vec![paths(unlocked), paths(locked)])
+        Answer::AfterNoise(noise, vec![paths(unlocked), paths(locked)])
     }
 
     fn secret(key: &[u8]) -> Answer {
@@ -521,12 +540,13 @@ mod tests {
         assert_eq!(call(6).path.as_deref(), Some("/item/1"));
     }
 
+    /// Even after more signals than the connection holds, 64, came while nothing waited.
     #[test]
     fn a_prompt_that_completes_before_its_call_returns_is_still_seen() {
         let (_folder, address, serving) = standing_in(b"OK 0123\r\n", |call| {
             match call.member.as_deref().unwrap_or_default() {
                 "OpenSession" => session(),
-                "SearchItems" => found(&[], &["/item/1"]),
+                "SearchItems" => found_after(70, &[], &["/item/1"]),
                 "Unlock" => {
                     Answer::Return(vec![Value::paths(&[]), Value::Path("/prompt/2".to_owned())])
                 }
@@ -577,10 +597,16 @@ mod tests {
         );
         drop(service);
         let calls = serving.join().unwrap();
-        assert!(
-            !members(&calls).contains(&"CreateItem"),
-            "{:?}",
-            members(&calls)
+        assert_eq!(
+            members(&calls),
+            [
+                "Hello",
+                "OpenSession",
+                "ReadAlias",
+                "Unlock",
+                "AddMatch",
+                "Prompt"
+            ]
         );
     }
 
@@ -594,11 +620,10 @@ mod tests {
                     Value::paths(&["/collection/login".to_owned()]),
                     Value::Path(NONE.to_owned()),
                 ]),
-                "CreateItem" => Answer::Return(vec![
+                _ => Answer::Return(vec![
                     Value::Path("/item/9".to_owned()),
                     Value::Path(NONE.to_owned()),
                 ]),
-                _ => Answer::Error("org.freedesktop.DBus.Error.UnknownMethod"),
             }
         });
         let mut service = opened(&address).unwrap();
@@ -611,24 +636,32 @@ mod tests {
         );
         let created = calls.last().unwrap();
         assert_eq!(created.path.as_deref(), Some("/collection/login"));
-        let Some(Value::Array(_, properties)) = created.body.first() else {
-            panic!("{:?}", created.body);
-        };
-        let wanted = Value::Entry(
-            Box::new(Value::Str(
-                "org.freedesktop.Secret.Item.Attributes".to_owned(),
-            )),
-            Box::new(Value::Variant(Box::new(attributes("/home")))),
-        );
-        assert!(properties.contains(&wanted), "{properties:?}");
-        let Some(Value::Struct(fields)) = created.body.get(1) else {
-            panic!("{:?}", created.body);
+        let property = |name: &str, value: Value| {
+            Value::Entry(
+                Box::new(Value::Str(format!("org.freedesktop.Secret.Item.{name}"))),
+                Box::new(Value::Variant(Box::new(value))),
+            )
         };
         assert_eq!(
-            fields.get(2),
-            Some(&Value::Bytes(Zeroizing::new(KEY.to_vec())))
+            created.body,
+            [
+                Value::Array(
+                    "{sv}".to_owned(),
+                    vec![
+                        property("Label", Value::Str(LABEL.to_owned())),
+                        property("Attributes", attributes("/home")),
+                    ]
+                ),
+                Value::Struct(vec![
+                    Value::Path("/org/freedesktop/secrets/session/1".to_owned()),
+                    Value::Bytes(Zeroizing::new(Vec::new())),
+                    Value::Bytes(Zeroizing::new(KEY.to_vec())),
+                    Value::Str("text/plain".to_owned()),
+                ]),
+                Value::Bool(true),
+            ],
+            "the label, the home it is kept for, the key, and replacing any kept before"
         );
-        assert_eq!(created.body.get(2), Some(&Value::Bool(true)), "replacing");
     }
 
     #[test]
@@ -654,8 +687,7 @@ mod tests {
             match call.member.as_deref().unwrap_or_default() {
                 "OpenSession" => session(),
                 "SearchItems" => found(&["/item/1"], &["/item/2"]),
-                "Delete" => Answer::Return(vec![Value::Path(NONE.to_owned())]),
-                _ => Answer::Return(Vec::new()),
+                _ => Answer::Return(vec![Value::Path(NONE.to_owned())]),
             }
         });
         let mut service = opened(&address).unwrap();
@@ -785,12 +817,47 @@ mod tests {
 
     #[test]
     fn with_no_session_bus_there_is_no_store() {
-        match opened("unix:path=/nonexistent/steamship/bus") {
-            Err(Error::Unavailable(why)) => assert_eq!(why, "no D-Bus session bus"),
-            Err(error) => panic!("{error}"),
-            Ok(_) => panic!("a bus where there is none"),
-        }
-        let nothing = Service::open(|_| None);
-        assert!(matches!(nothing, Err(Error::Unavailable(_))));
+        let none = Some(Error::Unavailable("no D-Bus session bus".to_owned()));
+        assert_eq!(opened("unix:path=/nonexistent/steamship/bus").err(), none);
+        assert_eq!(opened("unix:abstract=/steamship/nothing/here").err(), none);
+        assert_eq!(Service::open(|_| None).err(), none);
+    }
+
+    #[test]
+    fn with_no_bus_address_the_bus_in_the_runtime_folder_is_used() {
+        let (folder, _address, serving) = standing_in(b"OK 0123\r\n", |_| session());
+        let runtime = folder.path().as_os_str().to_owned();
+        let service = Service::open(|name| (name == "XDG_RUNTIME_DIR").then(|| runtime.clone()));
+        assert_eq!(
+            service.map(|service| service.session),
+            Ok("/org/freedesktop/secrets/session/1".to_owned())
+        );
+        drop(serving.join().unwrap());
+    }
+
+    #[test]
+    fn a_bus_in_the_abstract_namespace_is_reached_by_its_name() {
+        let name = format!("steamship-test-{}-abstract", process::id());
+        let listener =
+            UnixListener::bind_addr(&SocketAddr::from_abstract_name(&name).unwrap()).unwrap();
+        let serving = serve(listener, b"OK 0123\r\n", |_| session());
+        let service = opened(&format!("unix:abstract={name}"));
+        assert_eq!(
+            service.map(|service| service.session),
+            Ok("/org/freedesktop/secrets/session/1".to_owned())
+        );
+        drop(serving.join().unwrap());
+    }
+
+    #[test]
+    fn a_login_answer_longer_than_any_bus_gives_is_refused() {
+        let (_folder, address, serving) = standing_in(&[b'x'; 600], |_| session());
+        assert_eq!(
+            opened(&address).err(),
+            Some(Error::Failed(
+                "the session bus refused this user".to_owned()
+            ))
+        );
+        drop(serving.join().unwrap());
     }
 }

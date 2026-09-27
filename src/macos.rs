@@ -18,7 +18,7 @@ const NOT_FOUND: i32 = -25_300;
 /// logged in at the Mac.
 const UNAVAILABLE: [i32; 2] = [-25_307, -25_308];
 
-fn failed(status: &Status) -> Error {
+fn failed(status: Status) -> Error {
     if UNAVAILABLE.contains(&status.code()) {
         Error::Unavailable(status.to_string())
     } else {
@@ -43,7 +43,7 @@ pub fn has_secret(account: &str) -> Result<bool, Error> {
     match found {
         Ok(items) => Ok(!items.is_empty()),
         Err(status) if status.code() == NOT_FOUND => Ok(false),
-        Err(status) => Err(failed(&status)),
+        Err(status) => Err(failed(status)),
     }
 }
 
@@ -56,7 +56,7 @@ pub fn kept_secret(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
     match get_generic_password(LABEL, account) {
         Ok(secret) => Ok(Some(Zeroizing::new(secret))),
         Err(status) if status.code() == NOT_FOUND => Ok(None),
-        Err(status) => Err(failed(&status)),
+        Err(status) => Err(failed(status)),
     }
 }
 
@@ -70,7 +70,7 @@ pub fn keep_secret(account: &str, secret: &[u8]) -> Result<(), Error> {
     options.set_label(LABEL);
     // Kept on this Mac alone, never synchronised to iCloud.
     options.set_access_synchronized(Some(false));
-    set_generic_password_options(secret, options).map_err(|status| failed(&status))
+    set_generic_password_options(secret, options).map_err(failed)
 }
 
 /// Removes the secret kept for `account`, and says whether there was one.
@@ -82,7 +82,7 @@ pub fn forget_secret(account: &str) -> Result<bool, Error> {
     match delete_generic_password(LABEL, account) {
         Ok(()) => Ok(true),
         Err(status) if status.code() == NOT_FOUND => Ok(false),
-        Err(status) => Err(failed(&status)),
+        Err(status) => Err(failed(status)),
     }
 }
 
@@ -94,12 +94,12 @@ mod tests {
     fn no_keychain_to_use_is_no_store_and_anything_else_a_failure() {
         for code in UNAVAILABLE {
             assert!(
-                matches!(failed(&Status::from_code(code)), Error::Unavailable(_)),
+                matches!(failed(Status::from_code(code)), Error::Unavailable(_)),
                 "{code}"
             );
         }
         assert!(matches!(
-            failed(&Status::from_code(NOT_FOUND)),
+            failed(Status::from_code(NOT_FOUND)),
             Error::Failed(_)
         ));
     }

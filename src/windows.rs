@@ -778,9 +778,11 @@ pub fn kept_secret(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, keychain
             Err(store_failed(&error))
         };
     }
-    let found = Credential(found);
-    // SAFETY: CredReadW succeeded, so this is one credential, left alone until it is freed.
-    let credential = unsafe { &*found.0 };
+    let found = Credential(NonNull::new(found).ok_or_else(|| {
+        keychain::Error::Failed("Windows found the credential but gave none back".to_owned())
+    })?);
+    // SAFETY: CredReadW succeeded and gave back a credential, left alone until it is freed.
+    let credential = unsafe { found.0.as_ref() };
     let size = usize::try_from(credential.CredentialBlobSize).unwrap_or_default();
     let secret = if credential.CredentialBlob.is_null() {
         Zeroizing::new(Vec::new())
@@ -797,13 +799,13 @@ pub fn kept_secret(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, keychain
 
 /// A credential `CredReadW` allocated, freed once it is dropped.
 #[derive(Debug)]
-struct Credential(*mut CREDENTIALW);
+struct Credential(NonNull<CREDENTIALW>);
 
 impl Drop for Credential {
     fn drop(&mut self) {
         // SAFETY: the credential came from CredReadW and is freed once, here.
         unsafe {
-            CredFree(self.0.cast_const().cast());
+            CredFree(self.0.as_ptr().cast_const().cast());
         }
     }
 }
@@ -1567,5 +1569,49 @@ mod tests {
             let expected: Vec<OsString> = iter::once(program).chain(args).collect();
             prop_assert_eq!(parsed(&line), expected);
         }
+    }
+
+    #[test]
+    fn a_credential_windows_cannot_hold_is_an_error_not_one_missing() {
+        // Longer than any generic credential's name may be.
+        let account = "x".repeat(40_000);
+        assert!(matches!(
+            kept_secret(&account),
+            Err(keychain::Error::Failed(_))
+        ));
+        assert!(matches!(
+            forget_secret(&account),
+            Err(keychain::Error::Failed(_))
+        ));
+        assert!(matches!(
+            keep_secret(&account, b"0123"),
+            Err(keychain::Error::Failed(_))
+        ));
+    }
+
+    #[test]
+    fn a_kept_key_is_shown_in_credential_manager_by_what_it_is() {
+        // The lock the integration tests take (tests/common): the Credential Manager loses
+        // changes made at the same moment by different processes.
+        let store = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(env::temp_dir().join("steamship-tests-credentials.lock"))
+            .unwrap();
+        store.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let account = home.path().display().to_string();
+        keep_secret(&account, b"0123456789abcdef0123456789abcdef").unwrap();
+        let listed = process::Command::new("cmdkey")
+            .arg(format!("/list:steamship:web-api-key:{account}"))
+            .output()
+            .unwrap();
+        assert!(forget_secret(&account).unwrap());
+        let listed = String::from_utf8_lossy(&listed.stdout);
+        assert!(
+            listed.contains(&format!("User: {}", keychain::LABEL)),
+            "{listed}"
+        );
     }
 }

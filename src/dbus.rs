@@ -557,14 +557,7 @@ impl<'bytes> Reader<'bytes> {
                 let length = usize::from(self.byte()?);
                 Value::Signature(self.text(length)?)
             }
-            b'v' => {
-                let length = usize::from(self.byte()?);
-                let named = self.text(length)?;
-                if complete(named.as_bytes(), 0, deeper)? != named.len() {
-                    return Err(Error::Malformed("a variant of more than one type"));
-                }
-                Value::Variant(Box::new(self.value(named.as_bytes(), deeper)?))
-            }
+            b'v' => Value::Variant(Box::new(self.variant(deeper)?)),
             b'a' => self.array(inner, deeper)?,
             b'(' => {
                 self.pad(8)?;
@@ -596,6 +589,16 @@ impl<'bytes> Reader<'bytes> {
         })
     }
 
+    /// The value a variant holds, after the signature it names.
+    fn variant(&mut self, depth: usize) -> Result<Value, Error> {
+        let length = usize::from(self.byte()?);
+        let named = self.text(length)?;
+        if complete(named.as_bytes(), 0, depth)? != named.len() {
+            return Err(Error::Malformed("a variant of more than one type"));
+        }
+        self.value(named.as_bytes(), depth)
+    }
+
     fn array(&mut self, element: &[u8], depth: usize) -> Result<Value, Error> {
         let length = self.length()?;
         // D-Bus's own limit on an array, far above anything the Secret Service sends.
@@ -622,10 +625,10 @@ impl<'bytes> Reader<'bytes> {
                 "an array whose length is not its elements'",
             ));
         }
-        let element = String::from_utf8(element.to_vec())
-            .ok()
-            .ok_or(Error::Malformed("a signature"))?;
-        Ok(Value::Array(element, items))
+        Ok(Value::Array(
+            String::from_utf8_lossy(element).into_owned(),
+            items,
+        ))
     }
 }
 
@@ -711,8 +714,6 @@ pub fn message(bytes: &[u8]) -> Result<Message, Error> {
     if serial == 0 {
         return Err(Error::Malformed("a serial of 0"));
     }
-    let fields = reader.value(b"a(yv)", 0)?;
-    reader.pad(8)?;
     let mut message = Message {
         kind,
         serial,
@@ -724,36 +725,33 @@ pub fn message(bytes: &[u8]) -> Result<Message, Error> {
         body: Vec::new(),
     };
     let mut signature = String::new();
-    let Value::Array(_, fields) = fields else {
-        return Err(Error::Malformed("header fields"));
-    };
-    for field in fields {
-        let Value::Struct(parts) = field else {
-            return Err(Error::Malformed("a header field"));
-        };
-        let (Some(Value::Byte(code)), Some(Value::Variant(value))) = (parts.first(), parts.get(1))
-        else {
-            return Err(Error::Malformed("a header field"));
-        };
-        match (code, value.as_ref()) {
-            (1, Value::Path(path)) => message.path = Some(path.clone()),
-            (2, Value::Str(interface)) => message.interface = Some(interface.clone()),
-            (3, Value::Str(member)) => message.member = Some(member.clone()),
-            (4, Value::Str(error)) => message.error = Some(error.clone()),
-            (5, Value::Number(b'u', answered)) => {
-                message.reply_to = Some(
-                    u32::try_from(*answered)
-                        .ok()
-                        .ok_or(Error::Malformed("a reply serial"))?,
-                );
-            }
-            (8, Value::Signature(named)) => signature.clone_from(named),
+    // The header fields, `a(yv)`: each a code and a variant, read as they come.
+    let fields_length = reader.length()?;
+    reader.pad(8)?;
+    let fields_end = reader
+        .at
+        .checked_add(fields_length)
+        .ok_or(Error::Malformed("cut short"))?;
+    while reader.at < fields_end {
+        reader.pad(8)?;
+        let code = reader.byte()?;
+        match (code, reader.variant(0)?) {
+            (1, Value::Path(path)) => message.path = Some(path),
+            (2, Value::Str(interface)) => message.interface = Some(interface),
+            (3, Value::Str(member)) => message.member = Some(member),
+            (4, Value::Str(error)) => message.error = Some(error),
+            (5, Value::Number(b'u', answered)) => message.reply_to = u32::try_from(answered).ok(),
+            (8, Value::Signature(named)) => signature = named,
             // The destination, the sender and a count of file descriptors: nothing steamship uses.
             (6 | 7, Value::Str(_)) | (9, Value::Number(b'u', _)) => {}
             (1..=9, _) => return Err(Error::Malformed("a header field of the wrong type")),
             _ => {}
         }
     }
+    if reader.at != fields_end {
+        return Err(Error::Malformed("header fields of another length"));
+    }
+    reader.pad(8)?;
     let answers = matches!(kind, Kind::Return | Kind::Error);
     if answers != message.reply_to.is_some() || (kind == Kind::Error) != message.error.is_some() {
         return Err(Error::Malformed("header fields its type needs"));
@@ -1237,10 +1235,10 @@ mod tests {
             (changed(1, 2), "header fields its type needs"),
         ];
         for (bytes, why) in cases {
-            match message(&bytes) {
-                Err(Error::Malformed(said)) => assert_eq!(said, why),
-                other => panic!("{why}: {other:?}"),
-            }
+            assert!(
+                matches!(message(&bytes), Err(Error::Malformed(said)) if said == why),
+                "{why}"
+            );
         }
     }
 
@@ -1261,7 +1259,7 @@ mod tests {
             );
         }
         for signature in [
-            "", "a", "()", "(s", "a{vs}", "a{(s)s}", "{ss}x", "z", "a{s}",
+            "", "a", "()", "(s", "a{vs}", "a{(s)s}", "{ss}x", "z", "a{s}", "a{sss}",
         ] {
             let whole = complete(signature.as_bytes(), 0, 0)
                 .is_ok_and(|end| end == signature.len() && !signature.starts_with('{'));
@@ -1307,10 +1305,153 @@ mod tests {
         ));
     }
 
+    /// A message of type `kind` with the header fields `fields` and the body `body`, from serial 1.
+    fn built(kind: u8, fields: &[u8], body: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![b'l', kind, 0, 1];
+        bytes.extend_from_slice(&u32::try_from(body.len()).unwrap().to_le_bytes());
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&u32::try_from(fields.len()).unwrap().to_le_bytes());
+        bytes.extend_from_slice(fields);
+        padded(&mut bytes);
+        bytes.extend_from_slice(body);
+        bytes
+    }
+
+    #[test]
+    fn header_fields_are_read_by_their_code_and_type() {
+        let unknown = read_back(&built(1, &[10, 1, b'y', 0, 7], &[]));
+        assert_eq!(
+            unknown.path, None,
+            "a field of a code D-Bus may add later is passed over"
+        );
+
+        let cases = [
+            (
+                built(1, &[1, 1, b's', 0, 1, 0, 0, 0, b'x', 0], &[]),
+                "a header field of the wrong type",
+            ),
+            (
+                {
+                    let mut bytes = built(1, &[3, 1, b's', 0, 1, 0, 0, 0, b'M', 0], &[]);
+                    *bytes.get_mut(12).expect("the fields' length") = 4;
+                    bytes
+                },
+                "header fields of another length",
+            ),
+            (
+                built(1, &[8, 1, b'g', 0, 1, b'y', 0], &[1, 2]),
+                "a body of another length",
+            ),
+            (
+                {
+                    let mut body = [1, b'v', 0].repeat(DEEPEST.saturating_add(2));
+                    body.extend_from_slice(&[1, b'y', 0, 9]);
+                    built(1, &[8, 1, b'g', 0, 1, b'v', 0], &body)
+                },
+                "nesting",
+            ),
+        ];
+        for (bytes, why) in cases {
+            assert!(
+                matches!(message(&bytes), Err(Error::Malformed(said)) if said == why),
+                "{why}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_that_breaks_the_rules_is_refused_not_guessed_at() {
+        let read = |signature: &[u8], bytes: &[u8]| {
+            Reader {
+                bytes,
+                at: 0,
+                big: false,
+            }
+            .value(signature, 0)
+        };
+        let too_long = u32::try_from((1_usize << 26_u32).saturating_add(1)).unwrap();
+        let cases: [(&[u8], Vec<u8>, &str); 10] = [
+            (b"b", vec![2, 0, 0, 0], "a boolean that is neither 0 nor 1"),
+            (b"s", vec![1, 0, 0, 0, b'x', 1], "text not ended by one NUL"),
+            (b"s", vec![1, 0, 0, 0, 0, 0], "text not ended by one NUL"),
+            (b"s", vec![1, 0, 0, 0, 0xff, 0], "text that is not UTF-8"),
+            (
+                b"v",
+                vec![2, b's', b's', 0],
+                "a variant of more than one type",
+            ),
+            (b"z", vec![0], "a type"),
+            (b"", vec![0], "a signature"),
+            (
+                b"ay",
+                too_long.to_le_bytes().to_vec(),
+                "an array longer than D-Bus allows",
+            ),
+            (
+                b"au",
+                vec![5, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0],
+                "an array whose length is not its elements'",
+            ),
+            (b"au", vec![8, 0, 0, 0, 1, 0, 0, 0], "cut short"),
+        ];
+        for (signature, bytes, why) in cases {
+            let refused = read(signature, &bytes);
+            assert!(
+                matches!(refused, Err(Error::Malformed(said)) if said == why),
+                "{why}"
+            );
+        }
+        let mut empty_element = Reader {
+            bytes: &[0, 0, 0, 0],
+            at: 0,
+            big: false,
+        };
+        assert!(matches!(
+            empty_element.array(b"", 0),
+            Err(Error::Malformed("a signature"))
+        ));
+        let mut deep = Reader {
+            bytes: &[0],
+            at: 0,
+            big: false,
+        };
+        assert!(matches!(
+            deep.value(b"y", DEEPEST.saturating_add(1)),
+            Err(Error::Malformed("nesting"))
+        ));
+    }
+
     #[test]
     fn a_secret_is_never_shown_by_debug() {
         let shown = format!("{:?}", Value::Bytes(Zeroizing::new(b"hunter2".to_vec())));
         assert_eq!(shown, "Bytes(7 bytes)");
+    }
+
+    #[test]
+    fn debug_and_signature_show_each_value_by_its_type() {
+        let entry = Value::Entry(
+            Box::new(Value::Str("k".to_owned())),
+            Box::new(Value::Variant(Box::new(Value::Struct(vec![
+                Value::Byte(1),
+                Value::Bool(true),
+                Value::u32(2),
+                Value::Path("/p".to_owned()),
+                Value::Signature("s".to_owned()),
+            ])))),
+        );
+        assert_eq!(entry.signature(), "{sv}");
+        assert_eq!(
+            Value::Struct(vec![
+                Value::Byte(1),
+                Value::Bytes(Zeroizing::new(Vec::new()))
+            ])
+            .signature(),
+            "(yay)"
+        );
+        assert_eq!(
+            format!("{:?}", Value::Array("{sv}".to_owned(), vec![entry])),
+            r#"Array("{sv}", [Entry(Str("k"), Variant(Struct([Byte(1), Bool(true), Number(u, 2), Path("/p"), Signature("s")])))])"#
+        );
     }
 
     #[test]

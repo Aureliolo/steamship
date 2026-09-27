@@ -15,6 +15,8 @@ use std::fs::{self, File};
 use std::io::{Read as _, Write};
 use std::iter;
 use std::net::TcpListener;
+#[cfg(target_os = "linux")]
+use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
@@ -1322,8 +1324,24 @@ impl Session {
 
     /// Reads on until `text` has been shown, or fails the test after half a minute.
     fn wait_for(&mut self, text: &str) {
+        self.wait_until(text, |seen| seen.contains(text));
+    }
+
+    /// Reads on until `text` has been shown once more than it has so far.
+    #[cfg(unix)]
+    fn wait_for_another(&mut self, text: &str) {
+        let shown = self.seen().matches(text).count();
+        self.wait_until(text, |seen| seen.matches(text).count() > shown);
+    }
+
+    /// Reads on until what has been shown is `done`, or fails the test after half a minute saying
+    /// that `text` never was.
+    fn wait_until<Done>(&mut self, text: &str, done: Done)
+    where
+        Done: Fn(&str) -> bool,
+    {
         let deadline = Instant::now().checked_add(Duration::from_secs(30)).unwrap();
-        while !self.seen().contains(text) {
+        while !done(&self.seen()) {
             let left = deadline.saturating_duration_since(Instant::now());
             let chunk = self.chunks.recv_timeout(left);
             assert!(chunk.is_ok(), "{text:?} never shown in {:?}", self.seen());
@@ -2046,6 +2064,13 @@ const APPS: &str = r#"{"applist": {"apps": {"app": [
     {"appid": 5335970, "app_type": "game", "app_name": "Ostinato"}
 ]}}}"#;
 
+/// `GetAppBetas` and `GetAppBuilds` answering with one branch and one build.
+const BETAS: &str = r#"{"response": {"result": 1, "betas": {"testing": {"BuildID": 7}}}}"#;
+const BUILDS: &str = r#"{"response": {"builds": {"7": {"Description": "0.1.0"}}}}"#;
+
+/// `SetAppBuildLive` answering that the build is live.
+const SET_LIVE: &str = r#"{"response": {"result": 1}}"#;
+
 /// A stand-in for Steam's partner Web API on this machine, which a debug build of steamship is
 /// sent to through `STEAMSHIP_WEB_API_STAND_IN`. It answers one request with each status and body
 /// in `answers`, in turn, and hands over each request it read.
@@ -2090,12 +2115,19 @@ fn web_api(answers: Vec<(&'static str, &'static str)>) -> (String, mpsc::Receive
     (format!("http://{address}"), requests)
 }
 
-/// `steamship login --web-api-key` with the Web API at `host`, `typed` piped to its prompt.
-fn login_with_key(home: &Path, host: &str, typed: &str) -> (Option<i32>, String, String) {
+/// `steamship login --web-api-key` with the Web API at `host`, `typed` piped to its prompt, and
+/// `variables` set besides.
+fn login_with_key(
+    home: &Path,
+    host: &str,
+    typed: &str,
+    variables: &[(&str, &str)],
+) -> (Option<i32>, String, String) {
     let mut child = steamship_command()
         .args(["login", "--web-api-key"])
         .env("STEAMSHIP_HOME", home)
         .env(STAND_IN, host)
+        .envs(variables.iter().copied())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2120,7 +2152,7 @@ fn login_with_web_api_key_keeps_a_key_steam_takes_and_logout_forgets_it() {
     let _store = common::store_lock();
     let home = tempfile::tempdir().unwrap();
     let (host, requests) = web_api(vec![("200 OK", APPS)]);
-    let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY);
+    let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY, &[]);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     assert!(
         stdout.contains("Steam takes the key, for 2 apps\n"),
@@ -2155,6 +2187,45 @@ fn login_with_web_api_key_keeps_a_key_steam_takes_and_logout_forgets_it() {
         kept.contains(&format!("  api key   kept in {}\n", keychain::STORE)),
         "{kept}"
     );
+    let set_key = "fedcba9876543210fedcba9876543210";
+    let (_, set, _) = steamship(
+        &["status"],
+        Some(home.path()),
+        &[("STEAMSHIP_WEB_API_KEY", set_key)],
+    );
+    assert!(
+        set.contains("  api key   from STEAMSHIP_WEB_API_KEY\n"),
+        "the variable comes first: {set}"
+    );
+    assert!(!set.contains(set_key), "{set}");
+    let (builds_host, builds_requests) = web_api(vec![("200 OK", BETAS), ("200 OK", BUILDS)]);
+    let (built, used, said) = steamship(
+        &["builds", "5335950"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", ""),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &builds_host),
+        ],
+    );
+    assert_eq!((built, said.as_str()), (Some(0_i32), ""), "{used}");
+    assert!(
+        used.contains(&format!("  api key   kept in {}\n", keychain::STORE)),
+        "{used}"
+    );
+    assert!(
+        !used.contains("keep it"),
+        "a kept key is not offered again: {used}"
+    );
+    let asked = builds_requests
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap();
+    assert!(
+        asked
+            .to_ascii_lowercase()
+            .contains(&format!("x-webapi-key: {KEY}")),
+        "the kept key: {asked}"
+    );
     let (_, forgot, _) = steamship(&["logout"], Some(home.path()), &[]);
     assert!(
         forgot.contains("  api key   \u{2713} forgotten\n"),
@@ -2168,7 +2239,7 @@ fn login_with_web_api_key_keeps_a_key_steam_takes_and_logout_forgets_it() {
 fn login_with_web_api_key_keeps_nothing_steam_refuses() {
     let home = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(vec![("403 Forbidden", "")]);
-    let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY);
+    let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY, &[]);
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     assert!(
         failure(&stderr).starts_with("Steam refused the Web API key; "),
@@ -2180,8 +2251,6 @@ fn login_with_web_api_key_keeps_nothing_steam_refuses() {
 
 #[test]
 fn builds_at_a_terminal_asks_for_the_key_then_offers_to_keep_it() {
-    const BETAS: &str = r#"{"response": {"result": 1, "betas": {"testing": {"BuildID": 7}}}}"#;
-    const BUILDS: &str = r#"{"response": {"builds": {"7": {"Description": "0.1.0"}}}}"#;
     let _store = common::store_lock();
     let steamship_program = env!("CARGO_BIN_EXE_steamship");
     #[cfg(windows)]
@@ -2210,6 +2279,204 @@ fn builds_at_a_terminal_asks_for_the_key_then_offers_to_keep_it() {
         assert_eq!(kept, answer == "\r", "{answer:?}: {status}\nshown: {seen}");
         drop(steamship(&["logout"], Some(home.path()), &[]));
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn login_on_a_terminal_keeps_the_key_typed_at_its_offer_and_offers_no_more() {
+    let _store = common::store_lock();
+    let home = asking();
+    let (host, _requests) = web_api(vec![("200 OK", APPS)]);
+    let login = format!(
+        "'{}' login --account build_bot",
+        env!("CARGO_BIN_EXE_steamship")
+    );
+    let mut session = Session::start_with(
+        &format!("unset STEAMSHIP_ACCOUNT; {login}; {login}; echo \"exited $?\""),
+        home.path(),
+        &[
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            ("STEAMSHIP_WEB_API_KEY", ""),
+            (STAND_IN, &host),
+        ],
+    );
+    session.wait_for_another("  password  ");
+    session.type_in("hunter2\r");
+    session.wait_for("Enter skips it");
+    session.type_in(&format!("{KEY}\r"));
+    session.wait_for(&format!("  api key   \u{2713} kept in {}", keychain::STORE));
+    session.wait_for_another("  password  ");
+    session.type_in("hunter2\r");
+    session.wait_for("exited 0");
+    let seen = session.seen();
+    assert!(seen.contains("Steam takes the key, for 2 apps\n"), "{seen}");
+    assert!(
+        seen.contains(&format!("  api key   kept in {}\n", keychain::STORE)),
+        "the second login says where it is kept: {seen}"
+    );
+    assert_eq!(
+        seen.matches("Enter skips it").count(),
+        1,
+        "offered once: {seen}"
+    );
+    assert!(!seen.contains(KEY), "the key was shown: {seen}");
+    assert_eq!(session.end().wait().unwrap(), Some(0_i32));
+    drop(steamship(&["logout"], Some(home.path()), &[]));
+}
+
+#[test]
+fn builds_and_promote_use_the_key_set_and_say_what_steam_answered() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", BUILDS),
+        ("200 OK", SET_LIVE),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let (built, listed, said) = steamship(&["builds", "5335950"], Some(home.path()), &set);
+    assert_eq!((built, said.as_str()), (Some(0_i32), ""), "{listed}");
+    assert!(
+        listed.contains("  api key   from STEAMSHIP_WEB_API_KEY\n"),
+        "{listed}"
+    );
+    assert!(listed.contains("1 branch and 1 build"), "{listed}");
+    assert!(
+        !listed.contains("keep it"),
+        "a key set is not offered for keeping: {listed}"
+    );
+    let (promoted, live, stderr) = steamship(
+        &["promote", "5335950", "--build", "7", "--branch", "testing"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!((promoted, stderr.as_str()), (Some(0_i32), ""), "{live}");
+    assert!(live.contains("  steam     \u{2713} set live\n"), "{live}");
+    assert!(
+        live.contains("app 5335950: BuildID 7 live on testing"),
+        "{live}"
+    );
+    assert!(!format!("{listed}{live}").contains(KEY), "never shown");
+    let asked: Vec<String> =
+        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(3)
+            .collect();
+    let setting = asked.last().unwrap();
+    assert!(
+        setting.starts_with("POST /ISteamApps/SetAppBuildLive/v2/ ")
+            && setting.ends_with("appid=5335950&buildid=7&betakey=testing"),
+        "{setting}"
+    );
+}
+
+#[test]
+fn builds_and_promote_that_steam_does_not_answer_say_so_and_exit_1() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", ""),
+        ("500 Internal Server Error", ""),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    for args in [
+        &["builds", "5335950"][..],
+        &["promote", "5335950", "--build", "7", "--branch", "testing"],
+    ] {
+        let (code, stdout, stderr) = steamship(args, Some(home.path()), &set);
+        assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+        assert!(
+            stdout.contains("  steam     \u{2717} no answer\n"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("live on"), "{stdout}");
+    }
+}
+
+/// A session bus that hangs up on everyone who connects, at a socket in the folder given back.
+#[cfg(target_os = "linux")]
+fn broken_bus() -> (tempfile::TempDir, String) {
+    let folder = tempfile::tempdir().unwrap();
+    let socket = folder.path().join("bus");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let _hanging_up = thread::spawn(move || {
+        for connection in listener.incoming() {
+            drop(connection);
+        }
+    });
+    (folder, format!("unix:path={}", socket.display()))
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn with_no_credential_store_no_key_is_kept_and_status_and_logout_say_so() {
+    let home = tempfile::tempdir().unwrap();
+    let nowhere = [(
+        "DBUS_SESSION_BUS_ADDRESS",
+        "unix:path=/nonexistent/steamship/bus",
+    )];
+    let (host, _requests) = web_api(vec![("200 OK", APPS)]);
+    let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY, &nowhere);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("Steam takes the key, for 2 apps\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("  api key   \u{2717} not kept\n"),
+        "{stdout}"
+    );
+    assert_eq!(
+        failure(&stderr),
+        "no credential store: no D-Bus session bus"
+    );
+    let (_, status, _) = steamship(&["status"], Some(home.path()), &nowhere);
+    assert!(
+        status.contains("  api key   no credential store here\n"),
+        "{status}"
+    );
+    let (logged_out, logout, said) = steamship(&["logout"], Some(home.path()), &nowhere);
+    assert_eq!((logged_out, said.as_str()), (Some(0_i32), ""), "{logout}");
+    assert!(logout.contains("  api key   none kept\n"), "{logout}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_credential_store_that_fails_is_named_and_nothing_goes_on_without_it() {
+    let home = tempfile::tempdir().unwrap();
+    let (_folder, address) = broken_bus();
+    let broken = [
+        ("DBUS_SESSION_BUS_ADDRESS", address.as_str()),
+        ("STEAMSHIP_WEB_API_KEY", ""),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+    ];
+    let (_, status, _) = steamship(&["status"], Some(home.path()), &broken);
+    assert!(
+        status.contains("  api key   \u{2717} the Secret Service: the session bus: "),
+        "{status}"
+    );
+    let (logged_out, logout, said) = steamship(&["logout"], Some(home.path()), &broken);
+    assert_eq!(logged_out, Some(1_i32), "{logout}{said}");
+    assert!(
+        logout.contains("  api key   \u{2717} not forgotten\n"),
+        "{logout}"
+    );
+    assert!(!logout.contains("logged out"), "{logout}");
+    let (code, builds, stderr) = steamship(&["builds", "5335950"], Some(home.path()), &broken);
+    assert_eq!(code, Some(1_i32), "{builds}{stderr}");
+    assert!(
+        builds.contains("  api key   \u{2717} not read\n"),
+        "{builds}"
+    );
+    assert!(
+        failure(&stderr).starts_with("the Secret Service: "),
+        "{stderr}"
+    );
 }
 
 #[test]
