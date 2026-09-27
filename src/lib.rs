@@ -22,6 +22,7 @@ pub mod terminal;
 pub mod typing;
 #[cfg(unix)]
 pub mod unix;
+pub mod update;
 pub mod upload;
 pub mod vdf;
 #[cfg(windows)]

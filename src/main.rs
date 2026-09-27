@@ -18,6 +18,7 @@ use steamship::show::{self, Hint, Spinner};
 use steamship::typing::{self, Echo};
 #[cfg(unix)]
 use steamship::unix::Terminal;
+use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{check, conversation, run, steamcmd, upload};
@@ -103,7 +104,8 @@ fn main() -> ExitCode {
         Ok(parsed) => parsed.command,
         Err(error) => error.exit(),
     };
-    match command {
+    let update = update_check();
+    let code = match command {
         Command::Check { script } => run_check(&script),
         Command::Install => run_install(),
         Command::Login { account } => match try_login(account.as_deref()) {
@@ -121,7 +123,28 @@ fn main() -> ExitCode {
             preview,
             account: account.as_deref(),
         }),
+    };
+    if let Some(latest) = update.and_then(update::Check::newer) {
+        let installed = env::current_exe().map_or(Installed::Archive, |program| {
+            Installed::of(&program, Path::exists)
+        });
+        show::upgrade(
+            &latest.to_string(),
+            env!("CARGO_PKG_VERSION"),
+            installed.hint(),
+        );
     }
+    code
+}
+
+/// Whether a newer steamship is out, found out while the command runs, when a person at a
+/// terminal would be told.
+fn update_check() -> Option<update::Check> {
+    if !update::wanted(|name| env::var_os(name), io::stderr().is_terminal()) {
+        return None;
+    }
+    let home = Platform::THIS.home(|name| env::var_os(name)).ok()?;
+    Some(update::Check::start(home))
 }
 
 fn home() -> Result<PathBuf, ExitCode> {

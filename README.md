@@ -41,6 +41,19 @@ cargo binstall steamship          # that same archive, in seconds
 cargo install --locked steamship  # or built from source
 ```
 
+## Upgrade
+
+The same commands replace the steamship you have with the newest release:
+
+```sh
+cargo binstall steamship
+cargo install --locked steamship
+```
+
+or download the archive from the latest release again. Once a day, at a terminal, steamship asks
+GitHub whether a newer release is out; when one is, it says so after the command, with the command
+that upgrades the way you installed. It never asks in CI, or with `STEAMSHIP_NO_UPDATE_CHECK` set.
+
 ## Quick start
 
 ```sh
@@ -124,10 +137,11 @@ for example in CI, and verifies an existing install.
 
 ## Configuration
 
-| Variable            | Meaning                                                                       |
-| ------------------- | ----------------------------------------------------------------------------- |
-| `STEAMSHIP_HOME`    | Where steamcmd, its token and build output live; a per-user folder by default |
-| `STEAMSHIP_ACCOUNT` | The build account, if not the one `login` remembered                          |
+| Variable                    | Meaning                                                                       |
+| --------------------------- | ----------------------------------------------------------------------------- |
+| `STEAMSHIP_HOME`            | Where steamcmd, its token and build output live; a per-user folder by default |
+| `STEAMSHIP_ACCOUNT`         | The build account, if not the one `login` remembered                          |
+| `STEAMSHIP_NO_UPDATE_CHECK` | Set to anything to never ask GitHub for a newer release                       |
 
 There is no password setting anywhere.
 

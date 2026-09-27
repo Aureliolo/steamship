@@ -106,14 +106,29 @@ pub fn failure(headline: &str, reason: &str, hint: Option<Hint<'_>>) {
         format!(": {reason}")
     };
     anstream::eprintln!("  {RED}\u{2717}{RED:#} {BOLD}{headline}{BOLD:#}{reason}");
-    if let Some(Hint {
+    if let Some(hint) = hint {
+        hinted(hint);
+    }
+}
+
+fn hinted(
+    Hint {
         before,
         command,
         after,
-    }) = hint
-    {
-        anstream::eprintln!("    {DIM}{before}{DIM:#}{CYAN}{command}{CYAN:#}{DIM}{after}{DIM:#}");
-    }
+    }: Hint<'_>,
+) {
+    anstream::eprintln!("    {DIM}{before}{DIM:#}{CYAN}{command}{CYAN:#}{DIM}{after}{DIM:#}");
+}
+
+/// That steamship `latest` is out while this is `this`, and `how` to upgrade, set apart from what
+/// the command itself printed.
+pub fn upgrade(latest: &str, this: &str, how: Hint<'_>) {
+    anstream::eprintln!();
+    anstream::eprintln!(
+        "  {YELLOW}\u{2191}{YELLOW:#} {BOLD}steamship {latest} is out{BOLD:#}{DIM}, this is {this}{DIM:#}"
+    );
+    hinted(how);
 }
 
 /// What to do after a failure: `before`, then a `command` to run, then `after`.
