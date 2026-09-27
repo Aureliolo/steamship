@@ -31,15 +31,18 @@ and then publishes and packages:
    trusts this workflow, and a short-lived token is the whole credential.
 7. **action** uses the GitHub Action from the tag on each system, as a game's workflow would: it
    installs the release just published, checked by SHA-256 and attestation, and runs it.
-8. **packages** writes the Homebrew formula and the Scoop manifest from the release's checksums,
+8. **site** builds <https://aureliolo.github.io/steamship> from the tag and publishes it, so the
+   site always describes the latest release: its version, its archives and its commands. The
+   `github-pages` environment admits `v*` tags only, so nothing else can publish it.
+9. **packages** writes the Homebrew formula and the Scoop manifest from the release's checksums,
    each verified against the attestation first, and installs them as a user would: with
    Homebrew on Linux and macOS, and with Scoop on Windows, by the release's address and as a
    bucket. Then it opens a pull request putting them on `main`, as the packaging app, and merges
    it once every required check has passed; a check that fails, or anything else that keeps it
    from merging, fails the job with the reason.
-9. **winget** writes the new version's manifests with Microsoft's `wingetcreate`, checks the
-   installer hash in them is the one the release is signed over, and submits them to
-   `microsoft/winget-pkgs`, where Microsoft's checks and moderators merge them.
+10. **winget** writes the new version's manifests with Microsoft's `wingetcreate`, checks the
+    installer hash in them is the one the release is signed over, and submits them to
+    `microsoft/winget-pkgs`, where Microsoft's checks and moderators merge them.
 
 ## What a release carries
 

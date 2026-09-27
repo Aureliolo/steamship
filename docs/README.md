@@ -1,7 +1,8 @@
 # docs
 
 The source of <https://aureliolo.github.io/steamship>. `cargo run -p steamship-docs-site` renders
-it into `target/site`, and `.github/workflows/docs.yml` publishes that from `main`.
+it into `target/site`, and each release publishes that from its tag through
+`.github/workflows/docs.yml`, so the site always describes the latest release.
 
 | File           | Page                            |
 | -------------- | ------------------------------- |
