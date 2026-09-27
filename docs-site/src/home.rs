@@ -109,13 +109,13 @@ const WAYS: [Way; 7] = [
     Way {
         id: "linux",
         name: "Linux archive",
-        command: "curl -fLO RELEASE/steamship-VERSION-x86_64-unknown-linux-musl.tar.gz\n\
-                  wget RELEASE/steamship-VERSION-x86_64-unknown-linux-musl.tar.gz\n\
+        command: "curl -fLO RELEASE/steamship-VERSION-x86_64-linux-musl.tar.gz\n\
+                  wget RELEASE/steamship-VERSION-x86_64-linux-musl.tar.gz\n\
                   gh release download vVERSION --repo Aureliolo/steamship --pattern '*linux-musl*'",
         note: "Any x86-64 Linux, whatever its glibc: steamship vVERSION, with curl, wget or the \
                GitHub command line. Check it as Install shows, then put `steamship` on your \
                `PATH`.",
-        link: Some("RELEASE/steamship-VERSION-x86_64-unknown-linux-musl.tar.gz"),
+        link: Some("RELEASE/steamship-VERSION-x86_64-linux-musl.tar.gz"),
     },
     Way {
         id: "macos",
@@ -325,7 +325,7 @@ mod tests {
             "the reader's system chooses first: {picker}"
         );
         let linux = "https://github.com/Aureliolo/steamship/releases/download/v9.8.7/\
-                     steamship-9.8.7-x86_64-unknown-linux-musl.tar.gz";
+                     steamship-9.8.7-x86_64-linux-musl.tar.gz";
         assert!(
             picker.contains(&format!(
                 "curl -fLO {linux}\nwget {linux}\ngh release download v9.8.7 "

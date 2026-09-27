@@ -56,18 +56,23 @@ Each [release](https://github.com/Aureliolo/steamship/releases/latest) carries a
 each system, with its checksum and signature. The Linux binary is linked statically, so it runs
 on any x86-64 Linux, whatever its glibc. These are steamship {{version}}'s:
 
-| System              | Archive                                                                                                                                                        |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Linux x86-64        | [steamship-{{version}}-x86_64-unknown-linux-musl.tar.gz](https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-unknown-linux-musl.tar.gz) |
-| macOS Apple silicon | [steamship-{{version}}-aarch64-apple-darwin.tar.gz](https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-aarch64-apple-darwin.tar.gz)           |
-| macOS Intel         | [steamship-{{version}}-x86_64-apple-darwin.tar.gz](https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-apple-darwin.tar.gz)             |
-| Windows x86-64      | [steamship-{{version}}-x86_64-pc-windows-msvc.zip](https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-pc-windows-msvc.zip)             |
+| System              | Archive                                                         |
+| ------------------- | --------------------------------------------------------------- |
+| Linux x86-64        | [steamship-{{version}}-x86_64-linux-musl.tar.gz][linux]         |
+| macOS Apple silicon | [steamship-{{version}}-aarch64-apple-darwin.tar.gz][macos-arm]  |
+| macOS Intel         | [steamship-{{version}}-x86_64-apple-darwin.tar.gz][macos-intel] |
+| Windows x86-64      | [steamship-{{version}}-x86_64-pc-windows-msvc.zip][windows]     |
+
+[linux]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-linux-musl.tar.gz
+[macos-arm]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-aarch64-apple-darwin.tar.gz
+[macos-intel]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-apple-darwin.tar.gz
+[windows]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-pc-windows-msvc.zip
 
 From a terminal, the Linux one with curl, wget or the GitHub command line:
 
 ```sh
-curl -fLO https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-unknown-linux-musl.tar.gz
-wget https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-unknown-linux-musl.tar.gz
+curl -fLO https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-linux-musl.tar.gz
+wget https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-linux-musl.tar.gz
 gh release download v{{version}} --repo Aureliolo/steamship --pattern '*linux-musl*'
 ```
 
@@ -77,7 +82,7 @@ Check it, then put `steamship` on your `PATH`.
 
 ```sh with the GitHub command line, gh
 VERSION=X.Y.Z
-ARCHIVE=steamship-${VERSION}-x86_64-unknown-linux-musl.tar.gz
+ARCHIVE=steamship-${VERSION}-x86_64-linux-musl.tar.gz
 gh release download "v${VERSION}" --repo Aureliolo/steamship
 sha256sum -c "${ARCHIVE}.sha256"
 gh attestation verify "${ARCHIVE}" --repo Aureliolo/steamship \

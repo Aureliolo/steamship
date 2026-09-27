@@ -59,7 +59,7 @@ moved or deleted.
 
 ```sh
 VERSION=X.Y.Z
-ARCHIVE=steamship-${VERSION}-x86_64-unknown-linux-musl.tar.gz
+ARCHIVE=steamship-${VERSION}-x86_64-linux-musl.tar.gz
 gh release download "v${VERSION}" --repo Aureliolo/steamship
 sha256sum -c "${ARCHIVE}.sha256"
 gh attestation verify "${ARCHIVE}" --repo Aureliolo/steamship \

@@ -44,7 +44,7 @@ hash_of() {
 
 macos_arm="$(hash_of aarch64-apple-darwin tar.gz)"
 macos_intel="$(hash_of x86_64-apple-darwin tar.gz)"
-linux="$(hash_of x86_64-unknown-linux-musl tar.gz)"
+linux="$(hash_of x86_64-linux-musl tar.gz)"
 windows="$(hash_of x86_64-pc-windows-msvc zip)"
 
 mkdir -p "${out}/Formula" "${out}/bucket"
@@ -69,7 +69,7 @@ class Steamship < Formula
 
   on_linux do
     on_intel do
-      url "${download}/steamship-${version}-x86_64-unknown-linux-musl.tar.gz"
+      url "${download}/steamship-${version}-x86_64-linux-musl.tar.gz"
       sha256 "${linux}"
     end
   end

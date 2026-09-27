@@ -178,7 +178,9 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
-          name="steamship-${VERSION}-${TARGET}"
+          # Named for the target without Rust's placeholder vendor, which says nothing to someone
+          # choosing a download: x86_64-linux-musl, not x86_64-unknown-linux-musl.
+          name="steamship-${VERSION}-${TARGET/-unknown-/-}"
           binary="steamship"
           if [[ "${TARGET}" == *windows* ]]; then
             binary="steamship.exe"
@@ -239,12 +241,12 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
-          targets=(x86_64-unknown-linux-musl x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-apple-darwin)
-          expected="$(for target in "${targets[@]}"; do
+          platforms=(x86_64-linux-musl x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-apple-darwin)
+          expected="$(for platform in "${platforms[@]}"; do
             extension=tar.gz
-            [[ "${target}" == *windows* ]] && extension=zip
-            printf 'dist/steamship-%s-%s.%s\n' "${VERSION}" "${target}" "${extension}"
-            printf 'dist/steamship-%s-%s.%s.sha256\n' "${VERSION}" "${target}" "${extension}"
+            [[ "${platform}" == *windows* ]] && extension=zip
+            printf 'dist/steamship-%s-%s.%s\n' "${VERSION}" "${platform}" "${extension}"
+            printf 'dist/steamship-%s-%s.%s.sha256\n' "${VERSION}" "${platform}" "${extension}"
           done | sort)"
           actual="$(find dist -maxdepth 1 -type f -print | sort)"
           if [[ "${actual}" != "${expected}" ]]; then

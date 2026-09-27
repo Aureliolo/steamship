@@ -57,7 +57,7 @@ A tool that installs steamship from the release archives can pin it in any JSON 
 ```json
 "steamship": {
   "x86_64-pc-windows-msvc": { "tag": "v{{version}}", "sha256": "<the .sha256 beside it>" },
-  "x86_64-unknown-linux-musl": { "tag": "v{{version}}", "sha256": "<the .sha256 beside it>" }
+  "x86_64-linux-musl": { "tag": "v{{version}}", "sha256": "<the .sha256 beside it>" }
 }
 ```
 
