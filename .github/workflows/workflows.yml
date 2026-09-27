@@ -47,6 +47,10 @@ jobs:
           tar -xzf "${archive}" -C "${RUNNER_TEMP}" actionlint
           "${RUNNER_TEMP}/actionlint" -color
 
+      # The scripts the workflows run, which actionlint does not read.
+      - name: Run shellcheck on the workflows' scripts
+        run: shellcheck --enable=all .github/*.sh
+
   zizmor:
     name: zizmor
     runs-on: ubuntu-26.04

@@ -16,6 +16,9 @@ use std::time::{Duration, SystemTime};
 
 use crate::show::Hint;
 
+/// Set to anything, and steamship never asks GitHub for a newer release.
+pub const OPT_OUT: &str = "STEAMSHIP_NO_UPDATE_CHECK";
+
 /// The newest release's page, which GitHub answers with a redirect to that release's tag.
 pub const LATEST: &str = "https://github.com/Aureliolo/steamship/releases/latest";
 const TAG: &str = "https://github.com/Aureliolo/steamship/releases/tag/v";
@@ -80,7 +83,7 @@ where
     Lookup: Fn(&str) -> Option<OsString>,
 {
     let set = |name: &str| lookup(name).is_some_and(|value| !value.is_empty());
-    terminal && !set("CI") && !set("STEAMSHIP_NO_UPDATE_CHECK")
+    terminal && !set("CI") && !set(OPT_OUT)
 }
 
 /// The version a redirect to `location` names, when it is to one of steamship's release tags.

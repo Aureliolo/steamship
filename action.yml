@@ -40,7 +40,7 @@ runs:
         set -euo pipefail
         version="$(grep -m1 -E '^version = "' "${ACTION_PATH}/Cargo.toml" | cut -d '"' -f 2)"
         case "${RUNNER_OS}-${RUNNER_ARCH}" in
-          Linux-X64) target=x86_64-unknown-linux-musl extension=tar.gz ;;
+          Linux-X64) target=x86_64-linux-musl extension=tar.gz ;;
           Windows-X64) target=x86_64-pc-windows-msvc extension=zip ;;
           macOS-ARM64) target=aarch64-apple-darwin extension=tar.gz ;;
           macOS-X64) target=x86_64-apple-darwin extension=tar.gz ;;

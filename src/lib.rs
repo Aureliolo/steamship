@@ -4,6 +4,7 @@
 pub mod account;
 pub mod check;
 pub mod ci;
+pub mod cli;
 pub mod conversation;
 pub mod dbus;
 pub mod digest;
