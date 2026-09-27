@@ -337,6 +337,70 @@ fn a_login_handed_over_that_is_not_one_is_refused_without_repeating_it() {
     assert!(!format!("{stdout}{stderr}").contains("secret_name"));
 }
 
+#[cfg(unix)]
+#[test]
+fn a_login_handed_over_that_is_not_text_is_refused() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let home = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_steamship"))
+        .arg("status")
+        .env("STEAMSHIP_HOME", home.path())
+        .env(
+            "STEAMSHIP_LOGIN",
+            OsStr::from_bytes(b"steamship-login-1:\xff"),
+        )
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2_i32));
+    assert_eq!(
+        failure(&String::from_utf8_lossy(&output.stderr)),
+        "STEAMSHIP_LOGIN does not hold a login packed by `steamship ci`"
+    );
+}
+
+#[test]
+fn ci_with_the_script_named_goes_on_to_the_account() {
+    let (_project, root) = github_project();
+    let home = tempfile::tempdir().unwrap();
+    let script = root.join("steam").join("app_build.vdf");
+    let (code, stdout, stderr) = steamship(
+        &[
+            "ci",
+            "--script",
+            script.to_str().unwrap(),
+            "--output",
+            "unused",
+        ],
+        Some(home.path()),
+        &[("STEAMSHIP_ACCOUNT", "")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(&format!("  script    {}\n", script.display())),
+        "{stdout}"
+    );
+    assert_eq!(
+        failure(&stderr),
+        "name the build account with --account or STEAMSHIP_ACCOUNT"
+    );
+}
+
+#[test]
+fn ci_in_a_repository_without_an_app_build_script_says_so_and_exits_2() {
+    let empty = tempfile::tempdir().unwrap();
+    git(empty.path(), &["init", "--quiet"]);
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship_in(empty.path(), &["ci"], Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(
+        failure(&stderr).starts_with("no app build script in "),
+        "{stderr}"
+    );
+    assert!(stderr.contains("; name one with --script"), "{stderr}");
+}
+
 #[test]
 fn an_empty_account_variable_names_no_account() {
     let home = tempfile::tempdir().unwrap();
@@ -486,6 +550,7 @@ fn github_project() -> (tempfile::TempDir, PathBuf) {
 /// `STEAMSHIP_FAKE_GH_OFFLINE` is set.
 #[cfg(unix)]
 fn fake_gh() -> (tempfile::TempDir, String) {
+    use std::env;
     use std::os::unix::fs::PermissionsExt as _;
 
     let bin = tempfile::tempdir().unwrap();
@@ -506,11 +571,7 @@ fn fake_gh() -> (tempfile::TempDir, String) {
     )
     .unwrap();
     fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
-    let path = format!(
-        "{}:{}",
-        bin.path().display(),
-        std::env::var("PATH").unwrap()
-    );
+    let path = format!("{}:{}", bin.path().display(), env::var("PATH").unwrap());
     (bin, path)
 }
 
@@ -631,6 +692,8 @@ fn ci_says_what_gh_answered_when_it_cannot_set_the_secret_and_exits_1() {
 #[cfg(unix)]
 #[test]
 fn ci_without_gh_says_where_to_get_it_and_exits_1() {
+    use std::os::unix::fs::symlink;
+
     let home = checking(
         "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
         0,
@@ -642,7 +705,7 @@ fn ci_without_gh_says_where_to_get_it_and_exits_1() {
         .output()
         .unwrap();
     let git = String::from_utf8(git.stdout).unwrap();
-    std::os::unix::fs::symlink(git.trim(), bin.path().join("git")).unwrap();
+    symlink(git.trim(), bin.path().join("git")).unwrap();
     let (code, stdout, stderr) = steamship_in(
         &root,
         &["ci"],

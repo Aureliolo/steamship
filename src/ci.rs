@@ -379,11 +379,20 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let account = || Account::parse("build_bot").unwrap();
         let missing = Login::saved(home.path(), Platform::Linux, account()).unwrap_err();
-        assert!(matches!(missing, Error::NotSaved { .. }), "{missing}");
         let path = steamcmd::saved_login(home.path(), Platform::Linux);
+        assert_eq!(
+            missing.to_string(),
+            format!("there is no saved login in {}", path.display())
+        );
         fs::create_dir_all(&path).unwrap();
         let unreadable = Login::saved(home.path(), Platform::Linux, account()).unwrap_err();
         assert!(matches!(unreadable, Error::Io { .. }), "{unreadable}");
+        assert!(
+            unreadable
+                .to_string()
+                .starts_with(&format!("{}: ", path.display())),
+            "{unreadable}"
+        );
         fs::remove_dir(&path).unwrap();
         fs::write(&path, "").unwrap();
         let empty = Login::saved(home.path(), Platform::Linux, account()).unwrap_err();
