@@ -1,0 +1,6 @@
+# Every Windows build, the tests' too, is the build that ships: the C runtime linked in, so the
+# program runs without the Visual C++ redistributable, and Control Flow Guard, which checks each
+# indirect call lands at the start of a function. The linker's own mitigations are in build.rs,
+# which also covers a build from the published crate.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "control-flow-guard"]

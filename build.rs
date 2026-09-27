@@ -1,6 +1,7 @@
-//! Gives steamship.exe its icon and the details Windows shows under Properties and in Task
-//! Manager. The resources are written here in the compiled `.res` form, which Microsoft's linker
-//! takes as it is, so building needs neither a resource compiler nor a crate to drive one.
+//! Gives steamship.exe its icon, the details Windows shows under Properties and in Task Manager,
+//! its application manifest, and the linker's mitigations that rustc leaves off. The resources
+//! are written here in the compiled `.res` form, which Microsoft's linker takes as it is, so
+//! building needs neither a resource compiler nor a crate to drive one.
 
 use std::env;
 use std::fs;
@@ -11,6 +12,7 @@ const ICON: &str = "assets/steamship.ico";
 const RT_ICON: u16 = 3;
 const RT_GROUP_ICON: u16 = 14;
 const RT_VERSION: u16 = 16;
+const RT_MANIFEST: u16 = 24;
 /// English (United States), with the Unicode code page the strings are written in.
 const LANGUAGE: u16 = 0x0409;
 const CODE_PAGE: u16 = 1200;
@@ -29,11 +31,50 @@ fn main() -> Result<(), String> {
     resource(&mut res, 0, 0, 0, &[])?;
     icons(&mut res, &icon)?;
     resource(&mut res, RT_VERSION, 1, 0x0030, &version_info()?)?;
+    // Resource 1 is the manifest Windows reads when it creates the process.
+    resource(&mut res, RT_MANIFEST, 1, 0x0030, manifest()?.as_bytes())?;
     let out = PathBuf::from(env::var("OUT_DIR").map_err(|error| error.to_string())?)
         .join("steamship.res");
     fs::write(&out, res).map_err(|error| format!("{}: {error}", out.display()))?;
     tell(&format!("cargo::rustc-link-arg-bins={}", out.display()));
+    // Compatible with the hardware shadow stack, which then guards every return address. And the
+    // DLLs steamship imports are looked up in System32 alone: wintrust.dll and the crypto
+    // libraries are not among Windows' known DLLs, so without this a copy planted beside the
+    // program, in a Downloads folder say, would be loaded in their place.
+    tell("cargo::rustc-link-arg-bins=/CETCOMPAT");
+    tell("cargo::rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
     Ok(())
+}
+
+/// Runs as whoever started it, on Windows 10 and later, with UTF-8 as the code page any
+/// narrow-string API uses and paths longer than 260 characters where the system allows them.
+fn manifest() -> Result<String, String> {
+    let version = env::var("CARGO_PKG_VERSION").map_err(|error| error.to_string())?;
+    Ok(format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="Aureliolo.steamship" version="{version}.0"/>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <supportedOS Id="{{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}}"/>
+    </application>
+  </compatibility>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>
+"#
+    ))
 }
 
 fn tell(line: &str) {
@@ -132,10 +173,11 @@ fn version_info() -> Result<Vec<u8>, String> {
     let version = env::var("CARGO_PKG_VERSION").map_err(|error| error.to_string())?;
     let mut strings = Vec::new();
     for (key, value) in [
+        ("CompanyName", "Aurelio Amoroso"),
         ("FileDescription", "steamship"),
         ("FileVersion", version.as_str()),
         ("InternalName", "steamship"),
-        ("LegalCopyright", "MIT OR Apache-2.0"),
+        ("LegalCopyright", "Copyright (c) 2026 Aurelio Amoroso"),
         ("OriginalFilename", "steamship.exe"),
         ("ProductName", "steamship"),
         ("ProductVersion", version.as_str()),

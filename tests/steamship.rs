@@ -232,8 +232,9 @@ fn the_windows_program_carries_its_icon_and_version_details() {
           [DllImport(\"shell32.dll\", CharSet = CharSet.Unicode)]
           public static extern uint ExtractIconExW(string file, int index, IntPtr[] large, IntPtr[] small, uint count);'
         $v = (Get-Item -LiteralPath $env:PROGRAM).VersionInfo
-        $v.FileDescription, $v.ProductName, $v.ProductVersion, $v.FileVersionRaw.ToString(),
-          $v.LegalCopyright, $v.OriginalFilename, [Shell.Icons]::ExtractIconExW($env:PROGRAM, -1, $null, $null, 0)";
+        $v.CompanyName, $v.FileDescription, $v.ProductName, $v.ProductVersion,
+          $v.FileVersionRaw.ToString(), $v.LegalCopyright, $v.OriginalFilename,
+          [Shell.Icons]::ExtractIconExW($env:PROGRAM, -1, $null, $null, 0)";
     let output = Command::new("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .env("PROGRAM", env!("CARGO_BIN_EXE_steamship"))
@@ -244,17 +245,124 @@ fn the_windows_program_carries_its_icon_and_version_details() {
     assert_eq!(
         said.lines().collect::<Vec<_>>(),
         [
+            "Aurelio Amoroso",
             "steamship",
             "steamship",
             version,
             &format!("{version}.0"),
-            "MIT OR Apache-2.0",
+            "Copyright (c) 2026 Aurelio Amoroso",
             "steamship.exe",
             "1",
         ],
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+/// steamship.exe as its headers describe it, read the way the loader reads them.
+#[cfg(windows)]
+struct Program(Vec<u8>);
+
+#[cfg(windows)]
+impl Program {
+    fn bytes(&self, at: usize, length: usize) -> &[u8] {
+        self.0
+            .get(at..at.checked_add(length).unwrap())
+            .ok_or("past the end of the program")
+            .unwrap()
+    }
+
+    fn u16(&self, at: usize) -> u16 {
+        u16::from_le_bytes(self.bytes(at, 2).try_into().unwrap())
+    }
+
+    fn u32(&self, at: usize) -> usize {
+        usize::try_from(u32::from_le_bytes(self.bytes(at, 4).try_into().unwrap())).unwrap()
+    }
+
+    /// Where the 64-bit optional header starts.
+    fn optional(&self) -> usize {
+        let pe = self.u32(0x3C);
+        assert_eq!(self.bytes(pe, 4), b"PE\0\0", "a Windows program");
+        let optional = pe.checked_add(24).unwrap();
+        assert_eq!(self.u16(optional), 0x20B, "a 64-bit program");
+        optional
+    }
+
+    /// The file offset of a data directory's contents, and their size.
+    fn directory(&self, index: usize) -> (usize, usize) {
+        let entry = self
+            .optional()
+            .checked_add(112)
+            .and_then(|table| table.checked_add(index.checked_mul(8)?))
+            .unwrap();
+        (
+            self.offset(self.u32(entry)),
+            self.u32(entry.checked_add(4).unwrap()),
+        )
+    }
+
+    /// The file offset of an address as loaded, found through the section it falls in.
+    fn offset(&self, address: usize) -> usize {
+        let pe = self.u32(0x3C);
+        let sections = usize::from(self.u16(pe.checked_add(6).unwrap()));
+        let first = self
+            .optional()
+            .checked_add(usize::from(self.u16(pe.checked_add(20).unwrap())))
+            .unwrap();
+        (0..sections)
+            .map(|index| first.checked_add(index.checked_mul(40).unwrap()).unwrap())
+            .find_map(|header| {
+                let (size, start, raw) = (
+                    self.u32(header.checked_add(8).unwrap()),
+                    self.u32(header.checked_add(12).unwrap()),
+                    self.u32(header.checked_add(20).unwrap()),
+                );
+                let inside = address.checked_sub(start).filter(|within| *within < size)?;
+                raw.checked_add(inside)
+            })
+            .unwrap()
+    }
+}
+
+/// The exploit mitigations the loader enforces, and the manifest it reads, on the program as
+/// built: a flag lost from the build configuration fails here rather than going unnoticed.
+#[cfg(windows)]
+#[test]
+fn the_windows_program_has_its_mitigations_and_manifest() {
+    let program = Program(fs::read(env!("CARGO_BIN_EXE_steamship")).unwrap());
+    let characteristics = program.u16(program.optional().checked_add(70).unwrap());
+    for (flag, name) in [
+        (0x0020, "high-entropy ASLR"),
+        (0x0040, "ASLR"),
+        (0x0100, "DEP"),
+        (0x4000, "Control Flow Guard"),
+    ] {
+        assert_ne!(characteristics & flag, 0, "{name}");
+    }
+
+    let (debug, size) = program.directory(6);
+    let shadow_stack = (0..size.checked_div(28).unwrap())
+        .map(|index| debug.checked_add(index.checked_mul(28).unwrap()).unwrap())
+        .filter(|entry| program.u32(entry.checked_add(12).unwrap()) == 20)
+        .any(|entry| program.u32(program.u32(entry.checked_add(24).unwrap())) & 1 != 0);
+    assert!(shadow_stack, "compatible with the hardware shadow stack");
+
+    let (load_config, _) = program.directory(10);
+    assert_eq!(
+        program.u16(load_config.checked_add(78).unwrap()),
+        0x800,
+        "imports looked up in System32 alone"
+    );
+
+    let text = String::from_utf8_lossy(&program.0);
+    for setting in [
+        r#"<requestedExecutionLevel level="asInvoker" uiAccess="false"/>"#,
+        ">UTF-8</activeCodePage>",
+        ">true</longPathAware>",
+    ] {
+        assert!(text.contains(setting), "the manifest says {setting}");
+    }
 }
 
 #[test]

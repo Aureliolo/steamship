@@ -154,12 +154,11 @@ jobs:
         run: cargo test --locked --target "${TARGET}"
 
       # The dist profile, optimised as a whole program, where `cargo install` keeps to the
-      # quicker release profile. Windows' C runtime linked in, so the binary runs on a machine
-      # without the Visual C++ redistributable.
+      # quicker release profile. Windows' flags come from .cargo/config.toml, which the tests
+      # above were built with too.
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
-          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
         run: cargo auditable build --locked --profile dist --target "${TARGET}"
 
       - name: Verify the build left the source as it was
