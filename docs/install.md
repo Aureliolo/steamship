@@ -98,6 +98,21 @@ GitHub-hosted runner, which a checksum cannot: a checksum made beside a tampered
 with it perfectly. Every release also carries an SPDX SBOM of its four binaries, attested against
 each archive in the same file.
 
+## Tab completion
+
+Homebrew installs tab completion for bash, zsh and fish, and `man steamship`. Anywhere else,
+steamship prints it for your shell to load:
+
+```sh
+steamship completions bash > ~/.local/share/bash-completion/completions/steamship
+steamship completions zsh > "${fpath[1]}/_steamship"
+steamship completions fish > ~/.config/fish/completions/steamship.fish
+steamship completions powershell >> $PROFILE
+```
+
+Each release archive also carries them in `completions/`, and a man page for every command in
+`man/`.
+
 ## Upgrading
 
 Upgrade the way you installed:

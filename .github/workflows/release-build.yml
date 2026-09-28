@@ -170,7 +170,7 @@ jobs:
             exit 1
           fi
 
-      - name: Pack the binary with its licences and README
+      - name: Pack the binary with its licences, README, man pages and completions
         id: pack
         env:
           TARGET: ${{ matrix.target }}
@@ -186,6 +186,9 @@ jobs:
           fi
           mkdir -p "dist/${name}"
           cp "target/${TARGET}/dist/${binary}" README.md LICENSE-APACHE LICENSE-MIT "dist/${name}/"
+          # A man page per command and tab completion per shell, from the same definitions as
+          # `--help`, made by the docs generator so the program itself carries no man writer.
+          cargo run --locked --quiet -p steamship-docs-site -- package "dist/${name}"
           cd dist
           if [[ "${TARGET}" == *windows* ]]; then
             archive="${name}.zip"

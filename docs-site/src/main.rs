@@ -10,7 +10,9 @@ pub mod check;
 pub mod commands;
 pub mod home;
 pub mod markdown;
+pub mod package;
 
+use std::env;
 use std::fmt::{self, Write as _};
 use std::fs;
 use std::io::{self, Write as _};
@@ -89,6 +91,21 @@ const PAGES: [Page; 5] = [
 
 fn main() -> ExitCode {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let arguments: Vec<_> = env::args_os().skip(1).collect();
+    if let [mode, out] = arguments.as_slice()
+        && mode == "package"
+    {
+        return match package::write(Path::new(out)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(why) => {
+                let _said: io::Result<()> = writeln!(
+                    io::stderr(),
+                    "the man pages and completions were not written: {why}"
+                );
+                ExitCode::FAILURE
+            }
+        };
+    }
     match build(&root.join("docs"), &root.join("target").join("site")) {
         Ok(published) => {
             let said = writeln!(io::stdout(), "built {}", published.display());
