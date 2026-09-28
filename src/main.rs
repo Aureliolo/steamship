@@ -6,6 +6,7 @@ use std::fs;
 use std::io::{self, IsTerminal as _};
 use std::path::{self, Path, PathBuf};
 use std::process::{self, ExitCode};
+use std::time::SystemTime;
 
 use clap::{CommandFactory as _, FromArgMatches as _};
 use steamship::account::Account;
@@ -485,7 +486,7 @@ fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     if judged == upload::Login::Taken {
         show::success("ready to upload", "");
     }
-    Ok(verdict(judged))
+    Ok(verdict(judged, packed.as_ref()))
 }
 
 /// Where `builds` and `promote` would find the Web API key, found out without unlocking anything.
@@ -537,10 +538,10 @@ fn check_saved_login(
 ) -> Result<upload::Login, ExitCode> {
     let (home, manifest) = ready()?;
     restore(packed, &home)?;
-    if packed.is_some() {
-        show::field("login", &format!("from {}", ci::VARIABLE));
-    } else {
-        show::field("login", "saved");
+    match packed.map(ci::Login::packed_on) {
+        Some(Some(day)) => show::field("login", &format!("from {}, packed {day}", ci::VARIABLE)),
+        Some(None) => show::field("login", &format!("from {}", ci::VARIABLE)),
+        None => show::field("login", "saved"),
     }
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
     let root = home.join(install::FOLDER);
@@ -573,19 +574,45 @@ fn check_saved_login(
     Ok(judged)
 }
 
-/// The exit code for what Steam made of the saved login, saying why when it did not take it.
-fn verdict(judged: upload::Login) -> ExitCode {
-    match judged {
-        upload::Login::Taken => ExitCode::SUCCESS,
-        upload::Login::Refused(reason) => {
+/// Says Steam refused the login, and how to log in again: for one handed over in
+/// `STEAMSHIP_LOGIN`, with the day it was packed, since the token in it may simply have expired.
+fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCode {
+    match packed {
+        None => {
             let again = Hint {
                 before: "log the build account in again with ",
                 command: "steamship login",
                 after: "",
             };
-            show::failure("not logged in", &reason, Some(again));
-            ExitCode::from(LOGIN)
+            show::failure("not logged in", reason, Some(again));
         }
+        Some(packed) => {
+            let from = packed.packed_on().map_or_else(
+                || {
+                    format!(
+                        "the login in {} was packed by an earlier steamship",
+                        ci::VARIABLE
+                    )
+                },
+                |day| format!("the login in {} was packed on {day}", ci::VARIABLE),
+            );
+            let again = Hint {
+                before: "log in again with ",
+                command: "steamship login",
+                after: ", then run steamship ci to pack the new login",
+            };
+            show::failure("not logged in", &format!("{reason}; {from}"), Some(again));
+        }
+    }
+    ExitCode::from(LOGIN)
+}
+
+/// The exit code for what Steam made of the saved login, or the one handed over in `packed`,
+/// saying why when it did not take it.
+fn verdict(judged: upload::Login, packed: Option<&ci::Login>) -> ExitCode {
+    match judged {
+        upload::Login::Taken => ExitCode::SUCCESS,
+        upload::Login::Refused(reason) => login_refused(&reason, packed),
         upload::Login::Failed(reasons) => {
             for reason in &reasons {
                 show::failure(reason, "", None);
@@ -819,7 +846,7 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         log.as_deref().map(String::from_utf8_lossy).as_deref(),
         request.preview,
     );
-    let code = report(&outcome, spinner, &took, &prepared, &saved);
+    let code = report(&outcome, spinner, &took, &prepared, &saved, packed.as_ref());
     if matches!(
         outcome,
         upload::Outcome::Failed(_) | upload::Outcome::BuiltThenFailed { .. }
@@ -841,6 +868,7 @@ fn report(
     took: &str,
     prepared: &upload::Prepared,
     saved: &Path,
+    packed: Option<&ci::Login>,
 ) -> ExitCode {
     let app = prepared.app_id;
     let logs = format!(
@@ -867,13 +895,7 @@ fn report(
         }
         upload::Outcome::NotLoggedIn(line) => {
             spinner.failed(&format!("refused after {took}"));
-            let again = Hint {
-                before: "log the build account in again with ",
-                command: "steamship login",
-                after: "",
-            };
-            show::failure("not logged in", line, Some(again));
-            ExitCode::from(LOGIN)
+            login_refused(line, packed)
         }
         upload::Outcome::BuiltThenFailed { build_id, reasons } => {
             spinner.failed(&format!("failed after {took}"));
@@ -1300,13 +1322,7 @@ fn try_workshop(script: &Path, named: Option<&str>, new: bool) -> Result<ExitCod
         }
         workshop::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
-            let again = Hint {
-                before: "log the build account in again with ",
-                command: "steamship login",
-                after: "",
-            };
-            show::failure("not logged in", &reason, Some(again));
-            ExitCode::from(LOGIN)
+            login_refused(&reason, packed.as_ref())
         }
         workshop::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
@@ -1441,12 +1457,16 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
     })?;
     let judged = check_saved_login(&account, None)?;
     if judged != upload::Login::Taken {
-        return Ok(verdict(judged));
+        return Ok(verdict(judged, None));
     }
+    let today = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    let packed = packed.packed(&ci::day(today));
     let again = "when the login expires, run `steamship login` and `steamship ci` again";
     match (setup.output, repository) {
         (Some(output), _) => {
-            ci::write_private(output, packed.packed().as_bytes())
+            ci::write_private(output, packed.as_bytes())
                 .map_err(|error| fail(&format!("{}: {error}", output.display()), FAILED))?;
             show::done("secret", &format!("written to {}", output.display()));
             show::success(
@@ -1458,6 +1478,7 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
             );
         }
         (None, Some(repository)) => {
+            fits_a_secret(&packed)?;
             set_secret(&repository, setup.secret, &packed)?;
             let relative = root
                 .as_deref()
@@ -1598,9 +1619,30 @@ fn ci_repository(named: Option<&str>, script: &Path) -> Result<String, ExitCode>
     Ok(repository)
 }
 
+/// Refuses a packed login GitHub would not keep in a secret, before `gh` is asked to.
+fn fits_a_secret(packed: &str) -> Result<(), ExitCode> {
+    if packed.len() <= ci::SECRET_LIMIT {
+        return Ok(());
+    }
+    let output = Hint {
+        before: "write it to a file for another CI with ",
+        command: "steamship ci --output login.txt",
+        after: "",
+    };
+    show::failure(
+        "the packed login is too large for a GitHub secret",
+        &format!(
+            "{} KB, where a secret holds 48 KB",
+            packed.len().div_ceil(1024)
+        ),
+        Some(output),
+    );
+    Err(ExitCode::from(FAILED))
+}
+
 /// Sets `packed` as the secret `secret` of `repository` with the GitHub command line, which
 /// reads it from its input, so that it is never on a command line or on the screen.
-fn set_secret(repository: &str, secret: &str, packed: &ci::Login) -> Result<(), ExitCode> {
+fn set_secret(repository: &str, secret: &str, packed: &str) -> Result<(), ExitCode> {
     let spinner = Spinner::start(
         "secret",
         &format!("setting {secret} on {repository}"),
@@ -1630,7 +1672,7 @@ fn set_secret(repository: &str, secret: &str, packed: &ci::Login) -> Result<(), 
         }
     };
     let written = child.stdin.take().map_or(Ok(()), |mut input| {
-        io::Write::write_all(&mut input, packed.packed().as_bytes())
+        io::Write::write_all(&mut input, packed.as_bytes())
     });
     let finished = child.wait_with_output();
     match (written, finished) {
