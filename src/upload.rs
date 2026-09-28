@@ -304,6 +304,9 @@ pub fn judge(
     }
 }
 
+/// What steamcmd says in place of a login when it never reached Steam, which refused nothing.
+const NO_CONNECTION: &str = "No Connection";
+
 /// Why steamcmd could not log in with the login it saved, when that is what its `console` says.
 /// The reason is taken from the line and not the line itself, which names the account.
 #[must_use]
@@ -311,6 +314,8 @@ pub fn refused_login(console: &str) -> Option<String> {
     console.lines().find_map(|line| {
         if line.contains("Cached credentials not found") {
             Some(line.trim().to_owned())
+        } else if conversation::refusal(line) == Some(NO_CONNECTION) {
+            None
         } else if line.contains("FAILED (No cached credentials")
             || (line.contains("Logging in") && line.contains("FAILED"))
         {
@@ -356,11 +361,17 @@ pub fn judge_login(code: Option<i32>, console: &str) -> Login {
 pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<String> {
     let mut found: Vec<String> = Vec::new();
     for line in log.into_iter().flat_map(str::lines).chain(console.lines()) {
-        if let Some((_, error)) = line.split_once("ERROR!") {
-            let error = error.trim().to_owned();
-            if !found.contains(&error) {
-                found.push(error);
-            }
+        let error = if let Some((_, error)) = line.split_once("ERROR!") {
+            error.trim().to_owned()
+        } else if let Some((_, socket)) = line.split_once("CreateBoundSocket: ") {
+            no_socket(socket.trim())
+        } else if conversation::refusal(line) == Some(NO_CONNECTION) {
+            format!("steamcmd could not connect to Steam ({NO_CONNECTION})")
+        } else {
+            continue;
+        };
+        if !found.contains(&error) {
+            found.push(error);
         }
     }
     if found.is_empty() {
@@ -373,6 +384,20 @@ pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<Strin
         });
     }
     found
+}
+
+/// Why steamcmd could not open a network socket, from what it `said`. Error 38 is ENOSYS, which
+/// Docker's default seccomp filter answers the socket call 32-bit steamcmd makes with: seen in a
+/// container, and gone when the same container runs without the filter.
+fn no_socket(said: &str) -> String {
+    if said.ends_with("(38)") {
+        "steamcmd could not open a network socket: in a Docker container, the default seccomp \
+         filter refuses the socket call 32-bit steamcmd makes; run the container with \
+         --security-opt seccomp=unconfined"
+            .to_owned()
+    } else {
+        format!("steamcmd could not open a network socket: {said}")
+    }
 }
 
 #[cfg(test)]
@@ -539,6 +564,54 @@ mod tests {
                 "Build for depot 5335971 failed : Failure".to_owned(),
             ])
         );
+    }
+
+    /// steamcmd's console in a Docker container with the default seccomp filter, as it was.
+    const NO_SOCKET: &str = "Loading Steam API...CreateBoundSocket: failed to create socket, \
+        error [no name available] (38)\r\nOK\r\n\
+        Connecting anonymously to Steam Public...Retrying... \r\n\
+        CreateBoundSocket: failed to create socket, error [no name available] (38)\r\n\
+        FAILED (No Connection)\r\n";
+
+    #[test]
+    fn a_socket_steamcmd_cannot_open_is_named_with_what_to_do_in_a_container() {
+        assert_eq!(
+            judge(480, Some(5_i32), NO_SOCKET, None, true),
+            Outcome::Failed(vec![
+                "steamcmd could not open a network socket: in a Docker container, the default \
+                 seccomp filter refuses the socket call 32-bit steamcmd makes; run the container \
+                 with --security-opt seccomp=unconfined"
+                    .to_owned(),
+                "steamcmd could not connect to Steam (No Connection)".to_owned(),
+            ])
+        );
+        assert_eq!(
+            reasons(
+                Some(5_i32),
+                "CreateBoundSocket: failed to create socket, error [refused] (13)\r\n",
+                None
+            ),
+            [
+                "steamcmd could not open a network socket: failed to create socket, error [refused] (13)"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_login_that_never_reached_steam_is_not_one_steam_refused() {
+        let unreachable =
+            "Logging in user 'build_bot' to Steam Public...FAILED (No Connection)\r\n";
+        assert_eq!(refused_login(unreachable), None);
+        assert_eq!(
+            judge_login(Some(5_i32), unreachable),
+            Login::Failed(vec![
+                "steamcmd could not connect to Steam (No Connection)".to_owned()
+            ])
+        );
+        assert!(matches!(
+            judge(1, Some(5_i32), unreachable, None, false),
+            Outcome::Failed(_)
+        ));
     }
 
     #[test]
