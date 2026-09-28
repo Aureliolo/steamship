@@ -338,6 +338,23 @@ fn finished(app_id: u32, line: &str) -> Option<Finished> {
     digits.parse().ok().map(Finished::Build)
 }
 
+/// Why Steam may have refused to commit a build the script sets live on a branch, when that is
+/// the failure: Valve names no reason, and a branch the app does not have is refused this way.
+#[must_use]
+pub fn commit_refused(reasons: &[String], set_live: Option<&str>) -> Option<String> {
+    let branch = set_live?;
+    reasons
+        .iter()
+        .any(|reason| reason.starts_with("Failed to commit build"))
+        .then(|| {
+            format!(
+                "\"SetLive\" names \"{branch}\": Steam refuses the build when the app has no \
+                 branch by that name, which is made in Steamworks under SteamPipe, Builds, or \
+                 when the account may not set builds live"
+            )
+        })
+}
+
 /// What steamcmd says in place of a login when it never reached Steam, which refused nothing.
 const NO_CONNECTION: &str = "No Connection";
 
@@ -519,6 +536,17 @@ mod tests {
                 "{app} {code:?} {preview}"
             );
         }
+    }
+
+    #[test]
+    fn a_refused_commit_names_the_branch_it_would_have_set_live() {
+        // As steamcmd 1788292693 reported an upload whose SetLive branch did not exist yet.
+        let refused = vec!["Failed to commit build for AppID 5335950 : Failure".to_owned()];
+        let why = commit_refused(&refused, Some("testing")).unwrap();
+        assert!(why.starts_with("\"SetLive\" names \"testing\": "), "{why}");
+        assert_eq!(commit_refused(&refused, None), None);
+        let other = vec!["Failed to initialize build on server (Access Denied)".to_owned()];
+        assert_eq!(commit_refused(&other, Some("testing")), None);
     }
 
     #[test]

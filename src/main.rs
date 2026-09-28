@@ -718,11 +718,20 @@ fn checked(script: &Path) -> Result<check::Report, ExitCode> {
     Err(ExitCode::from(REFUSED))
 }
 
+/// Why an unchecked `SetLive` branch matters, and how to have it checked.
+const UNCHECKED_BRANCH: &str = "a branch the app does not have fails the upload only at its end; \
+                                steamship login --web-api-key keeps a key to check it with";
+
 /// Refuses a `SetLive` branch the app does not have, which Valve would otherwise report only
 /// after the whole upload. Steam is asked only with a key already at hand, never one typed for
 /// the purpose, and when it cannot answer the upload is not held up by it.
 fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<(), ExitCode> {
     let Some(api) = key_at_hand()? else {
+        show::field(
+            "branch",
+            &format!("{branch}, not checked: no Web API key at hand"),
+        );
+        show::aside(UNCHECKED_BRANCH);
         return Ok(());
     };
     let spinner = Spinner::start("branch", "asking Steam for the app's branches", false);
@@ -933,6 +942,14 @@ fn report(
             spinner.failed(&format!("failed after {took}"));
             for reason in reasons {
                 show::failure(reason, "", None);
+            }
+            if let Some(why) = upload::commit_refused(reasons, prepared.set_live.as_deref()) {
+                show::note(&why);
+                show::hint(Hint {
+                    before: "see the app's branches with ",
+                    command: &format!("steamship builds {app}"),
+                    after: "",
+                });
             }
             show::note(&logs);
             ExitCode::from(FAILED)

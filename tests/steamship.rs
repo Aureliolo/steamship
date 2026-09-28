@@ -2796,15 +2796,23 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
     assert_eq!(unanswered, Some(0_i32), "{said}");
     assert!(said.contains("not checked"), "{said}");
 
-    // No key set or kept: nothing is asked of Steam, and nothing is said about the branch.
+    // No key set or kept: nothing is asked of Steam, and the branch is said to be unchecked, with
+    // what that risks and how to have it checked.
     let (unasked, _never) = web_api(vec![]);
-    let (keyless, quiet, _) = steamship(
+    let (keyless, warned, _) = steamship(
         &["check", &script],
         Some(home.path()),
         &[("STEAMSHIP_NO_UPDATE_CHECK", "1"), (STAND_IN, &unasked)],
     );
-    assert_eq!(keyless, Some(0_i32), "{quiet}");
-    assert!(!quiet.contains("branch"), "{quiet}");
+    assert_eq!(keyless, Some(0_i32), "{warned}");
+    assert!(
+        warned.contains("  branch    beta2, not checked: no Web API key at hand\n"),
+        "{warned}"
+    );
+    assert!(
+        warned.contains("fails the upload only at its end; steamship login --web-api-key keeps"),
+        "{warned}"
+    );
 }
 
 #[test]
