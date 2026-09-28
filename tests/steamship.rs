@@ -2026,8 +2026,10 @@ fn leaking() -> tempfile::TempDir {
              > \"$output/app_build_1000.log\"\n\
            exit 6\n\
          fi\n\
+         finished='build (BuildID 4242).'\n\
+         grep -q '\"Preview\"[[:space:]]*\"1\"' \"$script\" && finished='build preview.'\n\
          { cat \"$HOME/Steam/config/config.vdf\"; \
-           echo 'Successfully finished AppID 1000 build (BuildID 4242).'; } \
+           echo \"Successfully finished AppID 1000 $finished\"; } \
            > \"$output/app_build_1000.log\"\n",
     );
     let [token, local] = SECRETS;
