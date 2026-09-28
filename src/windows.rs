@@ -8,7 +8,7 @@
 use std::env;
 use std::ffi::{OsStr, OsString, c_void};
 use std::fs::File;
-use std::io::{self, PipeReader, PipeWriter, Read as _};
+use std::io::{self, PipeReader, PipeWriter};
 use std::iter;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStrExt as _;
@@ -18,9 +18,10 @@ use std::path::Path;
 use std::process;
 use std::ptr::{self, NonNull};
 use std::slice;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
     ERROR_NOT_FOUND, ERROR_SUCCESS, GENERIC_ALL, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL,
@@ -68,7 +69,7 @@ use windows_sys::Win32::System::Threading::{
 use zeroize::{Zeroize as _, Zeroizing};
 
 use crate::keychain;
-use crate::run::Finished;
+use crate::run::{self, Finished};
 use windows_sys::Win32::Security::Cryptography::{
     CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
 };
@@ -84,6 +85,9 @@ use windows_sys::core::BOOL;
 /// when its last handle closes, and a run opening one by the same name at that moment is refused.
 static DESKTOPS: AtomicU64 = AtomicU64::new(0);
 
+/// How often a wait looks up from the program to see whether it has said it will never finish.
+const POLL: Duration = Duration::from_millis(50);
+
 /// [`crate::run::run`], for Windows: on a desktop of its own, inside a job that ends every process
 /// in it, with only its input and output handed down to it.
 ///
@@ -96,11 +100,12 @@ pub fn run(
     environment: &[(OsString, OsString)],
     directory: &Path,
     limit: Duration,
+    hopeless: &'static [&'static str],
 ) -> io::Result<Finished> {
     silence_error_dialogues();
     let desktop = Desktop::create()?;
     let job = Job::create()?;
-    let (mut reader, writer) = io::pipe()?;
+    let (reader, writer) = io::pipe()?;
     let input = File::open("NUL")?;
     let process = spawn(
         program,
@@ -114,11 +119,10 @@ pub fn run(
     // The child has its own copies now. Holding ours would keep the output open after it ends.
     drop(writer);
     drop(input);
-    let reading = thread::spawn(move || {
-        let mut output = Vec::new();
-        reader.read_to_end(&mut output).map(|_| output)
-    });
-    let code = process.wait(limit, &job)?;
+    let seen = Arc::new(AtomicBool::new(false));
+    let watching = Arc::clone(&seen);
+    let reading = thread::spawn(move || run::watch(reader, hopeless, &watching));
+    let code = process.wait(limit, &job, &seen)?;
     // Whatever the program started and left running ends with the job, which is also what lets
     // the reading finish: a straggler would hold the output open.
     drop(job);
@@ -248,16 +252,29 @@ impl Process {
     }
 
     /// The exit code, or none when `limit` passed first and the job was ended.
-    fn wait(&self, limit: Duration, job: &Job) -> io::Result<Option<i32>> {
-        // INFINITE itself is reserved, so the longest finite wait is one less.
-        let milliseconds = u32::try_from(limit.as_millis()).unwrap_or(INFINITE.saturating_sub(1));
+    /// The process's exit code once it ends; none when `limit` passes or `hopeless` is set first,
+    /// and the job is stopped.
+    fn wait(&self, limit: Duration, job: &Job, hopeless: &AtomicBool) -> io::Result<Option<i32>> {
         let handle = self.0.as_raw_handle();
-        // SAFETY: the process handle is open for as long as `self`.
-        if unsafe { WaitForSingleObject(handle, milliseconds) } == WAIT_TIMEOUT {
-            job.stop_all();
-            // SAFETY: as above; the job has ended the process, so this returns at once.
-            let _: u32 = unsafe { WaitForSingleObject(handle, INFINITE) };
-            return Ok(None);
+        let deadline = Instant::now().checked_add(limit);
+        loop {
+            let left = deadline.map_or(POLL, |deadline| {
+                deadline.saturating_duration_since(Instant::now()).min(POLL)
+            });
+            // Whole milliseconds of at most POLL, which fits.
+            let milliseconds = u32::try_from(left.as_millis()).unwrap_or(0);
+            // SAFETY: the process handle is open for as long as `self`.
+            if unsafe { WaitForSingleObject(handle, milliseconds) } != WAIT_TIMEOUT {
+                break;
+            }
+            if hopeless.load(Ordering::Relaxed)
+                || deadline.is_some_and(|deadline| Instant::now() >= deadline)
+            {
+                job.stop_all();
+                // SAFETY: as above; the job has ended the process, so this returns at once.
+                let _: u32 = unsafe { WaitForSingleObject(handle, INFINITE) };
+                return Ok(None);
+            }
         }
         let mut code = 0_u32;
         // SAFETY: the process has ended and `code` is a valid place for its exit code.
@@ -347,7 +364,8 @@ impl Terminal {
                 .join()
                 .unwrap_or_else(|panic| panic::resume_unwind(panic));
         }
-        self.process.wait(Duration::MAX, &self.job)
+        self.process
+            .wait(Duration::MAX, &self.job, &AtomicBool::new(false))
     }
 }
 
