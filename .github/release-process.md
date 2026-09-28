@@ -11,7 +11,7 @@ a click once the run starts.
 ## What happens on the merge
 
 `release-tag.yml` sees a new version on `main` with no tag, creates `vX.Y.Z`, and starts
-`release.yml` on it. `release.yml` calls `release-build.yml`, which does the first four steps,
+`release.yml` on it. `release.yml` calls `release-build.yml`, which does the first five steps,
 and then publishes and packages:
 
 1. **verify** refuses to go on unless the release commit is on `main`, carries a valid
@@ -20,28 +20,33 @@ and then publishes and packages:
    arm64 Windows, and arm64 and x86-64 macOS. The tests run again where the system can run them.
    Each binary records every crate it was built from, at its exact version (`cargo auditable`).
    There is no Arm Linux build: Valve's steamcmd for Linux is x86 only.
-3. **sbom** reads an SPDX SBOM from the five binaries themselves, then checks it lists every
-   crate linked into each at its locked version and every file shipped with its SHA-256, since
-   an SBOM that lists nothing looks exactly like a passing step.
-4. **attest** signs everything through Sigstore, attests the SBOM against each archive, and
-   gathers both signed attestations into one file. It is the only job that can sign, and it
-   runs no code from the repository.
-5. **publish** checks every file once more the way you would, from the file alone, and creates
+3. **linux packages** builds the `.deb` and the `.rpm` from the Linux archive with nFPM, then
+   lints each with its own system's linter and installs it on a bare Debian and Fedora, where it
+   installs steamcmd and runs it.
+4. **sbom** reads an SPDX SBOM from the five binaries themselves, checks the two packages hold
+   the Linux archive's binary byte for byte, then checks the SBOM lists every crate linked into
+   each binary at its locked version and every file shipped with its SHA-256, since an SBOM that
+   lists nothing looks exactly like a passing step.
+5. **attest** signs everything through Sigstore, attests the SBOM against each archive and
+   package, and gathers both signed attestations into one file. It is the only job that can
+   sign, and it runs no code from the repository.
+6. **publish** checks every file once more the way you would, from the file alone, and creates
    the GitHub release.
-6. **crates** publishes the same tagged source to crates.io with no stored token: crates.io
+7. **crates** publishes the same tagged source to crates.io with no stored token: crates.io
    trusts this workflow, and a short-lived token is the whole credential.
-7. **action** uses the GitHub Action from the tag on each system, as a game's workflow would: it
+8. **action** uses the GitHub Action from the tag on each system, as a game's workflow would: it
    installs the release just published, checked by SHA-256 and attestation, and runs it.
-8. **site** builds <https://aureliolo.github.io/steamship> from the tag and publishes it, so the
+9. **site** builds <https://aureliolo.github.io/steamship> from the tag and publishes it, so the
    site always describes the latest release: its version, its archives and its commands. The
    `github-pages` environment admits `v*` tags only, so nothing else can publish it.
-9. **packages** writes the Homebrew formula, the Scoop manifest and the winget manifests from
-   the release's checksums, each verified against the attestation first, and installs the first
-   two as a user would: with Homebrew on Linux and macOS, and with Scoop on x86-64 and Arm
-   Windows, by the release's address and as a bucket. Then it opens a pull request putting them
-   on `main`, as the packaging app, and merges it once every required check has passed; a check
-   that fails, or anything else that keeps it from merging, fails the job with the reason.
-10. **winget** checks each installer in the winget manifests against its signed archive, its
+10. **packages** writes the Homebrew formula, the Scoop manifest and the winget manifests from
+    the release's checksums, each verified against the attestation first, and installs the
+    first two as a user would: with Homebrew on Linux and macOS, and with Scoop on x86-64 and Arm
+    Windows, by the release's address and as a bucket. Then it opens a pull request putting them
+    on `main`, as the packaging app, and merges it once every required check has passed; a
+    check that fails, or anything else that keeps it from merging, fails the job with the
+    reason.
+11. **winget** checks each installer in the winget manifests against its signed archive, its
     hash and the path of the program inside it, and submits them with Microsoft's
     `wingetcreate` to `microsoft/winget-pkgs`, where Microsoft's checks and moderators merge
     them.
@@ -50,11 +55,13 @@ and then publishes and packages:
 
 - An archive per system, holding the binary, the README and both licences. The Linux binary is
   linked statically against musl, so it runs on any x86-64 Linux, whatever its glibc.
-- A SHA-256 checksum for each archive.
+- A `.deb` for Debian and Ubuntu and an `.rpm` for Fedora, holding the Linux binary, its man
+  pages and completions, and depending on the 32-bit C libraries Valve's steamcmd loads.
+- A SHA-256 checksum for each archive and package.
 - `steamship.json`, the Scoop manifest, which `scoop install` reads by the release's address.
 - An SPDX SBOM of the five binaries.
 - A Sigstore build-provenance attestation over all of these, and an SBOM attestation tying the
-  SBOM to each archive, both in `steamship-X.Y.Z.intoto.jsonl`. They are keyless: there is no
+  SBOM to each archive and package, both in `steamship-X.Y.Z.intoto.jsonl`. They are keyless: there is no
   signing key anywhere.
 
 Releases are immutable: a published one cannot be edited or replaced, and no release tag can be

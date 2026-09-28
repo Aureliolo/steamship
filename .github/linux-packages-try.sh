@@ -1,20 +1,27 @@
 #!/usr/bin/env bash
-# Run inside a bare Debian or Fedora container by the linux-packages action: installs the package
-# for $SYSTEM from /packages, checks what it put where, uploads a preview of Valve's test app from
-# /spacewar anonymously, and removes the package again.
+# Run inside a bare Debian or Fedora container by the linux-packages action: lints the package
+# for $SYSTEM from /packages with that system's own linter, installs it, checks what it put where,
+# uploads a preview of Valve's test app from /spacewar anonymously, and removes it again. Neither
+# linter brings any 32-bit library, so the install still starts from none.
 set -euo pipefail
 : "${SYSTEM:?}" "${VERSION:?}"
 
 case "${SYSTEM}" in
   debian)
     export DEBIAN_FRONTEND=noninteractive
+    deb="/packages/steamship_${VERSION}-1_amd64.deb"
     apt-get update
-    apt-get install --yes --no-install-recommends "/packages/steamship_${VERSION}-1_amd64.deb"
+    apt-get install --yes --no-install-recommends lintian
+    lintian --fail-on error,warning --display-info "${deb}"
+    apt-get install --yes --no-install-recommends "${deb}"
     dpkg --verify steamship
     zsh=/usr/share/zsh/vendor-completions/_steamship
     ;;
   fedora)
-    dnf install --assumeyes --setopt=install_weak_deps=False "/packages/steamship-${VERSION}-1.x86_64.rpm"
+    rpm="/packages/steamship-${VERSION}-1.x86_64.rpm"
+    dnf install --assumeyes --setopt=install_weak_deps=False rpmlint
+    rpmlint --strict --config /rpmlint.toml "${rpm}"
+    dnf install --assumeyes --setopt=install_weak_deps=False "${rpm}"
     rpm --verify steamship
     zsh=/usr/share/zsh/site-functions/_steamship
     test -f /usr/share/licenses/steamship/LICENSE-MIT

@@ -45,24 +45,11 @@ runs:
         SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" PATH="${RUNNER_TEMP}/nfpm:${PATH}" \
           "${GITHUB_ACTION_PATH}/../../linux-packages.sh" "${VERSION}" "${ARCHIVE}" "${OUT}"
 
-    # From the image's own signed Ubuntu archive, as musl-tools is.
-    - name: Lint them
-      shell: bash
-      env:
-        VERSION: ${{ inputs.version }}
-        OUT: ${{ inputs.out }}
-      run: |
-        set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install --yes --no-install-recommends lintian rpmlint
-        lintian --fail-on error,warning --display-info "${OUT}/steamship_${VERSION}-1_amd64.deb"
-        rpmlint --strict --config "${GITHUB_ACTION_PATH}/../../rpmlint.toml" \
-          "${OUT}/steamship-${VERSION}-1.x86_64.rpm"
-
-    # Each on a bare system of its kind, where nothing but the package's own dependencies brings
-    # the 32-bit libraries steamcmd loads: steamship installs steamcmd and uploads a preview of
+    # Each on a bare system of its kind: linted there by that system's own lintian or rpmlint,
+    # with its policy, then installed where nothing but the package's own dependencies brings the
+    # 32-bit libraries steamcmd loads. steamship installs steamcmd and uploads a preview of
     # Valve's test app anonymously, which Steam refuses only once steamcmd is running.
-    - name: Install each in a bare Debian and Fedora, and upload with it
+    - name: Lint and install each on a bare Debian and Fedora, and upload with it
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
@@ -77,6 +64,7 @@ runs:
           docker run --rm --env VERSION --env SYSTEM="$1" \
             --volume "$(realpath "${OUT}"):/packages:ro" \
             --volume "$(realpath "${GITHUB_ACTION_PATH}/../../linux-packages-try.sh"):/try.sh:ro" \
+            --volume "$(realpath "${GITHUB_ACTION_PATH}/../../rpmlint.toml"):/rpmlint.toml:ro" \
             --volume "${GITHUB_WORKSPACE}/tests/fixtures/spacewar:/spacewar:ro" \
             "$2" bash /try.sh
         }
