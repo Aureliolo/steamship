@@ -39,6 +39,25 @@ winget install Aureliolo.steamship
 Homebrew, Scoop and winget install the release's archive only if it matches the SHA-256 the
 release is signed over.
 
+## Debian, Ubuntu and Fedora
+
+On x86-64 Linux, the release's `.deb` or `.rpm`:
+
+```sh
+# Debian and Ubuntu
+curl -fLO https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship_{{version}}-1_amd64.deb
+sudo apt install ./steamship_{{version}}-1_amd64.deb
+# Fedora
+sudo dnf install https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-1.x86_64.rpm
+```
+
+Each brings the 32-bit C libraries Valve's steamcmd for Linux loads, and carries a man page per
+command and tab completion for bash, zsh and fish. Check one as [Verifying a
+download](#verifying-a-download) shows, with the package's name in place of the archive's.
+
+Installed any other way on Linux, steamship needs those libraries too: `lib32gcc-s1` on Debian
+and Ubuntu, `glibc.i686` and `libgcc.i686` on Fedora.
+
 ## Cargo
 
 Anywhere Rust runs:

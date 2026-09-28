@@ -1,0 +1,83 @@
+name: Linux packages
+description: >-
+  Builds the .deb and the .rpm from a Linux archive with .github/linux-packages.sh, lints them
+  with Debian's lintian and Fedora's rpmlint, and installs each on the system it is for: the .deb
+  on this Ubuntu runner, the .rpm in Fedora. The release uses this, and pull requests too, so
+  what a release would ship is known to install before it is tagged.
+
+inputs:
+  version:
+    description: The version the packages are for
+    required: true
+  archive:
+    description: The Linux archive holding the binary, man pages, completions, README and licences
+    required: true
+  out:
+    description: The folder the packages and their .sha256 files are written into
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install nFPM
+      shell: bash
+      env:
+        # renovate: datasource=github-release-attachments depName=goreleaser/nfpm versioning=semver
+        NFPM_TAG: v2.47.0
+        NFPM_SHA256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+      run: |
+        set -euo pipefail
+        archive="${RUNNER_TEMP}/nfpm.tar.gz"
+        curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
+          "https://github.com/goreleaser/nfpm/releases/download/${NFPM_TAG}/nfpm_${NFPM_TAG#v}_Linux_x86_64.tar.gz"
+        echo "${NFPM_SHA256}  ${archive}" | sha256sum --check --strict
+        mkdir -p "${RUNNER_TEMP}/nfpm"
+        tar -xzf "${archive}" -C "${RUNNER_TEMP}/nfpm" nfpm
+
+    - name: Build the packages
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        ARCHIVE: ${{ inputs.archive }}
+        OUT: ${{ inputs.out }}
+      run: |
+        set -euo pipefail
+        SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)" PATH="${RUNNER_TEMP}/nfpm:${PATH}" \
+          "${GITHUB_ACTION_PATH}/../../linux-packages.sh" "${VERSION}" "${ARCHIVE}" "${OUT}"
+
+    # From the image's own signed Ubuntu archive, as musl-tools is.
+    - name: Lint them
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        OUT: ${{ inputs.out }}
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends lintian rpmlint
+        lintian --fail-on error,warning --display-info "${OUT}/steamship_${VERSION}-1_amd64.deb"
+        rpmlint --strict "${OUT}/steamship-${VERSION}-1.x86_64.rpm"
+
+    # Each on a bare system of its kind, where nothing but the package's own dependencies brings
+    # the 32-bit libraries steamcmd loads: steamship installs steamcmd and uploads a preview of
+    # Valve's test app anonymously, which Steam refuses only once steamcmd is running.
+    - name: Install each in a bare Debian and Fedora, and upload with it
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        OUT: ${{ inputs.out }}
+        # renovate: datasource=docker depName=debian
+        DEBIAN: debian:13@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c
+        # renovate: datasource=docker depName=fedora
+        FEDORA: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+      run: |
+        set -euo pipefail
+        try() {
+          docker run --rm --env VERSION --env SYSTEM="$1" \
+            --volume "$(realpath "${OUT}"):/packages:ro" \
+            --volume "$(realpath "${GITHUB_ACTION_PATH}/../../linux-packages-try.sh"):/try.sh:ro" \
+            --volume "${GITHUB_WORKSPACE}/tests/fixtures/spacewar:/spacewar:ro" \
+            "$2" bash /try.sh
+        }
+        try debian "${DEBIAN}"
+        try fedora "${FEDORA}"
