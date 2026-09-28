@@ -183,32 +183,7 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
-          # Named for the target without Rust's placeholder vendor, which says nothing to someone
-          # choosing a download: x86_64-linux-musl, not x86_64-unknown-linux-musl.
-          name="steamship-${VERSION}-${TARGET/-unknown-/-}"
-          binary="steamship"
-          if [[ "${TARGET}" == *windows* ]]; then
-            binary="steamship.exe"
-          fi
-          mkdir -p "dist/${name}"
-          cp "target/${TARGET}/dist/${binary}" README.md LICENSE-APACHE LICENSE-MIT "dist/${name}/"
-          # A man page per command and tab completion per shell, from the same definitions as
-          # `--help`, made by the docs generator so the program itself carries no man writer.
-          cargo run --locked --quiet -p steamship-docs-site -- package "dist/${name}"
-          cd dist
-          if [[ "${TARGET}" == *windows* ]]; then
-            archive="${name}.zip"
-            7z a -tzip -bso0 "${archive}" "${name}"
-          else
-            archive="${name}.tar.gz"
-            tar -czf "${archive}" "${name}"
-          fi
-          rm -rf "${name}"
-          if command -v sha256sum > /dev/null; then
-            sha256sum "${archive}" > "${archive}.sha256"
-          else
-            shasum -a 256 "${archive}" > "${archive}.sha256"
-          fi
+          archive="$(.github/pack.sh "${VERSION}" "${TARGET}" dist)"
           echo "archive=${archive}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload the archive
@@ -221,11 +196,53 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The .deb and the .rpm, from the Linux archive just built, so they hold that very binary.
+  linux-packages:
+    name: linux packages
+    needs: [verify, build]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read # Reads the tagged scripts that build and check the packages.
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the Linux archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-x86_64-unknown-linux-musl
+          path: dist
+
+      - name: Verify it
+        run: (cd dist && sha256sum --check --strict ./*.sha256)
+
+      - name: Build, lint and install the packages
+        uses: ./.github/actions/linux-packages # zizmor: ignore[self-repository]
+        with:
+          version: ${{ needs.verify.outputs.version }}
+          archive: dist/steamship-${{ needs.verify.outputs.version }}-x86_64-linux-musl.tar.gz
+          out: packages
+
+      - name: Upload the packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-linux-packages
+          path: |
+            packages/*.deb
+            packages/*.rpm
+            packages/*.sha256
+          if-no-files-found: error
+          retention-days: 1
+
   # One SBOM for the release, read from the five binaries themselves. Then the job checks the
   # SBOM says what it should, because an SBOM that lists nothing looks exactly like a passing step.
   sbom:
     name: sbom
-    needs: [verify, build]
+    needs: [verify, build, linux-packages]
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
@@ -244,7 +261,9 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Verify the archives, and lay out what syft reads
+      # The packages hold the Linux archive's binary, which is checked here, so the SBOM read
+      # from the archives describes them too.
+      - name: Verify the archives and packages, and lay out what syft reads
         env:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
@@ -253,22 +272,35 @@ jobs:
             x86_64-linux-musl x86_64-pc-windows-msvc aarch64-pc-windows-msvc aarch64-apple-darwin
             x86_64-apple-darwin
           )
-          expected="$(for platform in "${platforms[@]}"; do
-            extension=tar.gz
-            [[ "${platform}" == *windows* ]] && extension=zip
-            printf 'dist/steamship-%s-%s.%s\n' "${VERSION}" "${platform}" "${extension}"
-            printf 'dist/steamship-%s-%s.%s.sha256\n' "${VERSION}" "${platform}" "${extension}"
-          done | sort)"
+          deb="steamship_${VERSION}-1_amd64.deb"
+          rpm="steamship-${VERSION}-1.x86_64.rpm"
+          expected="$({
+            for platform in "${platforms[@]}"; do
+              extension=tar.gz
+              [[ "${platform}" == *windows* ]] && extension=zip
+              printf 'dist/steamship-%s-%s.%s\n' "${VERSION}" "${platform}" "${extension}"
+            done
+            printf 'dist/%s\n' "${deb}" "${rpm}"
+          } | sed 'p; s/$/.sha256/' | sort)"
           actual="$(find dist -maxdepth 1 -type f -print | sort)"
           if [[ "${actual}" != "${expected}" ]]; then
-            echo "The build left other files than the five archives and their checksums:" >&2
+            echo "The build left other files than the five archives, the two packages and their checksums:" >&2
             printf '%s\n' "${actual}" >&2
             exit 1
           fi
           (cd dist && sha256sum --check ./*.sha256)
-          mkdir sbom-input
+          mkdir sbom-input unpacked-deb unpacked-rpm
           for archive in dist/*.tar.gz; do tar -xzf "${archive}" -C sbom-input; done
           for archive in dist/*.zip; do unzip -q "${archive}" -d sbom-input; done
+          # rpm2cpio from the image's own signed Ubuntu archive.
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends rpm2cpio cpio
+          dpkg-deb --extract "dist/${deb}" unpacked-deb
+          rpm2cpio "dist/${rpm}" | (cd unpacked-rpm && cpio --extract --make-directories --quiet)
+          linux="sbom-input/steamship-${VERSION}-x86_64-linux-musl/steamship"
+          cmp "${linux}" unpacked-deb/usr/bin/steamship
+          cmp "${linux}" unpacked-rpm/usr/bin/steamship
+          rm -rf unpacked-deb unpacked-rpm
 
       # Scoop installs from this file by the release's address, so it ships in the release and is
       # signed with it, written from the checksums just checked.
@@ -337,6 +369,7 @@ jobs:
           name: release-bundle
           path: |
             dist/steamship-${{ needs.verify.outputs.version }}-*
+            dist/steamship_${{ needs.verify.outputs.version }}-1_amd64.deb*
             dist/steamship-${{ needs.verify.outputs.version }}.spdx.json
             dist/steamship.json
           if-no-files-found: error
@@ -364,6 +397,7 @@ jobs:
         with:
           subject-path: |
             dist/steamship-*
+            dist/steamship_*
             dist/steamship.json
 
       - name: Attest the SBOM
@@ -373,6 +407,8 @@ jobs:
           subject-path: |
             dist/steamship-*.tar.gz
             dist/steamship-*.zip
+            dist/steamship_*.deb
+            dist/steamship-*.rpm
           sbom-path: dist/steamship-${{ needs.verify.outputs.version }}.spdx.json
 
       # The attestations are stored on the repository too, but only a verifier with GitHub's API
