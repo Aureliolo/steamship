@@ -130,6 +130,17 @@ pub fn failure(headline: &str, reason: &str, hint: Option<Hint<'_>>) {
     }
 }
 
+/// What to do next, under the failures it follows.
+pub fn hint(hint: Hint<'_>) {
+    hinted(hint);
+}
+
+/// Text for the program reading steamship's output rather than a person, as it is: GitHub
+/// Actions' workflow commands, which it reads only from the start of a line on standard output.
+pub fn plain(text: &str) {
+    anstream::print!("{text}");
+}
+
 fn hinted(
     Hint {
         before,

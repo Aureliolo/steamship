@@ -62,6 +62,10 @@ ends the run rather than waiting at a prompt. It prints the BuildID and, when th
 one, the branch it was set live on; in a GitHub Actions step it also gives the BuildID as the
 step's `build-id` output.
 
+When Valve builds the upload but steamcmd fails after, as when setting it live, the run still
+fails, and says the BuildID and the `steamship promote` command that sets it live, so nothing
+has to be uploaded again. The `build-id` output is given then too.
+
 `--preview` is Valve's dry run: the whole build is computed and logged, nothing is uploaded and
 nothing is set live.
 

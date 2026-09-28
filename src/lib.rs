@@ -9,6 +9,7 @@ pub mod conversation;
 pub mod dbus;
 pub mod digest;
 pub mod download;
+pub mod dump;
 pub mod elf;
 pub mod install;
 pub mod keychain;
