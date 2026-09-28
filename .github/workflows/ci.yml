@@ -218,6 +218,27 @@ jobs:
           archive: ${{ steps.pack.outputs.archive }}
           out: packages
 
+      # The AUR package too, written by packages.sh as a release writes it, for this archive. The
+      # other systems' archives are not built here, so their checksums are stand-ins.
+      - name: Write the AUR package for this archive
+        env:
+          VERSION: ${{ steps.pack.outputs.version }}
+          ARCHIVE: ${{ steps.pack.outputs.archive }}
+        run: |
+          set -euo pipefail
+          for other in aarch64-apple-darwin.tar.gz x86_64-apple-darwin.tar.gz \
+              x86_64-pc-windows-msvc.zip aarch64-pc-windows-msvc.zip; do
+            name="steamship-${VERSION}-${other}"
+            printf '%064d *%s\n' 0 "${name}" > "dist/${name}.sha256"
+          done
+          .github/packages.sh "${VERSION}" dist written
+          cp "${ARCHIVE}" written/aur/
+
+      - name: Build, lint and install the AUR package
+        uses: ./.github/actions/aur # zizmor: ignore[self-repository]
+        with:
+          folder: written/aur
+
   # The pinned steamcmd, installed for real from Valve's CDN on each system, then installed again,
   # which must find it as pinned. Nothing runs steamcmd here.
   install:

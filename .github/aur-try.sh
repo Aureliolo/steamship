@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Run inside a bare Arch Linux container by the aur action: builds steamship-bin from the
+# PKGBUILD in /aur as the AUR would, lints it, installs it, uploads a preview of Valve's test app
+# from /spacewar anonymously with it, and removes it again. An archive already in /aur is used in
+# place of the release's download, as makepkg does with any source it finds beside the PKGBUILD.
+set -euo pipefail
+
+# lib32-gcc-libs, which the package depends on, is in the multilib repository, off by default.
+printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+pacman -Syu --noconfirm --needed namcap
+
+# makepkg refuses to run as root.
+useradd --create-home builder
+cp -r /aur /home/builder/aur
+chown -R builder: /home/builder/aur
+build() {
+  su builder -c "cd /home/builder/aur && $1"
+}
+build 'makepkg --printsrcinfo | diff -u .SRCINFO -'
+build 'namcap PKGBUILD'
+build 'makepkg --nodeps --noconfirm'
+package="$(find /home/builder/aur -maxdepth 1 -name 'steamship-bin-*-x86_64.pkg.tar.zst' -print -quit)"
+namcap "${package}"
+pacman -U --noconfirm "${package}"
+
+version="$(sed -n 's/^pkgver=//p' /home/builder/aur/PKGBUILD)"
+said="$(steamship --version)"
+test "${said}" = "steamship ${version}"
+test -f /usr/share/man/man1/steamship.1.gz
+test -f /usr/share/man/man1/steamship-upload.1.gz
+test -f /usr/share/bash-completion/completions/steamship
+test -f /usr/share/zsh/site-functions/_steamship
+test -f /usr/share/fish/vendor_completions.d/steamship.fish
+test -f /usr/share/licenses/steamship-bin/LICENSE-MIT
+
+export STEAMSHIP_HOME=/tmp/steamship
+steamship install
+status=0
+steamship upload /spacewar/steam/app_build.vdf --version packages --account anonymous --preview \
+  2> /tmp/upload.txt || status=$?
+cat /tmp/upload.txt
+test "${status}" -eq 1
+grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' /tmp/upload.txt
+
+pacman -R --noconfirm steamship-bin
+test ! -e /usr/bin/steamship
