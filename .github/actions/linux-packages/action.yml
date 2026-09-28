@@ -58,6 +58,9 @@ runs:
         DEBIAN: debian:13@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c
         # renovate: datasource=docker depName=fedora
         FEDORA: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+      # Without Docker's seccomp filter, which answers the socket call 32-bit steamcmd makes with
+      # ENOSYS: steamcmd then says "CreateBoundSocket: failed to create socket" and never reaches
+      # Steam. A system of its own, which these stand in for, has no such filter.
       run: |
         set -euo pipefail
         try() {

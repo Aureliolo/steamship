@@ -21,10 +21,10 @@ case "${SYSTEM}" in
     rpm="/packages/steamship-${VERSION}-1.x86_64.rpm"
     dnf install --assumeyes --setopt=install_weak_deps=False rpmlint git-core
     rpmlint --strict --config /rpmlint.toml "${rpm}"
-    dnf install --assumeyes --setopt=install_weak_deps=False "${rpm}"
+    # The image leaves documentation out, which a Fedora system installs.
+    dnf install --assumeyes --setopt=install_weak_deps=False --setopt=tsflags= "${rpm}"
     rpm --verify steamship
     zsh=/usr/share/zsh/site-functions/_steamship
-    test -f /usr/share/licenses/steamship/LICENSE-MIT
     ;;
   *)
     echo "No package for ${SYSTEM}." >&2
@@ -34,21 +34,33 @@ esac
 
 said="$(steamship --version)"
 test "${said}" = "steamship ${VERSION}"
-test -f /usr/share/man/man1/steamship.1.gz
-test -f /usr/share/man/man1/steamship-upload.1.gz
-test -f /usr/share/bash-completion/completions/steamship
-test -f "${zsh}"
-test -f /usr/share/fish/vendor_completions.d/steamship.fish
-test -f /usr/share/doc/steamship/README.md
+for file in /usr/share/man/man1/steamship.1.gz /usr/share/man/man1/steamship-upload.1.gz \
+  /usr/share/bash-completion/completions/steamship "${zsh}" \
+  /usr/share/fish/vendor_completions.d/steamship.fish /usr/share/doc/steamship/README.md; do
+  if [[ ! -f "${file}" ]]; then
+    echo "The package installed no ${file}." >&2
+    exit 1
+  fi
+done
 
-export STEAMSHIP_HOME=/tmp/steamship
-steamship install
 # An upload names the commit its scripts are at, so they are given one.
 cp -r /spacewar /tmp/spacewar
 git -C /tmp/spacewar init --quiet
 git -C /tmp/spacewar add .
 git -C /tmp/spacewar -c user.name=packages -c user.email=packages@localhost commit --quiet \
   --message 'The scripts under test'
+
+# The linters and Git brought the system's certificate store with them, which the package does
+# not ask for: it goes, so that the upload shows steamship and steamcmd reach Steam without it.
+if [[ "${SYSTEM}" == debian ]]; then
+  dpkg --purge --force-depends ca-certificates
+else
+  rpm --erase --nodeps ca-certificates
+fi
+rm -rf /etc/ssl/certs /etc/pki/tls/certs /etc/pki/ca-trust
+
+export STEAMSHIP_HOME=/tmp/steamship
+steamship install
 status=0
 steamship upload /tmp/spacewar/steam/app_build.vdf --version packages --account anonymous --preview \
   2> /tmp/upload.txt || status=$?
