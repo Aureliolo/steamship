@@ -131,9 +131,10 @@ const WAYS: [Way; 7] = [
         id: "windows",
         name: "Windows archive",
         command: "curl.exe -fLO RELEASE/steamship-VERSION-x86_64-pc-windows-msvc.zip\n\
-                  gh release download vVERSION --repo Aureliolo/steamship --pattern '*windows*'",
+                  gh release download vVERSION --repo Aureliolo/steamship --pattern '*x86_64-pc-windows*'",
         note: "Windows x86-64: steamship vVERSION, with the curl Windows ships or the GitHub \
-               command line. Check it as Install shows, then put `steamship.exe` on your `PATH`.",
+               command line; on Windows on Arm, `x86_64` becomes `aarch64`. Check it as Install \
+               shows, then put `steamship.exe` on your `PATH`.",
         link: Some("RELEASE/steamship-VERSION-x86_64-pc-windows-msvc.zip"),
     },
 ];

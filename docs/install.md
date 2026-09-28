@@ -56,17 +56,19 @@ Each [release](https://github.com/Aureliolo/steamship/releases/latest) carries a
 each system, with its checksum and signature. The Linux binary is linked statically, so it runs
 on any x86-64 Linux, whatever its glibc. These are steamship {{version}}'s:
 
-| System              | Archive                                                         |
-| ------------------- | --------------------------------------------------------------- |
-| Linux x86-64        | [steamship-{{version}}-x86_64-linux-musl.tar.gz][linux]         |
-| macOS Apple silicon | [steamship-{{version}}-aarch64-apple-darwin.tar.gz][macos-arm]  |
-| macOS Intel         | [steamship-{{version}}-x86_64-apple-darwin.tar.gz][macos-intel] |
-| Windows x86-64      | [steamship-{{version}}-x86_64-pc-windows-msvc.zip][windows]     |
+| System              | Archive                                                          |
+| ------------------- | ---------------------------------------------------------------- |
+| Linux x86-64        | [steamship-{{version}}-x86_64-linux-musl.tar.gz][linux]          |
+| macOS Apple silicon | [steamship-{{version}}-aarch64-apple-darwin.tar.gz][macos-arm]   |
+| macOS Intel         | [steamship-{{version}}-x86_64-apple-darwin.tar.gz][macos-intel]  |
+| Windows x86-64      | [steamship-{{version}}-x86_64-pc-windows-msvc.zip][windows]      |
+| Windows on Arm      | [steamship-{{version}}-aarch64-pc-windows-msvc.zip][windows-arm] |
 
 [linux]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-linux-musl.tar.gz
 [macos-arm]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-aarch64-apple-darwin.tar.gz
 [macos-intel]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-apple-darwin.tar.gz
 [windows]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-pc-windows-msvc.zip
+[windows-arm]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-aarch64-pc-windows-msvc.zip
 
 From a terminal, the Linux one with curl, wget or the GitHub command line:
 
@@ -95,7 +97,7 @@ gh attestation verify "${ARCHIVE}" --repo Aureliolo/steamship \
 The checksum proves the bytes are the ones the release lists. The attestation proves GitHub
 Actions built them from this repository, by the steps in `release-build.yml` at that tag, on a
 GitHub-hosted runner, which a checksum cannot: a checksum made beside a tampered archive agrees
-with it perfectly. Every release also carries an SPDX SBOM of its four binaries, attested against
+with it perfectly. Every release also carries an SPDX SBOM of its five binaries, attested against
 each archive in the same file.
 
 ## Tab completion

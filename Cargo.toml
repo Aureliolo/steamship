@@ -194,6 +194,10 @@ bin-dir = "{ name }-{ version }-x86_64-linux-musl/{ bin }{ binary-ext }"
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.zip"
 pkg-fmt = "zip"
 
+[package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.zip"
+pkg-fmt = "zip"
+
 # `cargo install` builds with this profile, so it stays quick: whole-program optimisation nearly
 # triples the build for an 11% smaller binary. The release archives are built with `dist`, which
 # adds it; `cargo install --locked steamship --profile dist` builds the same from source.
