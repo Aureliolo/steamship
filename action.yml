@@ -56,6 +56,7 @@ runs:
         case "${RUNNER_OS}-${RUNNER_ARCH}" in
           Linux-X64) target=x86_64-linux-musl extension=tar.gz ;;
           Windows-X64) target=x86_64-pc-windows-msvc extension=zip ;;
+          Windows-ARM64) target=aarch64-pc-windows-msvc extension=zip ;;
           macOS-ARM64) target=aarch64-apple-darwin extension=tar.gz ;;
           macOS-X64) target=x86_64-apple-darwin extension=tar.gz ;;
           *)

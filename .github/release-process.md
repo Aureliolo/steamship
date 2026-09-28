@@ -16,10 +16,11 @@ and then publishes and packages:
 
 1. **verify** refuses to go on unless the release commit is on `main`, carries a valid
    signature, and the tag names the version in `Cargo.toml`.
-2. **build** makes the four binaries, each on the system it is for: x86-64 Linux, x86-64
-   Windows, and arm64 and x86-64 macOS. The tests run again where the system can run them.
+2. **build** makes the five binaries, each on the system it is for: x86-64 Linux, x86-64 and
+   arm64 Windows, and arm64 and x86-64 macOS. The tests run again where the system can run them.
    Each binary records every crate it was built from, at its exact version (`cargo auditable`).
-3. **sbom** reads an SPDX SBOM from the four binaries themselves, then checks it lists every
+   There is no Arm Linux build: Valve's steamcmd for Linux is x86 only.
+3. **sbom** reads an SPDX SBOM from the five binaries themselves, then checks it lists every
    crate linked into each at its locked version and every file shipped with its SHA-256, since
    an SBOM that lists nothing looks exactly like a passing step.
 4. **attest** signs everything through Sigstore, attests the SBOM against each archive, and
@@ -34,15 +35,16 @@ and then publishes and packages:
 8. **site** builds <https://aureliolo.github.io/steamship> from the tag and publishes it, so the
    site always describes the latest release: its version, its archives and its commands. The
    `github-pages` environment admits `v*` tags only, so nothing else can publish it.
-9. **packages** writes the Homebrew formula and the Scoop manifest from the release's checksums,
-   each verified against the attestation first, and installs them as a user would: with
-   Homebrew on Linux and macOS, and with Scoop on Windows, by the release's address and as a
-   bucket. Then it opens a pull request putting them on `main`, as the packaging app, and merges
-   it once every required check has passed; a check that fails, or anything else that keeps it
-   from merging, fails the job with the reason.
-10. **winget** writes the new version's manifests with Microsoft's `wingetcreate`, checks the
-    installer hash in them is the one the release is signed over, and submits them to
-    `microsoft/winget-pkgs`, where Microsoft's checks and moderators merge them.
+9. **packages** writes the Homebrew formula, the Scoop manifest and the winget manifests from
+   the release's checksums, each verified against the attestation first, and installs the first
+   two as a user would: with Homebrew on Linux and macOS, and with Scoop on x86-64 and Arm
+   Windows, by the release's address and as a bucket. Then it opens a pull request putting them
+   on `main`, as the packaging app, and merges it once every required check has passed; a check
+   that fails, or anything else that keeps it from merging, fails the job with the reason.
+10. **winget** checks each installer in the winget manifests against its signed archive, its
+    hash and the path of the program inside it, and submits them with Microsoft's
+    `wingetcreate` to `microsoft/winget-pkgs`, where Microsoft's checks and moderators merge
+    them.
 
 ## What a release carries
 
@@ -50,7 +52,7 @@ and then publishes and packages:
   linked statically against musl, so it runs on any x86-64 Linux, whatever its glibc.
 - A SHA-256 checksum for each archive.
 - `steamship.json`, the Scoop manifest, which `scoop install` reads by the release's address.
-- An SPDX SBOM of the four binaries.
+- An SPDX SBOM of the five binaries.
 - A Sigstore build-provenance attestation over all of these, and an SBOM attestation tying the
   SBOM to each archive, both in `steamship-X.Y.Z.intoto.jsonl`. They are keyless: there is no
   signing key anywhere.
@@ -119,8 +121,10 @@ winget takes packages only through a pull request to `microsoft/winget-pkgs`, wh
 `wingetcreate` opens from a fork with a **classic** token: GitHub lets no fine-grained token open
 a pull request on a repository its owner is not a member of, and `wingetcreate` says so.
 
-The first version is submitted by hand, once, and a moderator reviews it; `wingetcreate update`
-only updates a package that exists. After it is accepted:
+The manifests are written whole by `.github/packages.sh`, one installer for each Windows archive,
+rather than raised with `wingetcreate update`, which keeps only the installers the last version
+had. The first version is submitted by hand, once, and a moderator reviews it. After it is
+accepted:
 
 1. Create a GitHub account used for nothing else, and fork `microsoft/winget-pkgs` to it. It needs
    no access to this repository.
@@ -130,7 +134,7 @@ only updates a package that exists. After it is accepted:
 4. Set the repository variable `WINGET` to `submit`.
 
 The job runs only with `WINGET` set, as **crates** does with `CRATES_IO`: before the first version
-is in winget-pkgs, every release would fail on a step nothing could make pass. With it set, a
+is in winget-pkgs, each release would open a second request for a new package. With it set, a
 missing token fails the release. When the token expires, the job fails; make a new one the same
 way.
 
