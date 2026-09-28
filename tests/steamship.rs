@@ -537,6 +537,24 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
         "{stdout}"
     );
 
+    // Steam shows the build it had until the new one shows, as it may just after setting it.
+    let (late, _late_asked) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(7)),
+        ("200 OK", testing_live(4242)),
+    ]);
+    let (caught_up, late_out, late_err) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &late)],
+    );
+    assert_eq!(caught_up, Some(0_i32), "{late_out}{late_err}");
+    assert!(
+        late_out.contains("testing: BuildID 4242, as Steam shows it"),
+        "{late_out}"
+    );
+
     // Steam goes on showing another build, however often it is asked.
     let (other, _asked) = web_api(vec![
         ("200 OK", BETAS),

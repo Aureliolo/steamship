@@ -886,31 +886,37 @@ fn confirmed_live(app: u32, branch: &str, build_id: u64) -> bool {
         return true;
     };
     let spinner = Spinner::start("branch", "asking Steam what is live", false);
-    let mut seen = upload::Live::Missing;
-    for ask in 1..=ASKS {
-        match api.branches(app) {
-            Ok(branches) => seen = upload::live_now(&branches, branch, build_id),
-            Err(error) => {
-                spinner.failed("not confirmed");
-                show::aside(&error.to_string());
-                return true;
-            }
+    let ask = || {
+        api.branches(app)
+            .map(|branches| upload::live_now(&branches, branch, build_id))
+    };
+    let mut seen = ask();
+    for _ in 1..ASKS {
+        if !matches!(seen, Ok(upload::Live::Other(_) | upload::Live::Missing)) {
+            break;
         }
-        if seen == upload::Live::Confirmed {
+        thread::sleep(APART);
+        seen = ask();
+    }
+    match seen {
+        Ok(upload::Live::Confirmed) => {
             spinner.done(&format!("{branch}: BuildID {build_id}, as Steam shows it"));
-            return true;
+            true
         }
-        if ask < ASKS {
-            thread::sleep(APART);
+        Ok(upload::Live::Other(other)) => {
+            spinner.failed(&format!("{branch}: BuildID {other}, as Steam shows it"));
+            false
+        }
+        Ok(upload::Live::Missing) => {
+            spinner.failed(&format!("{branch}: no such branch on Steam"));
+            false
+        }
+        Err(error) => {
+            spinner.failed("not confirmed");
+            show::aside(&error.to_string());
+            true
         }
     }
-    spinner.failed(&match seen {
-        upload::Live::Other(other) => format!("{branch}: BuildID {other}, as Steam shows it"),
-        upload::Live::Missing | upload::Live::Confirmed => {
-            format!("{branch}: no such branch on Steam")
-        }
-    });
-    false
 }
 
 /// A build Steam kept but set live nowhere, found by its description when a key is at hand, as
