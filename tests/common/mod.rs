@@ -33,7 +33,9 @@ use steamship::dbus::Value;
 use steamship::dbus::session::Connection;
 
 /// Starts the bus, prints its address once it listens, then gnome-keyring on it, and ends both
-/// when its input ends.
+/// when its input ends. The bus starts nothing itself: a session bus would start a gnome-keyring
+/// of its own, its keyring locked, for any call that came while the tests' own was not there,
+/// and every test after would fail as if a prompt had been dismissed.
 #[cfg(target_os = "linux")]
 const SCRIPT: &str = r#"
 set -eu
@@ -41,7 +43,19 @@ folder=$1
 unset DISPLAY WAYLAND_DISPLAY
 export HOME="$folder" XDG_RUNTIME_DIR="$folder" XDG_DATA_HOME="$folder/data"
 mkdir -p "$XDG_DATA_HOME"
-dbus-daemon --session --nofork --print-address=3 3>"$folder/address" &
+cat >"$folder/bus.conf" <<CONFIG
+<busconfig>
+  <type>session</type>
+  <listen>unix:dir=$folder</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+CONFIG
+dbus-daemon --config-file="$folder/bus.conf" --nofork --print-address=3 3>"$folder/address" &
 bus=$!
 keyring=
 trap 'kill $bus $keyring 2>/dev/null; rm -rf "$folder"' EXIT
