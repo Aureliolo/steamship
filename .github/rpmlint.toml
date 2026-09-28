@@ -1,0 +1,8 @@
+# What rpmlint reports about the .rpm that is so by design, each matched as narrowly as it can be.
+Filters = [
+  # Linked statically against musl, so the one binary runs on every distribution whatever its
+  # glibc, and is byte for byte the release's Linux archive's.
+  'steamship\.x86_64: E: statically-linked-binary /usr/bin/steamship$',
+  # Valve's name for its command-line Steam client, not a misspelling.
+  "steamship\\.x86_64: E: spelling-error \\('steamcmd', ",
+]
