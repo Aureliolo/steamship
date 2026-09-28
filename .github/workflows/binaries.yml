@@ -1,0 +1,112 @@
+name: Binaries
+
+# Microsoft's BinSkim over the programs as the release builds them, on the systems they are for:
+# the exploit mitigations and build hygiene its rules check, with every result in the Security
+# tab. tests/hardening.rs asserts the mitigations steamship relies on; this is the wider,
+# independent look. No paths filter: a required check a filter skipped never reports.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The NuGet package, which Microsoft signs, refused unless it matches the digest written here.
+  # renovate: datasource=nuget depName=Microsoft.CodeAnalysis.BinSkim
+  BINSKIM_VERSION: 4.4.9.11
+  BINSKIM_SHA256: 69678989cbc273b5b50fcf98fb0fd978e1e35a3f844acb24254b31f0ce90c447
+
+jobs:
+  binskim:
+    name: binskim (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            # renovate: datasource=github-runners depName=windows
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            program: steamship.exe
+            binskim: win-x64/BinSkim.exe
+          - platform: linux
+            # renovate: datasource=github-runners depName=ubuntu
+            runner: ubuntu-26.04
+            target: x86_64-unknown-linux-musl
+            program: steamship
+            binskim: linux-x64/BinSkim
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read # Reads the source it builds.
+      security-events: write # Uploads the results to code scanning.
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup target add "${TARGET}"
+
+      - name: Install musl-gcc
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+
+      # The release profile rather than the release's own whole-program build: the same flags
+      # and mitigations in a third of the time. Symbols kept, since several PE rules read them.
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+          CARGO_PROFILE_RELEASE_STRIP: none
+          CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
+        run: cargo build --locked --release --target "${TARGET}"
+
+      - name: Install BinSkim
+        run: |
+          set -euo pipefail
+          package="${RUNNER_TEMP}/binskim.nupkg"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${package}" \
+            "https://api.nuget.org/v3-flatcontainer/microsoft.codeanalysis.binskim/${BINSKIM_VERSION}/microsoft.codeanalysis.binskim.${BINSKIM_VERSION}.nupkg"
+          echo "${BINSKIM_SHA256}  ${package}" | sha256sum --check --strict
+          mkdir "${RUNNER_TEMP}/binskim"
+          unzip -q "${package}" 'tools/*' -d "${RUNNER_TEMP}/binskim"
+          # A zip carries no executable bit, which only Linux asks for.
+          if [[ "${RUNNER_OS}" == Linux ]]; then
+            chmod +x "${RUNNER_TEMP}"/binskim/tools/*/linux-x64/BinSkim
+          fi
+
+      - name: Analyse
+        env:
+          TARGET: ${{ matrix.target }}
+          PROGRAM: ${{ matrix.program }}
+          BINSKIM: ${{ matrix.binskim }}
+        run: |
+          set -euo pipefail
+          binskim="$(echo "${RUNNER_TEMP}"/binskim/tools/net*/"${BINSKIM}")"
+          "${binskim}" analyze "target/${TARGET}/release/${PROGRAM}" --output binskim.sarif
+
+      - name: Upload the results
+        if: '!cancelled()'
+        uses: github/codeql-action/upload-sarif@977e6ceaea7361825998245d787fa3b4d6b9e5df # codeql-bundle-v2.27.0
+        with:
+          sarif_file: binskim.sarif
+          category: binskim-${{ matrix.platform }}
