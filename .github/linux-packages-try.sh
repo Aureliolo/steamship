@@ -26,7 +26,10 @@ case "${SYSTEM}" in
     ;;
   fedora)
     rpm="/packages/steamship-${VERSION}-1.x86_64.rpm"
-    dnf install --assumeyes --setopt=install_weak_deps=False rpmlint git-core
+    # Cisco's codec repository, which rpmlint's dependencies would reach for a codec Fedora's own
+    # repositories stand in for, is a server of its own that can fail on its own.
+    dnf install --assumeyes --setopt=install_weak_deps=False \
+      --disablerepo=fedora-cisco-openh264 rpmlint git-core
     rpmlint --strict --config /rpmlint.toml "${rpm}"
     # The image leaves documentation out, which a Fedora system installs.
     dnf install --assumeyes --setopt=install_weak_deps=False --setopt=tsflags= "${rpm}"
