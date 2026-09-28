@@ -262,17 +262,16 @@ mod tests {
         );
     }
 
+    /// Written out rather than taken from the constant, so that the limit itself is under test.
     #[test]
-    fn only_the_start_of_a_dynamic_section_is_read() {
-        let at = usize::try_from(DYNAMIC_LIMIT).unwrap() + 16;
+    fn only_the_first_64_kib_of_a_dynamic_section_is_read() {
         assert!(
-            !program(with_dynamic(DF_1_PIE, at, DYNAMIC_LIMIT * 2)),
-            "a flag beyond the limit is not looked for"
+            !program(with_dynamic(DF_1_PIE, 65_552, 131_072)),
+            "a flag beyond 64 KiB is not looked for"
         );
-        let inside = usize::try_from(DYNAMIC_LIMIT - 32).unwrap();
         assert!(
-            program(with_dynamic(DF_1_PIE, inside, DYNAMIC_LIMIT * 2)),
-            "a flag just inside the limit is found"
+            program(with_dynamic(DF_1_PIE, 65_504, 131_072)),
+            "a flag just inside 64 KiB is found"
         );
     }
 
