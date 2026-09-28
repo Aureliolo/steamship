@@ -718,11 +718,20 @@ fn checked(script: &Path) -> Result<check::Report, ExitCode> {
     Err(ExitCode::from(REFUSED))
 }
 
+/// Why an unchecked `SetLive` branch matters, and how to have it checked.
+const UNCHECKED_BRANCH: &str = "a branch the app does not have leaves the build uploaded but not \
+                                live; steamship login --web-api-key keeps a key to check it with";
+
 /// Refuses a `SetLive` branch the app does not have, which Valve would otherwise report only
 /// after the whole upload. Steam is asked only with a key already at hand, never one typed for
 /// the purpose, and when it cannot answer the upload is not held up by it.
 fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<(), ExitCode> {
     let Some(api) = key_at_hand()? else {
+        show::field(
+            "branch",
+            &format!("{branch}, not checked: no Web API key at hand"),
+        );
+        show::aside(UNCHECKED_BRANCH);
         return Ok(());
     };
     let spinner = Spinner::start("branch", "asking Steam for the app's branches", false);
@@ -735,15 +744,9 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<(), ExitCo
             spinner.done(&format!("{branch}, found on Steam"));
             Ok(())
         }
-        Ok(_) => {
+        Ok(branches) => {
             spinner.failed("not on Steam");
-            let problem = scripts::Problem::new(
-                script,
-                format!(
-                    "\"SetLive\" names \"{branch}\", but app {app} has no branch by that name; \
-                     create it in Steamworks under SteamPipe, Builds first"
-                ),
-            );
+            let problem = scripts::Problem::new(script, upload::no_branch(app, branch, &branches));
             show::failure("refused", &problem.to_string(), None);
             Err(ExitCode::from(REFUSED))
         }
@@ -855,6 +858,7 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         log.as_deref().map(String::from_utf8_lossy).as_deref(),
         request.preview,
     );
+    let outcome = found_on_steam(outcome, &prepared, &description);
     let code = report(&outcome, spinner, &took, &prepared, &saved, packed.as_ref());
     if matches!(
         outcome,
@@ -869,6 +873,36 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
     }
     install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(code)
+}
+
+/// A build Steam kept but set live nowhere, found by its description when a key is at hand, as
+/// the build it is: steamcmd reports no build ID when Steam refuses to set one live.
+fn found_on_steam(
+    outcome: upload::Outcome,
+    prepared: &upload::Prepared,
+    description: &str,
+) -> upload::Outcome {
+    let upload::Outcome::Failed(reasons) = &outcome else {
+        return outcome;
+    };
+    if upload::commit_refused(reasons, prepared.set_live.as_deref()).is_none() {
+        return outcome;
+    }
+    let Ok(Some(api)) = key_at_hand() else {
+        return outcome;
+    };
+    // Enough to reach past uploads made while this one ran.
+    let found = api
+        .builds(prepared.app_id, 10)
+        .ok()
+        .and_then(|builds| upload::uploaded_as(&builds, description));
+    let Some(build_id) = found else {
+        return outcome;
+    };
+    upload::Outcome::BuiltThenFailed {
+        build_id,
+        reasons: reasons.clone(),
+    }
 }
 
 fn report(
@@ -916,6 +950,9 @@ fn report(
             for reason in reasons {
                 show::failure(reason, "", None);
             }
+            if let Some(why) = upload::commit_refused(reasons, prepared.set_live.as_deref()) {
+                show::note(&why);
+            }
             if let Some(branch) = &prepared.set_live {
                 show::hint(Hint {
                     before: "set it live with ",
@@ -933,6 +970,15 @@ fn report(
             spinner.failed(&format!("failed after {took}"));
             for reason in reasons {
                 show::failure(reason, "", None);
+            }
+            if let Some(why) = upload::commit_refused(reasons, prepared.set_live.as_deref()) {
+                show::note(upload::NOT_LIVE);
+                show::note(&why);
+                show::hint(Hint {
+                    before: "see the app's branches with ",
+                    command: &format!("steamship builds {app}"),
+                    after: "",
+                });
             }
             show::note(&logs);
             ExitCode::from(FAILED)
