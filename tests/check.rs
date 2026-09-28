@@ -131,6 +131,142 @@ fn setting_default_live_is_refused() {
 }
 
 #[test]
+fn setting_public_live_is_refused_as_the_default_branch() {
+    let (_project, app) = Project::shipping("");
+    let text = fs::read_to_string(&app)
+        .unwrap()
+        .replace("\"testing\"", "\"Public\"");
+    fs::write(&app, text).unwrap();
+    assert_eq!(
+        messages(&check(&app)),
+        [
+            "\"SetLive\" names \"public\", the Web API's name for the default branch, which \
+             Valve only allows from the Steamworks site"
+        ]
+    );
+}
+
+#[test]
+fn a_folder_unity_says_not_to_ship_is_refused_once() {
+    let (project, app) = Project::shipping("");
+    project.put(
+        "export/linux/Game_BurstDebugInformation_DoNotShip/a.txt",
+        b"a",
+    );
+    project.put(
+        "export/linux/Game_BurstDebugInformation_DoNotShip/deep/b.txt",
+        b"b",
+    );
+    project.put(
+        "export/linux/data/Game_BackUpThisFolder_ButDontShipItWithYourGame/c.txt",
+        b"c",
+    );
+    let report = check(&app);
+    let refused: Vec<(String, String)> = report
+        .problems
+        .iter()
+        .map(|problem| {
+            (
+                problem
+                    .file
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                problem.message.clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            (
+                "Game_BurstDebugInformation_DoNotShip".to_owned(),
+                "is in depot 1002; Unity names this folder as one not to ship".to_owned()
+            ),
+            (
+                "Game_BackUpThisFolder_ButDontShipItWithYourGame".to_owned(),
+                "is in depot 1002; Unity names this folder as one not to ship".to_owned()
+            ),
+        ]
+    );
+}
+
+#[test]
+fn debug_symbols_are_counted_without_being_refused() {
+    let (project, app) = Project::shipping("");
+    project.put("export/linux/game.debug", b"symbols");
+    project.put(
+        "export/linux/Game.dSYM/Contents/Resources/DWARF/Game",
+        b"dwarf",
+    );
+    project.put("export/linux/tools.PDB", b"symbols");
+    let report = check(&app);
+    assert_eq!(messages(&report), Vec::<String>::new());
+    let symbols = |depot_id: u32| {
+        report
+            .depots
+            .iter()
+            .find(|depot| depot.depot_id == depot_id)
+            .unwrap()
+            .debug_symbols
+    };
+    assert_eq!(symbols(1001), 0, "excluded by its own FileExclusion");
+    assert_eq!(symbols(1002), 3);
+}
+
+/// The Linux depot script with `extra` lines added to it.
+fn with_linux_depot(project: &Project, extra: &str) {
+    project.put(
+        "steam/depot_linux.vdf",
+        format!(
+            r#""DepotBuild"
+{{
+	"DepotID" "1002"
+	"FileMapping" {{ "LocalPath" "linux\*" "DepotPath" "." "Recursive" "1" }}
+	{extra}
+}}
+"#
+        )
+        .as_bytes(),
+    );
+}
+
+#[test]
+fn an_install_script_must_be_a_file_the_depot_maps() {
+    let (project, app) = Project::shipping("");
+    project.put("export/linux/installscript.vdf", b"\"InstallScript\" {}");
+    with_linux_depot(&project, r#""InstallScript" "linux\installscript.vdf""#);
+    assert_eq!(messages(&check(&app)), Vec::<String>::new());
+
+    with_linux_depot(&project, r#""InstallScript" "linux\missing.vdf""#);
+    let report = check(&app);
+    let [problem] = report.problems.as_slice() else {
+        panic!("one problem: {:?}", report.problems);
+    };
+    assert!(
+        problem
+            .message
+            .starts_with("depot 1002: InstallScript \"linux\\missing.vdf\" is not a file in "),
+        "{}",
+        problem.message
+    );
+
+    project.put(
+        "export/elsewhere/installscript.vdf",
+        b"\"InstallScript\" {}",
+    );
+    with_linux_depot(&project, r#""InstallScript" "elsewhere\installscript.vdf""#);
+    assert_eq!(
+        messages(&check(&app)),
+        [
+            "depot 1002: InstallScript \"elsewhere\\installscript.vdf\" is not in the depot; map \
+             it with a FileMapping too"
+        ]
+    );
+}
+
+#[test]
 fn no_set_live_is_fine() {
     let (_project, app) = Project::shipping("");
     let text = fs::read_to_string(&app)
@@ -252,6 +388,39 @@ fn a_linux_program_needs_its_executable_bit() {
     );
     fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
     assert!(check(&app).problems.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_macos_program_or_a_script_needs_its_executable_bit_and_a_library_does_not() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (project, app) = Project::shipping("");
+    let mut program = vec![0xCF, 0xFA, 0xED, 0xFE, 0, 0, 0, 0, 0, 0, 0, 0];
+    let mut library = program.clone();
+    program.extend_from_slice(&2_u32.to_le_bytes());
+    library.extend_from_slice(&6_u32.to_le_bytes());
+    for (relative, contents) in [
+        (
+            "export/linux/Game.app/Contents/MacOS/Game",
+            program.as_slice(),
+        ),
+        (
+            "export/linux/start.sh",
+            b"#!/bin/sh\nexec ./game\n".as_slice(),
+        ),
+        ("export/linux/libgame.dylib", library.as_slice()),
+    ] {
+        let path = project.file(relative, contents);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+    }
+    assert_eq!(
+        messages(&check(&app)),
+        [
+            "is a macOS program without its executable bit; run chmod +x on it",
+            "is a script (it starts with #!) without its executable bit; run chmod +x on it",
+        ]
+    );
 }
 
 /// A 64-bit position-independent ELF program: `ET_DYN` with a `PT_INTERP` segment.

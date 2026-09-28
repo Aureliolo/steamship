@@ -2,7 +2,8 @@
 //!
 //! A program needs its executable bit to start; a shared library does not. Both can be `ET_DYN`
 //! (a position-independent program is), so the question is whether the file names an
-//! interpreter, which only programs do.
+//! interpreter, which only programs do, or is marked `DF_1_PIE`, which a static-pie program is
+//! in place of naming one.
 
 use std::io::{self, Read, Seek, SeekFrom};
 
@@ -10,6 +11,10 @@ const MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const ET_EXEC: u16 = 2;
 const ET_DYN: u16 = 3;
 const PT_INTERP: u32 = 3;
+const PT_DYNAMIC: u32 = 2;
+const DT_FLAGS_1: u64 = 0x6FFF_FFFB;
+const DF_1_PIE: u64 = 0x0800_0000;
+const DYNAMIC_LIMIT: u64 = 64 * 1024;
 
 /// Answers whether `file` is an ELF program: one that is started, rather than loaded by another.
 ///
@@ -61,6 +66,7 @@ where
     if entry_size < 4 {
         return Ok(false);
     }
+    let mut dynamic = None;
     for index in 0..u64::from(count) {
         let Some(at) = index
             .checked_mul(u64::from(entry_size))
@@ -71,15 +77,59 @@ where
         // An absolute seek lands at `at` by definition, even past the end, where the short read
         // below is what says the table is not there.
         let _: u64 = file.seek(SeekFrom::Start(at))?;
-        let segment = read_up_to(file, 4)?;
+        let segment = read_up_to(file, u64::from(entry_size))?;
         let Some(segment_kind) = order.u32(&segment, 0) else {
             return Ok(false);
         };
         if segment_kind == PT_INTERP {
             return Ok(true);
         }
+        if segment_kind == PT_DYNAMIC {
+            dynamic = if wide {
+                order.u64(&segment, 8).zip(order.u64(&segment, 32))
+            } else {
+                order
+                    .u32(&segment, 4)
+                    .zip(order.u32(&segment, 16))
+                    .map(|(offset, size)| (u64::from(offset), u64::from(size)))
+            };
+        }
     }
-    Ok(false)
+    // A program linked static-pie names no interpreter, as a library does not; it is told from
+    // one by the flag the linker sets on programs alone.
+    match dynamic {
+        Some((offset, size)) => says_pie(file, order, wide, offset, size),
+        None => Ok(false),
+    }
+}
+
+/// Whether the dynamic section at `offset` sets `DF_1_PIE` in its `DT_FLAGS_1`. Only the first
+/// 64 KiB is read, which is far more than any linker writes there.
+fn says_pie<File>(
+    file: &mut File,
+    order: Order,
+    wide: bool,
+    offset: u64,
+    size: u64,
+) -> io::Result<bool>
+where
+    File: Read + Seek,
+{
+    let _: u64 = file.seek(SeekFrom::Start(offset))?;
+    let section = read_up_to(file, size.min(DYNAMIC_LIMIT))?;
+    let entry = if wide { 16 } else { 8 };
+    let flags = section.chunks_exact(entry).find_map(|pair| {
+        let (tag, value) = if wide {
+            (order.u64(pair, 0)?, order.u64(pair, 8)?)
+        } else {
+            (
+                u64::from(order.u32(pair, 0)?),
+                u64::from(order.u32(pair, 4)?),
+            )
+        };
+        (tag == DT_FLAGS_1).then_some(value)
+    });
+    Ok(flags.is_some_and(|flags| flags & DF_1_PIE != 0))
 }
 
 /// Up to `limit` bytes from where `file` stands, fewer only at its end.
@@ -180,6 +230,75 @@ mod tests {
     #[test]
     fn a_shared_library_is_not() {
         assert!(!program(elf64(ET_DYN, 1)));
+    }
+
+    /// A 64-bit little-endian `ET_DYN` file whose one segment is a dynamic section `size` bytes
+    /// long at 120, holding `entries` from its start and `DT_FLAGS_1` of `flags` at `flags_at`.
+    fn with_dynamic(flags: u64, flags_at: usize, size: u64) -> Vec<u8> {
+        let mut bytes = elf64(ET_DYN, PT_DYNAMIC);
+        let mut header = bytes.split_off(64);
+        header.truncate(8);
+        bytes.extend(header);
+        put(&mut bytes, 72, &120_u64.to_le_bytes());
+        put(&mut bytes, 96, &size.to_le_bytes());
+        put(&mut bytes, 120, &[]);
+        let at = |from: usize| flags_at.checked_add(from).unwrap();
+        put(&mut bytes, at(120), &DT_FLAGS_1.to_le_bytes());
+        put(&mut bytes, at(128), &flags.to_le_bytes());
+        put(&mut bytes, at(136), &[0; 16]);
+        bytes
+    }
+
+    #[test]
+    fn a_static_pie_program_is_told_from_a_library_by_its_flag() {
+        assert!(program(with_dynamic(DF_1_PIE | 1, 16, 48)), "static-pie");
+        assert!(
+            !program(with_dynamic(1, 16, 48)),
+            "a library with other flags"
+        );
+        assert!(
+            !program(with_dynamic(DF_1_PIE, 16, 16)),
+            "a flag past the section's end"
+        );
+    }
+
+    /// Written out rather than taken from the constant, so that the limit itself is under test.
+    #[test]
+    fn only_the_first_64_kib_of_a_dynamic_section_is_read() {
+        assert!(
+            !program(with_dynamic(DF_1_PIE, 65_552, 0x0002_0000)),
+            "a flag beyond 64 KiB is not looked for"
+        );
+        assert!(
+            program(with_dynamic(DF_1_PIE, 65_504, 0x0002_0000)),
+            "a flag just inside 64 KiB is found"
+        );
+    }
+
+    #[test]
+    fn a_32_bit_static_pie_program_is_a_program() {
+        let mut bytes = Vec::new();
+        put(&mut bytes, 0, &MAGIC);
+        put(&mut bytes, 4, &[1, 1]);
+        put(&mut bytes, 16, &ET_DYN.to_le_bytes());
+        put(&mut bytes, 28, &52_u32.to_le_bytes());
+        put(&mut bytes, 42, &32_u16.to_le_bytes());
+        put(&mut bytes, 44, &1_u16.to_le_bytes());
+        put(&mut bytes, 52, &PT_DYNAMIC.to_le_bytes());
+        put(&mut bytes, 56, &84_u32.to_le_bytes());
+        put(&mut bytes, 68, &16_u32.to_le_bytes());
+        put(
+            &mut bytes,
+            84,
+            &u32::try_from(DT_FLAGS_1).unwrap().to_le_bytes(),
+        );
+        put(
+            &mut bytes,
+            88,
+            &u32::try_from(DF_1_PIE).unwrap().to_le_bytes(),
+        );
+        put(&mut bytes, 92, &[0; 8]);
+        assert!(program(bytes));
     }
 
     #[test]

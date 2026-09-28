@@ -54,6 +54,8 @@ pub struct DepotScript {
     pub content_root: PathBuf,
     pub mappings: Vec<FileMapping>,
     pub exclusions: Vec<String>,
+    /// Each `InstallScript`, a path from the content root to a file the depot also maps.
+    pub install_scripts: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +203,16 @@ fn depot(
             )),
         }
     }
+    let mut install_scripts = Vec::new();
+    for script in block.all("InstallScript") {
+        match script {
+            Value::Text(file) => install_scripts.push(file.clone()),
+            Value::Block(_) => problems.push(Problem::new(
+                &path,
+                "an \"InstallScript\" is a block, where a path belongs",
+            )),
+        }
+    }
     match (depot_id, content_root) {
         (Some(depot_id), Some(content_root)) if problems.is_empty() => Ok(DepotScript {
             path,
@@ -208,6 +220,7 @@ fn depot(
             content_root,
             mappings,
             exclusions,
+            install_scripts,
         }),
         _ => Err(problems),
     }

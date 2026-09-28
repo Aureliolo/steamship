@@ -30,6 +30,10 @@ its attestation check out, uploads, and gives the BuildID as its `build-id` outp
 `preview: true` makes it Valve's dry run. It runs on Linux, Windows and macOS runners, and
 Renovate raises its pin by itself.
 
+When your content is built in another job, hand it over as a tar archive:
+`actions/upload-artifact` does not keep file permissions, so a Linux or macOS program would
+arrive without its executable bit, which `check` refuses.
+
 A Workshop item goes up the same way, with its `workshopitem` script in place of the build's:
 
 ```yaml
