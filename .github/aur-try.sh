@@ -6,7 +6,9 @@
 set -euo pipefail
 
 # lib32-gcc-libs, which the package depends on, is in the multilib repository, off by default.
+# And the image keeps man pages and documentation out of what it installs, which Arch does not.
 printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+sed -i '/^NoExtract/d' /etc/pacman.conf
 pacman -Syu --noconfirm --needed namcap git
 
 # makepkg refuses to run as root.
@@ -26,12 +28,14 @@ pacman -U --noconfirm "${package}"
 version="$(sed -n 's/^pkgver=//p' /home/builder/aur/PKGBUILD)"
 said="$(steamship --version)"
 test "${said}" = "steamship ${version}"
-test -f /usr/share/man/man1/steamship.1.gz
-test -f /usr/share/man/man1/steamship-upload.1.gz
-test -f /usr/share/bash-completion/completions/steamship
-test -f /usr/share/zsh/site-functions/_steamship
-test -f /usr/share/fish/vendor_completions.d/steamship.fish
-test -f /usr/share/licenses/steamship-bin/LICENSE-MIT
+for file in /usr/share/man/man1/steamship.1.gz /usr/share/man/man1/steamship-upload.1.gz \
+  /usr/share/bash-completion/completions/steamship /usr/share/zsh/site-functions/_steamship \
+  /usr/share/fish/vendor_completions.d/steamship.fish /usr/share/licenses/steamship-bin/LICENSE-MIT; do
+  if [[ ! -f "${file}" ]]; then
+    echo "The package installed no ${file}." >&2
+    exit 1
+  fi
+done
 
 export STEAMSHIP_HOME=/tmp/steamship
 steamship install
