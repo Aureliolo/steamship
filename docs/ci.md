@@ -54,13 +54,15 @@ steamcmd added to its own logs during the run. All of it is redacted as steamshi
 are, and the account's name is masked.
 
 Anything `ci` cannot find it asks for; `--script`, `--repo`, `--account` and `--secret` answer
-ahead. The secret holds the token steamcmd saved and the account's name, never a password or a
-Steam Guard secret, and nothing of it is shown.
+ahead. The secret holds the token steamcmd saved, the account's name and the day it was packed,
+never a password or a Steam Guard secret, and nothing of it is shown. It is a few kilobytes:
+steamcmd's list of the servers it last reached is left out, since steamcmd finds them again.
 
 ## When the token expires
 
-An upload in CI exits 3 when the token has expired. Run `steamship login` and `steamship ci`
-again, and the next run uploads.
+An upload in CI exits 3 when the token has expired, and says the day the login was packed.
+`steamship status` in CI shows that day too. Run `steamship login` and `steamship ci` again, and
+the next run uploads.
 
 ## Another CI
 
