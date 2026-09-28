@@ -7,7 +7,7 @@ set -euo pipefail
 
 # lib32-gcc-libs, which the package depends on, is in the multilib repository, off by default.
 printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
-pacman -Syu --noconfirm --needed namcap
+pacman -Syu --noconfirm --needed namcap git
 
 # makepkg refuses to run as root.
 useradd --create-home builder
@@ -35,8 +35,14 @@ test -f /usr/share/licenses/steamship-bin/LICENSE-MIT
 
 export STEAMSHIP_HOME=/tmp/steamship
 steamship install
+# An upload names the commit its scripts are at, so they are given one.
+cp -r /spacewar /tmp/spacewar
+git -C /tmp/spacewar init --quiet
+git -C /tmp/spacewar add .
+git -C /tmp/spacewar -c user.name=packages -c user.email=packages@localhost commit --quiet \
+  --message 'The scripts under test'
 status=0
-steamship upload /spacewar/steam/app_build.vdf --version packages --account anonymous --preview \
+steamship upload /tmp/spacewar/steam/app_build.vdf --version packages --account anonymous --preview \
   2> /tmp/upload.txt || status=$?
 cat /tmp/upload.txt
 test "${status}" -eq 1
