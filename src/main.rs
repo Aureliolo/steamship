@@ -111,17 +111,21 @@ fn main() -> ExitCode {
         }),
     };
     if let Some(latest) = update.and_then(update::Check::newer) {
-        // Homebrew and winget run steamship through a link to where they keep it.
-        let installed = env::current_exe().map_or(Installed::Archive, |program| {
-            Installed::of(&fs::canonicalize(&program).unwrap_or(program), Path::exists)
-        });
         show::upgrade(
             &latest.to_string(),
             env!("CARGO_PKG_VERSION"),
-            installed.hint(),
+            installed().hint(),
         );
     }
     code
+}
+
+/// How this steamship was installed, which is how it is upgraded.
+fn installed() -> Installed {
+    // Homebrew and winget run steamship through a link to where they keep it.
+    env::current_exe().map_or(Installed::Archive, |program| {
+        Installed::of(&fs::canonicalize(&program).unwrap_or(program), Path::exists)
+    })
 }
 
 /// The account named with `--account` or `STEAMSHIP_ACCOUNT`, where an empty name is none: a CI
@@ -244,7 +248,12 @@ fn steamcmd_failed(error: &install::Error) -> ExitCode {
     } else {
         FAILED
     };
-    fail(error, code)
+    show::failure(&error.to_string(), "", None);
+    if let Some(remedy) = error.remedy() {
+        show::note(remedy);
+        show::hint(installed().hint());
+    }
+    ExitCode::from(code)
 }
 
 /// Where the account came from, which is what `login` shows of it: its name is never printed,

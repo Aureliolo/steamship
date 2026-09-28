@@ -52,16 +52,43 @@ pub enum Outcome {
 #[derive(Debug)]
 pub enum Error {
     Download(download::Error),
-    Io { path: PathBuf, error: io::Error },
-    Package { file: String, reason: String },
-    Altered { root: PathBuf, changes: Vec<String> },
-    Busy { home: PathBuf },
+    /// Valve's CDN no longer has a package of the pinned steamcmd. It keeps old builds for a
+    /// while, then deletes them, and only a newer steamship, pinning a newer build, installs again.
+    Withdrawn {
+        version: u64,
+        system: String,
+        file: String,
+    },
+    Io {
+        path: PathBuf,
+        error: io::Error,
+    },
+    Package {
+        file: String,
+        reason: String,
+    },
+    Altered {
+        root: PathBuf,
+        changes: Vec<String>,
+    },
+    Busy {
+        home: PathBuf,
+    },
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Download(error) => write!(formatter, "{error}"),
+            Self::Withdrawn {
+                version,
+                system,
+                file,
+            } => write!(
+                formatter,
+                "Valve no longer serves steamcmd {version} ({system}), the one this steamship \
+                 pins: {file} is gone from its CDN"
+            ),
             Self::Io { path, error } => write!(formatter, "{}: {error}", path.display()),
             Self::Package { file, reason } => write!(formatter, "package {file} {reason}"),
             Self::Altered { root, changes } => write!(
@@ -82,6 +109,21 @@ impl fmt::Display for Error {
 }
 
 impl error::Error for Error {}
+
+impl Error {
+    /// Why upgrading steamship is the way out, for the failures it is the way out of.
+    #[must_use]
+    pub const fn remedy(&self) -> Option<&'static str> {
+        match self {
+            Self::Withdrawn { .. } => Some("a newer steamship pins a steamcmd Valve still serves"),
+            Self::Download(_)
+            | Self::Io { .. }
+            | Self::Package { .. }
+            | Self::Altered { .. }
+            | Self::Busy { .. } => None,
+        }
+    }
+}
 
 impl From<download::Error> for Error {
     fn from(error: download::Error) -> Self {
@@ -194,6 +236,25 @@ fn lock(home: &Path) -> Result<File, Error> {
     }
 }
 
+/// A pinned package the CDN says it does not have, as [`Error::Withdrawn`]; anything else as it is.
+fn withdrawn(error: Error, manifest: &Manifest, package: &Package) -> Error {
+    if matches!(
+        error,
+        Error::Download(download::Error::Gone {
+            status: 404 | 410,
+            ..
+        })
+    ) {
+        Error::Withdrawn {
+            version: manifest.version,
+            system: manifest.system.clone(),
+            file: package.file.clone(),
+        }
+    } else {
+        error
+    }
+}
+
 fn fresh<Fetch>(home: &Path, root: &Path, manifest: &Manifest, fetch: &Fetch) -> Result<(), Error>
 where
     Fetch: Fn(&Package, &Path) -> Result<(), Error>,
@@ -212,7 +273,7 @@ where
     for package in &manifest.packages {
         let archive = downloads.join(&package.file);
         if !is_pinned(&archive, package)? {
-            fetch(package, &archive)?;
+            fetch(package, &archive).map_err(|error| withdrawn(error, manifest, package))?;
             if !is_pinned(&archive, package)? {
                 return Err(Error::Package {
                     file: package.file.clone(),
@@ -557,6 +618,24 @@ mod tests {
     }
 
     #[test]
+    fn only_a_withdrawn_pin_is_upgraded_out_of() {
+        let withdrawn = Error::Withdrawn {
+            version: 7,
+            system: "linux".into(),
+            file: "p.zip".into(),
+        };
+        assert_eq!(
+            withdrawn.remedy(),
+            Some("a newer steamship pins a steamcmd Valve still serves")
+        );
+        let gone = Error::from(download::Error::Gone {
+            url: "u".into(),
+            status: 404,
+        });
+        assert_eq!(gone.remedy(), None);
+    }
+
+    #[test]
     fn says_what_went_wrong() {
         let home = Path::new("home");
         let cases = [
@@ -566,6 +645,16 @@ mod tests {
                     status: 404,
                 }),
                 "u answered 404".to_owned(),
+            ),
+            (
+                Error::Withdrawn {
+                    version: 7,
+                    system: "linux".into(),
+                    file: "p.zip".into(),
+                },
+                "Valve no longer serves steamcmd 7 (linux), the one this steamship pins: p.zip is \
+                 gone from its CDN"
+                    .to_owned(),
             ),
             (
                 Error::Io {
