@@ -133,7 +133,9 @@ pub fn secret_service() -> &'static str {
 }
 
 /// Waits until gnome-keyring owns the Secret Service's name, so that nothing asks for it first
-/// and has the bus start another.
+/// and has the bus start another; and then until its default keyring is there and unlocked.
+/// gnome-keyring takes the name before it has made and unlocked that keyring, and a key kept in
+/// the moments between would ask for a prompt, which has no display to open on.
 #[cfg(target_os = "linux")]
 fn wait_for_keyring(address: &str) {
     let deadline = Instant::now().checked_add(Duration::from_secs(20)).unwrap();
@@ -151,13 +153,47 @@ fn wait_for_keyring(address: &str) {
                 &[Value::Str("org.freedesktop.secrets".to_owned())],
             )
             .unwrap();
-        if owned.first() == Some(&Value::Bool(true)) {
+        if owned.first() == Some(&Value::Bool(true)) && default_unlocked(&mut bus) {
             return;
         }
         assert!(
             Instant::now() < deadline,
-            "gnome-keyring never took the name"
+            "gnome-keyring never took the name, or never unlocked its default keyring"
         );
         thread::sleep(Duration::from_millis(50));
     }
+}
+
+/// Whether the keyring the `default` alias names is there and unlocked.
+#[cfg(target_os = "linux")]
+fn default_unlocked(bus: &mut Connection) -> bool {
+    let Ok(alias) = bus.call(
+        "org.freedesktop.secrets",
+        "/org/freedesktop/secrets",
+        "org.freedesktop.Secret.Service",
+        "ReadAlias",
+        &[Value::Str("default".to_owned())],
+    ) else {
+        return false;
+    };
+    let Some(Value::Path(collection)) = alias.first() else {
+        return false;
+    };
+    if collection == "/" {
+        return false;
+    }
+    let locked = bus.call(
+        "org.freedesktop.secrets",
+        collection,
+        "org.freedesktop.DBus.Properties",
+        "Get",
+        &[
+            Value::Str("org.freedesktop.Secret.Collection".to_owned()),
+            Value::Str("Locked".to_owned()),
+        ],
+    );
+    matches!(
+        locked.as_deref(),
+        Ok([Value::Variant(unlocked)]) if **unlocked == Value::Bool(false)
+    )
 }
