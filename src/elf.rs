@@ -266,11 +266,11 @@ mod tests {
     #[test]
     fn only_the_first_64_kib_of_a_dynamic_section_is_read() {
         assert!(
-            !program(with_dynamic(DF_1_PIE, 65_552, 131_072)),
+            !program(with_dynamic(DF_1_PIE, 65_552, 0x0002_0000)),
             "a flag beyond 64 KiB is not looked for"
         );
         assert!(
-            program(with_dynamic(DF_1_PIE, 65_504, 131_072)),
+            program(with_dynamic(DF_1_PIE, 65_504, 0x0002_0000)),
             "a flag just inside 64 KiB is found"
         );
     }
