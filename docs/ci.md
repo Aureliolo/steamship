@@ -30,6 +30,20 @@ its attestation check out, uploads, and gives the BuildID as its `build-id` outp
 `preview: true` makes it Valve's dry run. It runs on Linux, Windows and macOS runners, and
 Renovate raises its pin by itself.
 
+A Workshop item goes up the same way, with its `workshopitem` script in place of the build's:
+
+```yaml
+- name: Upload the Workshop item
+  uses: Aureliolo/steamship@<commit> # vX.Y.Z
+  with:
+    workshop: workshop/item.vdf
+    login: ${{ secrets.STEAMSHIP_LOGIN }}
+```
+
+The item's ID is its `published-file-id` output. A script with no `publishedfileid` is refused
+there, since every run would make another item; make the item once, add its ID to the script,
+or set `new-item: true` for the one run that makes it.
+
 When an upload or a Workshop item fails there, steamship prints Steam's own logs after the
 reasons, each as a collapsed group: steamcmd's console, the app and depot build logs, and what
 steamcmd added to its own logs during the run. All of it is redacted as steamship's logs always
