@@ -86,7 +86,8 @@ pub fn description(version: &str, commit: &str) -> Result<String, Error> {
 ///
 /// # Errors
 ///
-/// When Git cannot be run, or `path` is not in a Git repository with a commit.
+/// When `path`'s folder is not there, Git cannot be run, or `path` is not in a Git repository
+/// with a commit.
 pub fn commit(path: &Path) -> Result<String, Error> {
     let folder = if path.is_dir() {
         path.to_path_buf()
@@ -94,11 +95,22 @@ pub fn commit(path: &Path) -> Result<String, Error> {
         path.parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     };
+    // Looked at first: a folder that is not there and a Git that is not installed fail to start
+    // with the same error, and only one of them is about the folder.
+    let _: fs::Metadata = fs::metadata(&folder).map_err(at(&folder))?;
     let output = Command::new("git")
         .args(["rev-parse", "--short=12", "HEAD"])
         .current_dir(&folder)
         .output()
-        .map_err(at(&folder))?;
+        .map_err(|error| {
+            Error::Description(if error.kind() == io::ErrorKind::NotFound {
+                "Git is not installed, or not on the PATH, and the build description names the \
+                 commit the scripts are at"
+                    .to_owned()
+            } else {
+                format!("Git could not be run ({error}), and the build description names the commit the scripts are at")
+            })
+        })?;
     if !output.status.success() {
         return Err(Error::Description(format!(
             "{} is not in a Git repository with a commit, which the build description names",
@@ -414,6 +426,16 @@ mod tests {
         assert_eq!(
             description("1.4.0", "abc123def456").unwrap(),
             "1.4.0 abc123def456"
+        );
+    }
+
+    #[test]
+    fn a_folder_that_is_not_there_is_named_rather_than_git() {
+        let missing = tempfile::tempdir().unwrap().path().join("steam");
+        let failed = commit(&missing.join("app_build.vdf")).unwrap_err();
+        assert!(
+            matches!(&failed, Error::Io { path, error } if *path == missing && error.kind() == io::ErrorKind::NotFound),
+            "{failed:?}"
         );
     }
 
