@@ -37,7 +37,10 @@ jobs:
             binskim: win-x64/BinSkim.exe
             # Several PE rules read the program database, so line tables are kept for it.
             debug: line-tables-only
-            accepted: ''
+            # BA2014, functions without /GS stack cookies: the static C runtime makes BinSkim read
+            # the program as C++, and Rust has no /GS; the rule then lists Rust's own functions.
+            # The C runtime's objects are built with /GS, which BinSkim's other rules confirm.
+            accepted: BA2014
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
             runner: ubuntu-26.04

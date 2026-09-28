@@ -23,6 +23,7 @@ impl Program {
             .unwrap()
     }
 
+    #[cfg(any(windows, target_os = "linux"))]
     fn u16(&self, at: usize) -> u16 {
         u16::from_le_bytes(self.bytes(at, 2).try_into().unwrap())
     }
@@ -79,6 +80,7 @@ const fn plus(at: usize, by: usize) -> usize {
 }
 
 /// The start of each of `count` records of `size` bytes, the first at `first`.
+#[cfg(any(windows, target_os = "linux"))]
 fn records(first: usize, count: usize, size: usize) -> impl Iterator<Item = usize> {
     (0..count).map(move |index| plus(first, index.checked_mul(size).unwrap()))
 }
