@@ -23,7 +23,7 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    check, ci, conversation, dump, keychain, run, scripts, steamcmd, upload, webapi, workshop,
+    check, ci, conversation, dump, init, keychain, run, scripts, steamcmd, upload, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -67,6 +67,11 @@ fn main() -> ExitCode {
             Ok(code) | Err(code) => code,
         },
         Command::Install => run_install(),
+        Command::Init {
+            app,
+            depots,
+            folder,
+        } => run_init(app, depots, &folder),
         Command::Builds { app, count } => match try_builds(&app, count) {
             Ok(code) | Err(code) => code,
         },
@@ -160,6 +165,60 @@ fn ready() -> Result<(PathBuf, Manifest), ExitCode> {
         }
     }
     Ok((home, manifest))
+}
+
+fn run_init(app: u32, mut depots: Vec<init::Depot>, folder: &Path) -> ExitCode {
+    show::title("init");
+    if depots.is_empty() {
+        let Some(id) = app.checked_add(1) else {
+            return fail(
+                &format!("app {app} leaves no ID for a depot after it"),
+                REFUSED,
+            );
+        };
+        depots.push(init::Depot {
+            id,
+            folder: "build".to_owned(),
+        });
+    }
+    let scripts = match init::scripts(app, &depots, folder) {
+        Ok(scripts) => scripts,
+        Err(why) => return fail(&why, REFUSED),
+    };
+    let paths: Vec<(PathBuf, String)> = scripts
+        .into_iter()
+        .map(|(name, text)| (folder.join(name), text))
+        .collect();
+    // All or nothing: a script already there is someone's, and half a set would not check.
+    if let Some((there, _)) = paths.iter().find(|(path, _)| path.exists()) {
+        return fail(
+            &format!("{} is already there, and is left as it is", there.display()),
+            REFUSED,
+        );
+    }
+    if let Err(error) = fs::create_dir_all(folder) {
+        return fail(&format!("{}: {error}", folder.display()), FAILED);
+    }
+    for (path, text) in &paths {
+        let written = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .and_then(|mut file| io::Write::write_all(&mut file, text.as_bytes()));
+        if let Err(error) = written {
+            return fail(&format!("{}: {error}", path.display()), FAILED);
+        }
+        show::field("wrote", &path.display().to_string());
+    }
+    let app_script = folder.join("app_build.vdf");
+    show::success(
+        "scripts written",
+        &format!(
+            "put the build in each depot's folder, then check it with steamship check {}",
+            app_script.display()
+        ),
+    );
+    ExitCode::SUCCESS
 }
 
 fn run_install() -> ExitCode {
