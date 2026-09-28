@@ -670,12 +670,77 @@ fn checked(script: &Path) -> Result<check::Report, ExitCode> {
                 show::counted(files, "file"),
             ),
         );
+        if let (Some(app), Some(branch)) = (report.app_id, report.set_live.as_deref()) {
+            live_branch_found(script, app, branch)?;
+        }
         return Ok(report);
     }
     for problem in &report.problems {
         show::failure("refused", &problem.to_string(), None);
     }
     Err(ExitCode::from(REFUSED))
+}
+
+/// Refuses a `SetLive` branch the app does not have, which Valve would otherwise report only
+/// after the whole upload. Steam is asked only with a key already at hand, never one typed for
+/// the purpose, and when it cannot answer the upload is not held up by it.
+fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<(), ExitCode> {
+    let Some(api) = key_at_hand()? else {
+        return Ok(());
+    };
+    let spinner = Spinner::start("branch", "asking Steam for the app's branches", false);
+    match api.branches(app) {
+        Ok(branches)
+            if branches
+                .iter()
+                .any(|found| found.name.eq_ignore_ascii_case(branch)) =>
+        {
+            spinner.done(&format!("{branch}, found on Steam"));
+            Ok(())
+        }
+        Ok(_) => {
+            spinner.failed("not on Steam");
+            let problem = scripts::Problem::new(
+                script,
+                format!(
+                    "\"SetLive\" names \"{branch}\", but app {app} has no branch by that name; \
+                     create it in Steamworks under SteamPipe, Builds first"
+                ),
+            );
+            show::failure("refused", &problem.to_string(), None);
+            Err(ExitCode::from(REFUSED))
+        }
+        Err(error) => {
+            spinner.failed("not checked");
+            show::aside(&error.to_string());
+            Ok(())
+        }
+    }
+}
+
+/// The partner Web API, when a key is set in `STEAMSHIP_WEB_API_KEY` or kept; none otherwise,
+/// without asking for one.
+fn key_at_hand() -> Result<Option<webapi::Api>, ExitCode> {
+    if let Some(text) = key_variable() {
+        let key = webapi::Key::parse(&text).map_err(|_not_a_key| {
+            fail(
+                &format!(
+                    "{} does not hold a publisher Web API key, which is 32 hexadecimal digits",
+                    webapi::KEY
+                ),
+                REFUSED,
+            )
+        })?;
+        return Ok(Some(webapi::Api::new(key)));
+    }
+    // Asked first without reading it, which no store prompts for; a store holding none is then
+    // never asked to unlock, so a check stays free of prompts for anyone who kept no key.
+    let kept = Platform::THIS
+        .home(|name| env::var_os(name))
+        .ok()
+        .filter(|home| keychain::has(home).unwrap_or(false))
+        .and_then(|home| keychain::kept(&home).ok().flatten());
+    Ok(kept.map(webapi::Api::new))
 }
 
 struct Upload<'command> {
@@ -892,10 +957,14 @@ fn run_check(script: &Path) -> ExitCode {
     match checked(script) {
         Ok(report) => {
             for depot in &report.depots {
+                let symbols = match depot.debug_symbols {
+                    0 => String::new(),
+                    count => format!(", {count} of them debug symbols"),
+                };
                 show::field(
                     "depot",
                     &format!(
-                        "{}, {}",
+                        "{}, {}{symbols}",
                         depot.depot_id,
                         show::counted(depot.files.len(), "file")
                     ),
