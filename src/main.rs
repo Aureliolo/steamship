@@ -1208,7 +1208,7 @@ fn checked_item(script: &Path, new: bool) -> Result<workshop::Item, ExitCode> {
         ExitCode::from(REFUSED)
     })?;
     // Nobody adds the new item's ID back to the script from CI, so every run would make another.
-    if item.published.is_none() && !new && in_ci() {
+    if item.published.is_none() && !new && dump::in_ci(|name| env::var(name).ok()) {
         show::failure(
             "refused",
             &format!(
@@ -1258,12 +1258,6 @@ fn output(name: &str, value: u64, what: &str) {
             "{what} could not be handed to the workflow: {error}"
         ));
     }
-}
-
-/// Whether steamship runs in CI, as GitHub Actions and most other systems say by setting `CI`.
-fn in_ci() -> bool {
-    dump::in_actions(|name| env::var(name).ok())
-        || env::var("CI").is_ok_and(|value| !value.is_empty() && value != "false")
 }
 
 struct Setup<'command> {
