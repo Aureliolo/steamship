@@ -733,9 +733,12 @@ fn key_at_hand() -> Result<Option<webapi::Api>, ExitCode> {
         })?;
         return Ok(Some(webapi::Api::new(key)));
     }
+    // Asked first without reading it, which no store prompts for; a store holding none is then
+    // never asked to unlock, so a check stays free of prompts for anyone who kept no key.
     let kept = Platform::THIS
         .home(|name| env::var_os(name))
         .ok()
+        .filter(|home| keychain::has(home).unwrap_or(false))
         .and_then(|home| keychain::kept(&home).ok().flatten());
     Ok(kept.map(webapi::Api::new))
 }
