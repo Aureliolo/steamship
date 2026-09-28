@@ -51,12 +51,14 @@ sudo apt install ./steamship_{{version}}-1_amd64.deb
 sudo dnf install https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-1.x86_64.rpm
 ```
 
-Each brings the 32-bit C libraries Valve's steamcmd for Linux loads, and carries a man page per
-command and tab completion for bash, zsh and fish. Check one as [Verifying a
-download](#verifying-a-download) shows, with the package's name in place of the archive's.
+Each brings the 32-bit C libraries Valve's steamcmd for Linux loads and the certificates it checks
+Steam against, and carries a man page per command and tab completion for bash, zsh and fish.
+Check one as [Verifying a download](#verifying-a-download) shows, with the package's name in place
+of the archive's.
 
-Installed any other way on Linux, steamship needs those libraries too: `lib32gcc-s1` on Debian
-and Ubuntu, `glibc.i686` and `libgcc.i686` on Fedora.
+Installed any other way on Linux, steamship needs those too: `lib32gcc-s1` and `ca-certificates`
+on Debian and Ubuntu, `glibc.i686`, `libgcc.i686` and `ca-certificates` on Fedora. Most systems
+have the certificates already; a minimal container may not.
 
 ## Cargo
 
