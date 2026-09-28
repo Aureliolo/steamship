@@ -6,7 +6,8 @@ use std::fs;
 use std::io::{self, IsTerminal as _};
 use std::path::{self, Path, PathBuf};
 use std::process::{self, ExitCode};
-use std::time::SystemTime;
+use std::thread;
+use std::time::{Duration, SystemTime};
 
 use clap::{CommandFactory as _, FromArgMatches as _};
 use steamship::account::Account;
@@ -875,6 +876,49 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
     Ok(code)
 }
 
+/// Asks Steam, when a key is at hand, whether `build_id` is what is live on `branch` now; false
+/// only when Steam shows another build there, or no such branch. Asked a few times, since a
+/// build just set live may not show at once; a Steam that cannot be asked holds nothing up.
+fn confirmed_live(app: u32, branch: &str, build_id: u64) -> bool {
+    const ASKS: u32 = 4;
+    const APART: Duration = Duration::from_secs(2);
+    let Ok(Some(api)) = key_at_hand() else {
+        return true;
+    };
+    let spinner = Spinner::start("branch", "asking Steam what is live", false);
+    let ask = || {
+        api.branches(app)
+            .map(|branches| upload::live_now(&branches, branch, build_id))
+    };
+    let mut seen = ask();
+    for _ in 1..ASKS {
+        if !matches!(seen, Ok(upload::Live::Other(_) | upload::Live::Missing)) {
+            break;
+        }
+        thread::sleep(APART);
+        seen = ask();
+    }
+    match seen {
+        Ok(upload::Live::Confirmed) => {
+            spinner.done(&format!("{branch}: BuildID {build_id}, as Steam shows it"));
+            true
+        }
+        Ok(upload::Live::Other(other)) => {
+            spinner.failed(&format!("{branch}: BuildID {other}, as Steam shows it"));
+            false
+        }
+        Ok(upload::Live::Missing) => {
+            spinner.failed(&format!("{branch}: no such branch on Steam"));
+            false
+        }
+        Err(error) => {
+            spinner.failed("not confirmed");
+            show::aside(&error.to_string());
+            true
+        }
+    }
+}
+
 /// A build Steam kept but set live nowhere, found by its description when a key is at hand, as
 /// the build it is: steamcmd reports no build ID when Steam refuses to set one live.
 fn found_on_steam(
@@ -922,13 +966,33 @@ fn report(
     match outcome {
         upload::Outcome::Built { build_id } => {
             spinner.done(&format!("uploaded in {took}"));
-            let live = prepared
-                .set_live
-                .as_ref()
-                .map(|branch| format!(", set live on {branch}"))
-                .unwrap_or_default();
-            show::success(&format!("app {app}: BuildID {build_id}{live}"), &logs);
             hand_on(*build_id);
+            let Some(branch) = &prepared.set_live else {
+                show::success(&format!("app {app}: BuildID {build_id}"), &logs);
+                return ExitCode::SUCCESS;
+            };
+            if !confirmed_live(app, branch, *build_id) {
+                show::failure(
+                    &format!(
+                        "app {app}: BuildID {build_id} uploaded, but Steam does not show it live \
+                         on {branch}"
+                    ),
+                    "",
+                    Some(Hint {
+                        before: "set it live with ",
+                        command: &format!(
+                            "steamship promote {app} --build {build_id} --branch {branch}"
+                        ),
+                        after: "",
+                    }),
+                );
+                show::note(&logs);
+                return ExitCode::from(FAILED);
+            }
+            show::success(
+                &format!("app {app}: BuildID {build_id}, set live on {branch}"),
+                &logs,
+            );
             ExitCode::SUCCESS
         }
         upload::Outcome::Previewed => {
