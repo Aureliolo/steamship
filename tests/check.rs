@@ -11,6 +11,8 @@ use std::process::Command;
 
 use steamship::check::{Report, check};
 
+pub mod common;
+
 struct Project {
     _temp: tempfile::TempDir,
     root: PathBuf,
@@ -442,10 +444,16 @@ fn elf_program() -> Vec<u8> {
     bytes
 }
 
+/// `steamship check` on `script`, in a home of its own and with no key set: a key kept for the
+/// home of whoever runs the tests would otherwise have `check` ask Steam about the test's app.
 fn run(script: &Path) -> (Option<i32>, String, String) {
+    let home = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_steamship"))
         .arg("check")
         .arg(script)
+        .env("STEAMSHIP_HOME", home.path())
+        .env_remove("STEAMSHIP_WEB_API_KEY")
+        .envs(common::store_environment())
         .output();
     let output = output.unwrap();
     (
