@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# Writes the Homebrew formula and the Scoop manifest for one release, from the .sha256 files its
-# build wrote beside the archives. Whoever calls this has already checked those files against the
-# release's attestation, so every hash below is one the release is signed over.
+# Writes the Homebrew formula, the Scoop manifest and the winget manifests for one release, from
+# the .sha256 files its build wrote beside the archives. Whoever calls this has already checked
+# those files against the release's attestation, so every hash below is one the release is signed
+# over.
 #
 #   .github/packages.sh <version> <folder with the .sha256 files> <folder to write into>
 #
-# It writes <folder>/Formula/steamship.rb and <folder>/bucket/steamship.json.
+# It writes <folder>/Formula/steamship.rb, <folder>/bucket/steamship.json and the three
+# manifests winget takes in <folder>/winget.
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
@@ -51,14 +53,15 @@ hash_of() {
 macos_arm_archive="$(archive_of aarch64-apple-darwin.tar.gz)"
 macos_intel_archive="$(archive_of x86_64-apple-darwin.tar.gz)"
 linux_archive="$(archive_of linux-musl.tar.gz)"
-windows_archive="$(archive_of windows-msvc.zip)"
+windows_archive="$(archive_of x86_64-pc-windows-msvc.zip)"
+windows_arm_archive="$(archive_of aarch64-pc-windows-msvc.zip)"
 macos_arm="$(hash_of "${macos_arm_archive}")"
 macos_intel="$(hash_of "${macos_intel_archive}")"
 linux="$(hash_of "${linux_archive}")"
 windows="$(hash_of "${windows_archive}")"
-windows_folder="${windows_archive%.zip}"
+windows_arm="$(hash_of "${windows_arm_archive}")"
 
-mkdir -p "${out}/Formula" "${out}/bucket"
+mkdir -p "${out}/Formula" "${out}/bucket" "${out}/winget"
 
 cat > "${out}/Formula/steamship.rb" << FORMULA
 # Written by .github/packages.sh for each release, from the release's own signed checksums.
@@ -104,24 +107,97 @@ FORMULA
 jq -n \
   --arg version "${version}" \
   --arg homepage "${repository}" \
-  --arg url "${download}/${windows_archive}" \
-  --arg hash "${windows}" \
-  --arg folder "${windows_folder}" \
-  --arg next "${repository}/releases/download/v\$version/${windows_archive//${version}/\$version}" \
-  --arg next_folder "${windows_folder//${version}/\$version}" \
-  '{
+  --arg download "${download}" \
+  --arg next_download "${repository}/releases/download/v\$version" \
+  --arg x64 "${windows_archive%.zip}" \
+  --arg x64_hash "${windows}" \
+  --arg arm64 "${windows_arm_archive%.zip}" \
+  --arg arm64_hash "${windows_arm}" \
+  '
+  def later: split($version) | join("$version");
+  def now(folder; hash): {url: "\($download)/\(folder).zip", hash: hash, extract_dir: folder};
+  def next(folder): {
+    url: "\($next_download)/\(folder | later).zip",
+    hash: {url: "$url.sha256"},
+    extract_dir: (folder | later)
+  };
+  {
     version: $version,
     description: "Uploads game builds to Steam with Valve'"'"'s steamcmd.",
     homepage: $homepage,
     license: "MIT|Apache-2.0",
-    architecture: {"64bit": {url: $url, hash: $hash, extract_dir: $folder}},
+    architecture: {"64bit": now($x64; $x64_hash), arm64: now($arm64; $arm64_hash)},
     bin: "steamship.exe",
     checkver: "github",
-    autoupdate: {
-      architecture: {"64bit": {
-        url: $next,
-        hash: {url: "$url.sha256"},
-        extract_dir: $next_folder
-      }}
-    }
+    autoupdate: {architecture: {"64bit": next($x64), arm64: next($arm64)}}
   }' > "${out}/bucket/steamship.json"
+
+# Written whole rather than raised with `wingetcreate update`, which carries only the installers
+# the last version had and cannot add one for a new architecture.
+winget_installer() {
+  local architecture="$1" archive="$2" hash="$3"
+  cat << INSTALLER
+- Architecture: ${architecture}
+  InstallerUrl: ${download}/${archive}
+  InstallerSha256: ${hash^^}
+  NestedInstallerFiles:
+  - RelativeFilePath: ${archive%.zip}\\steamship.exe
+    PortableCommandAlias: steamship
+INSTALLER
+}
+
+manifest_version=1.12.0
+schema="https://aka.ms/winget-manifest"
+x64_installer="$(winget_installer x64 "${windows_archive}" "${windows}")"
+arm64_installer="$(winget_installer arm64 "${windows_arm_archive}" "${windows_arm}")"
+
+cat > "${out}/winget/Aureliolo.steamship.yaml" << VERSION
+# yaml-language-server: \$schema=${schema}.version.${manifest_version}.schema.json
+
+PackageIdentifier: Aureliolo.steamship
+PackageVersion: ${version}
+DefaultLocale: en-GB
+ManifestType: version
+ManifestVersion: ${manifest_version}
+VERSION
+
+cat > "${out}/winget/Aureliolo.steamship.installer.yaml" << INSTALLER
+# yaml-language-server: \$schema=${schema}.installer.${manifest_version}.schema.json
+
+PackageIdentifier: Aureliolo.steamship
+PackageVersion: ${version}
+InstallerType: zip
+NestedInstallerType: portable
+Installers:
+${x64_installer}
+${arm64_installer}
+ManifestType: installer
+ManifestVersion: ${manifest_version}
+INSTALLER
+
+cat > "${out}/winget/Aureliolo.steamship.locale.en-GB.yaml" << LOCALE
+# yaml-language-server: \$schema=${schema}.defaultLocale.${manifest_version}.schema.json
+
+PackageIdentifier: Aureliolo.steamship
+PackageVersion: ${version}
+PackageLocale: en-GB
+Publisher: Aureliolo
+PublisherUrl: https://github.com/Aureliolo
+PublisherSupportUrl: ${repository}/issues
+PackageName: steamship
+PackageUrl: ${repository}
+License: MIT OR Apache-2.0
+LicenseUrl: ${repository}#licence
+ShortDescription: Uploads game builds to Steam with Valve's steamcmd.
+Description: steamship runs Valve's own steamcmd with your app_build and depot_build scripts, sets steamcmd up pinned and verified, checks the scripts before anything is sent, reports the BuildID or the reason an upload failed, and never keeps a password.
+Moniker: steamship
+Tags:
+- gamedev
+- steam
+- steamcmd
+- steamworks
+- upload
+ReleaseNotesUrl: ${repository}/releases/tag/v${version}
+ManifestType: defaultLocale
+ManifestVersion: ${manifest_version}
+LOCALE

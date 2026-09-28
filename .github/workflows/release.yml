@@ -214,6 +214,8 @@ jobs:
           - platform: windows
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
+          - platform: windows-arm
+            runner: windows-11-arm
           - platform: macos
             # renovate: datasource=github-runners depName=macos
             runner: macos-26
@@ -262,8 +264,9 @@ jobs:
           test "$("${program}" --version)" = "steamship ${version}"
           test "${OUTCOME}" = failure
 
-  # The formula and the Scoop manifest for this release, from the checksums as published, each
-  # verified against the release's attestation the way a user's download would be.
+  # The formula, the Scoop manifest and the winget manifests for this release, from the checksums
+  # as published, each verified against the release's attestation the way a user's download
+  # would be.
   packages-write:
     name: packages (write)
     if: github.repository == 'Aureliolo/steamship'
@@ -305,6 +308,7 @@ jobs:
           path: |
             packages/Formula/steamship.rb
             packages/bucket/steamship.json
+            packages/winget/*.yaml
           if-no-files-found: error
           retention-days: 1
 
@@ -455,13 +459,13 @@ jobs:
 
   # winget takes packages only through a pull request to microsoft/winget-pkgs, which Microsoft's
   # wingetcreate opens from a fork with a classic token; GitHub lets no fine-grained token open
-  # one. The token belongs to a machine account that owns nothing but that fork. The first version
-  # is submitted by hand, since `update` needs one to exist; this job runs once the repository
-  # variable WINGET is set to `submit`, after that one is accepted.
+  # one. The token belongs to a machine account that owns nothing but that fork. A new package
+  # waits on a moderator, so the first version is submitted by hand; this job runs once the
+  # repository variable WINGET is set to `submit`, after that one is accepted.
   winget:
     name: winget
     if: github.repository == 'Aureliolo/steamship' && vars.WINGET == 'submit'
-    needs: [build, publish]
+    needs: [build, packages-write]
     runs-on: windows-2025
     timeout-minutes: 20
     # The token is a secret of this environment, which only release tags can deploy to.
@@ -494,45 +498,47 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 "$env:RUNNER_TEMP\wingetcreate.exe").Hash.ToLowerInvariant()
           if ($hash -ne $env:WINGETCREATE_SHA256) { throw "wingetcreate.exe hashes to $hash, not the pinned $env:WINGETCREATE_SHA256." }
 
-      # wingetcreate hashes the archive it downloads itself; the manifests are only sent once that
-      # hash is the one the release is signed over. It carries the path of steamship.exe inside
-      # the archive over from the last version, and that path names the version, so it is written
-      # anew and checked against what the archive holds.
-      - name: Write the manifests and check them against the release
+      - name: Download the manifests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: packages
+          path: packages
+
+      # The hashes come from the signed checksums already; each installer's archive is fetched
+      # too, and checked to be signed, to hash to what its installer says and to hold the program
+      # where its installer says.
+      - name: Check each installer against the release
         env:
           GH_TOKEN: ${{ github.token }}
-          # Only to read the current manifest from winget-pkgs; the job token reads and no more.
-          WINGET_CREATE_GITHUB_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          $folder = "steamship-$env:VERSION-x86_64-pc-windows-msvc"
-          $archive = "$folder.zip"
           $bundle = "steamship-$env:VERSION.intoto.jsonl"
-          gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --dir release `
-            --pattern $archive --pattern $bundle
-          gh attestation verify "release/$archive" --bundle "release/$bundle" `
-            --repo $env:GITHUB_REPOSITORY `
-            --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release-build.yml" `
-            --source-ref $env:GITHUB_REF --deny-self-hosted-runners
-          $signed = (Get-FileHash -Algorithm SHA256 "release/$archive").Hash
-          $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$archive"
-          & "$env:RUNNER_TEMP\wingetcreate.exe" update Aureliolo.steamship --version $env:VERSION `
-            --urls "$url|x64" --out manifests
-          $installer = (Get-ChildItem manifests -Recurse -Filter 'Aureliolo.steamship.installer.yaml').FullName
-          $written = (Select-String -Path $installer -Pattern 'InstallerSha256:\s*(\S+)').Matches[0].Groups[1].Value
-          if ($written -ne $signed) { throw "wingetcreate wrote the hash $written, not the release's $signed." }
-          $text = (Get-Content $installer -Raw) -replace `
-            'RelativeFilePath:\s*steamship-[^\\/\s]+-x86_64-pc-windows-msvc[\\/]steamship\.exe', `
-            "RelativeFilePath: $folder\steamship.exe"
-          Set-Content -Path $installer -Value $text -NoNewline
-          $path = (Select-String -Path $installer -Pattern 'RelativeFilePath:\s*(\S+)').Matches[0].Groups[1].Value
+          $manifest = Get-Content packages/winget/Aureliolo.steamship.installer.yaml -Raw
+          $installers = [regex]::Matches($manifest,
+            'InstallerUrl: (?<url>\S+)\s+InstallerSha256: (?<hash>\S+)\s+NestedInstallerFiles:\s+- RelativeFilePath: (?<path>\S+)')
+          if ($installers.Count -ne 2) { throw "The installer manifest has $($installers.Count) installers, not 2." }
+          gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --dir release --pattern $bundle
           Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "release/$archive").Path)
-          $entries = $zip.Entries.FullName
-          $zip.Dispose()
-          if ($entries -notcontains ($path -replace '\\', '/')) { throw "The archive holds no $path." }
+          foreach ($installer in $installers) {
+            $url = $installer.Groups['url'].Value
+            $archive = Split-Path -Leaf $url
+            $release = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$archive"
+            if ($url -cne $release) { throw "$url is not this release's $archive." }
+            gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --dir release --pattern $archive
+            gh attestation verify "release/$archive" --bundle "release/$bundle" `
+              --repo $env:GITHUB_REPOSITORY `
+              --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release-build.yml" `
+              --source-ref $env:GITHUB_REF --deny-self-hosted-runners
+            $hash = (Get-FileHash -Algorithm SHA256 "release/$archive").Hash
+            if ($installer.Groups['hash'].Value -cne $hash) { throw "$archive hashes to $hash, not what its installer says." }
+            $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "release/$archive").Path)
+            $entries = $zip.Entries.FullName
+            $zip.Dispose()
+            $path = $installer.Groups['path'].Value
+            if ($entries -cnotcontains ($path -replace '\\', '/')) { throw "$archive holds no $path." }
+          }
 
       - name: Submit them
         env:
@@ -541,9 +547,8 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          $folder = (Get-ChildItem manifests -Recurse -Filter 'Aureliolo.steamship.installer.yaml').DirectoryName
           & "$env:RUNNER_TEMP\wingetcreate.exe" submit --prtitle "New version: Aureliolo.steamship version $env:VERSION" `
-            --no-open $folder
+            --no-open packages/winget
 
   # crates.io, through trusted publishing: the OIDC token below is the whole credential, and no
   # crates.io token exists anywhere. A crate nobody has published cannot have a trusted publisher

@@ -152,8 +152,19 @@ jobs:
           brew untap aureliolo/steamship
 
   scoop:
-    name: packages (scoop)
-    runs-on: windows-2025
+    name: packages (scoop ${{ matrix.architecture }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            # renovate: datasource=github-runners depName=windows
+            runner: windows-2025
+            machine: 0x8664
+          - architecture: arm64
+            runner: windows-11-arm
+            machine: 0xAA64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     permissions:
       contents: read # Reads the manifest.
@@ -190,12 +201,17 @@ jobs:
       - name: Install by address, then from this repository as a bucket
         env:
           TAG: ${{ inputs.tag }}
+          ARCHITECTURE: ${{ matrix.architecture }}
+          MACHINE: ${{ matrix.machine }}
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
           $env:SCOOP = "$env:RUNNER_TEMP\scoop"
           $scoop = "$env:SCOOP\apps\scoop\current\bin\scoop.ps1"
-          $version = (Get-Content bucket/steamship.json -Raw | ConvertFrom-Json).version
+          $manifest = Get-Content bucket/steamship.json -Raw | ConvertFrom-Json
+          $version = $manifest.version
+          # A manifest with no arm64 build installs the x64 one on Arm, which Windows emulates.
+          $machine = if ($manifest.architecture.$env:ARCHITECTURE) { [int]$env:MACHINE } else { 0x8664 }
           # scoop.ps1 is a script, not a program, so a failure shows only in its exit code.
           function Scoop {
             & $scoop @args
@@ -204,6 +220,9 @@ jobs:
           function Check {
             $said = & "$env:SCOOP\shims\steamship.exe" --version
             if ($said -ne "steamship $version") { throw "steamship said '$said' rather than version $version." }
+            $program = [IO.File]::ReadAllBytes("$env:SCOOP\apps\steamship\current\steamship.exe")
+            $found = [BitConverter]::ToUInt16($program, [BitConverter]::ToInt32($program, 0x3C) + 4)
+            if ($found -ne $machine) { throw ('Scoop installed a build for machine 0x{0:X4}, not 0x{1:X4}.' -f $found, $machine) }
           }
 
           $address = if ($env:TAG) {

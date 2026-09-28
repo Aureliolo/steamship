@@ -95,6 +95,12 @@ jobs:
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
             native: true
+          # Windows on Arm, native, while steamcmd runs there as the x86 program it is, emulated by
+          # Windows. There is no Arm Linux build: steamcmd for Linux is x86 alone. The Arm image
+          # is not one Renovate tracks.
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            native: true
           - target: aarch64-apple-darwin
             # renovate: datasource=github-runners depName=macos
             runner: macos-26
@@ -215,7 +221,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # One SBOM for the release, read from the four binaries themselves. Then the job checks the
+  # One SBOM for the release, read from the five binaries themselves. Then the job checks the
   # SBOM says what it should, because an SBOM that lists nothing looks exactly like a passing step.
   sbom:
     name: sbom
@@ -243,7 +249,10 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
-          platforms=(x86_64-linux-musl x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-apple-darwin)
+          platforms=(
+            x86_64-linux-musl x86_64-pc-windows-msvc aarch64-pc-windows-msvc aarch64-apple-darwin
+            x86_64-apple-darwin
+          )
           expected="$(for platform in "${platforms[@]}"; do
             extension=tar.gz
             [[ "${platform}" == *windows* ]] && extension=zip
@@ -252,7 +261,7 @@ jobs:
           done | sort)"
           actual="$(find dist -maxdepth 1 -type f -print | sort)"
           if [[ "${actual}" != "${expected}" ]]; then
-            echo "The build left other files than the four archives and their checksums:" >&2
+            echo "The build left other files than the five archives and their checksums:" >&2
             printf '%s\n' "${actual}" >&2
             exit 1
           fi
@@ -299,7 +308,8 @@ jobs:
           set -euo pipefail
           sbom="dist/steamship-${VERSION}.spdx.json"
           failed=0
-          for target in x86_64-unknown-linux-musl x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-apple-darwin; do
+          for target in x86_64-unknown-linux-musl x86_64-pc-windows-msvc aarch64-pc-windows-msvc \
+              aarch64-apple-darwin x86_64-apple-darwin; do
             cargo tree --locked --edges normal,no-proc-macro --target "${target}" --prefix none --no-dedupe \
               | sed -E 's/ \(.*\)$//; s/ v/ /' | sort -u
           done | sort -u > crates.txt
