@@ -566,6 +566,11 @@ fn an_upload_built_then_failed_keeps_its_build_id_and_shows_steams_logs_in_actio
     ] {
         assert!(stdout.contains(group), "{group:?} in {stdout}");
     }
+    assert_eq!(
+        stdout.matches("::group::").count(),
+        4,
+        "the console and app log once each, and no other log taken for a depot's: {stdout}"
+    );
     assert!(stdout.contains("this run: chunks sent"), "{stdout}");
     assert!(!stdout.contains("an older run"), "{stdout}");
     let forged = stdout.find("::set-output name=forged::yes").unwrap();
