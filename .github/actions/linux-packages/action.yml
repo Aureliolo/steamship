@@ -61,7 +61,7 @@ runs:
       run: |
         set -euo pipefail
         try() {
-          docker run --rm --env VERSION --env SYSTEM="$1" \
+          docker run --rm --security-opt seccomp=unconfined --env VERSION --env SYSTEM="$1" \
             --volume "$(realpath "${OUT}"):/packages:ro" \
             --volume "$(realpath "${GITHUB_ACTION_PATH}/../../linux-packages-try.sh"):/try.sh:ro" \
             --volume "$(realpath "${GITHUB_ACTION_PATH}/../../rpmlint.toml"):/rpmlint.toml:ro" \
