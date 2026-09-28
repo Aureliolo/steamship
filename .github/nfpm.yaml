@@ -22,16 +22,19 @@ description: |-
   never keeps a password.
 
 # Valve's steamcmd for Linux is a 32-bit x86 program, which steamship installs and runs; these
-# bring the C libraries it loads. RPM names them by the 32-bit sonames themselves, which only the
-# i686 packages provide.
+# bring the C libraries it loads, and the certificates it checks Steam's servers against, without
+# which it tries for two minutes and gives up. RPM names the libraries by the 32-bit sonames
+# themselves, which only the i686 packages provide.
 overrides:
   deb:
     depends:
       - lib32gcc-s1
+      - ca-certificates
   rpm:
     depends:
       - ld-linux.so.2
       - libgcc_s.so.1
+      - ca-certificates
 
 rpm:
   summary: Uploads game builds to Steam with Valve's steamcmd

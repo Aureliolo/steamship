@@ -53,8 +53,12 @@ status=0
 steamship upload /tmp/spacewar/steam/app_build.vdf --version packages --account anonymous --preview \
   2> /tmp/upload.txt || status=$?
 cat /tmp/upload.txt
-test "${status}" -eq 1
-grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' /tmp/upload.txt
+if [[ "${status}" -ne 1 ]] ||
+  ! grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' /tmp/upload.txt; then
+  echo "The upload did not reach Steam's refusal; steamcmd's console:" >&2
+  cat /tmp/steamship/apps/480/output/steamcmd.log >&2 || true
+  exit 1
+fi
 
 if [[ "${SYSTEM}" == debian ]]; then
   apt-get remove --yes steamship
