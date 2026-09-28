@@ -148,6 +148,8 @@ INSTALLER
 
 manifest_version=1.12.0
 schema="https://aka.ms/winget-manifest"
+x64_installer="$(winget_installer x64 "${windows_archive}" "${windows}")"
+arm64_installer="$(winget_installer arm64 "${windows_arm_archive}" "${windows_arm}")"
 
 cat > "${out}/winget/Aureliolo.steamship.yaml" << VERSION
 # yaml-language-server: \$schema=${schema}.version.${manifest_version}.schema.json
@@ -167,8 +169,8 @@ PackageVersion: ${version}
 InstallerType: zip
 NestedInstallerType: portable
 Installers:
-$(winget_installer x64 "${windows_archive}" "${windows}")
-$(winget_installer arm64 "${windows_arm_archive}" "${windows_arm}")
+${x64_installer}
+${arm64_installer}
 ManifestType: installer
 ManifestVersion: ${manifest_version}
 INSTALLER
