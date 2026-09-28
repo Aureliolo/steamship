@@ -37,11 +37,14 @@ fn main() -> Result<(), String> {
         .join("steamship.res");
     fs::write(&out, res).map_err(|error| format!("{}: {error}", out.display()))?;
     tell(&format!("cargo::rustc-link-arg-bins={}", out.display()));
-    // Compatible with the hardware shadow stack, which then guards every return address. And the
-    // DLLs steamship imports are looked up in System32 alone: wintrust.dll and the crypto
-    // libraries are not among Windows' known DLLs, so without this a copy planted beside the
-    // program, in a Downloads folder say, would be loaded in their place.
-    tell("cargo::rustc-link-arg-bins=/CETCOMPAT");
+    // Compatible with the hardware shadow stack, which then guards every return address; x86-64
+    // has one, Arm does not. And the DLLs steamship imports are looked up in System32 alone:
+    // wintrust.dll and the crypto libraries are not among Windows' known DLLs, so without this a
+    // copy planted beside the program, in a Downloads folder say, would be loaded in their
+    // place.
+    if env::var("CARGO_CFG_TARGET_ARCH").is_ok_and(|arch| arch == "x86_64") {
+        tell("cargo::rustc-link-arg-bins=/CETCOMPAT");
+    }
     tell("cargo::rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
     Ok(())
 }
