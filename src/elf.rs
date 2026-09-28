@@ -269,6 +269,11 @@ mod tests {
             !program(with_dynamic(DF_1_PIE, at, DYNAMIC_LIMIT * 2)),
             "a flag beyond the limit is not looked for"
         );
+        let inside = usize::try_from(DYNAMIC_LIMIT - 32).unwrap();
+        assert!(
+            program(with_dynamic(DF_1_PIE, inside, DYNAMIC_LIMIT * 2)),
+            "a flag just inside the limit is found"
+        );
     }
 
     #[test]
