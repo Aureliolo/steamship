@@ -21,7 +21,9 @@ if [[ ! "${version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; 
   exit 2
 fi
 
-config="$(dirname "$0")/nfpm.yaml"
+here="$(realpath "$(dirname "$0")")"
+mkdir -p "${out}"
+out="$(realpath "${out}")"
 repository="https://github.com/Aureliolo/steamship"
 maintainer="Aurelio Amoroso <19254254+Aureliolo@users.noreply.github.com>"
 export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(date +%s)}"
@@ -39,14 +41,20 @@ fi
 # builds of one release differ.
 gzip -9n "${folder}"/man/*.1
 
-changed="$(date -u -R -d "@${SOURCE_DATE_EPOCH}")"
-printf '%s\n' \
-  "steamship (${version}-1) unstable; urgency=medium" \
-  "" \
-  "  * steamship ${version}: ${repository}/releases/tag/v${version}" \
-  "" \
-  " -- ${maintainer}  ${changed}" |
-  gzip -9n > "${folder}/changelog.Debian.gz"
+# One entry, pointing at the release's notes, which nFPM writes as Debian's changelog and as the
+# RPM's.
+changed="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
+cat > "${folder}/changelog.yml" << CHANGELOG
+- semver: ${version}-1
+  date: ${changed}
+  packager: ${maintainer}
+  deb:
+    urgency: medium
+    distributions:
+      - unstable
+  changes:
+    - note: "steamship ${version}: ${repository}/releases/tag/v${version}"
+CHANGELOG
 
 # Debian's machine-readable form. Apache-2.0 is among the licences every Debian system carries;
 # MIT is not, so its text is given in full, indented as the format asks.
@@ -70,9 +78,25 @@ License: Apache-2.0
  /usr/share/common-licenses/Apache-2.0.
 COPYRIGHT
 
-mkdir -p "${out}"
-VERSION="${version}" STAGE="${folder}" nfpm package --config "${config}" --packager deb --target "${out}/"
-VERSION="${version}" STAGE="${folder}" nfpm package --config "${config}" --packager rpm --target "${out}/"
+cp "${here}/lintian-overrides" "${folder}/lintian-overrides"
+
+config="${folder}/nfpm.yaml"
+cp "${here}/nfpm.yaml" "${config}"
+for page in "${folder}"/man/*.1.gz; do
+  page="$(basename "${page}")"
+  printf '%s\n' \
+    "  - src: man/${page}" \
+    "    dst: /usr/share/man/man1/${page}" \
+    "    packager: rpm" \
+    "    type: doc" \
+    "    file_info:" \
+    "      mode: 0644" >> "${config}"
+done
+
+for packager in deb rpm; do
+  (cd "${folder}" && VERSION="${version}" \
+    nfpm package --config "${config}" --packager "${packager}" --target "${out}/")
+done
 
 for package in "${out}/steamship_${version}-1_amd64.deb" "${out}/steamship-${version}-1.x86_64.rpm"; do
   if [[ ! -f "${package}" ]]; then

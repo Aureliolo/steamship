@@ -1,0 +1,5 @@
+# A static PIE: position-independent, so its ELF header calls it a shared object, yet it loads
+# no libraries at all.
+steamship: shared-library-lacks-prerequisites [usr/bin/steamship]
+# Built for steamship's own releases rather than uploaded to Debian, so no ITP bug exists to close.
+steamship: initial-upload-closes-no-bugs [usr/share/doc/steamship/changelog.Debian.gz:1]

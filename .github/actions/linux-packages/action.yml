@@ -56,7 +56,8 @@ runs:
         sudo apt-get update
         sudo apt-get install --yes --no-install-recommends lintian rpmlint
         lintian --fail-on error,warning --display-info "${OUT}/steamship_${VERSION}-1_amd64.deb"
-        rpmlint --strict "${OUT}/steamship-${VERSION}-1.x86_64.rpm"
+        rpmlint --strict --config "${GITHUB_ACTION_PATH}/../../rpmlint.toml" \
+          "${OUT}/steamship-${VERSION}-1.x86_64.rpm"
 
     # Each on a bare system of its kind, where nothing but the package's own dependencies brings
     # the 32-bit libraries steamcmd loads: steamship installs steamcmd and uploads a preview of
