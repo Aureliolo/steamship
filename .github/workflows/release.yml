@@ -129,8 +129,10 @@ jobs:
           fi
 
           # What changed since the last release, one line per pull request: main takes only
-          # squash merges, so each commit's first line is its pull request's title. No release
-          # yet answers an empty list; a request that fails fails the job.
+          # squash merges, so each commit's first line is its pull request's title. The pull
+          # requests releasing makes itself, raising the version (release-prepare.yml) and writing
+          # the Homebrew and Scoop files (packages-pr.sh), change nothing for a user and are left
+          # out. No release yet answers an empty list; a request that fails fails the job.
           previous="$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')"
           download="https://github.com/${GH_REPO}/releases/download/${GITHUB_REF_NAME}"
           deb="steamship_${VERSION}-1_amd64.deb"
@@ -160,7 +162,9 @@ jobs:
               ''
             if [[ -n "${previous}" ]]; then
               gh api "repos/${GH_REPO}/compare/${previous}...${GITHUB_REF_NAME}" \
-                --jq '.commits[].commit.message | split("\n")[0] | "- " + .'
+                --jq '.commits[].commit.message | split("\n")[0]
+                  | select(test("^(Release v[0-9]|Package v[0-9].* for Homebrew and Scoop)") | not)
+                  | "- " + .'
             else
               echo '- The first release.'
             fi
