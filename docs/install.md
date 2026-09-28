@@ -76,13 +76,17 @@ minimal container may not.
 
 ## Cargo
 
-Anywhere Rust runs:
+Anywhere Rust runs, built from source in a few minutes:
 
 ```sh
-# the release's archive, in seconds
-cargo binstall steamship
-# or built from source
 cargo install --locked steamship
+```
+
+With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), a Cargo add-on installed
+separately, the release's own archive instead, in seconds:
+
+```sh
+cargo binstall steamship
 ```
 
 ## A release archive
@@ -158,8 +162,8 @@ Upgrade the way you installed:
 brew upgrade steamship
 scoop update steamship
 winget upgrade Aureliolo.steamship
-cargo binstall steamship
 cargo install --locked steamship
+cargo binstall steamship
 ```
 
 or download the archive from the latest release again. Once a day, at a terminal, steamship asks
