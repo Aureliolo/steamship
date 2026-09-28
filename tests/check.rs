@@ -466,6 +466,9 @@ fn the_command_says_what_it_mapped_and_exits_0() {
             "steamship check\n  \
              script    {}\n  \
              app       \u{2713} 1000, 2 depots, 4 files, checked\n  \
+             branch    testing, not checked: no Web API key at hand\n    \
+             a branch the app does not have fails the upload only at its end; steamship login \
+             --web-api-key keeps a key to check it with\n  \
              depot     1001, 2 files\n  \
              depot     1002, 2 files\n  \
              \u{2713} nothing refused\n",
