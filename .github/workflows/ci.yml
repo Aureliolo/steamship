@@ -36,8 +36,10 @@ jobs:
           - platform: windows
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
+            spectre: spectre
           - platform: windows-arm
             runner: windows-11-arm
+            spectre: spectre
           - platform: macos
             # renovate: datasource=github-runners depName=macos
             runner: macos-26
@@ -45,6 +47,10 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read # Reads the source it builds.
+    env:
+      # The release's C runtime, with Spectre mitigations, so that a runner without it fails
+      # here rather than at a release; see .cargo/config.toml.
+      VSCMD_ARG_VCVARS_SPECTRE: ${{ matrix.spectre }}
 
     steps:
       - name: Checkout
