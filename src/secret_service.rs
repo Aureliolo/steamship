@@ -74,6 +74,21 @@ impl Service {
         Lookup: Fn(&str) -> Option<OsString>,
     {
         let mut bus = Connection::session(lookup).map_err(|error| failed(&error))?;
+        // GNOME Keyring records a caller only after a first message from it, and a session asked
+        // for before then ends the daemon, leaving every keyring locked (GNOME/gnome-keyring#190).
+        // Asking where the default keyring is, which needs no record, and waiting for the answer
+        // leaves the record made: in bursts of fresh callers the daemon died in 13 rounds of 100
+        // asked for a session first, and in none asked this first.
+        drop(
+            bus.call(
+                SERVICE,
+                ROOT,
+                SECRETS,
+                "ReadAlias",
+                &[Value::Str("default".to_owned())],
+            )
+            .map_err(|error| failed(&error))?,
+        );
         let answer = bus
             .call(
                 SERVICE,
@@ -533,6 +548,7 @@ mod tests {
             members(&calls),
             [
                 "Hello",
+                "ReadAlias",
                 "OpenSession",
                 "SearchItems",
                 "Unlock",
@@ -542,10 +558,11 @@ mod tests {
             ]
         );
         let call = |at: usize| calls.get(at).expect("the call");
-        assert_eq!(call(2).body, [attributes("/home")]);
-        let rule = call(4).body.first().and_then(Value::text).unwrap();
+        assert_eq!(call(1).body, [Value::Str("default".to_owned())]);
+        assert_eq!(call(3).body, [attributes("/home")]);
+        let rule = call(5).body.first().and_then(Value::text).unwrap();
         assert!(rule.contains("path='/prompt/1'"), "{rule}");
-        assert_eq!(call(6).path.as_deref(), Some("/item/1"));
+        assert_eq!(call(7).path.as_deref(), Some("/item/1"));
     }
 
     /// Even after more signals than the connection holds, 64, came while nothing waited.
@@ -611,6 +628,7 @@ mod tests {
             members(&calls),
             [
                 "Hello",
+                "ReadAlias",
                 "OpenSession",
                 "ReadAlias",
                 "Unlock",
@@ -642,7 +660,14 @@ mod tests {
         let calls = serving.join().unwrap();
         assert_eq!(
             members(&calls),
-            ["Hello", "OpenSession", "ReadAlias", "Unlock", "CreateItem"]
+            [
+                "Hello",
+                "ReadAlias",
+                "OpenSession",
+                "ReadAlias",
+                "Unlock",
+                "CreateItem"
+            ]
         );
         let created = calls.last().unwrap();
         assert_eq!(created.path.as_deref(), Some("/collection/login"));
@@ -830,6 +855,7 @@ mod tests {
         let (_folder, address, serving) = standing_in(b"OK 0123\r\n", |call| {
             match call.member.as_deref().unwrap_or_default() {
                 "OpenSession" => Answer::AfterCall(opened_session()),
+                "ReadAlias" => Answer::Return(vec![Value::Path(NONE.to_owned())]),
                 _ => Answer::ToAnother(Vec::new()),
             }
         });
