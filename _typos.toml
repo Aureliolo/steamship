@@ -6,8 +6,11 @@ locale = "en-gb"
 # flags and settings of actionlint, cargo, cargo-fuzz and syft; GitHub's upload-artifact action
 # and the branding key of an action's metadata; the in-toto file extension; CSS's own
 # properties, function and value, in the site's stylesheet and the rules docs-site writes; and
-# BinSkim's rule names and its analyze command.
+# BinSkim's rule names and its analyze command. And SSH keys and their fingerprints, which are
+# base64 rather than words.
 extend-ignore-re = [
+  'SHA256:[A-Za-z0-9+/]{43}',
+  'ssh-ed25519 [A-Za-z0-9+/]+=*',
   '\bBA\d{4}\b',
   '\}" analyze ',
   '\b(?:[a-z]+-)*color(?:-[a-z]+)*\s*:',
