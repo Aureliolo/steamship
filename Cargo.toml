@@ -33,6 +33,7 @@ ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # Wipes the typed password from memory once it has been passed to steamcmd.
 zeroize = "1.9.0"
+clap_complete = "4.6.11"
 
 [target.'cfg(unix)'.dependencies]
 # Already in the tree through ring and sha2; stopping a process group has no std API.

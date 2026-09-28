@@ -198,6 +198,22 @@ pub enum Command {
     ///
     /// `login` and `upload` do this themselves; this does it ahead of time, as in CI.
     Install,
+    #[command(
+        about = "Print tab completion for bash, zsh, fish, PowerShell or elvish",
+        long_about = concat!(
+            "Print tab completion for bash, zsh, fish, PowerShell or elvish, for the shell to ",
+            "load.\n",
+            "\n  bash:        steamship completions bash > ",
+            "~/.local/share/bash-completion/completions/steamship",
+            "\n  zsh:         steamship completions zsh > \"${fpath[1]}/_steamship\"",
+            "\n  fish:        steamship completions fish > ~/.config/fish/completions/steamship.fish",
+            "\n  PowerShell:  steamship completions powershell >> $PROFILE",
+        )
+    )]
+    Completions {
+        /// The shell to complete in.
+        shell: clap_complete::Shell,
+    },
 }
 
 #[cfg(test)]
