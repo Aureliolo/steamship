@@ -146,14 +146,16 @@ mod tests {
             &shell_args(HOPELESS_LINE),
             &[],
             &env::temp_dir(),
-            Duration::from_secs(50),
+            // Far longer than the line takes to say it, and short enough that a runner which
+            // never hears it fails here soon.
+            Duration::from_secs(15),
             &["no way through"],
         )
         .unwrap();
         assert_eq!(finished.code, None);
         assert!(String::from_utf8_lossy(&finished.output).contains("no way through"));
         assert!(
-            started.elapsed() < Duration::from_secs(30),
+            started.elapsed() < Duration::from_secs(10),
             "took {:?}",
             started.elapsed()
         );
