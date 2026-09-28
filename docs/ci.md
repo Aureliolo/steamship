@@ -30,6 +30,11 @@ its attestation check out, uploads, and gives the BuildID as its `build-id` outp
 `preview: true` makes it Valve's dry run. It runs on Linux, Windows and macOS runners, and
 Renovate raises its pin by itself.
 
+When an upload or a Workshop item fails there, steamship prints Steam's own logs after the
+reasons, each as a collapsed group: steamcmd's console, the app and depot build logs, and what
+steamcmd added to its own logs during the run. All of it is redacted as steamship's logs always
+are, and the account's name is masked.
+
 Anything `ci` cannot find it asks for; `--script`, `--repo`, `--account` and `--secret` answer
 ahead. The secret holds the token steamcmd saved and the account's name, never a password or a
 Steam Guard secret, and nothing of it is shown.
