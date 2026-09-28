@@ -70,11 +70,12 @@ fn steamship_in(
 ) -> (Option<i32>, String, String) {
     let mut command = steamship_command();
     let _: &mut Command = command.current_dir(folder);
-    // The runner's own GitHub Actions variables would make every test a CI run, writing to the
-    // job's real outputs; a test that wants them sets its own.
+    // The runner's own CI variables would make every test a CI run, writing to the job's real
+    // outputs; a test that wants them sets its own.
     let _: &mut Command = command
         .args(args)
         .env_remove("STEAMSHIP_ACCOUNT")
+        .env_remove("CI")
         .env_remove("GITHUB_ACTIONS")
         .env_remove("GITHUB_OUTPUT");
     let _: &mut Command = match home {
@@ -2140,6 +2141,55 @@ fn a_workshop_upload_in_ci_logs_in_as_the_account_handed_over() {
     assert!(
         saved.exists(),
         "the login is put back where steamcmd reads it"
+    );
+}
+
+#[test]
+fn a_new_workshop_item_in_ci_is_refused_unless_asked_for() {
+    let home = tempfile::tempdir().unwrap();
+    let (_temp, script) = workshop_item("");
+    for ci in [("CI", "true"), ("GITHUB_ACTIONS", "true")] {
+        let (code, stdout, stderr) = steamship(
+            &[
+                "workshop",
+                script.to_str().unwrap(),
+                "--account",
+                "build_bot",
+            ],
+            Some(home.path()),
+            &[ci],
+        );
+        assert_eq!(code, Some(2_i32), "{stdout}");
+        assert_eq!(
+            failure(&stderr),
+            format!(
+                "refused: {}: there is no \"publishedfileid\", so every CI run would make a new \
+                 Workshop item; add the ID of the item to update, or pass --new to make one",
+                script.display()
+            )
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_new_workshop_item_asked_for_in_actions_hands_its_id_to_the_workflow() {
+    let home = publishing("Success.", 0);
+    let (_temp, script) = workshop_item("");
+    let outputs = home.path().join("github_output");
+    fs::write(&outputs, "").unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap(), "--new"],
+        Some(home.path()),
+        &[
+            ("GITHUB_ACTIONS", "true"),
+            ("GITHUB_OUTPUT", outputs.to_str().unwrap()),
+        ],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(&outputs).unwrap(),
+        "published-file-id=777\n"
     );
 }
 

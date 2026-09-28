@@ -7,11 +7,21 @@ branding:
 
 inputs:
   script:
-    description: The app build script, such as steam/app_build.vdf, from the repository's root.
-    required: true
+    description: The app build script, such as steam/app_build.vdf, from the repository's root; or give workshop instead.
+    required: false
+    default: ""
   version:
-    description: The version being shipped, which with the commit becomes the build's description.
-    required: true
+    description: The version being shipped, which with the commit becomes the build's description; needed with script.
+    required: false
+    default: ""
+  workshop:
+    description: A Workshop item's workshopitem script, such as workshop/item.vdf, to upload instead of a build.
+    required: false
+    default: ""
+  new-item:
+    description: Make a new Workshop item when the script names no publishedfileid, which is otherwise refused in CI.
+    required: false
+    default: "false"
   login:
     description: The login `steamship ci` set as a secret, passed as secrets.STEAMSHIP_LOGIN.
     required: true
@@ -22,8 +32,11 @@ inputs:
 
 outputs:
   build-id:
-    description: The BuildID Steam gave the upload; empty for a preview.
+    description: The BuildID Steam gave the upload; empty for a preview or a Workshop item.
     value: ${{ steps.upload.outputs.build-id }}
+  published-file-id:
+    description: The ID of the Workshop item uploaded; empty for a build.
+    value: ${{ steps.upload.outputs.published-file-id }}
 
 runs:
   using: composite
@@ -85,10 +98,25 @@ runs:
         STEAMSHIP_HOME: ${{ runner.temp }}/steamship-home
         SCRIPT: ${{ inputs.script }}
         VERSION: ${{ inputs.version }}
+        WORKSHOP: ${{ inputs.workshop }}
+        NEW_ITEM: ${{ inputs.new-item }}
         PREVIEW: ${{ inputs.preview }}
       run: |
         set -euo pipefail
-        if [[ "${PREVIEW}" == true ]]; then
+        if [[ -n "${SCRIPT}" && -n "${WORKSHOP}" ]] || [[ -z "${SCRIPT}" && -z "${WORKSHOP}" ]]; then
+          echo "::error::Give either script, for a build, or workshop, for a Workshop item." >&2
+          exit 2
+        fi
+        if [[ -n "${WORKSHOP}" ]]; then
+          if [[ "${NEW_ITEM}" == true ]]; then
+            "${STEAMSHIP}" workshop "${WORKSHOP}" --new
+          else
+            "${STEAMSHIP}" workshop "${WORKSHOP}"
+          fi
+        elif [[ -z "${VERSION}" ]]; then
+          echo "::error::A build needs version, which with the commit becomes its description." >&2
+          exit 2
+        elif [[ "${PREVIEW}" == true ]]; then
           "${STEAMSHIP}" upload "${SCRIPT}" --version "${VERSION}" --preview
         else
           "${STEAMSHIP}" upload "${SCRIPT}" --version "${VERSION}"
