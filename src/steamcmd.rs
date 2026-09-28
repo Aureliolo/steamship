@@ -155,6 +155,16 @@ pub const CHECK_LIMIT: Duration = Duration::from_mins(2);
 /// upload over a slow line takes hours; steamcmd waiting at a prompt would wait forever.
 pub const UPLOAD_LIMIT: Duration = Duration::from_hours(6);
 
+/// What steamcmd says when it will never reach Steam, only wait.
+///
+/// It is stopped then rather than at its limit. With no certificates to check Steam's servers
+/// against (on Linux, with the system's certificate store missing), it says this at once and then
+/// waits to connect for good.
+pub const HOPELESS: &[&str] = &[NO_CERTIFICATES];
+
+/// See [`HOPELESS`].
+pub const NO_CERTIFICATES: &str = "unable to load trusted SSL root certificates";
+
 /// The commands that log `account` in with the login steamcmd saved, build `script` and quit.
 ///
 /// With no saved login, or an expired one, steamcmd fails rather than asking for a password

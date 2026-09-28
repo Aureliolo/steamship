@@ -15,13 +15,13 @@ use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::panic;
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::Once;
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Once};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 use std::{ptr, slice, str};
 
-use crate::run::Finished;
+use crate::run::{self, Finished};
 use crate::{elf, macho, magic};
 
 /// How often a running program is looked at to see whether it has ended.
@@ -97,8 +97,9 @@ pub fn run(
     environment: &[(OsString, OsString)],
     directory: &Path,
     limit: Duration,
+    hopeless: &'static [&'static str],
 ) -> io::Result<Finished> {
-    let (mut reader, writer) = io::pipe()?;
+    let (reader, writer) = io::pipe()?;
     let mut child = Command::new(program)
         .args(args)
         .envs(environment.iter().map(|(name, value)| (name, value)))
@@ -110,16 +111,17 @@ pub fn run(
         .spawn()?;
     let group = i32::try_from(child.id()).map_err(io::Error::other)?;
     let _running = Running::mark(group);
-    let reading = thread::spawn(move || {
-        let mut output = Vec::new();
-        reader.read_to_end(&mut output).map(|_| output)
-    });
+    let seen = Arc::new(AtomicBool::new(false));
+    let watching = Arc::clone(&seen);
+    let reading = thread::spawn(move || run::watch(reader, hopeless, &watching));
     let deadline = Instant::now().checked_add(limit);
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break Some(status);
         }
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+        if seen.load(Ordering::Relaxed)
+            || deadline.is_some_and(|deadline| Instant::now() >= deadline)
+        {
             break None;
         }
         thread::sleep(POLL);
