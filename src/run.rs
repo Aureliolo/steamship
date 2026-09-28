@@ -6,7 +6,7 @@
 //! process it starts. Elsewhere it runs in a process group of its own, for the same ending.
 
 use std::ffi::OsString;
-use std::io::{self, Read};
+use std::io::{self, BufReader, Read};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -48,35 +48,23 @@ pub fn run(
 /// # Errors
 ///
 /// When the output cannot be read.
-pub fn watch<Output>(
-    mut output: Output,
-    hopeless: &[&str],
-    seen: &AtomicBool,
-) -> io::Result<Vec<u8>>
+pub fn watch<Output>(output: Output, hopeless: &[&str], seen: &AtomicBool) -> io::Result<Vec<u8>>
 where
     Output: Read,
 {
-    let longest = hopeless.iter().map(|words| words.len()).max().unwrap_or(0);
     let mut written = Vec::new();
-    let mut chunk = [0_u8; 8192];
-    loop {
-        let read = output.read(&mut chunk)?;
-        let Some(new) = chunk.get(..read).filter(|new| !new.is_empty()) else {
-            return Ok(written);
-        };
-        // Words split across two reads are looked for in what came before as well.
-        let from = written.len().saturating_sub(longest);
-        written.extend_from_slice(new);
-        let recent = written.get(from..).unwrap_or_default();
-        if hopeless.iter().any(|words| {
-            !words.is_empty()
-                && recent
-                    .windows(words.len())
-                    .any(|window| window == words.as_bytes())
-        }) {
+    // Byte by byte, so that words split across reads need no looking back, and so that the end
+    // of the output and an interrupted read are std's to tell, not a loop of this crate's.
+    for byte in BufReader::new(output).bytes() {
+        written.push(byte?);
+        if hopeless
+            .iter()
+            .any(|words| written.ends_with(words.as_bytes()))
+        {
             seen.store(true, Ordering::Relaxed);
         }
     }
+    Ok(written)
 }
 
 #[cfg(test)]
@@ -181,7 +169,7 @@ mod tests {
         let seen = AtomicBool::new(false);
         let output = watch(
             Trickle(written),
-            &["", "unable to load trusted SSL root certificates"],
+            &["unable to load trusted SSL root certificates"],
             &seen,
         )
         .unwrap();

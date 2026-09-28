@@ -25,7 +25,8 @@ use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
     ERROR_NOT_FOUND, ERROR_SUCCESS, GENERIC_ALL, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL,
-    INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation, WAIT_TIMEOUT, WIN32_ERROR,
+    INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    WIN32_ERROR,
 };
 use windows_sys::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
@@ -251,7 +252,6 @@ impl Process {
         let _: u32 = unsafe { WaitForSingleObject(self.0.as_raw_handle(), INFINITE) };
     }
 
-    /// The exit code, or none when `limit` passed first and the job was ended.
     /// The process's exit code once it ends; none when `limit` passes or `hopeless` is set first,
     /// and the job is stopped.
     fn wait(&self, limit: Duration, job: &Job, hopeless: &AtomicBool) -> io::Result<Option<i32>> {
@@ -264,8 +264,10 @@ impl Process {
             // Whole milliseconds of at most POLL, which fits.
             let milliseconds = u32::try_from(left.as_millis()).unwrap_or(0);
             // SAFETY: the process handle is open for as long as `self`.
-            if unsafe { WaitForSingleObject(handle, milliseconds) } != WAIT_TIMEOUT {
-                break;
+            match unsafe { WaitForSingleObject(handle, milliseconds) } {
+                WAIT_OBJECT_0 => break,
+                WAIT_TIMEOUT => {}
+                _ => return Err(io::Error::last_os_error()),
             }
             if hopeless.load(Ordering::Relaxed)
                 || deadline.is_some_and(|deadline| Instant::now() >= deadline)
