@@ -51,7 +51,8 @@ steamship check steam/app_build.vdf
 `check` reads the app script and every depot script it names, without logging in, and refuses:
 
 - `SetLive` naming `default` or `public`, which Valve only allows from the Steamworks site, or a
-  branch the app does not have, when a Web API key is set or kept;
+  branch the app does not have, when a Web API key is set or kept (with neither, it says the
+  branch was not checked);
 - `Preview` or `Local` set in the file (use `--preview` instead);
 - a `ContentRoot` or `LocalPath` that does not exist or matches no files;
 - an `InstallScript` that is not a file in the content, or that the depot does not map;
@@ -85,6 +86,11 @@ When Valve builds the upload but steamcmd fails after, as when setting it live, 
 fails, and says the BuildID and the `steamship promote` command that sets it live, so nothing
 has to be uploaded again. The `build-id` output is given then too.
 
+When Steam keeps the build but will not set it live on the `SetLive` branch, as for a branch the
+app does not have, steamcmd reports only "Failed to commit build" and no BuildID. steamship says
+the build is on Steam but not live, and why that happens. With a Web API key at hand it finds the
+build by its description and gives its BuildID and the `promote` command, as above.
+
 `--preview` is Valve's dry run: the whole build is computed and logged, nothing is uploaded and
 nothing is set live.
 
@@ -116,6 +122,11 @@ steamship promote 480 --build 12345678 --branch testing
 each was uploaded and where it is live. `promote` sets an uploaded build live on a beta branch
 without uploading it again; the default branch is set live in Steamworks only, so `promote`
 refuses it. An app is named by its ID or by its app build script.
+
+A new app has only its default branch, and Steamworks lets you create others only once a build
+is live on it. So the first upload of a script that sets a beta branch live leaves the build on
+Steam, live nowhere. In Steamworks, under SteamPipe, Builds, set that build live on the default
+branch, create the branch the script names, then upload again or `promote` the build.
 
 Both use Steam's partner Web API, which steamcmd cannot reach, with the publisher Web API key of
 a group that holds the app, from Steamworks under Users & Permissions, Manage Groups. The key
