@@ -298,23 +298,44 @@ pub fn judge(
     if let Some(reason) = refused_login(console) {
         return Outcome::NotLoggedIn(reason);
     }
-    let finished = format!("Successfully finished AppID {app_id} build (BuildID ");
-    let build_id = log.and_then(|log| {
-        log.lines().find_map(|line| {
-            let (_, after) = line.split_once(&finished)?;
-            let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
-            digits.parse::<u64>().ok()
-        })
-    });
-    match (code, build_id) {
-        (Some(0_i32), Some(_)) if preview => Outcome::Previewed,
-        (Some(0_i32), Some(build_id)) if build_id > 0 => Outcome::Built { build_id },
-        (_, Some(build_id)) if build_id > 0 && !preview => Outcome::BuiltThenFailed {
-            build_id,
-            reasons: reasons(code, console, log),
-        },
+    let finished = log.and_then(|log| log.lines().find_map(|line| finished(app_id, line)));
+    match (code, finished) {
+        (Some(0_i32), Some(Finished::Preview)) if preview => Outcome::Previewed,
+        (Some(0_i32), Some(Finished::Build(build_id))) if build_id > 0 && !preview => {
+            Outcome::Built { build_id }
+        }
+        (_, Some(Finished::Build(build_id))) if build_id > 0 && !preview => {
+            Outcome::BuiltThenFailed {
+                build_id,
+                reasons: reasons(code, console, log),
+            }
+        }
         _ => Outcome::Failed(reasons(code, console, log)),
     }
+}
+
+/// How the build log says Valve finished a build.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Finished {
+    /// `Successfully finished AppID 5335950 build preview.`, as steamcmd 1788292693 ends a
+    /// preview.
+    Preview,
+    /// `Successfully finished AppID 5335950 build (BuildID 18273645).`, with the build's ID.
+    Build(u64),
+}
+
+/// What `line` says of a finished build for `app_id`, if it is that line.
+fn finished(app_id: u32, line: &str) -> Option<Finished> {
+    let (_, after) = line.split_once(&format!("Successfully finished AppID {app_id} build "))?;
+    if after.starts_with("preview.") {
+        return Some(Finished::Preview);
+    }
+    let digits: String = after
+        .strip_prefix("(BuildID ")?
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok().map(Finished::Build)
 }
 
 /// What steamcmd says in place of a login when it never reached Steam, which refused nothing.
@@ -460,6 +481,14 @@ mod tests {
     const LOGGED_IN: &str = "Logging in user 'build_bot' [U:1:0] to Steam Public...OK\r\n\
                              Waiting for client config...OK\r\n";
 
+    /// A preview's build log as steamcmd 1788292693 wrote it for Fantasy Guild Manager.
+    const PREVIEW_LOG: &str = "[2026-09-28 20:24:13]: Starting AppID 5335950 build (flags 0x2).\n\
+         [2026-09-28 20:24:13]: Building depot 5335951...\n\
+         \n\
+         [2026-09-28 20:24:21]: Building depot 5335952...\n\
+         \n\
+         [2026-09-28 20:24:30]: Successfully finished AppID 5335950 build preview.\n";
+
     #[test]
     fn takes_the_build_id_from_the_log_when_steamcmd_exits_0() {
         assert_eq!(
@@ -468,10 +497,48 @@ mod tests {
                 build_id: 18_273_645
             }
         );
+    }
+
+    #[test]
+    fn a_preview_is_finished_only_by_the_line_valve_ends_one_with() {
         assert_eq!(
-            judge(5_335_970, Some(0_i32), LOGGED_IN, Some(LOG), true),
+            judge(5_335_950, Some(0_i32), LOGGED_IN, Some(PREVIEW_LOG), true),
             Outcome::Previewed
         );
+        for (app, code, log, preview) in [
+            (5_335_951, Some(0_i32), PREVIEW_LOG, true),
+            (5_335_950, Some(6_i32), PREVIEW_LOG, true),
+            (5_335_950, Some(0_i32), PREVIEW_LOG, false),
+            (5_335_970, Some(0_i32), LOG, true),
+        ] {
+            assert!(
+                matches!(
+                    judge(app, code, LOGGED_IN, Some(log), preview),
+                    Outcome::Failed(_)
+                ),
+                "{app} {code:?} {preview}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_finished_line_is_read_for_its_app_and_nothing_else() {
+        assert_eq!(
+            finished(5, "[..]: Successfully finished AppID 5 build (BuildID 12)."),
+            Some(Finished::Build(12))
+        );
+        assert_eq!(
+            finished(5, "Successfully finished AppID 5 build preview."),
+            Some(Finished::Preview)
+        );
+        for line in [
+            "Successfully finished AppID 55 build preview.",
+            "Successfully finished AppID 5 build previewing",
+            "Successfully finished AppID 5 build (BuildID x).",
+            "Successfully finished AppID 5 build",
+        ] {
+            assert_eq!(finished(5, line), None, "{line}");
+        }
     }
 
     #[test]
