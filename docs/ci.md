@@ -72,6 +72,11 @@ steamship ci --output login.txt
 variable `STEAMSHIP_LOGIN`, then delete the file. `steamship upload` reads it from there, and
 nothing else about uploading changes.
 
+A job in a Docker container needs `--security-opt seccomp=unconfined`: Docker's default seccomp
+filter refuses the socket call Valve's 32-bit steamcmd makes, and steamcmd never reaches Steam.
+steamship says so when it happens. On Linux, the container also needs the 32-bit C libraries
+[Install](install.md) names.
+
 ## Keeping steamship current
 
 A tool that installs steamship from the release archives can pin it in any JSON file as a
