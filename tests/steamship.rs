@@ -840,11 +840,10 @@ fn github_project() -> (tempfile::TempDir, PathBuf) {
 #[cfg(unix)]
 fn fake_gh() -> (tempfile::TempDir, String) {
     use std::env;
-    use std::os::unix::fs::PermissionsExt as _;
 
     let bin = tempfile::tempdir().unwrap();
     let gh = bin.path().join("gh");
-    fs::write(
+    write_program(
         &gh,
         "#!/bin/sh\n\
          here=\"$(dirname \"$0\")\"\n\
@@ -857,9 +856,7 @@ fn fake_gh() -> (tempfile::TempDir, String) {
          [ -z \"$STEAMSHIP_FAKE_GH_OFFLINE\" ] || exit 1\n\
          echo \"${STEAMSHIP_FAKE_GH_COMMIT:-0123456789abcdef0123456789abcdef01234567}\" ;;\n\
          esac\n",
-    )
-    .unwrap();
-    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let path = format!("{}:{}", bin.path().display(), env::var("PATH").unwrap());
     (bin, path)
 }
@@ -1341,15 +1338,33 @@ fn faked() -> tempfile::TempDir {
 /// A home whose recorded steamcmd is `script`.
 #[cfg(unix)]
 fn faked_with(script: &str) -> tempfile::TempDir {
-    use std::os::unix::fs::PermissionsExt as _;
     use steamship::digest;
 
     let hash = digest::hex(&digest::sha256(&mut script.as_bytes()).unwrap());
     let home = recorded(&format!("file {hash} steamcmd.sh\n"));
     let program = home.path().join(install::FOLDER).join("steamcmd.sh");
-    fs::write(&program, script).unwrap();
-    fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+    write_program(&program, script);
     home
+}
+
+/// Writes `program` as an executable from a process of its own. Written here, its handle would
+/// be open in this process while another test's thread started a program, which holds a copy of
+/// every handle until it runs; running `program` in those moments fails with "Text file busy".
+#[cfg(unix)]
+fn write_program(program: &Path, script: &str) {
+    let mut writer = Command::new("sh")
+        .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+        .arg(program)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writer
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(script.as_bytes())
+        .unwrap();
+    assert!(writer.wait().unwrap().success(), "{}", program.display());
 }
 
 #[cfg(unix)]
