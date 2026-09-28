@@ -18,9 +18,10 @@ runs:
         FOLDER: ${{ inputs.folder }}
         # renovate: datasource=docker depName=archlinux
         ARCH: archlinux:base-devel@sha256:8745817f349ed24373341ddb92776209eeec3f0364ea48f7f645ac5800d30a50
+      # Without Docker's seccomp filter, for the reason the linux-packages action gives.
       run: |
         set -euo pipefail
-        docker run --rm \
+        docker run --rm --security-opt seccomp=unconfined \
           --volume "$(realpath "${FOLDER}"):/aur:ro" \
           --volume "$(realpath "${GITHUB_ACTION_PATH}/../../aur-try.sh"):/try.sh:ro" \
           --volume "${GITHUB_WORKSPACE}/tests/fixtures/spacewar:/spacewar:ro" \
