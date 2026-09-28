@@ -76,12 +76,12 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" --signer-workflow "${signer}" \
               --source-ref "${GITHUB_REF}" --deny-self-hosted-runners
           }
-          for subject in dist/steamship-* dist/steamship.json; do
+          for subject in dist/steamship-* dist/steamship_* dist/steamship.json; do
             if [[ "${subject}" != "${bundle}" ]]; then
               verify "${subject}"
             fi
           done
-          for archive in dist/*.tar.gz dist/*.zip; do
+          for archive in dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm; do
             verify "${archive}" --predicate-type https://spdx.dev/Document/v2.3
           done
 
@@ -132,6 +132,8 @@ jobs:
           # squash merges, so each commit's first line is its pull request's title. No release
           # yet answers an empty list; a request that fails fails the job.
           previous="$(gh release list --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')"
+          download="https://github.com/${GH_REPO}/releases/download/${GITHUB_REF_NAME}"
+          deb="steamship_${VERSION}-1_amd64.deb"
           {
             printf '%s\n' \
               '## Install' \
@@ -141,8 +143,10 @@ jobs:
               '```sh' \
               "brew tap aureliolo/steamship https://github.com/${GH_REPO}" \
               'brew install aureliolo/steamship/steamship' \
-              "scoop install https://github.com/${GH_REPO}/releases/download/${GITHUB_REF_NAME}/steamship.json" \
+              "scoop install ${download}/steamship.json" \
               'winget install Aureliolo.steamship' \
+              "curl -fLO ${download}/${deb} && sudo apt install ./${deb}" \
+              "sudo dnf install ${download}/steamship-${VERSION}-1.x86_64.rpm" \
               "cargo install --locked steamship@${VERSION}" \
               '```' \
               '' \
