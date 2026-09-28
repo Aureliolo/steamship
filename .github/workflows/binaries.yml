@@ -94,11 +94,12 @@ jobs:
           curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${package}" \
             "https://api.nuget.org/v3-flatcontainer/microsoft.codeanalysis.binskim/${BINSKIM_VERSION}/microsoft.codeanalysis.binskim.${BINSKIM_VERSION}.nupkg"
           echo "${BINSKIM_SHA256}  ${package}" | sha256sum --check --strict
-          mkdir "${RUNNER_TEMP}/binskim"
-          unzip -q "${package}" 'tools/*' -d "${RUNNER_TEMP}/binskim"
+          # Unpacked beside the checkout, by a relative path: on Windows the runner's own folders
+          # start with a drive letter, which bash cannot glob.
+          unzip -q "${package}" 'tools/*' -d .binskim
           # A zip carries no executable bit, which only Linux asks for.
           if [[ "${RUNNER_OS}" == Linux ]]; then
-            chmod +x "${RUNNER_TEMP}"/binskim/tools/*/linux-x64/BinSkim
+            chmod +x .binskim/tools/*/linux-x64/BinSkim
           fi
 
       # Findings are judged from the results below rather than BinSkim's exit code, which does
@@ -112,9 +113,7 @@ jobs:
           ACCEPTED: ${{ matrix.accepted }}
         run: |
           set -euo pipefail
-          # The runner's temporary folder is a Windows path there, which a glob cannot expand.
-          tools="${RUNNER_TEMP//\\//}/binskim/tools"
-          binskim="$(echo "${tools}"/net*/"${BINSKIM}")"
+          binskim="$(echo .binskim/tools/net*/"${BINSKIM}")"
           status=0
           "${binskim}" analyze "target/${TARGET}/release/${PROGRAM}" --output raw.sarif \
             --insert FlattenedMessages --quiet || status=$?
