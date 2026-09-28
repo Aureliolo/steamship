@@ -484,6 +484,69 @@ const BUILT_THEN_FAILED: &str = "#!/bin/sh\n\
     echo 'ERROR! Failed to set build live on branch testing'\n\
     exit 6\n";
 
+/// A steamcmd whose build Steam keeps but will not set live, reporting it as steamcmd 1788292693
+/// did for Fantasy Guild Manager's `SetLive` branch before the app had one: no build ID, only
+/// "Failed to commit build".
+#[cfg(unix)]
+const COMMIT_REFUSED: &str = "#!/bin/sh\n\
+    output=\"$HOME/apps/1000/output\"\n\
+    mkdir -p \"$output\"\n\
+    echo '[..]: ERROR! Failed to commit build for AppID 1000 : Failure' > \"$output/app_build_1000.log\"\n\
+    echo 'Logging in user build_bot to Steam Public...OK'\n\
+    exit 6\n";
+
+#[cfg(unix)]
+#[test]
+fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_key() {
+    let home = faked_with(COMMIT_REFUSED);
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    for said in [
+        "Failed to commit build for AppID 1000 : Failure",
+        "the build is on Steam but not live: it is listed in Steamworks under SteamPipe, Builds",
+        "\"SetLive\" names \"testing\": Steam sets no build live on a branch the app does not have",
+        "see the app's branches with steamship builds 1000",
+    ] {
+        assert!(stderr.contains(said), "{said:?} in {stderr}");
+    }
+    let description = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("  build     "))
+        .unwrap()
+        .to_owned();
+
+    // With a key, the build is looked up by the description it was uploaded with.
+    let builds: &'static str = Box::leak(
+        format!(
+            r#"{{"response": {{"builds": {{"25585928": {{"Description": "{description}"}}}}}}}}"#
+        )
+        .into_boxed_str(),
+    );
+    let (host, requests) = web_api(vec![("200 OK", BETAS), ("200 OK", builds)]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    for said in [
+        "app 1000: built as BuildID 25585928, then steamcmd failed",
+        "\"SetLive\" names \"testing\": Steam sets no build live on a branch the app does not have",
+        "set it live with steamship promote 1000 --build 25585928 --branch testing",
+    ] {
+        assert!(stderr.contains(said), "{said:?} in {stderr}");
+    }
+    assert!(!stderr.contains("listed in Steamworks"), "{stderr}");
+    let _branches = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    let asked = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        asked.starts_with("GET /ISteamApps/GetAppBuilds/v1/?") && asked.contains("appid=1000"),
+        "{asked}"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn an_upload_built_then_failed_keeps_its_build_id_and_shows_steams_logs_in_actions() {
@@ -2810,7 +2873,9 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
         "{warned}"
     );
     assert!(
-        warned.contains("fails the upload only at its end; steamship login --web-api-key keeps"),
+        warned.contains(
+            "leaves the build uploaded but not live; steamship login --web-api-key keeps"
+        ),
         "{warned}"
     );
 }

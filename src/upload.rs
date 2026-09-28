@@ -17,6 +17,7 @@ use crate::conversation;
 use crate::scripts;
 use crate::steamcmd;
 use crate::vdf::{self, Block, Pair, Value};
+use crate::webapi;
 
 /// The folder in the home that holds each app's copy of the script and build output.
 pub const APPS: &str = "apps";
@@ -338,8 +339,10 @@ fn finished(app_id: u32, line: &str) -> Option<Finished> {
     digits.parse().ok().map(Finished::Build)
 }
 
-/// Why Steam may have refused to commit a build the script sets live on a branch, when that is
-/// the failure: Valve names no reason, and a branch the app does not have is refused this way.
+/// Why Steam may have refused to set a build live on the branch the script names, if it did.
+///
+/// Valve names no reason, and keeps the build: steamcmd 1788292693 said only "Failed to commit
+/// build" for a branch the app did not have, and each such build was listed on Steam.
 #[must_use]
 pub fn commit_refused(reasons: &[String], set_live: Option<&str>) -> Option<String> {
     let branch = set_live?;
@@ -348,11 +351,40 @@ pub fn commit_refused(reasons: &[String], set_live: Option<&str>) -> Option<Stri
         .any(|reason| reason.starts_with("Failed to commit build"))
         .then(|| {
             format!(
-                "\"SetLive\" names \"{branch}\": Steam refuses the build when the app has no \
-                 branch by that name, which is made in Steamworks under SteamPipe, Builds, or \
-                 when the account may not set builds live"
+                "\"SetLive\" names \"{branch}\": Steam sets no build live on a branch the app \
+                 does not have, or for an account that may not set builds live; a new app gets \
+                 other branches only once its default branch has a build live"
             )
         })
+}
+
+/// Why a `SetLive` `branch` is refused when `app`'s `branches` do not include it, and what to do:
+/// Steamworks offers no other branch until the default one has a build live.
+#[must_use]
+pub fn no_branch(app: u32, branch: &str, branches: &[webapi::Branch]) -> String {
+    let fresh = branches
+        .iter()
+        .any(|found| webapi::is_default(&found.name) && found.build_id == 0);
+    let first = if fresh {
+        "set a build live on its default branch, then create it, both in Steamworks under \
+         SteamPipe, Builds"
+    } else {
+        "create it in Steamworks under SteamPipe, Builds first"
+    };
+    format!("\"SetLive\" names \"{branch}\", but app {app} has no branch by that name; {first}")
+}
+
+/// Where a build Steam kept but set live nowhere is, when its ID is not to be had.
+pub const NOT_LIVE: &str =
+    "the build is on Steam but not live: it is listed in Steamworks under SteamPipe, Builds";
+
+/// The ID of the newest of `builds`, given newest first, with this upload's `description`.
+#[must_use]
+pub fn uploaded_as(builds: &[webapi::Build], description: &str) -> Option<u64> {
+    builds
+        .iter()
+        .find(|build| build.description == description)
+        .map(|build| build.build_id)
 }
 
 /// What steamcmd says in place of a login when it never reached Steam, which refused nothing.
@@ -544,9 +576,64 @@ mod tests {
         let refused = vec!["Failed to commit build for AppID 5335950 : Failure".to_owned()];
         let why = commit_refused(&refused, Some("testing")).unwrap();
         assert!(why.starts_with("\"SetLive\" names \"testing\": "), "{why}");
+        assert!(
+            why.ends_with("once its default branch has a build live"),
+            "{why}"
+        );
         assert_eq!(commit_refused(&refused, None), None);
         let other = vec!["Failed to initialize build on server (Access Denied)".to_owned()];
         assert_eq!(commit_refused(&other, Some("testing")), None);
+    }
+
+    #[test]
+    fn a_missing_branch_on_a_new_app_says_the_default_branch_needs_a_build_first() {
+        let branch = |name: &str, build_id| webapi::Branch {
+            name: name.to_owned(),
+            build_id,
+            description: String::new(),
+            locked: false,
+        };
+        assert_eq!(
+            no_branch(5, "testing", &[branch("public", 0)]),
+            "\"SetLive\" names \"testing\", but app 5 has no branch by that name; set a build \
+             live on its default branch, then create it, both in Steamworks under SteamPipe, \
+             Builds"
+        );
+        for live in [
+            vec![branch("public", 9)],
+            vec![branch("public", 9), branch("beta", 0)],
+        ] {
+            assert_eq!(
+                no_branch(5, "testing", &live),
+                "\"SetLive\" names \"testing\", but app 5 has no branch by that name; create it \
+                 in Steamworks under SteamPipe, Builds first",
+                "{live:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_build_an_upload_made_is_the_newest_with_its_description() {
+        let build = |build_id, description: &str| webapi::Build {
+            build_id,
+            description: description.to_owned(),
+            created: 0,
+        };
+        // As Steam listed Fantasy Guild Manager's: two uploads of one commit, newest first.
+        let builds = [
+            build(25_585_928, "0.1.0-test b4ca836e0512"),
+            build(25_585_877, "0.1.0-test b4ca836e0512"),
+            build(25_585_793, "0.1.0-test 9bbb5cb2f976"),
+        ];
+        assert_eq!(
+            uploaded_as(&builds, "0.1.0-test b4ca836e0512"),
+            Some(25_585_928)
+        );
+        assert_eq!(
+            uploaded_as(&builds, "0.1.0-test 9bbb5cb2f976"),
+            Some(25_585_793)
+        );
+        assert_eq!(uploaded_as(&builds, "0.1.0-test"), None);
     }
 
     #[test]
