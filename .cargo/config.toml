@@ -8,10 +8,9 @@ rustflags = ["-C", "target-feature=+crt-static", "-C", "control-flow-guard"]
 [target.aarch64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static", "-C", "control-flow-guard"]
 
-# The C that ring compiles with MSVC, with the compiler's Spectre mitigations. The C runtime linked
-# in has them too where Visual Studio's Spectre-mitigated libraries are installed, as on GitHub's
-# runners, where CI and the release ask for them (VSCMD_ARG_VCVARS_SPECTRE); without them, a
-# build here would not link.
+# The C that ring compiles with MSVC, with the compiler's Spectre mitigations. On Arm ring compiles
+# it with clang, which has no such switch. The C runtime linked in has them too where Visual
+# Studio's Spectre-mitigated libraries are installed, as on GitHub's runners, where CI and the
+# release ask for them (VSCMD_ARG_VCVARS_SPECTRE); without them, a build here would not link.
 [env]
 CFLAGS_x86_64_pc_windows_msvc = "/Qspectre"
-CFLAGS_aarch64_pc_windows_msvc = "/Qspectre"
