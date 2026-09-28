@@ -29,6 +29,19 @@ token as an upload would and says whether Steam takes it. It asks for nothing, p
 account's name nor any key, and exits 0 when an upload would log in and 3 when it would not.
 `steamship logout` forgets the token, the account and the Web API key.
 
+## Starting scripts
+
+If you have no build scripts yet, `init` writes them, in Valve's format and commented:
+
+```sh
+steamship init 480 --depot 481=build/windows --depot 482=build/linux
+```
+
+It writes `steam/app_build.vdf` and a `depot_build_<ID>.vdf` for each depot, each shipping every
+file in its folder except debug symbols. Without `--depot` the one depot is the app's ID plus
+one, shipping `build/`; `--folder` puts the scripts somewhere other than `steam/`. It never
+overwrites a script that is already there.
+
 ## Checking scripts
 
 ```sh

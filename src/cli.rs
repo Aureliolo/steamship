@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
-use crate::{ci, platform, show, update, webapi};
+use crate::{ci, init, platform, show, update, webapi};
 
 /// Something failed; what, and why, is printed.
 pub const FAILED: u8 = 1;
@@ -194,6 +194,23 @@ pub enum Command {
     /// Removes the login steamcmd saved, the account steamship remembered and the Web API key
     /// kept for `builds` and `promote`; the next upload needs `steamship login` first.
     Logout,
+    /// Write starter build scripts for an app.
+    ///
+    /// Writes an app build script, and a depot build script for each depot, into `steam/`,
+    /// commented, in Valve's own format, for `check` and `upload` to read. Without `--depot`,
+    /// the one depot is the app's ID plus one, shipping `build/`. Nothing already there is
+    /// overwritten.
+    Init {
+        /// The app's ID, from Steamworks.
+        app: u32,
+        /// A depot and the folder its files ship from, such as 1001=build/windows; once for each
+        /// depot.
+        #[arg(long = "depot", value_name = "ID=FOLDER", value_parser = init::depot)]
+        depots: Vec<init::Depot>,
+        /// The folder the scripts are written into.
+        #[arg(long, default_value = "steam")]
+        folder: PathBuf,
+    },
     /// Install or verify the pinned steamcmd.
     ///
     /// `login` and `upload` do this themselves; this does it ahead of time, as in CI.
