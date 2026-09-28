@@ -178,6 +178,10 @@ exit code 4.
 `steamship install` does it ahead of time, as in CI, and verifies an install that is already
 there.
 
+Valve keeps old steamcmd builds on its CDN for years, then deletes them. An install already made
+keeps working after that; a new one fails, saying that Valve no longer serves the pinned steamcmd
+and how to upgrade to a steamship that pins one it does.
+
 steamcmd, its login token and the build output live in steamship's home, a per-user folder
 unless `STEAMSHIP_HOME` names another. The token can do everything the build account may, so
 treat that folder like a password.

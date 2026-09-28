@@ -11,9 +11,9 @@ use std::fs::{self, File};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 
-use steamship::digest;
 use steamship::install::{self, Error, Outcome, State};
 use steamship::manifest::{Manifest, Package};
+use steamship::{digest, download};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
@@ -317,6 +317,50 @@ fn a_fetch_that_brings_the_wrong_file_is_refused() {
     });
     assert!(
         matches!(&result, Err(Error::Package { reason, .. }) if reason == "is not the pinned file"),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn a_package_the_cdn_no_longer_has_is_the_pin_withdrawn_and_any_other_refusal_is_as_it_came() {
+    let setup = Setup::new();
+    let manifest = steamcmd(&setup);
+    for (status, withdrawn) in [(404, true), (410, true), (403, false)] {
+        let result = install::using(&setup.home, &manifest, |package, _| {
+            Err(Error::Download(download::Error::Gone {
+                url: package.file.clone(),
+                status,
+            }))
+        });
+        match result {
+            Err(Error::Withdrawn {
+                version,
+                system,
+                file,
+            }) if withdrawn => {
+                assert_eq!(
+                    (version, system.as_str(), file.as_str()),
+                    (
+                        manifest.version,
+                        "test",
+                        manifest.packages.first().unwrap().file.as_str()
+                    )
+                );
+            }
+            Err(Error::Download(download::Error::Gone { status: kept, .. })) if !withdrawn => {
+                assert_eq!(kept, status);
+            }
+            other => panic!("{status}: {other:?}"),
+        }
+    }
+    let result = install::using(&setup.home, &manifest, |package, _| {
+        Err(Error::Download(download::Error::GaveUp {
+            url: package.file.clone(),
+            last: "answered 503".to_owned(),
+        }))
+    });
+    assert!(
+        matches!(result, Err(Error::Download(download::Error::GaveUp { .. }))),
         "{result:?}"
     );
 }
