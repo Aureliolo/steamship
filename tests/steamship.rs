@@ -1962,6 +1962,25 @@ fn upload_refuses_scripts_outside_a_repository_and_exits_2() {
 }
 
 #[test]
+fn upload_says_git_is_missing_rather_than_blaming_the_folder_and_exits_2() {
+    let (_project, script) = project(true);
+    let home = tempfile::tempdir().unwrap();
+    let nowhere = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.0"],
+        &[("PATH", nowhere.path().to_str().unwrap())],
+    );
+    assert_eq!(code, Some(2_i32));
+    assert_eq!(
+        failure(&stderr).trim_end(),
+        "Git is not installed, or not on the PATH, and the build description names the commit \
+         the scripts are at"
+    );
+}
+
+#[test]
 fn upload_runs_check_first_and_exits_2_on_a_refusal() {
     let (project, script) = project(true);
     fs::write(
