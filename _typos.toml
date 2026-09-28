@@ -4,9 +4,12 @@ locale = "en-gb"
 # Spellings that are not ours, each matched whole so that prose around them is still checked:
 # steamcmd's own messages, quoted as it prints them, which steamship matches and tests against;
 # flags and settings of actionlint, cargo, cargo-fuzz and syft; GitHub's upload-artifact action
-# and the branding key of an action's metadata; the in-toto file extension; and CSS's own
-# properties, function and value, in the site's stylesheet and the rules docs-site writes.
+# and the branding key of an action's metadata; the in-toto file extension; CSS's own
+# properties, function and value, in the site's stylesheet and the rules docs-site writes; and
+# BinSkim's rule names and its analyze command.
 extend-ignore-re = [
+  '\bBA\d{4}\b',
+  '\}" analyze ',
   '\b(?:[a-z]+-)*color(?:-[a-z]+)*\s*:',
   '\bcolor-mix\(',
   ':\s*center\b',
