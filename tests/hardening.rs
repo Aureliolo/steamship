@@ -85,8 +85,8 @@ fn records(first: usize, count: usize, size: usize) -> impl Iterator<Item = usiz
     (0..count).map(move |index| plus(first, index.checked_mul(size).unwrap()))
 }
 
-/// ASLR, DEP, Control Flow Guard, the hardware shadow stack, imports from System32 alone, and
-/// the manifest Windows reads when it creates the process.
+/// ASLR, DEP, Control Flow Guard, the hardware shadow stack on x86-64, imports from System32
+/// alone, and the manifest Windows reads when it creates the process.
 #[cfg(windows)]
 #[test]
 fn the_windows_program_has_its_mitigations_and_manifest() {
@@ -105,7 +105,11 @@ fn the_windows_program_has_its_mitigations_and_manifest() {
     let shadow_stack = records(debug, size.checked_div(28).unwrap(), 28)
         .filter(|&entry| program.u32(plus(entry, 12)) == 20)
         .any(|entry| program.u32(program.u32(plus(entry, 24))) & 1 != 0);
-    assert!(shadow_stack, "compatible with the hardware shadow stack");
+    assert_eq!(
+        shadow_stack,
+        cfg!(target_arch = "x86_64"),
+        "compatible with the hardware shadow stack, which Arm lacks"
+    );
 
     let (load_config, _) = program.directory(10);
     assert_eq!(

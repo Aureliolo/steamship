@@ -25,14 +25,19 @@ jobs:
       fail-fast: false
       matrix:
         # Renovate reads a runner out of `runs-on:` but not out of a matrix, so each of these
-        # carries its own line for it.
+        # carries its own line for it; the Windows Arm runner has no image Renovate tracks. There
+        # is no Arm Linux entry: Valve's steamcmd for Linux is an x86 program, so steamship on Arm
+        # Linux could not upload.
         include:
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
             runner: ubuntu-26.04
+            musl: x86_64-unknown-linux-musl
           - platform: windows
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
+          - platform: windows-arm
+            runner: windows-11-arm
           - platform: macos
             # renovate: datasource=github-runners depName=macos
             runner: macos-26
@@ -71,13 +76,15 @@ jobs:
       # rather than first at a release. musl-gcc, for the C and assembly in ring, comes from the
       # image's own signed Ubuntu archive.
       - name: Test the static Linux build
-        if: matrix.platform == 'linux' && !cancelled()
+        if: matrix.musl && !cancelled()
+        env:
+          MUSL: ${{ matrix.musl }}
         run: |
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends musl-tools
-          rustup target add x86_64-unknown-linux-musl
-          cargo test --locked --target x86_64-unknown-linux-musl
+          rustup target add "${MUSL}"
+          cargo test --locked --target "${MUSL}"
 
       # The crate as crates.io would receive it, built from its package alone: a file the build
       # reads but the package leaves out fails here rather than at publishing.
@@ -180,6 +187,9 @@ jobs:
           - platform: windows
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
+          # Valve's x86 steamcmd, emulated by Windows on Arm, driven by steamship built for Arm.
+          - platform: windows-arm
+            runner: windows-11-arm
           - platform: macos
             # renovate: datasource=github-runners depName=macos
             runner: macos-26
@@ -237,7 +247,7 @@ jobs:
           found="$(cd "${home}" && find . -path '*/config/config.vdf' | sed 's|^\./||')"
           echo "config.vdf: ${found:-none}"
           case "${PLATFORM}" in
-            windows) expected=steamcmd/config/config.vdf ;;
+            windows*) expected=steamcmd/config/config.vdf ;;
             linux) expected=Steam/config/config.vdf ;;
             macos) expected="Library/Application Support/Steam/config/config.vdf" ;;
           esac
@@ -319,7 +329,7 @@ jobs:
           test "${status}" -eq 1
           grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/ci.txt"
           case "${PLATFORM}" in
-            windows) restored=steamcmd/config/config.vdf ;;
+            windows*) restored=steamcmd/config/config.vdf ;;
             linux) restored=Steam/config/config.vdf ;;
             macos) restored="Library/Application Support/Steam/config/config.vdf" ;;
           esac
