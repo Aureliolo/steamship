@@ -70,7 +70,13 @@ fn steamship_in(
 ) -> (Option<i32>, String, String) {
     let mut command = steamship_command();
     let _: &mut Command = command.current_dir(folder);
-    let _: &mut Command = command.args(args).env_remove("STEAMSHIP_ACCOUNT");
+    // The runner's own GitHub Actions variables would make every test a CI run, writing to the
+    // job's real outputs; a test that wants them sets its own.
+    let _: &mut Command = command
+        .args(args)
+        .env_remove("STEAMSHIP_ACCOUNT")
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("GITHUB_OUTPUT");
     let _: &mut Command = match home {
         Some(home) => command.env("STEAMSHIP_HOME", home),
         None => command.env_clear(),
@@ -398,6 +404,85 @@ fn an_upload_in_ci_logs_in_as_the_account_handed_over() {
     let console = fs::read_to_string(home.path().join("apps/1000/output/steamcmd.log")).unwrap();
     assert!(console.contains(" +login build_bot "), "{stdout}{console}");
     assert!(steamcmd::saved_login(home.path(), Platform::THIS).exists());
+}
+
+/// A steamcmd that has Valve build the upload as `BuildID` 777, then fails setting it live: it
+/// writes the app and depot logs where it was told to, adds to its own content log, and exits 6.
+#[cfg(unix)]
+const BUILT_THEN_FAILED: &str = "#!/bin/sh\n\
+    output=\"$HOME/apps/1000/output\"\n\
+    logs=\"$HOME/Steam/logs\"\n\
+    [ \"$(uname)\" = Darwin ] && logs=\"$HOME/Library/Application Support/Steam/logs\"\n\
+    mkdir -p \"$output\" \"$logs\"\n\
+    echo 'Successfully finished AppID 1000 build (BuildID 777).' > \"$output/app_build_1000.log\"\n\
+    echo 'depot 1001: 1 file' > \"$output/depot_build_1001.log\"\n\
+    echo 'this run: chunks sent' >> \"$logs/content_log.txt\"\n\
+    echo 'Logging in user build_bot to Steam Public...OK'\n\
+    echo '::set-output name=forged::yes'\n\
+    echo 'ERROR! Failed to set build live on branch testing'\n\
+    exit 6\n";
+
+#[cfg(unix)]
+#[test]
+fn an_upload_built_then_failed_keeps_its_build_id_and_shows_steams_logs_in_actions() {
+    let home = faked_with(BUILT_THEN_FAILED);
+    let logs = steamcmd::state_folder(home.path(), Platform::THIS).join("logs");
+    fs::create_dir_all(&logs).unwrap();
+    fs::write(logs.join("content_log.txt"), "an older run\n").unwrap();
+    let outputs = home.path().join("github_output");
+    fs::write(&outputs, "").unwrap();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[
+            ("STEAMSHIP_LOGIN", &packed_login()),
+            ("GITHUB_ACTIONS", "true"),
+            ("GITHUB_OUTPUT", outputs.to_str().unwrap()),
+        ],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    for said in [
+        "app 1000: built as BuildID 777, then steamcmd failed",
+        "Failed to set build live on branch testing",
+        "set it live with steamship promote 1000 --build 777 --branch testing",
+    ] {
+        assert!(stderr.contains(said), "{said:?} in {stderr}");
+    }
+    assert_eq!(fs::read_to_string(&outputs).unwrap(), "build-id=777\n");
+    assert!(stdout.contains("::add-mask::build_bot\n"), "{stdout}");
+    for group in [
+        "::group::steamcmd's console\n",
+        "::group::app_build_1000.log\n",
+        "::group::depot_build_1001.log\n",
+        "::group::steamcmd's content_log.txt, from this run\n::stop-commands::",
+    ] {
+        assert!(stdout.contains(group), "{group:?} in {stdout}");
+    }
+    assert_eq!(
+        stdout.matches("::group::").count(),
+        4,
+        "the console and app log once each, and no other log taken for a depot's: {stdout}"
+    );
+    assert!(stdout.contains("this run: chunks sent"), "{stdout}");
+    assert!(!stdout.contains("an older run"), "{stdout}");
+    let forged = stdout.find("::set-output name=forged::yes").unwrap();
+    let stopped = stdout.find("::stop-commands::").unwrap();
+    assert!(
+        stopped < forged,
+        "a command in a log is shown only with commands stopped"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_upload_outside_actions_shows_no_log_groups() {
+    let home = faked_with(BUILT_THEN_FAILED);
+    let (_project, script) = project(true);
+    let (code, stdout, _) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}");
+    assert!(!stdout.contains("::group::"), "{stdout}");
 }
 
 #[test]

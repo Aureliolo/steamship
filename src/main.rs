@@ -23,7 +23,7 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    check, ci, conversation, keychain, run, scripts, steamcmd, upload, webapi, workshop,
+    check, ci, conversation, dump, keychain, run, scripts, steamcmd, upload, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -364,9 +364,12 @@ fn packed_login() -> Result<Option<ci::Login>, ExitCode> {
     let text = value
         .to_str()
         .ok_or_else(|| fail(&ci::Error::Unreadable, REFUSED))?;
-    ci::Login::unpack(text)
-        .map(Some)
-        .map_err(|error| fail(&error, REFUSED))
+    let login = ci::Login::unpack(text).map_err(|error| fail(&error, REFUSED))?;
+    // GitHub masks the secret, but not the account's name inside it, which steamcmd's logs name.
+    if dump::in_actions(|name| env::var(name).ok()) {
+        show::plain(&format!("::add-mask::{}\n", login.account().name()));
+    }
+    Ok(Some(login))
 }
 
 /// Puts a login handed over in `STEAMSHIP_LOGIN` where steamcmd looks for it in `home`.
@@ -655,6 +658,8 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
     } else {
         "uploading"
     };
+    let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
+    let marks = dump::Marks::take(&steamcmd_logs);
     let spinner = Spinner::start("steam", doing, true);
     let finished = run::run(
         &program,
@@ -687,6 +692,17 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         request.preview,
     );
     let code = report(&outcome, spinner, &took, &prepared, &saved);
+    if matches!(
+        outcome,
+        upload::Outcome::Failed(_) | upload::Outcome::BuiltThenFailed { .. }
+    ) {
+        let mut files = vec![
+            ("steamcmd's console".to_owned(), saved),
+            (format!("app_build_{}.log", prepared.app_id), prepared.log()),
+        ];
+        files.extend(depot_logs(&prepared.output));
+        dump_in_actions(&files, &marks.added(&steamcmd_logs), &redactor);
+    }
     install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(code)
 }
@@ -731,6 +747,29 @@ fn report(
             show::failure("not logged in", line, Some(again));
             ExitCode::from(LOGIN)
         }
+        upload::Outcome::BuiltThenFailed { build_id, reasons } => {
+            spinner.failed(&format!("failed after {took}"));
+            show::failure(
+                &format!("app {app}: built as BuildID {build_id}, then steamcmd failed"),
+                "",
+                None,
+            );
+            for reason in reasons {
+                show::failure(reason, "", None);
+            }
+            if let Some(branch) = &prepared.set_live {
+                show::hint(Hint {
+                    before: "set it live with ",
+                    command: &format!(
+                        "steamship promote {app} --build {build_id} --branch {branch}"
+                    ),
+                    after: "",
+                });
+            }
+            show::note(&logs);
+            hand_on(*build_id);
+            ExitCode::from(FAILED)
+        }
         upload::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
             for reason in reasons {
@@ -740,6 +779,50 @@ fn report(
             ExitCode::from(FAILED)
         }
     }
+}
+
+/// Steam's logs of a failed run, as collapsed groups in a GitHub Actions job's log: `files` as
+/// they are, then what steamcmd added to its own logs this run, all of it redacted. The action
+/// deletes steamship's home when the job ends, so this is the only look at them there is.
+fn dump_in_actions(files: &[(String, PathBuf)], added: &[(String, Vec<u8>)], redactor: &Redactor) {
+    if !dump::in_actions(|name| env::var(name).ok()) {
+        return;
+    }
+    let token = dump::token();
+    let mut shown = String::new();
+    let read = files
+        .iter()
+        .filter_map(|(title, path)| Some((title.clone(), fs::read(path).ok()?)));
+    let steamcmds = added
+        .iter()
+        .map(|(name, bytes)| (format!("steamcmd's {name}, from this run"), bytes.clone()));
+    for (title, bytes) in read.chain(steamcmds) {
+        let text = redactor.redact(&bytes);
+        shown.push_str(&dump::group(
+            &title,
+            &String::from_utf8_lossy(&text),
+            &token,
+        ));
+    }
+    show::plain(&shown);
+}
+
+/// Each depot's build log in `output`, by name, in name order.
+fn depot_logs(output: &Path) -> Vec<(String, PathBuf)> {
+    let mut found: Vec<(String, PathBuf)> = fs::read_dir(output)
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let log = Path::new(&name)
+                .extension()
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("log"));
+            (name.starts_with("depot_build_") && log).then(|| (name, entry.path()))
+        })
+        .collect();
+    found.sort();
+    found
 }
 
 fn run_check(script: &Path) -> ExitCode {
@@ -1026,24 +1109,7 @@ fn try_workshop(script: &Path, named: Option<&str>) -> Result<ExitCode, ExitCode
         (Some(packed), None) => packed.account().clone(),
         _ => account(named, false)?.0,
     };
-    let item = workshop::check(script).map_err(|problems| {
-        for problem in &problems {
-            show::failure("refused", &problem.to_string(), None);
-        }
-        ExitCode::from(REFUSED)
-    })?;
-    let which = item.published.map_or_else(
-        || "a new item".to_owned(),
-        |published| format!("item {published}"),
-    );
-    show::done(
-        "item",
-        &format!(
-            "app {}, {which}, {}, checked",
-            item.app_id,
-            show::counted(item.files, "file")
-        ),
-    );
+    let item = checked_item(script)?;
     let (home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let copy =
@@ -1051,6 +1117,8 @@ fn try_workshop(script: &Path, named: Option<&str>) -> Result<ExitCode, ExitCode
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
+    let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
+    let marks = dump::Marks::take(&steamcmd_logs);
     let spinner = Spinner::start("steam", "uploading", true);
     let finished = run::run(
         &program,
@@ -1111,12 +1179,44 @@ fn try_workshop(script: &Path, named: Option<&str>) -> Result<ExitCode, ExitCode
             for reason in &reasons {
                 show::failure(reason, "", None);
             }
-            show::note(&log);
+            // Valve gives the real reason for a Workshop failure there, not on the console.
+            show::note(&format!(
+                "{log}, and steamcmd's workshop log in {}",
+                steamcmd_logs.join("workshop_log.txt").display()
+            ));
+            dump_in_actions(
+                &[("steamcmd's console".to_owned(), saved)],
+                &marks.added(&steamcmd_logs),
+                &redactor,
+            );
             ExitCode::from(FAILED)
         }
     };
     install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(code)
+}
+
+/// The Workshop item `script` describes, checked, and said.
+fn checked_item(script: &Path) -> Result<workshop::Item, ExitCode> {
+    let item = workshop::check(script).map_err(|problems| {
+        for problem in &problems {
+            show::failure("refused", &problem.to_string(), None);
+        }
+        ExitCode::from(REFUSED)
+    })?;
+    let which = item.published.map_or_else(
+        || "a new item".to_owned(),
+        |published| format!("item {published}"),
+    );
+    show::done(
+        "item",
+        &format!(
+            "app {}, {which}, {}, checked",
+            item.app_id,
+            show::counted(item.files, "file")
+        ),
+    );
+    Ok(item)
 }
 
 /// Hands `build_id` on as the `build-id` output of the GitHub Actions step steamship runs in,

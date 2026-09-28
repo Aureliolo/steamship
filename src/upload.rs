@@ -263,6 +263,9 @@ pub enum Outcome {
     Previewed,
     /// steamcmd could not log in with what it has saved; the line it said so on.
     NotLoggedIn(String),
+    /// Valve built the upload as this build, and steamcmd failed after, as when setting it live;
+    /// with every reason it gave. The build is there to be set live by hand.
+    BuiltThenFailed { build_id: u64, reasons: Vec<String> },
     /// Anything else, with every reason steamcmd gave.
     Failed(Vec<String>),
 }
@@ -293,6 +296,10 @@ pub fn judge(
     match (code, build_id) {
         (Some(0_i32), Some(_)) if preview => Outcome::Previewed,
         (Some(0_i32), Some(build_id)) if build_id > 0 => Outcome::Built { build_id },
+        (_, Some(build_id)) if build_id > 0 && !preview => Outcome::BuiltThenFailed {
+            build_id,
+            reasons: reasons(code, console, log),
+        },
         _ => Outcome::Failed(reasons(code, console, log)),
     }
 }
@@ -431,14 +438,42 @@ mod tests {
             Outcome::Failed(_)
         ));
         assert!(matches!(
-            judge(5_335_970, Some(6_i32), "", Some(LOG), false),
-            Outcome::Failed(_)
-        ));
-        assert!(matches!(
             judge(
                 5_335_970,
                 Some(0_i32),
                 "",
+                Some(&LOG.replace("18273645", "0")),
+                false
+            ),
+            Outcome::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn a_build_valve_finished_is_kept_when_steamcmd_fails_after() {
+        let console = format!("{LOGGED_IN}ERROR! Failed to set build live on branch testing\r\n");
+        for code in [Some(6_i32), None] {
+            assert_eq!(
+                judge(5_335_970, code, &console, Some(LOG), false),
+                Outcome::BuiltThenFailed {
+                    build_id: 18_273_645,
+                    reasons: vec!["Failed to set build live on branch testing".to_owned()],
+                },
+                "{code:?}"
+            );
+        }
+        assert!(
+            matches!(
+                judge(5_335_970, Some(6_i32), &console, Some(LOG), true),
+                Outcome::Failed(_)
+            ),
+            "a preview builds nothing to keep"
+        );
+        assert!(matches!(
+            judge(
+                5_335_970,
+                Some(6_i32),
+                &console,
                 Some(&LOG.replace("18273645", "0")),
                 false
             ),
