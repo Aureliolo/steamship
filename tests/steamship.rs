@@ -495,6 +495,75 @@ const COMMIT_REFUSED: &str = "#!/bin/sh\n\
     echo 'Logging in user build_bot to Steam Public...OK'\n\
     exit 6\n";
 
+/// A steamcmd that has Valve build the upload as `BuildID` 4242, set live as the script asks.
+#[cfg(unix)]
+const BUILT: &str = "#!/bin/sh\n\
+    output=\"$HOME/apps/1000/output\"\n\
+    mkdir -p \"$output\"\n\
+    echo 'Successfully finished AppID 1000 build (BuildID 4242).' > \"$output/app_build_1000.log\"\n\
+    echo 'Logging in user build_bot to Steam Public...OK'\n";
+
+/// `GetAppBetas` showing `build` live on testing.
+#[cfg(unix)]
+fn testing_live(build: u64) -> &'static str {
+    Box::leak(
+        format!(
+            r#"{{"response": {{"result": 1, "betas": {{"testing": {{"BuildID": {build}}}}}}}}}"#
+        )
+        .into_boxed_str(),
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
+    let home = faked_with(BUILT);
+    let (_project, script) = project(true);
+
+    let (host, _requests) = web_api(vec![("200 OK", BETAS), ("200 OK", testing_live(4242))]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("testing: BuildID 4242, as Steam shows it"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("app 1000: BuildID 4242, set live on testing"),
+        "{stdout}"
+    );
+
+    // Steam goes on showing another build, however often it is asked.
+    let (other, _asked) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", BETAS),
+        ("200 OK", BETAS),
+        ("200 OK", BETAS),
+        ("200 OK", BETAS),
+    ]);
+    let (refused, said, why) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &other)],
+    );
+    assert_eq!(refused, Some(1_i32), "{said}{why}");
+    assert!(
+        said.contains("testing: BuildID 7, as Steam shows it"),
+        "{said}"
+    );
+    for line in [
+        "app 1000: BuildID 4242 uploaded, but Steam does not show it live on testing",
+        "set it live with steamship promote 1000 --build 4242 --branch testing",
+    ] {
+        assert!(why.contains(line), "{line:?} in {why}");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_key() {
