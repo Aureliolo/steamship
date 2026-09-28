@@ -203,8 +203,9 @@ ManifestVersion: ${manifest_version}
 LOCALE
 
 # steamship-bin repackages the Linux archive. lib32-gcc-libs, from Arch's multilib repository,
-# brings the 32-bit C libraries Valve's steamcmd for Linux loads. The binary is static and already
-# stripped, so makepkg is told not to strip it or split out debug symbols it does not have.
+# brings the 32-bit C libraries Valve's steamcmd for Linux loads, and ca-certificates what it
+# checks Steam's servers against. The binary is static and already stripped, so makepkg is told
+# not to strip it or split out debug symbols it does not have.
 if [[ "${linux_archive}" != "steamship-${version}-x86_64-linux-musl.tar.gz" ]]; then
   echo "The Linux archive is ${linux_archive}, not the one the PKGBUILD names." >&2
   exit 1
@@ -220,7 +221,7 @@ pkgdesc="Uploads game builds to Steam with Valve's steamcmd"
 arch=('x86_64')
 url='${repository}'
 license=('MIT OR Apache-2.0')
-depends=('lib32-gcc-libs')
+depends=('lib32-gcc-libs' 'ca-certificates')
 provides=('steamship')
 conflicts=('steamship')
 options=('!strip' '!debug')
@@ -250,6 +251,7 @@ printf '%s\n' \
   "	arch = x86_64" \
   "	license = MIT OR Apache-2.0" \
   "	depends = lib32-gcc-libs" \
+  "	depends = ca-certificates" \
   "	provides = steamship" \
   "	conflicts = steamship" \
   "	options = !strip" \
