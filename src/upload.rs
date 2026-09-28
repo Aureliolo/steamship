@@ -374,6 +374,30 @@ pub fn no_branch(app: u32, branch: &str, branches: &[webapi::Branch]) -> String 
     format!("\"SetLive\" names \"{branch}\", but app {app} has no branch by that name; {first}")
 }
 
+/// What Steam shows live on a branch an upload set live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Live {
+    /// The build just uploaded.
+    Confirmed,
+    /// Another build.
+    Other(u64),
+    /// The app has no branch by that name.
+    Missing,
+}
+
+/// What `branches` show live on `branch`, against the `build_id` just uploaded.
+#[must_use]
+pub fn live_now(branches: &[webapi::Branch], branch: &str, build_id: u64) -> Live {
+    match branches
+        .iter()
+        .find(|found| found.name.eq_ignore_ascii_case(branch))
+    {
+        Some(found) if found.build_id == build_id => Live::Confirmed,
+        Some(found) => Live::Other(found.build_id),
+        None => Live::Missing,
+    }
+}
+
 /// Where a build Steam kept but set live nowhere is, when its ID is not to be had.
 pub const NOT_LIVE: &str =
     "the build is on Steam but not live: it is listed in Steamworks under SteamPipe, Builds";
@@ -610,6 +634,30 @@ mod tests {
                 "{live:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_branch_is_confirmed_live_only_with_the_build_just_uploaded() {
+        let branches = [
+            webapi::Branch {
+                name: "public".to_owned(),
+                build_id: 20_000_001,
+                description: String::new(),
+                locked: false,
+            },
+            webapi::Branch {
+                name: "testing".to_owned(),
+                build_id: 20_000_740,
+                description: String::new(),
+                locked: true,
+            },
+        ];
+        assert_eq!(live_now(&branches, "Testing", 20_000_740), Live::Confirmed);
+        assert_eq!(
+            live_now(&branches, "testing", 20_000_773),
+            Live::Other(20_000_740)
+        );
+        assert_eq!(live_now(&branches, "beta", 20_000_740), Live::Missing);
     }
 
     #[test]

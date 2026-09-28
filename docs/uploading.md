@@ -75,12 +75,17 @@ steamship upload steam/app_build.vdf --version 1.4.0 --preview
 steamship upload steam/app_build.vdf --version 1.4.0
 ```
 
-The build's description is the version and the Git commit your scripts are in. Build output
-(logs, manifests, the chunk cache) goes to steamship's own folder for the app, never into your
-content, and is kept between runs so later uploads are faster. A failure or an expired token
+The build's description is the version and the Git commit the app script's own repository is
+at, whatever folder steamship runs in: a script in a worktree names that worktree's commit. Build
+output (logs, manifests, the chunk cache) goes to steamship's own folder for the app, never into
+your content, and is kept between runs so later uploads are faster. A failure or an expired token
 ends the run rather than waiting at a prompt. It prints the BuildID and, when the script names
 one, the branch it was set live on; in a GitHub Actions step it also gives the BuildID as the
 step's `build-id` output.
+
+With a Web API key at hand, a build set live on a branch is then confirmed with Steam: if Steam
+goes on showing another build there, the run fails with the `promote` command, so a script
+wrapping steamship can rely on its exit code. Steam that cannot be asked holds nothing up.
 
 When Valve builds the upload but steamcmd fails after, as when setting it live, the run still
 fails, and says the BuildID and the `steamship promote` command that sets it live, so nothing
