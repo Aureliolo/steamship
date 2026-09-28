@@ -6,8 +6,9 @@
 //! process it starts. Elsewhere it runs in a process group of its own, for the same ending.
 
 use std::ffi::OsString;
-use std::io;
+use std::io::{self, BufReader, Read};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[cfg(unix)]
@@ -23,8 +24,10 @@ pub struct Finished {
     pub output: Vec<u8>,
 }
 
-/// Runs `program` with `args` and `environment` added to steamship's, in `directory`, and waits
-/// at most `limit` for it.
+/// Runs `program` with `args` and `environment` added to steamship's, in `directory`.
+///
+/// It is waited for at most `limit`, or until it writes one of `hopeless`: words after which it
+/// never succeeds, only waits. Stopped either way, it has no exit code.
 ///
 /// # Errors
 ///
@@ -35,8 +38,33 @@ pub fn run(
     environment: &[(OsString, OsString)],
     directory: &Path,
     limit: Duration,
+    hopeless: &'static [&'static str],
 ) -> io::Result<Finished> {
-    native::run(program, args, environment, directory, limit)
+    native::run(program, args, environment, directory, limit, hopeless)
+}
+
+/// Reads `output` to its end, and sets `seen` once it has held one of `hopeless`.
+///
+/// # Errors
+///
+/// When the output cannot be read.
+pub fn watch<Output>(output: Output, hopeless: &[&str], seen: &AtomicBool) -> io::Result<Vec<u8>>
+where
+    Output: Read,
+{
+    let mut written = Vec::new();
+    // Byte by byte, so that words split across reads need no looking back, and so that the end
+    // of the output and an interrupted read are std's to tell, not a loop of this crate's.
+    for byte in BufReader::new(output).bytes() {
+        written.push(byte?);
+        if hopeless
+            .iter()
+            .any(|words| written.ends_with(words.as_bytes()))
+        {
+            seen.store(true, Ordering::Relaxed);
+        }
+    }
+    Ok(written)
 }
 
 #[cfg(test)]
@@ -87,8 +115,69 @@ mod tests {
             &[],
             &env::temp_dir(),
             limit,
+            &[],
         )
         .unwrap()
+    }
+
+    /// A line that says it will never finish, then waits a minute anyway.
+    #[cfg(windows)]
+    const HOPELESS_LINE: &str = "echo no way through& ping -n 60 127.0.0.1 > nul";
+    #[cfg(unix)]
+    const HOPELESS_LINE: &str = "echo no way through; sleep 60";
+
+    #[test]
+    fn stops_a_program_once_it_says_it_never_will_finish() {
+        let started = Instant::now();
+        let finished = run(
+            Path::new(SHELL.0),
+            &shell_args(HOPELESS_LINE),
+            &[],
+            &env::temp_dir(),
+            // Far longer than the line takes to say it, and short enough that a runner which
+            // never hears it fails here soon.
+            Duration::from_secs(15),
+            &["no way through"],
+        )
+        .unwrap();
+        assert_eq!(finished.code, None);
+        assert!(String::from_utf8_lossy(&finished.output).contains("no way through"));
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// Gives what it holds one byte at a time, as a pipe may.
+    struct Trickle<'bytes>(&'bytes [u8]);
+
+    impl Read for Trickle<'_> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let (Some(first), Some(slot)) = (self.0.first(), buf.first_mut()) else {
+                return Ok(0);
+            };
+            *slot = *first;
+            self.0 = self.0.get(1..).unwrap_or_default();
+            Ok(1)
+        }
+    }
+
+    #[test]
+    fn words_split_across_reads_are_seen_and_the_output_kept_whole() {
+        let written = b"Loading...unable to load trusted SSL root certificates\nConnecting";
+        let seen = AtomicBool::new(false);
+        let output = watch(
+            Trickle(written),
+            &["unable to load trusted SSL root certificates"],
+            &seen,
+        )
+        .unwrap();
+        assert_eq!(output, written);
+        assert!(seen.load(Ordering::Relaxed));
+        let unseen = AtomicBool::new(false);
+        drop(watch(Trickle(written), &["never said"], &unseen).unwrap());
+        assert!(!unseen.load(Ordering::Relaxed));
     }
 
     #[test]
@@ -182,7 +271,7 @@ mod tests {
     /// test rather than holding it up for good.
     fn to_the_end<Output>(mut output: Output) -> Vec<u8>
     where
-        Output: io::Read + Send + 'static,
+        Output: Read + Send + 'static,
     {
         let (sender, receiver) = mpsc::channel();
         let _reading = thread::spawn(move || {
@@ -208,6 +297,7 @@ mod tests {
             environment,
             directory,
             limit,
+            &[],
         )
         .unwrap()
         .code
@@ -298,7 +388,7 @@ mod tests {
     fn a_program_that_is_not_there_is_an_error() {
         let missing = env::temp_dir().join("steamship-no-such-program");
         let limit = Duration::from_secs(5);
-        let error = run(&missing, &[], &[], &env::temp_dir(), limit).unwrap_err();
+        let error = run(&missing, &[], &[], &env::temp_dir(), limit, &[]).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 }

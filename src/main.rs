@@ -553,6 +553,7 @@ fn check_saved_login(
         &steamcmd::environment(&home, Platform::THIS),
         &root,
         steamcmd::CHECK_LIMIT,
+        steamcmd::HOPELESS,
     );
     let finished = match finished {
         Ok(finished) => finished,
@@ -820,6 +821,7 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         &steamcmd::environment(&home, Platform::THIS),
         &root,
         steamcmd::UPLOAD_LIMIT,
+        steamcmd::HOPELESS,
     );
     let took = show::took(spinner.elapsed());
     let finished = match finished {
@@ -1278,6 +1280,7 @@ fn try_workshop(script: &Path, named: Option<&str>, new: bool) -> Result<ExitCod
         &steamcmd::environment(&home, Platform::THIS),
         &root,
         steamcmd::UPLOAD_LIMIT,
+        steamcmd::HOPELESS,
     );
     let took = show::took(spinner.elapsed());
     let finished = match finished {
