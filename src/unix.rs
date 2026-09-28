@@ -7,7 +7,7 @@
 
 use std::ffi::OsString;
 use std::fs::{self, File};
-use std::io::{self, Read as _};
+use std::io::{self, Read as _, Seek as _, SeekFrom};
 use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
 use std::os::unix::fs::{PermissionsExt as _, symlink as make_symlink};
@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 use std::{ptr, slice, str};
 
 use crate::run::Finished;
-use crate::{elf, magic};
+use crate::{elf, macho, magic};
 
 /// How often a running program is looked at to see whether it has ended.
 const POLL: Duration = Duration::from_millis(50);
@@ -381,24 +381,36 @@ fn stop_group(group: i32) {
     let _: i32 = unsafe { libc::killpg(group, libc::SIGKILL) };
 }
 
-/// Says what is wrong when `file` is a Linux program that nobody may execute.
+/// Says what is wrong when `file` is a program nobody may execute: a Linux or macOS program, or
+/// a script, which the system starts only with its executable bit set.
 #[must_use]
 pub fn missing_executable_bit(file: &Path) -> Option<String> {
-    let mut opened = match File::open(file) {
-        Ok(opened) => opened,
-        Err(error) => return Some(format!("cannot be read: {error}")),
-    };
-    match elf::is_program(&mut opened) {
-        Ok(false) => None,
-        Ok(true) => match opened.metadata() {
-            Ok(metadata) if metadata.permissions().mode() & 0o111 == 0 => {
-                Some("is a Linux program without its executable bit; run chmod +x on it".to_owned())
-            }
-            Ok(_) => None,
-            Err(error) => Some(format!("cannot be read: {error}")),
-        },
+    match unstartable(file) {
+        Ok(None) => None,
+        Ok(Some(kind)) => Some(format!(
+            "is {kind} without its executable bit; run chmod +x on it"
+        )),
         Err(error) => Some(format!("cannot be read: {error}")),
     }
+}
+
+/// What kind of program `file` is, when it is one and cannot be started as it stands.
+fn unstartable(file: &Path) -> io::Result<Option<&'static str>> {
+    let mut opened = File::open(file)?;
+    if opened.metadata()?.permissions().mode() & 0o111 != 0 {
+        return Ok(None);
+    }
+    if elf::is_program(&mut opened)? {
+        return Ok(Some("a Linux program"));
+    }
+    let _: u64 = opened.seek(SeekFrom::Start(0))?;
+    if macho::is_program(&mut opened)? {
+        return Ok(Some("a macOS program"));
+    }
+    let _: u64 = opened.seek(SeekFrom::Start(0))?;
+    let mut start = Vec::new();
+    let _: usize = opened.take(2).read_to_end(&mut start)?;
+    Ok((start == b"#!").then_some("a script (it starts with #!)"))
 }
 
 /// Valve's zips carry no permissions, so a program is made executable here, as steamcmd's own

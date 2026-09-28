@@ -2626,6 +2626,90 @@ fn builds_and_promote_use_the_key_set_and_say_what_steam_answered() {
     );
 }
 
+/// An app script for Spacewar's content that sets `branch` live, in a folder of its own.
+fn setting_live(branch: &str) -> (tempfile::TempDir, PathBuf) {
+    let folder = tempfile::tempdir().unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join("spacewar");
+    let script = folder.path().join("app_build.vdf");
+    fs::write(
+        &script,
+        format!(
+            "\"AppBuild\"\n{{\n\t\"AppID\" \"480\"\n\t\"ContentRoot\" \"{}\"\n\t\"SetLive\" \
+             \"{branch}\"\n\t\"Depots\" {{ \"481\" \"{}\" }}\n}}\n",
+            fixture.join("content").display(),
+            fixture.join("steam").join("depot_build.vdf").display()
+        ),
+    )
+    .unwrap();
+    (folder, script)
+}
+
+#[test]
+fn check_asks_steam_whether_the_live_branch_exists_when_a_key_is_at_hand() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![("200 OK", BETAS), ("200 OK", BETAS)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+
+    let (_there, found) = setting_live("Testing");
+    let found = found.to_string_lossy().into_owned();
+    let (passed, said, _) = steamship(&["check", &found], Some(home.path()), &set);
+    assert_eq!(passed, Some(0_i32), "{said}");
+    assert!(said.contains("Testing, found on Steam"), "{said}");
+
+    let (_missing, missing) = setting_live("beta2");
+    let missing = missing.to_string_lossy().into_owned();
+    let (refused, _, why) = steamship(&["check", &missing], Some(home.path()), &set);
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert!(
+        why.contains(
+            "app_build.vdf: \"SetLive\" names \"beta2\", but app 480 has no branch by that name; \
+             create it in Steamworks under SteamPipe, Builds first"
+        ),
+        "{why}"
+    );
+    let asked = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        asked.starts_with("GET /ISteamApps/GetAppBetas/v1/?") && asked.contains("appid=480"),
+        "{asked}"
+    );
+}
+
+#[test]
+fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("500 Internal Server Error", "")]);
+    let (_folder, script) = setting_live("beta2");
+    let script = script.to_string_lossy().into_owned();
+    let (unanswered, said, _) = steamship(
+        &["check", &script],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!(unanswered, Some(0_i32), "{said}");
+    assert!(said.contains("not checked"), "{said}");
+
+    // No key set or kept: nothing is asked of Steam, and nothing is said about the branch.
+    let (unasked, _never) = web_api(vec![]);
+    let (keyless, quiet, _) = steamship(
+        &["check", &script],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1"), (STAND_IN, &unasked)],
+    );
+    assert_eq!(keyless, Some(0_i32), "{quiet}");
+    assert!(!quiet.contains("branch"), "{quiet}");
+}
+
 #[test]
 fn builds_and_promote_that_steam_does_not_answer_say_so_and_exit_1() {
     let home = tempfile::tempdir().unwrap();

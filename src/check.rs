@@ -15,6 +15,8 @@ use crate::unix;
 pub struct Report {
     /// Present when the scripts could be read at all.
     pub app_id: Option<u32>,
+    /// The branch `SetLive` names, which only Steam can say whether the app has.
+    pub set_live: Option<String>,
     pub depots: Vec<DepotFiles>,
     pub problems: Vec<Problem>,
 }
@@ -23,7 +25,15 @@ pub struct Report {
 pub struct DepotFiles {
     pub depot_id: u32,
     pub files: BTreeSet<PathBuf>,
+    /// How many of the files are debug symbols, which some teams ship on purpose.
+    pub debug_symbols: usize,
 }
+
+/// The folders Unity writes beside a build and names as never to be shipped.
+const DO_NOT_SHIP: [&str; 2] = [
+    "*_BurstDebugInformation_DoNotShip",
+    "*_BackUpThisFolder_ButDontShipItWithYourGame",
+];
 
 /// Checks the app script at `path`, its depot scripts, and the content they map.
 #[must_use]
@@ -32,6 +42,7 @@ pub fn check(path: &Path) -> Report {
         Ok(app) => check_loaded(&app),
         Err(problems) => Report {
             app_id: None,
+            set_live: None,
             depots: Vec::new(),
             problems,
         },
@@ -40,15 +51,22 @@ pub fn check(path: &Path) -> Report {
 
 fn check_loaded(app: &AppScript) -> Report {
     let mut problems = Vec::new();
-    if app
+    match app
         .set_live
         .as_deref()
-        .is_some_and(|branch| branch.eq_ignore_ascii_case("default"))
+        .map(str::to_ascii_lowercase)
+        .as_deref()
     {
-        problems.push(Problem::new(
+        Some("default") => problems.push(Problem::new(
             &app.path,
             "\"SetLive\" names \"default\", which Valve only allows from the Steamworks site",
-        ));
+        )),
+        Some("public") => problems.push(Problem::new(
+            &app.path,
+            "\"SetLive\" names \"public\", the Web API's name for the default branch, which \
+             Valve only allows from the Steamworks site",
+        )),
+        _ => {}
     }
     if app
         .preview
@@ -73,13 +91,21 @@ fn check_loaded(app: &AppScript) -> Report {
     let depots = app
         .depots
         .iter()
-        .map(|depot| DepotFiles {
-            depot_id: depot.depot_id,
-            files: files(depot, &mut problems),
+        .map(|depot| {
+            let files = files(depot, &mut problems);
+            DepotFiles {
+                depot_id: depot.depot_id,
+                debug_symbols: files.iter().filter(|file| is_debug_symbols(file)).count(),
+                files,
+            }
         })
         .collect();
     Report {
         app_id: Some(app.app_id),
+        set_live: app
+            .set_live
+            .clone()
+            .filter(|branch| !branch.trim().is_empty()),
         depots,
         problems,
     }
@@ -125,7 +151,74 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
     for file in &mapped {
         content_problems(depot.depot_id, file, problems);
     }
+    for folder in not_to_ship(root, &mapped) {
+        problems.push(Problem::new(
+            &folder,
+            format!(
+                "is in depot {}; Unity names this folder as one not to ship",
+                depot.depot_id
+            ),
+        ));
+    }
+    for script in &depot.install_scripts {
+        let path = root.join(scripts::native(script));
+        let message = if !path.is_file() {
+            format!("is not a file in {}", root.display())
+        } else if !mapped.iter().any(|file| same_file(file, &path)) {
+            "is not in the depot; map it with a FileMapping too".to_owned()
+        } else {
+            continue;
+        };
+        problems.push(Problem::new(
+            &depot.path,
+            format!(
+                "depot {}: InstallScript \"{script}\" {message}",
+                depot.depot_id
+            ),
+        ));
+    }
     mapped
+}
+
+/// Each folder under `root`, holding one of `files`, that Unity names as not to be shipped.
+fn not_to_ship(root: &Path, files: &BTreeSet<PathBuf>) -> BTreeSet<PathBuf> {
+    let mut folders = BTreeSet::new();
+    for file in files {
+        let mut folder = root.to_path_buf();
+        let relative = file.strip_prefix(root).unwrap_or(file);
+        for part in relative.parent().into_iter().flat_map(Path::components) {
+            folder.push(part);
+            let name = part.as_os_str().to_string_lossy();
+            if DO_NOT_SHIP
+                .iter()
+                .any(|pattern| pattern::matches(pattern, &name))
+            {
+                let _new: bool = folders.insert(folder.clone());
+                break;
+            }
+        }
+    }
+    folders
+}
+
+/// Symbols for a debugger: Windows' program databases, a macOS symbol bundle's contents, and
+/// Linux's separate debug files.
+fn is_debug_symbols(file: &Path) -> bool {
+    let extension = |path: &Path, wanted: &str| {
+        path.extension()
+            .is_some_and(|found| found.eq_ignore_ascii_case(wanted))
+    };
+    extension(file, "pdb")
+        || extension(file, "debug")
+        || file.ancestors().any(|folder| extension(folder, "dSYM"))
+}
+
+/// Whether two paths name the same file, however each was spelt.
+fn same_file(one: &Path, other: &Path) -> bool {
+    match (fs::canonicalize(one), fs::canonicalize(other)) {
+        (Ok(one), Ok(other)) => one == other,
+        _ => false,
+    }
 }
 
 fn mapped_by(root: &Path, mapping: &FileMapping) -> Result<Vec<PathBuf>, String> {
