@@ -276,11 +276,26 @@ pub fn is_default(branch: &str) -> bool {
         .any(|default| branch.eq_ignore_ascii_case(default))
 }
 
+/// The name Steamworks shows for `branch`: the Web API calls the default branch `public`, which
+/// the site, and every message of steamship's, calls `default`.
+#[must_use]
+pub fn shown_name(branch: &str) -> &str {
+    if is_default(branch) {
+        "default"
+    } else {
+        branch
+    }
+}
+
 /// `branch` as a line: its name, the build live on it and its description, and whether it takes
 /// a password.
 #[must_use]
 pub fn branch_line(branch: &Branch) -> String {
-    let mut parts = vec![format!("{}: BuildID {}", branch.name, branch.build_id)];
+    let mut parts = vec![format!(
+        "{}: BuildID {}",
+        shown_name(&branch.name),
+        branch.build_id
+    )];
     if !branch.description.is_empty() {
         parts.push(branch.description.clone());
     }
@@ -301,7 +316,7 @@ pub fn build_line(build: &Build, branches: &[Branch]) -> String {
     let names: Vec<&str> = branches
         .iter()
         .filter(|branch| branch.build_id == build.build_id)
-        .map(|branch| branch.name.as_str())
+        .map(|branch| shown_name(&branch.name))
         .collect();
     if !names.is_empty() {
         parts.push(format!("live on {}", names.join(" and ")));
@@ -739,6 +754,30 @@ mod tests {
             created: 0,
         };
         assert_eq!(build_line(&older, &branches), "1970-01-01");
+    }
+
+    #[test]
+    fn the_default_branch_is_shown_by_the_name_steamworks_gives_it() {
+        // As Steam's Web API answered for Fantasy Guild Manager.
+        let public = Branch {
+            description: "Public default branch".to_owned(),
+            ..branch("public", 25_585_928, false)
+        };
+        assert_eq!(
+            branch_line(&public),
+            "default: BuildID 25585928, Public default branch"
+        );
+        let build = Build {
+            build_id: 25_585_928,
+            description: "0.1.0-test b4ca836e0512".to_owned(),
+            created: 0,
+        };
+        assert_eq!(
+            build_line(&build, &[public]),
+            "1970-01-01, 0.1.0-test b4ca836e0512, live on default"
+        );
+        assert_eq!(shown_name("Public"), "default");
+        assert_eq!(shown_name("testing"), "testing");
     }
 
     /// A server on this machine that answers the next request with `status` and `body`, and
