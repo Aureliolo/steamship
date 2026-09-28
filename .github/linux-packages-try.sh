@@ -14,7 +14,7 @@ case "${SYSTEM}" in
     apt-get update
     apt-get install --yes --no-install-recommends lintian git
     lintian --fail-on error,warning --display-info "${deb}"
-    dpkg --purge --force-depends ca-certificates
+    apt-get purge --yes --autoremove ca-certificates
     rm -rf /etc/ssl/certs
     apt-get install --yes --no-install-recommends "${deb}"
     dpkg --verify steamship
