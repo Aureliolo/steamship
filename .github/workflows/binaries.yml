@@ -153,4 +153,5 @@ jobs:
           set -euo pipefail
           found='[.runs[].results[] | select((.level // "warning") == "error" and (.kind // "fail") == "fail")]'
           jq -r "${found}[] | \"\(.ruleId): \(.message.text)\"" binskim.sarif
-          test "$(jq "${found} | length" binskim.sarif)" = 0
+          # Decided by jq's own exit status: its text ends in a carriage return on Windows.
+          jq -e "${found} | length == 0" binskim.sarif > /dev/null
