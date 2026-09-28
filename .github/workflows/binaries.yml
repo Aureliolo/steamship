@@ -94,9 +94,10 @@ jobs:
           curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${package}" \
             "https://api.nuget.org/v3-flatcontainer/microsoft.codeanalysis.binskim/${BINSKIM_VERSION}/microsoft.codeanalysis.binskim.${BINSKIM_VERSION}.nupkg"
           echo "${BINSKIM_SHA256}  ${package}" | sha256sum --check --strict
-          # Unpacked beside the checkout, by a relative path: on Windows the runner's own folders
-          # start with a drive letter, which bash cannot glob.
-          unzip -q "${package}" 'tools/*' -d .binskim
+          # Unpacked whole, since Git for Windows' unzip will not let a wildcard cross a folder,
+          # and beside the checkout by a relative path, since the runner's own folders there start
+          # with a drive letter, which bash cannot glob.
+          unzip -q "${package}" -d .binskim
           # A zip carries no executable bit, which only Linux asks for.
           if [[ "${RUNNER_OS}" == Linux ]]; then
             chmod +x .binskim/tools/*/linux-x64/BinSkim
