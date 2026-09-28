@@ -11,6 +11,7 @@ pub mod digest;
 pub mod download;
 pub mod dump;
 pub mod elf;
+pub mod init;
 pub mod install;
 pub mod keychain;
 pub mod login;
