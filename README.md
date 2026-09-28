@@ -37,8 +37,8 @@ brew tap aureliolo/steamship https://github.com/Aureliolo/steamship
 brew install aureliolo/steamship/steamship
 # Windows
 winget install Aureliolo.steamship
-# anywhere
-cargo binstall steamship
+# anywhere Rust is installed
+cargo install --locked steamship
 ```
 
 Every way to install, and how to verify a download, is on the
