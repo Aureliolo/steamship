@@ -533,10 +533,16 @@ mod tests {
             b"\"CMWebSocket\"\t\t\"a value, not a block\"\n\"MTBF\"\t\t\"1\"\n",
             b"\"CMWebSocket\"\n\"MTBF\"\t\t\"1\"\n{\n}\n",
             b"\"CMWebSocket\"\n{\n\t\"never closed\"\n\t{\n\t}\n",
+            b"\"CMWebSocket\"\n}\n\"MTBF\"\t\t\"1\"\n",
             b"\"CMWebSocket\"\n{\n}\n\xff",
         ] {
             assert_eq!(without_servers(config), config, "{}", config.escape_ascii());
         }
+    }
+
+    #[test]
+    fn the_limit_is_the_48_kb_github_keeps_in_a_secret() {
+        assert_eq!(SECRET_LIMIT, 49_152);
     }
 
     #[test]
