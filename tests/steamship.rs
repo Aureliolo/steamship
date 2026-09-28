@@ -524,21 +524,21 @@ fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_
         .into_boxed_str(),
     );
     let (host, requests) = web_api(vec![("200 OK", BETAS), ("200 OK", builds)]);
-    let (code, stdout, stderr) = upload(
+    let (keyed, keyed_out, keyed_err) = upload(
         &script,
         home.path(),
         &["--version", "1.4.0"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
-    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(keyed, Some(1_i32), "{keyed_out}{keyed_err}");
     for said in [
         "app 1000: built as BuildID 25585928, then steamcmd failed",
         "\"SetLive\" names \"testing\": Steam sets no build live on a branch the app does not have",
         "set it live with steamship promote 1000 --build 25585928 --branch testing",
     ] {
-        assert!(stderr.contains(said), "{said:?} in {stderr}");
+        assert!(keyed_err.contains(said), "{said:?} in {keyed_err}");
     }
-    assert!(!stderr.contains("listed in Steamworks"), "{stderr}");
+    assert!(!keyed_err.contains("listed in Steamworks"), "{keyed_err}");
     let _branches = requests.recv_timeout(Duration::from_secs(10)).unwrap();
     let asked = requests.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(
