@@ -8,6 +8,8 @@ publish = false
 
 [dependencies]
 clap = "4.6.7"
+clap_complete = "4.6.11"
+clap_mangen = "0.3.3"
 # Markdown to HTML, without the command-line tool its default features build.
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
 steamship = { path = ".." }

@@ -41,7 +41,8 @@ env:
 
 jobs:
   # A pull request can change the files by hand; what reaches users has to be exactly what the
-  # release's own signed checksums say.
+  # release's own signed checksums say, written by the script as it was at that release's tag. A
+  # change to the script shows in the next release, which installs what it wrote before merging.
   signed:
     name: packages (signed)
     if: github.event_name == 'pull_request'
@@ -72,7 +73,9 @@ jobs:
               --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release-build.yml" \
               --source-ref "refs/tags/${tag}" --deny-self-hosted-runners
           done
-          .github/packages.sh "${version}" release written
+          gh api -H "Accept: application/vnd.github.raw" \
+            "repos/${GITHUB_REPOSITORY}/contents/.github/packages.sh?ref=${tag}" > "${RUNNER_TEMP}/packages.sh"
+          bash "${RUNNER_TEMP}/packages.sh" "${version}" release written
           diff -u written/Formula/steamship.rb Formula/steamship.rb
           diff -u written/bucket/steamship.json bucket/steamship.json
 
@@ -128,6 +131,16 @@ jobs:
           brew tap aureliolo/steamship "${GITHUB_WORKSPACE}"
           brew install aureliolo/steamship/steamship
           test "$(steamship --version)" = "steamship ${version}"
+          # A glob that matches nothing installs nothing without a word, so what the formula says
+          # it installs is looked for where Homebrew puts it.
+          if grep -q 'man1.install' Formula/steamship.rb; then
+            prefix="$(brew --prefix)"
+            test -f "${prefix}/share/man/man1/steamship.1"
+            test -f "${prefix}/share/man/man1/steamship-upload.1"
+            test -f "${prefix}/etc/bash_completion.d/steamship"
+            test -f "${prefix}/share/zsh/site-functions/_steamship"
+            test -f "${prefix}/share/fish/vendor_completions.d/steamship.fish"
+          fi
           brew test aureliolo/steamship/steamship
           brew audit --strict aureliolo/steamship/steamship
           # The other systems' archives, downloaded and checked against their SHA-256 here, since
