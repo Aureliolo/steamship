@@ -1,8 +1,8 @@
 //! Uploading from CI, where nobody is there to log in.
 //!
-//! steamcmd's saved login is a token in one file. `steamship ci` packs that file and the build
-//! account's name into one value for a CI secret, and `upload` and `status` unpack it into the
-//! home when `STEAMSHIP_LOGIN` holds it. It never holds a password or a Steam Guard secret, but
+//! steamcmd's saved login is a token in one file. `steamship ci` packs that file, the build
+//! account's name and the day it packed them into one value for a CI secret, and `upload` and
+//! `status` unpack it into the home when `STEAMSHIP_LOGIN` holds it. It never holds a password or a Steam Guard secret, but
 //! it logs the account in until the token expires, so it is kept like one.
 
 use std::error;
@@ -18,17 +18,27 @@ use crate::digest;
 use crate::platform::Platform;
 use crate::steamcmd;
 use crate::vdf;
+use crate::webapi;
 
 /// The environment variable a CI hands the packed login over in, and the secret's name.
 pub const VARIABLE: &str = "STEAMSHIP_LOGIN";
 
-/// Marks a value as a login packed by steamship, and how it was packed.
-const TAG: &str = "steamship-login-1:";
+/// Marks a value as a login packed by steamship, and how it was packed: this form carries the day
+/// it was packed, before the account.
+const TAG: &str = "steamship-login-2:";
+
+/// The first form, with no day, which a login packed by an earlier steamship still carries.
+const FIRST_TAG: &str = "steamship-login-1:";
+
+/// The most GitHub keeps in one secret, in bytes.
+pub const SECRET_LIMIT: usize = 48 * 1024;
 
 /// A saved login and the account it is for.
 pub struct Login {
     account: Account,
     config: Zeroizing<Vec<u8>>,
+    /// The day `steamship ci` packed it, as YYYY-MM-DD in UTC; unknown in the first form.
+    packed_on: Option<String>,
 }
 
 impl fmt::Debug for Login {
@@ -70,17 +80,19 @@ impl fmt::Display for Error {
 impl error::Error for Error {}
 
 impl Login {
-    /// The login steamcmd saved in `home` on `platform`, for `account`.
+    /// The login steamcmd saved in `home` on `platform`, for `account`, without the servers
+    /// steamcmd last reached (see [`without_servers`]).
     ///
     /// # Errors
     ///
     /// When there is none, or it cannot be read.
     pub fn saved(home: &Path, platform: Platform, account: Account) -> Result<Self, Error> {
         let path = steamcmd::saved_login(home, platform);
-        match fs::read(&path) {
+        match fs::read(&path).map(Zeroizing::new) {
             Ok(config) if !config.is_empty() => Ok(Self {
                 account,
-                config: Zeroizing::new(config),
+                config: Zeroizing::new(without_servers(&config)),
+                packed_on: None,
             }),
             Ok(_) => Err(Error::NotSaved { path }),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Err(Error::NotSaved { path }),
@@ -88,20 +100,29 @@ impl Login {
         }
     }
 
-    /// The login as one line of text, for a secret.
+    /// The login as one line of text, for a secret, packed on the day `on` (YYYY-MM-DD).
     #[must_use]
-    pub fn packed(&self) -> Zeroizing<String> {
+    pub fn packed(&self, on: &str) -> Zeroizing<String> {
         let digits = Zeroizing::new(digest::hex(&self.config));
-        Zeroizing::new(format!("{TAG}{}:{}", self.account.name(), *digits))
+        Zeroizing::new(format!("{TAG}{on}:{}:{}", self.account.name(), *digits))
     }
 
     /// The login `text` packs.
     ///
     /// # Errors
     ///
-    /// When `text` is not a login packed by [`Login::packed`].
+    /// When `text` is not a login packed by [`Login::packed`], or by an earlier steamship.
     pub fn unpack(text: &str) -> Result<Self, Error> {
-        let rest = text.trim().strip_prefix(TAG).ok_or(Error::Unreadable)?;
+        let text = text.trim();
+        let (packed_on, rest) = if let Some(rest) = text.strip_prefix(TAG) {
+            let (on, rest) = rest.split_once(':').ok_or(Error::Unreadable)?;
+            if !is_day(on) {
+                return Err(Error::Unreadable);
+            }
+            (Some(on.to_owned()), rest)
+        } else {
+            (None, text.strip_prefix(FIRST_TAG).ok_or(Error::Unreadable)?)
+        };
         let (name, digits) = rest.split_once(':').ok_or(Error::Unreadable)?;
         // The name is not repeated in the error, as the rest may be a real login.
         let account = Account::parse(name).ok().ok_or(Error::Unreadable)?;
@@ -111,12 +132,19 @@ impl Login {
         Ok(Self {
             account,
             config: Zeroizing::new(config),
+            packed_on,
         })
     }
 
     #[must_use]
     pub const fn account(&self) -> &Account {
         &self.account
+    }
+
+    /// The day `steamship ci` packed this login, when it says.
+    #[must_use]
+    pub fn packed_on(&self) -> Option<&str> {
+        self.packed_on.as_deref()
     }
 
     /// Puts the login where steamcmd on `platform` looks for it in `home`, over any there, and
@@ -137,6 +165,63 @@ impl Login {
         write_private(&path, &self.config).map_err(at)?;
         Ok(path)
     }
+}
+
+/// steamcmd's `config.vdf` without its `CMWebSocket` block, the servers it last reached.
+///
+/// steamcmd finds them again for itself, and they are most of the file, more of it the longer
+/// steamcmd runs; the login is a small part. The rest is kept byte for byte and in its order,
+/// since steamcmd reads the login only where it wrote it: cut down to the login alone, the file
+/// is refused. A file not laid out as steamcmd lays it out is kept whole.
+#[must_use]
+pub fn without_servers(config: &[u8]) -> Vec<u8> {
+    let Ok(text) = str::from_utf8(config) else {
+        return config.to_vec();
+    };
+    let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let Some(start) = lines
+        .iter()
+        .position(|line| line.trim() == "\"CMWebSocket\"")
+    else {
+        return config.to_vec();
+    };
+    let mut depth = 0_usize;
+    for (index, line) in lines.iter().enumerate().skip(start.saturating_add(1)) {
+        match line.trim() {
+            "{" => depth = depth.saturating_add(1),
+            "}" if depth > 1 => depth = depth.saturating_sub(1),
+            "}" if depth == 1 => {
+                let kept = lines
+                    .iter()
+                    .take(start)
+                    .chain(lines.iter().skip(index.saturating_add(1)));
+                return kept.copied().collect::<String>().into_bytes();
+            }
+            // The key's own value is not a block, or a line comes before its block opens.
+            _ if depth == 0 => return config.to_vec(),
+            _ => {}
+        }
+    }
+    config.to_vec()
+}
+
+/// Whether `text` is a day as [`day`] writes one.
+fn is_day(text: &str) -> bool {
+    text.len() == 10
+        && text.char_indices().all(|(at, character)| {
+            if at == 4 || at == 7 {
+                character == '-'
+            } else {
+                character.is_ascii_digit()
+            }
+        })
+}
+
+/// The day `seconds` since 1970 fall on, in UTC, as YYYY-MM-DD.
+#[must_use]
+pub fn day(seconds: u64) -> String {
+    let (year, month, day) = webapi::date(seconds);
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 /// Writes `contents` to `path` readable by its owner alone where the file system says who may
@@ -277,18 +362,21 @@ pub fn step(script: &str, pinned: &str, release: &str, secret: &str) -> String {
 mod tests {
     use super::*;
 
+    const DAY: &str = "2026-09-28";
+
     fn login() -> Login {
         Login {
             account: Account::parse("build_bot").unwrap(),
             config: Zeroizing::new(b"\"token\" \"a_saved_login_token\"\n".to_vec()),
+            packed_on: None,
         }
     }
 
     #[test]
-    fn a_packed_login_unpacks_to_the_same_account_and_file() {
-        let packed = login().packed();
+    fn a_packed_login_unpacks_to_the_same_account_file_and_day() {
+        let packed = login().packed(DAY);
         assert!(
-            packed.starts_with("steamship-login-1:build_bot:"),
+            packed.starts_with("steamship-login-2:2026-09-28:build_bot:"),
             "{}",
             *packed
         );
@@ -299,15 +387,32 @@ mod tests {
         let unpacked = Login::unpack(&format!("  {}\n", *packed)).unwrap();
         assert_eq!(unpacked.account().name(), "build_bot");
         assert_eq!(*unpacked.config, *login().config);
+        assert_eq!(unpacked.packed_on(), Some(DAY));
+        assert_eq!(login().packed_on(), None);
+    }
+
+    #[test]
+    fn a_login_packed_by_an_earlier_steamship_still_unpacks_with_no_day() {
+        let digits = digest::hex(&login().config);
+        let unpacked = Login::unpack(&format!("steamship-login-1:build_bot:{digits}")).unwrap();
+        assert_eq!(unpacked.account().name(), "build_bot");
+        assert_eq!(*unpacked.config, *login().config);
+        assert_eq!(unpacked.packed_on(), None);
     }
 
     #[test]
     fn only_a_login_packed_by_steamship_unpacks_and_none_of_another_is_repeated() {
-        let packed = login().packed();
+        let packed = login().packed(DAY);
         let digits = packed.rsplit(':').next().unwrap();
         for wrong in [
             String::new(),
-            "steamship-login-2:build_bot:00".to_owned(),
+            format!("steamship-login-3:{DAY}:build_bot:{digits}"),
+            format!("steamship-login-2:build_bot:{digits}"),
+            format!("steamship-login-2:2026-9-28:build_bot:{digits}"),
+            format!("steamship-login-2:2026-09-2x:build_bot:{digits}"),
+            format!("steamship-login-2:2026_09_28:build_bot:{digits}"),
+            format!("steamship-login-2:{DAY}:{digits}"),
+            format!("steamship-login-1:{DAY}:build_bot:{digits}"),
             format!("steamship-login-1:{digits}"),
             format!("steamship-login-1:+quit:{digits}"),
             "steamship-login-1:build_bot:".to_owned(),
@@ -337,7 +442,7 @@ mod tests {
             assert_eq!(fs::read(&path).unwrap(), *login().config);
             let saved =
                 Login::saved(home.path(), platform, Account::parse("build_bot").unwrap()).unwrap();
-            assert_eq!(*saved.packed(), *login().packed());
+            assert_eq!(*saved.packed(DAY), *login().packed(DAY));
         }
     }
 
@@ -393,6 +498,68 @@ mod tests {
         fs::write(&path, "").unwrap();
         let empty = Login::saved(home.path(), Platform::Linux, account()).unwrap_err();
         assert!(matches!(empty, Error::NotSaved { .. }), "{empty}");
+    }
+
+    /// A config.vdf laid out as steamcmd writes it, the servers it reached among its settings.
+    const CONFIG: &str = "\"InstallConfigStore\"\n{\n\t\"Software\"\n\t{\n\t\t\"Valve\"\n\t\t{\n\t\t\t\"Steam\"\n\t\t\t{\n\t\t\t\t\"AutoUpdateWindowEnabled\"\t\t\"0\"\n\t\t\t\t\"CMWebSocket\"\n\t\t\t\t{\n\t\t\t\t\t\"cmp1.steamserver.net:443\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"dc\"\t\t\"fra\"\n\t\t\t\t\t}\n\t\t\t\t\t\"cmp2.steamserver.net:27018\"\n\t\t\t\t\t{\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t\t\"MTBF\"\t\t\"123\"\n\t\t\t\t\"ConnectCache\"\n\t\t\t\t{\n\t\t\t\t\t\"1a2b3c\"\t\t\"a_saved_login_token\"\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n";
+
+    #[test]
+    fn a_saved_login_is_packed_without_the_servers_steamcmd_reached() {
+        let kept = String::from_utf8(without_servers(CONFIG.as_bytes())).unwrap();
+        assert_eq!(
+            kept,
+            CONFIG.replace(
+                "\t\t\t\t\"CMWebSocket\"\n\t\t\t\t{\n\t\t\t\t\t\"cmp1.steamserver.net:443\"\n\t\t\t\t\t{\n\t\t\t\t\t\t\"dc\"\t\t\"fra\"\n\t\t\t\t\t}\n\t\t\t\t\t\"cmp2.steamserver.net:27018\"\n\t\t\t\t\t{\n\t\t\t\t\t}\n\t\t\t\t}\n",
+                ""
+            )
+        );
+        let home = tempfile::tempdir().unwrap();
+        let path = steamcmd::saved_login(home.path(), Platform::Linux);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, CONFIG).unwrap();
+        let saved = Login::saved(
+            home.path(),
+            Platform::Linux,
+            Account::parse("build_bot").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(*saved.config, kept.into_bytes());
+    }
+
+    #[test]
+    fn a_file_not_laid_out_as_steamcmd_lays_it_out_is_packed_whole() {
+        for config in [
+            b"\"Steam\"\n{\n\t\"ConnectCache\"\n\t{\n\t}\n}\n".as_slice(),
+            b"\"CMWebSocket\"\t\t\"a value, not a block\"\n\"MTBF\"\t\t\"1\"\n",
+            b"\"CMWebSocket\"\n\"MTBF\"\t\t\"1\"\n{\n}\n",
+            b"\"CMWebSocket\"\n{\n\t\"never closed\"\n\t{\n\t}\n",
+            b"\"CMWebSocket\"\n}\n\"MTBF\"\t\t\"1\"\n",
+            b"\"CMWebSocket\"\n{\n}\n\xff",
+        ] {
+            assert_eq!(without_servers(config), config, "{}", config.escape_ascii());
+        }
+    }
+
+    #[test]
+    fn the_limit_is_the_48_kb_github_keeps_in_a_secret() {
+        assert_eq!(SECRET_LIMIT, 49_152);
+    }
+
+    #[test]
+    fn a_day_is_written_as_iso_8601_in_utc() {
+        assert_eq!(day(0), "1970-01-01");
+        assert_eq!(day(1_790_581_931), "2026-09-28");
+        assert!(is_day(&day(1_790_581_931)));
+        for wrong in [
+            "",
+            "2026-09-2",
+            "2026-09-280",
+            "2026/09/28",
+            "20260-9-28",
+            "2026-09-2\u{668}",
+        ] {
+            assert!(!is_day(wrong), "{wrong}");
+        }
     }
 
     #[test]
