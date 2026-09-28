@@ -61,8 +61,8 @@ and then publishes and packages:
 - `steamship.json`, the Scoop manifest, which `scoop install` reads by the release's address.
 - An SPDX SBOM of the five binaries.
 - A Sigstore build-provenance attestation over all of these, and an SBOM attestation tying the
-  SBOM to each archive and package, both in `steamship-X.Y.Z.intoto.jsonl`. They are keyless: there is no
-  signing key anywhere.
+  SBOM to each archive and package, both in `steamship-X.Y.Z.intoto.jsonl`. They are keyless:
+  there is no signing key anywhere.
 
 Releases are immutable: a published one cannot be edited or replaced, and no release tag can be
 moved or deleted.
