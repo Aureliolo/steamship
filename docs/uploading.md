@@ -83,7 +83,8 @@ description or change note longer than Steam takes. Paths are relative to the sc
 
 A script with no `publishedfileid`, or `0`, makes a new item: steamship prints its ID and the
 line to add to the script, so that later uploads update the same item. Your script is never
-rewritten.
+rewritten. In CI nobody adds that line, so every run would make another item: there, a script
+with no `publishedfileid` is refused unless `--new` is given.
 
 ## Branches and promoting
 

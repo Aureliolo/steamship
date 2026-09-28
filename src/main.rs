@@ -73,11 +73,13 @@ fn main() -> ExitCode {
         Command::Promote { app, build, branch } => match try_promote(&app, build, &branch) {
             Ok(code) | Err(code) => code,
         },
-        Command::Workshop { script, account } => {
-            match try_workshop(&script, named(account.as_deref())) {
-                Ok(code) | Err(code) => code,
-            }
-        }
+        Command::Workshop {
+            script,
+            account,
+            new,
+        } => match try_workshop(&script, named(account.as_deref()), new) {
+            Ok(code) | Err(code) => code,
+        },
         Command::Login {
             web_api_key: true, ..
         } => match try_key_login() {
@@ -1101,7 +1103,7 @@ fn try_promote(app: &str, build: u64, branch: &str) -> Result<ExitCode, ExitCode
     Ok(ExitCode::SUCCESS)
 }
 
-fn try_workshop(script: &Path, named: Option<&str>) -> Result<ExitCode, ExitCode> {
+fn try_workshop(script: &Path, named: Option<&str>, new: bool) -> Result<ExitCode, ExitCode> {
     show::title("workshop");
     show::field("script", &script.display().to_string());
     let packed = packed_login()?;
@@ -1109,7 +1111,7 @@ fn try_workshop(script: &Path, named: Option<&str>) -> Result<ExitCode, ExitCode
         (Some(packed), None) => packed.account().clone(),
         _ => account(named, false)?.0,
     };
-    let item = checked_item(script)?;
+    let item = checked_item(script, new)?;
     let (home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let copy =
@@ -1162,6 +1164,7 @@ fn try_workshop(script: &Path, named: Option<&str>) -> Result<ExitCode, ExitCode
                 &format!("app {}: Workshop item {published}", item.app_id),
                 &detail,
             );
+            output("published-file-id", published, "the item's ID");
             ExitCode::SUCCESS
         }
         workshop::Outcome::NotLoggedIn(reason) => {
@@ -1197,13 +1200,26 @@ fn try_workshop(script: &Path, named: Option<&str>) -> Result<ExitCode, ExitCode
 }
 
 /// The Workshop item `script` describes, checked, and said.
-fn checked_item(script: &Path) -> Result<workshop::Item, ExitCode> {
+fn checked_item(script: &Path, new: bool) -> Result<workshop::Item, ExitCode> {
     let item = workshop::check(script).map_err(|problems| {
         for problem in &problems {
             show::failure("refused", &problem.to_string(), None);
         }
         ExitCode::from(REFUSED)
     })?;
+    // Nobody adds the new item's ID back to the script from CI, so every run would make another.
+    if item.published.is_none() && !new && dump::in_ci(|name| env::var(name).ok()) {
+        show::failure(
+            "refused",
+            &format!(
+                "{}: there is no \"publishedfileid\", so every CI run would make a new Workshop \
+                 item; add the ID of the item to update, or pass --new to make one",
+                script.display()
+            ),
+            None,
+        );
+        return Err(ExitCode::from(REFUSED));
+    }
     let which = item.published.map_or_else(
         || "a new item".to_owned(),
         |published| format!("item {published}"),
@@ -1219,10 +1235,15 @@ fn checked_item(script: &Path) -> Result<workshop::Item, ExitCode> {
     Ok(item)
 }
 
-/// Hands `build_id` on as the `build-id` output of the GitHub Actions step steamship runs in,
-/// through the file GitHub names for a step's outputs. The upload is done by then, so a file that
-/// cannot be written is said and does not fail it.
+/// Hands `build_id` on as the `build-id` output of the GitHub Actions step steamship runs in.
 fn hand_on(build_id: u64) {
+    output("build-id", build_id, "the BuildID");
+}
+
+/// Sets the output `name` of the GitHub Actions step steamship runs in to `value`, through the
+/// file GitHub names for a step's outputs. The upload is done by then, so a file that cannot be
+/// written is said, as `what`, and does not fail it.
+fn output(name: &str, value: u64, what: &str) {
     let Some(outputs) = env::var_os("GITHUB_OUTPUT").filter(|path| !path.is_empty()) else {
         return;
     };
@@ -1230,11 +1251,11 @@ fn hand_on(build_id: u64) {
         .append(true)
         .open(&outputs)
         .and_then(|mut file| {
-            io::Write::write_all(&mut file, format!("build-id={build_id}\n").as_bytes())
+            io::Write::write_all(&mut file, format!("{name}={value}\n").as_bytes())
         });
     if let Err(error) = written {
         show::note(&format!(
-            "the BuildID could not be handed to the workflow: {error}"
+            "{what} could not be handed to the workflow: {error}"
         ));
     }
 }

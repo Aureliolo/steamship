@@ -131,13 +131,17 @@ pub enum Command {
     ///
     /// Checks a `workshopitem` script and what it names, then has steamcmd upload the item with
     /// the saved login. A script with no `publishedfileid` makes a new item, whose ID is printed
-    /// to add to the script so that later uploads update the same item.
+    /// to add to the script so that later uploads update the same item. In CI that is refused
+    /// without `--new`, since every run would make another.
     Workshop {
         /// The item script, such as `workshop/item.vdf`.
         script: PathBuf,
         /// The build account, if not the one the last login remembered.
         #[arg(long, env = ACCOUNT)]
         account: Option<String>,
+        /// Make a new item from CI, which a script with no `publishedfileid` otherwise is not.
+        #[arg(long)]
+        new: bool,
     },
     /// Show an app's branches and last builds.
     ///

@@ -24,6 +24,16 @@ where
     lookup("GITHUB_ACTIONS").is_some_and(|value| value == "true")
 }
 
+/// Whether steamship runs in CI, as GitHub Actions and most other systems say by setting `CI`
+/// to anything but empty or `false`.
+#[must_use]
+pub fn in_ci<Lookup>(lookup: Lookup) -> bool
+where
+    Lookup: Fn(&str) -> Option<String>,
+{
+    in_actions(&lookup) || lookup("CI").is_some_and(|value| !value.is_empty() && value != "false")
+}
+
 /// How long each file in a folder of logs was, taken before a run, so that only what the run
 /// added is shown: steamcmd adds to its logs rather than starting them afresh.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -121,6 +131,28 @@ mod tests {
         assert!(!with(Some("false")));
         assert!(!with(Some("")));
         assert!(!with(None));
+    }
+
+    #[test]
+    fn ci_is_said_by_ci_set_to_anything_but_empty_or_false_or_by_github_actions() {
+        let with = |set: &[(&str, &str)]| {
+            let set: Vec<(String, String)> = set
+                .iter()
+                .map(|&(name, value)| (name.to_owned(), value.to_owned()))
+                .collect();
+            in_ci(|name| {
+                set.iter()
+                    .find(|(found, _)| found == name)
+                    .map(|(_, value)| value.clone())
+            })
+        };
+        assert!(with(&[("CI", "true")]));
+        assert!(with(&[("CI", "1")]));
+        assert!(!with(&[("CI", "false")]));
+        assert!(!with(&[("CI", "")]));
+        assert!(!with(&[]));
+        assert!(with(&[("GITHUB_ACTIONS", "true")]));
+        assert!(with(&[("GITHUB_ACTIONS", "true"), ("CI", "false")]));
     }
 
     #[test]
