@@ -208,18 +208,40 @@ fn help_lists_every_command_with_one_short_line() {
         "named as it is typed, on Windows too: {stdout}"
     );
     for line in [
-        "  login     Log in to Steam, once, for uploads\n",
-        "  status    Show the login and steamcmd, checking the login with Steam\n",
-        "  check     Check the build scripts, without logging in\n",
-        "  upload    Check, build and upload, then print the build ID\n",
-        "  workshop  Upload a Workshop item, then print its ID\n",
-        "  builds    Show an app's branches and last builds\n",
-        "  promote   Set an uploaded build live on a branch\n",
-        "  ci        Set up uploads from CI, the login kept as a secret\n",
-        "  logout    Forget the saved login\n",
-        "  install   Install or verify the pinned steamcmd\n",
+        "  login        Log in to Steam, once, for uploads\n",
+        "  status       Show the login and steamcmd, checking the login with Steam\n",
+        "  check        Check the build scripts, without logging in\n",
+        "  upload       Check, build and upload, then print the build ID\n",
+        "  workshop     Upload a Workshop item, then print its ID\n",
+        "  builds       Show an app's branches and last builds\n",
+        "  promote      Set an uploaded build live on a branch\n",
+        "  ci           Set up uploads from CI, the login kept as a secret\n",
+        "  logout       Forget the saved login\n",
+        "  install      Install or verify the pinned steamcmd\n",
+        "  completions  Print tab completion for bash, zsh, fish, PowerShell or elvish\n",
     ] {
         assert!(stdout.contains(line), "{line:?} in {stdout}");
+    }
+}
+
+#[test]
+fn completions_are_printed_for_each_shell_and_name_every_command() {
+    for (shell, opening) in [
+        ("bash", "_steamship() {"),
+        ("zsh", "#compdef steamship"),
+        ("fish", "complete -c steamship"),
+        (
+            "powershell",
+            "Register-ArgumentCompleter -Native -CommandName 'steamship'",
+        ),
+        ("elvish", "set edit:completion:arg-completer[steamship]"),
+    ] {
+        let (code, stdout, stderr) = steamship(&["completions", shell], Some(Path::new(".")), &[]);
+        assert_eq!(code, Some(0_i32), "{shell}: {stderr}");
+        assert!(stdout.contains(opening), "{shell}: {stdout}");
+        for command in ["upload", "workshop", "promote", "completions"] {
+            assert!(stdout.contains(command), "{shell} completes {command}");
+        }
     }
 }
 
