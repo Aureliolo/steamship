@@ -224,11 +224,64 @@ fn help_lists_every_command_with_one_short_line() {
         "  promote      Set an uploaded build live on a branch\n",
         "  ci           Set up uploads from CI, the login kept as a secret\n",
         "  logout       Forget the saved login\n",
+        "  init         Write starter build scripts for an app\n",
         "  install      Install or verify the pinned steamcmd\n",
         "  completions  Print tab completion for bash, zsh, fish, PowerShell or elvish\n",
     ] {
         assert!(stdout.contains(line), "{line:?} in {stdout}");
     }
+}
+
+#[test]
+fn init_writes_scripts_check_takes_and_never_overwrites_them() {
+    let folder = tempfile::tempdir().unwrap();
+    let home = folder.path().join("home");
+    let (code, stdout, stderr) = steamship_in(
+        folder.path(),
+        &[
+            "init",
+            "480",
+            "--depot",
+            "481=build/windows",
+            "--depot",
+            "482=build/linux",
+        ],
+        Some(&home),
+        &[],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    for name in [
+        "app_build.vdf",
+        "depot_build_481.vdf",
+        "depot_build_482.vdf",
+    ] {
+        let path = Path::new("steam").join(name);
+        assert!(
+            stdout.contains(&format!("  wrote     {}\n", path.display())),
+            "{stdout}"
+        );
+        assert!(folder.path().join(&path).is_file(), "{name}");
+    }
+    for platform in ["windows", "linux"] {
+        let build = folder.path().join("build").join(platform);
+        fs::create_dir_all(&build).unwrap();
+        fs::write(build.join("game.pck"), "pack").unwrap();
+    }
+    let script = folder.path().join("steam").join("app_build.vdf");
+    let (checked, said, _) = steamship(&["check", script.to_str().unwrap()], Some(&home), &[]);
+    assert_eq!(checked, Some(0_i32), "{said}");
+
+    let before = fs::read_to_string(&script).unwrap();
+    let (again, _, refused) = steamship_in(folder.path(), &["init", "480"], Some(&home), &[]);
+    assert_eq!(again, Some(2_i32));
+    assert_eq!(
+        failure(&refused),
+        format!(
+            "{} is already there, and is left as it is",
+            Path::new("steam").join("app_build.vdf").display()
+        )
+    );
+    assert_eq!(fs::read_to_string(&script).unwrap(), before);
 }
 
 #[test]
