@@ -95,12 +95,14 @@ jobs:
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
             native: true
+            spectre: spectre
           # Windows on Arm, native, while steamcmd runs there as the x86 program it is, emulated by
           # Windows. There is no Arm Linux build: steamcmd for Linux is x86 alone. The Arm image
           # is not one Renovate tracks.
           - target: aarch64-pc-windows-msvc
             runner: windows-11-arm
             native: true
+            spectre: spectre
           - target: aarch64-apple-darwin
             # renovate: datasource=github-runners depName=macos
             runner: macos-26
@@ -116,6 +118,10 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      # On Windows, the C runtime linked in is Visual Studio's build of it with Spectre
+      # mitigations, which the runners have; see .cargo/config.toml.
+      VSCMD_ARG_VCVARS_SPECTRE: ${{ matrix.spectre }}
 
     steps:
       - name: Checkout tag

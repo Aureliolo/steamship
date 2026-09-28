@@ -41,6 +41,9 @@ jobs:
             # the program as C++, and Rust has no /GS; the rule then lists Rust's own functions.
             # The C runtime's objects are built with /GS, which BinSkim's other rules confirm.
             accepted: BA2014
+            # The C runtime linked in is the one built with Spectre mitigations (BA2024), which
+            # the runner's Visual Studio has.
+            spectre: spectre
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
             runner: ubuntu-26.04
@@ -88,6 +91,7 @@ jobs:
         env:
           TARGET: ${{ matrix.target }}
           CARGO_PROFILE_RELEASE_DEBUG: ${{ matrix.debug }}
+          VSCMD_ARG_VCVARS_SPECTRE: ${{ matrix.spectre }}
         run: cargo build --locked --release --target "${TARGET}"
 
       - name: Install BinSkim
@@ -108,7 +112,9 @@ jobs:
 
       # Findings are judged from the results below rather than BinSkim's exit code, which does
       # not tell a finding from the tool failing. Messages are written out in full, which code
-      # scanning requires, and each accepted rule is dropped with its reason given above.
+      # scanning requires, and each accepted rule is dropped with its reason given above. So is
+      # BA2004, MD5 source checksums in the debug information, while every module it names was
+      # assembled by NASM: ring's assembly is, and NASM writes CodeView with MD5 alone.
       - name: Analyse
         env:
           TARGET: ${{ matrix.target }}
@@ -131,6 +137,13 @@ jobs:
                  ([.tool.driver.rules[]? | {key: .id, value: .messageStrings}] | from_entries) as $wording
                  | .results |= map(
                      select(.ruleId as $rule | $accepted | index($rule) | not)
+                     | select(
+                         .ruleId != "BA2004"
+                         or ((.message.arguments // [])[1] // "" | split("\n")
+                             | map(select(length > 0)) as $modules
+                             | $modules == []
+                               or ($modules | any(startswith("The Netwide Assembler ") | not)))
+                       )
                      | if .message.text then . else
                          (.message.arguments // []) as $arguments
                          | .message.text = (
@@ -151,10 +164,11 @@ jobs:
           sarif_file: binskim.sarif
           category: binskim-${{ matrix.platform }}
 
-      - name: Refuse any error BinSkim found
+      # A warning is refused as an error is: each is a mitigation missing from what ships.
+      - name: Refuse anything BinSkim found
         run: |
           set -euo pipefail
-          found='[.runs[].results[] | select((.level // "warning") == "error" and (.kind // "fail") == "fail")]'
+          found='[.runs[].results[] | select((.level // "warning") != "note" and (.kind // "fail") == "fail")]'
           jq -r "${found}[] | \"\(.ruleId): \(.message.text)\"" binskim.sarif
           # Decided by jq's own exit status: its text ends in a carriage return on Windows.
           jq -e "${found} | length == 0" binskim.sarif > /dev/null
