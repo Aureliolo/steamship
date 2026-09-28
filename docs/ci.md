@@ -30,6 +30,7 @@ its attestation check out, uploads, and gives the BuildID as its `build-id` outp
 `preview: true` makes it Valve's dry run. It runs on Linux, Windows and macOS runners, and
 Renovate raises its pin by itself.
 
+<<<<<<< HEAD
 A Workshop item goes up the same way, with its `workshopitem` script in place of the build's:
 
 ```yaml
@@ -48,6 +49,11 @@ When an upload or a Workshop item fails there, steamship prints Steam's own logs
 reasons, each as a collapsed group: steamcmd's console, the app and depot build logs, and what
 steamcmd added to its own logs during the run. All of it is redacted as steamship's logs always
 are, and the account's name is masked.
+=======
+When your content is built in another job, hand it over as a tar archive:
+`actions/upload-artifact` does not keep file permissions, so a Linux or macOS program would
+arrive without its executable bit, which `check` refuses.
+>>>>>>> 8b66ff0 (check refuses a live branch Steam does not have, public, Unity's do-not-ship folders, a stray InstallScript, and macOS programs and scripts without their executable bit; counts debug symbols)
 
 Anything `ci` cannot find it asks for; `--script`, `--repo`, `--account` and `--secret` answer
 ahead. The secret holds the token steamcmd saved and the account's name, never a password or a

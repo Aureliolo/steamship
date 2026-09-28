@@ -15,6 +15,7 @@ pub mod init;
 pub mod install;
 pub mod keychain;
 pub mod login;
+pub mod macho;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod magic;

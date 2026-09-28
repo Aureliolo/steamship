@@ -50,11 +50,17 @@ steamship check steam/app_build.vdf
 
 `check` reads the app script and every depot script it names, without logging in, and refuses:
 
-- `SetLive` naming `default`, which Valve only allows from the Steamworks site;
+- `SetLive` naming `default` or `public`, which Valve only allows from the Steamworks site, or a
+  branch the app does not have, when a Web API key is set or kept;
 - `Preview` or `Local` set in the file (use `--preview` instead);
 - a `ContentRoot` or `LocalPath` that does not exist or matches no files;
-- a `steam_appid.txt` in the content;
-- a Linux executable in the content without its executable bit, where the file system has one.
+- an `InstallScript` that is not a file in the content, or that the depot does not map;
+- a `steam_appid.txt` in the content, and the folders Unity names as not to ship;
+- a Linux or macOS program, or a script starting with `#!`, without its executable bit, where
+  the file system has one.
+
+It also counts the debug symbols each depot ships (`.pdb`, `.dSYM`, `.debug`) without refusing
+them, since some teams ship them on purpose.
 
 Keys steamship does not know are passed to steamcmd unchanged. `upload` runs the same check
 first, so a script it would refuse is never sent.

@@ -402,7 +402,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [vdf, elf, pattern, redact, terminal, dbus]
+        target: [vdf, elf, macho, pattern, redact, terminal, dbus]
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
