@@ -6,24 +6,28 @@ class Steamship < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/Aureliolo/steamship/releases/download/v0.5.1/steamship-0.5.1-aarch64-apple-darwin.tar.gz"
-      sha256 "760c1fdd939d30b3ae4c36e6eb4a642db1856823241b3895178f315eb9b9330e"
+      url "https://github.com/Aureliolo/steamship/releases/download/v0.6.0/steamship-0.6.0-aarch64-apple-darwin.tar.gz"
+      sha256 "97a781efcf713f716ec11710d93deffb711a9586242fefd167bde5c656fbdfbf"
     end
     on_intel do
-      url "https://github.com/Aureliolo/steamship/releases/download/v0.5.1/steamship-0.5.1-x86_64-apple-darwin.tar.gz"
-      sha256 "3c7770ad9c60b075dba655c4d0303e2a44d1d8c3122e6903c496e486d6050f1f"
+      url "https://github.com/Aureliolo/steamship/releases/download/v0.6.0/steamship-0.6.0-x86_64-apple-darwin.tar.gz"
+      sha256 "f01e94a85b3f9456ee4966733f32dc90c0fa23da340eb35a8e81beb7f33e7374"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/Aureliolo/steamship/releases/download/v0.5.1/steamship-0.5.1-x86_64-linux-musl.tar.gz"
-      sha256 "ff286acc62d9ece89ecde2415ed2ec951f7301e7bea37275780518f7e80e1b08"
+      url "https://github.com/Aureliolo/steamship/releases/download/v0.6.0/steamship-0.6.0-x86_64-linux-musl.tar.gz"
+      sha256 "c75065664c38e34a7cc8e1bb92d0bf06f954f6b7f74a38d3ce6ea6380c9e953d"
     end
   end
 
   def install
     bin.install "steamship"
+    man1.install Dir["man/*.1"]
+    bash_completion.install "completions/steamship.bash" => "steamship"
+    zsh_completion.install "completions/_steamship"
+    fish_completion.install "completions/steamship.fish"
   end
 
   test do
