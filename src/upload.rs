@@ -364,17 +364,14 @@ pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<Strin
     for line in log.into_iter().flat_map(str::lines).chain(console.lines()) {
         let error = if let Some((_, error)) = line.split_once("ERROR!") {
             error.trim().to_owned()
-<<<<<<< HEAD
         } else if line.contains(steamcmd::NO_CERTIFICATES) {
             "steamcmd found no certificates to check Steam's servers against, and would have \
              waited for good; install the system's certificate store (ca-certificates)"
                 .to_owned()
-=======
         } else if let Some((_, socket)) = line.split_once("CreateBoundSocket: ") {
             no_socket(socket.trim())
         } else if conversation::refusal(line) == Some(NO_CONNECTION) {
             format!("steamcmd could not connect to Steam ({NO_CONNECTION})")
->>>>>>> origin/main
         } else {
             continue;
         };
