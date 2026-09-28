@@ -35,12 +35,20 @@ jobs:
             target: x86_64-pc-windows-msvc
             program: steamship.exe
             binskim: win-x64/BinSkim.exe
+            # Several PE rules read the program database, so line tables are kept for it.
+            debug: line-tables-only
+            accepted: ''
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
             runner: ubuntu-26.04
             target: x86_64-unknown-linux-musl
             program: steamship
             binskim: linux-x64/BinSkim
+            # Stripped, as the release ships it.
+            debug: none
+            # BA3003, stack canaries: Rust's -Z stack-protector is unstable, and safe Rust does not
+            # write past a buffer's end. Stack clash protection, which Rust does have, is BA3005.
+            accepted: BA3003
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
@@ -72,12 +80,11 @@ jobs:
           sudo apt-get install --yes --no-install-recommends musl-tools
 
       # The release profile rather than the release's own whole-program build: the same flags
-      # and mitigations in a third of the time. Symbols kept, since several PE rules read them.
+      # and mitigations in a third of the time.
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
-          CARGO_PROFILE_RELEASE_STRIP: none
-          CARGO_PROFILE_RELEASE_DEBUG: line-tables-only
+          CARGO_PROFILE_RELEASE_DEBUG: ${{ matrix.debug }}
         run: cargo build --locked --release --target "${TARGET}"
 
       - name: Install BinSkim
@@ -94,15 +101,29 @@ jobs:
             chmod +x "${RUNNER_TEMP}"/binskim/tools/*/linux-x64/BinSkim
           fi
 
+      # Findings are judged from the results below rather than BinSkim's exit code, which does
+      # not tell a finding from the tool failing. Messages are written out in full, which code
+      # scanning requires, and each accepted rule is dropped with its reason given above.
       - name: Analyse
         env:
           TARGET: ${{ matrix.target }}
           PROGRAM: ${{ matrix.program }}
           BINSKIM: ${{ matrix.binskim }}
+          ACCEPTED: ${{ matrix.accepted }}
         run: |
           set -euo pipefail
-          binskim="$(echo "${RUNNER_TEMP}"/binskim/tools/net*/"${BINSKIM}")"
-          "${binskim}" analyze "target/${TARGET}/release/${PROGRAM}" --output binskim.sarif
+          # The runner's temporary folder is a Windows path there, which a glob cannot expand.
+          tools="${RUNNER_TEMP//\\//}/binskim/tools"
+          binskim="$(echo "${tools}"/net*/"${BINSKIM}")"
+          status=0
+          "${binskim}" analyze "target/${TARGET}/release/${PROGRAM}" --output raw.sarif \
+            --insert FlattenedMessages --quiet || status=$?
+          echo "BinSkim exited with ${status}."
+          jq -e 'all(.runs[].invocations[]; .executionSuccessful)' raw.sarif > /dev/null
+          jq --arg accepted "${ACCEPTED}" \
+            '($accepted | split(" ")) as $accepted
+             | .runs[].results |= map(select(.ruleId as $rule | $accepted | index($rule) | not))' \
+            raw.sarif > binskim.sarif
 
       - name: Upload the results
         if: '!cancelled()'
@@ -110,3 +131,10 @@ jobs:
         with:
           sarif_file: binskim.sarif
           category: binskim-${{ matrix.platform }}
+
+      - name: Refuse any error BinSkim found
+        run: |
+          set -euo pipefail
+          found='[.runs[].results[] | select((.level // "warning") == "error" and (.kind // "fail") == "fail")]'
+          jq -r "${found}[] | \"\(.ruleId): \(.message.text)\"" binskim.sarif
+          test "$(jq "${found} | length" binskim.sarif)" = 0
