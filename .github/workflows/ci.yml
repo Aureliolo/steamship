@@ -173,6 +173,51 @@ jobs:
             exit 1
           fi
 
+  # The .deb and the .rpm, from a Linux archive packed as the release packs it, linted and then
+  # installed and used on bare Debian and Fedora, so a change that breaks them fails here rather
+  # than at a release.
+  linux-packages:
+    name: linux packages
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read # Reads the source it builds.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # musl-gcc, for the C and assembly in ring, from the image's own signed Ubuntu archive.
+      - name: Install Rust and musl-gcc
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup target add x86_64-unknown-linux-musl
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+
+      # The release profile rather than the release's dist one, which only adds whole-program
+      # optimisation and would triple the build.
+      - name: Build and pack the Linux binary
+        id: pack
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --locked --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "steamship") | .version')"
+          cargo build --locked --release --target x86_64-unknown-linux-musl
+          archive="$(.github/pack.sh "${version}" x86_64-unknown-linux-musl release)"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "archive=dist/${archive}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build, lint and install the packages
+        uses: ./.github/actions/linux-packages # zizmor: ignore[self-repository]
+        with:
+          version: ${{ steps.pack.outputs.version }}
+          archive: ${{ steps.pack.outputs.archive }}
+          out: packages
+
   # The pinned steamcmd, installed for real from Valve's CDN on each system, then installed again,
   # which must find it as pinned. Nothing runs steamcmd here.
   install:

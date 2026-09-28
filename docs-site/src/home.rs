@@ -69,7 +69,7 @@ impl Way {
     }
 }
 
-const WAYS: [Way; 7] = [
+const WAYS: [Way; 8] = [
     Way {
         id: "homebrew",
         name: "Homebrew",
@@ -97,6 +97,18 @@ const WAYS: [Way; 7] = [
         link: None,
     },
     Way {
+        id: "packages",
+        name: "Debian, Ubuntu, Fedora",
+        command: "# Debian and Ubuntu\n\
+                  curl -fLO RELEASE/steamship_VERSION-1_amd64.deb\n\
+                  sudo apt install ./steamship_VERSION-1_amd64.deb\n\
+                  # Fedora\n\
+                  sudo dnf install RELEASE/steamship-VERSION-1.x86_64.rpm",
+        note: "x86-64 Linux: steamship vVERSION, with the 32-bit C libraries Valve's steamcmd for \
+               Linux loads, a man page per command and tab completion.",
+        link: None,
+    },
+    Way {
         id: "cargo",
         name: "Cargo",
         command: "# the release's archive, in seconds\n\
@@ -114,7 +126,7 @@ const WAYS: [Way; 7] = [
                   gh release download vVERSION --repo Aureliolo/steamship --pattern '*linux-musl*'",
         note: "Any x86-64 Linux, whatever its glibc: steamship vVERSION, with curl, wget or the \
                GitHub command line. Check it as Install shows, then put `steamship` on your \
-               `PATH`.",
+               `PATH`; steamcmd needs the 32-bit C libraries Install names.",
         link: Some("RELEASE/steamship-VERSION-x86_64-linux-musl.tar.gz"),
     },
     Way {

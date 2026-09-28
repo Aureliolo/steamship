@@ -1,0 +1,106 @@
+# The .deb and .rpm, built by .github/linux-packages.sh from the Linux archive's own files, so
+# they hold the very binary, man pages and completions the archive does. nFPM runs in the folder
+# that script lays out, which every path below is relative to.
+name: steamship
+arch: amd64
+platform: linux
+version: ${VERSION}
+release: 1
+section: devel
+priority: optional
+maintainer: Aurelio Amoroso <19254254+Aureliolo@users.noreply.github.com>
+vendor: Aurelio Amoroso
+homepage: https://github.com/Aureliolo/steamship
+license: MIT OR Apache-2.0
+changelog: changelog.yml
+# Debian keeps each line of the long description within 80 columns.
+description: |-
+  Uploads game builds to Steam with Valve's steamcmd
+  steamship runs Valve's own steamcmd with your app_build and depot_build
+  scripts, sets steamcmd up pinned and verified, checks the scripts before
+  anything is sent, reports the BuildID or the reason an upload failed, and
+  never keeps a password.
+
+# Valve's steamcmd for Linux is a 32-bit x86 program, which steamship installs and runs; these
+# bring the C libraries it loads, and the system's certificates, against which it checks Steam's
+# servers: without them it hangs at the build with nothing said. RPM names the libraries by the
+# 32-bit sonames themselves, which only the i686 packages provide.
+overrides:
+  deb:
+    depends:
+      - lib32gcc-s1
+      - ca-certificates
+  rpm:
+    depends:
+      - ld-linux.so.2
+      - libgcc_s.so.1
+      - ca-certificates
+
+rpm:
+  summary: Uploads game builds to Steam with Valve's steamcmd
+  group: Development/Tools
+  compression: zstd
+
+contents:
+  - src: steamship
+    dst: /usr/bin/steamship
+    file_info:
+      mode: 0755
+  # The .rpm's man pages, marked as documentation, are added one by one by linux-packages.sh:
+  # nFPM expands no pattern for them.
+  - src: man/*.1.gz
+    dst: /usr/share/man/man1/
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: completions/steamship.bash
+    dst: /usr/share/bash-completion/completions/steamship
+    file_info:
+      mode: 0644
+  - src: completions/steamship.fish
+    dst: /usr/share/fish/vendor_completions.d/steamship.fish
+    file_info:
+      mode: 0644
+  - src: completions/_steamship
+    dst: /usr/share/zsh/vendor-completions/_steamship
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: completions/_steamship
+    dst: /usr/share/zsh/site-functions/_steamship
+    packager: rpm
+    file_info:
+      mode: 0644
+  - src: copyright
+    dst: /usr/share/doc/steamship/copyright
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: lintian-overrides
+    dst: /usr/share/lintian/overrides/steamship
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: README.md
+    dst: /usr/share/doc/steamship/README.md
+    packager: deb
+    file_info:
+      mode: 0644
+  - src: README.md
+    dst: /usr/share/doc/steamship/README.md
+    packager: rpm
+    type: doc
+    file_info:
+      mode: 0644
+  - src: LICENSE-APACHE
+    dst: /usr/share/licenses/steamship/LICENSE-APACHE
+    packager: rpm
+    type: license
+    file_info:
+      mode: 0644
+  - src: LICENSE-MIT
+    dst: /usr/share/licenses/steamship/LICENSE-MIT
+    packager: rpm
+    type: license
+    file_info:
+      mode: 0644
