@@ -15,6 +15,7 @@ use std::process::Command;
 
 use crate::conversation;
 use crate::scripts;
+use crate::steamcmd;
 use crate::vdf::{self, Block, Pair, Value};
 
 /// The folder in the home that holds each app's copy of the script and build output.
@@ -375,6 +376,10 @@ pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<Strin
     for line in log.into_iter().flat_map(str::lines).chain(console.lines()) {
         let error = if let Some((_, error)) = line.split_once("ERROR!") {
             error.trim().to_owned()
+        } else if line.contains(steamcmd::NO_CERTIFICATES) {
+            "steamcmd found no certificates to check Steam's servers against, and would have \
+             waited for good; install the system's certificate store (ca-certificates)"
+                .to_owned()
         } else if let Some((_, socket)) = line.split_once("CreateBoundSocket: ") {
             no_socket(socket.trim())
         } else if conversation::refusal(line) == Some(NO_CONNECTION) {
@@ -656,6 +661,23 @@ mod tests {
         let description = Error::Description("bad".to_owned());
         assert_eq!(description.to_string(), "bad");
         assert!(error::Error::source(&description).is_none());
+    }
+
+    #[test]
+    fn a_run_stopped_for_want_of_certificates_says_so_rather_than_that_it_ran_out_of_time() {
+        // As steamcmd printed it with the certificate store hidden, before it waited for good.
+        let console = "src/common/opensslconnection.cpp (1706) : unable to load trusted SSL root \
+                       certificates\nLoading Steam API...src/common/opensslconnection.cpp (1706) : \
+                       unable to load trusted SSL root certificates\nOK\n\
+                       Connecting anonymously to Steam Public...";
+        assert_eq!(
+            judge(480, None, console, None, true),
+            Outcome::Failed(vec![
+                "steamcmd found no certificates to check Steam's servers against, and would have \
+                 waited for good; install the system's certificate store (ca-certificates)"
+                    .to_owned()
+            ])
+        );
     }
 
     #[test]
