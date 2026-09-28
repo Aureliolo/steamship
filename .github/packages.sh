@@ -87,6 +87,10 @@ class Steamship < Formula
 
   def install
     bin.install "steamship"
+    man1.install Dir["man/*.1"]
+    bash_completion.install "completions/steamship.bash" => "steamship"
+    zsh_completion.install "completions/_steamship"
+    fish_completion.install "completions/steamship.fish"
   end
 
   test do

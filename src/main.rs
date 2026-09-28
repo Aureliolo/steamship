@@ -39,8 +39,17 @@ fn main() -> ExitCode {
         Ok(parsed) => parsed.command,
         Err(error) => error.exit(),
     };
-    let update = update_check();
+    // Completion is text for a shell to load, often at every start, so it asks nothing online.
+    let update = if matches!(command, Command::Completions { .. }) {
+        None
+    } else {
+        update_check()
+    };
     let code = match command {
+        Command::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "steamship", &mut io::stdout());
+            ExitCode::SUCCESS
+        }
         Command::Check { script } => run_check(&script),
         Command::Ci {
             script,
