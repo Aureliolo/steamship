@@ -395,7 +395,7 @@ fn answering(said: &str, code: u8) -> tempfile::TempDir {
     ))
 }
 
-/// The login `saved_login` makes, packed as `steamship ci` packs it.
+/// The login `saved_login` makes, packed as `steamship ci` packs it, on 2026-09-28.
 #[cfg(unix)]
 fn packed_login() -> String {
     let home = tempfile::tempdir().unwrap();
@@ -404,7 +404,15 @@ fn packed_login() -> String {
     fs::write(config, "\"token\" \"a_saved_login_token_0123456789\"").unwrap();
     let account = Account::parse("build_bot").unwrap();
     let login = ci::Login::saved(home.path(), Platform::THIS, account).unwrap();
-    login.packed().to_string()
+    login.packed("2026-09-28").to_string()
+}
+
+/// A packed login without the day it was packed, for one `steamship ci` packed today, which a
+/// test cannot know ahead.
+#[cfg(unix)]
+fn undated(packed: &str) -> String {
+    let rest = packed.strip_prefix("steamship-login-2:").unwrap();
+    rest.split_once(':').unwrap().1.to_owned()
 }
 
 #[cfg(unix)]
@@ -426,7 +434,7 @@ fn status_in_ci_logs_in_with_the_login_handed_over_and_puts_it_where_steamcmd_lo
         "{stdout}"
     );
     assert!(
-        stdout.contains("  login     from STEAMSHIP_LOGIN\n"),
+        stdout.contains("  login     from STEAMSHIP_LOGIN, packed 2026-09-28\n"),
         "{stdout}"
     );
     assert!(stdout.ends_with("  \u{2713} ready to upload\n"), "{stdout}");
@@ -717,10 +725,11 @@ fn ci_writes_the_checked_login_to_a_file_for_another_ci() {
     );
     assert!(stdout.contains("\u{2713} ready for CI\n"), "{stdout}");
     let written = fs::read_to_string(&output).unwrap();
-    assert_eq!(written, packed_login());
+    assert_eq!(undated(&written), undated(&packed_login()));
     assert!(!stdout.contains(&written), "the login is never shown");
     let unpacked = ci::Login::unpack(&written).unwrap();
     assert_eq!(unpacked.account().name(), "build_bot");
+    assert!(unpacked.packed_on().is_some());
 }
 
 #[cfg(unix)]
@@ -829,8 +838,37 @@ fn ci_sets_the_secret_through_gh_and_shows_the_step_pinned_by_commit() {
         "secret set STEAMSHIP_LOGIN --repo Aureliolo/some-game\n"
     );
     let secret = fs::read_to_string(gh.path().join("secret")).unwrap();
-    assert_eq!(secret, packed_login());
     assert!(!stdout.contains(&secret), "the login is never shown");
+    assert_eq!(undated(&secret), undated(&packed_login()));
+    assert!(ci::Login::unpack(&secret).unwrap().packed_on().is_some());
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_refuses_a_login_too_large_for_a_github_secret_before_asking_gh() {
+    let home = answering(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let config = steamcmd::saved_login(home.path(), Platform::THIS);
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, format!("\"token\" \"{}\"", "t".repeat(30_000))).unwrap();
+    fs::write(home.path().join("account"), "build_bot\n").unwrap();
+    let (_project, root) = github_project();
+    let (gh, path) = fake_gh();
+    let (code, stdout, stderr) =
+        steamship_in(&root, &["ci"], Some(home.path()), &[("PATH", &path)]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "the packed login is too large for a GitHub secret: 59 KB, where a secret holds 48 KB"
+    );
+    assert!(
+        stderr
+            .ends_with("write it to a file for another CI with steamship ci --output login.txt\n"),
+        "{stderr}"
+    );
+    assert!(!gh.path().join("args").exists(), "gh is never asked");
 }
 
 #[cfg(unix)]
@@ -1134,6 +1172,44 @@ fn status_with_a_login_steam_refuses_says_why_without_the_account_and_exits_3() 
         "{stderr}"
     );
     assert!(!format!("{stdout}{stderr}").contains("build_bot"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_login_handed_over_that_steam_refuses_says_when_it_was_packed_and_how_to_pack_another() {
+    let home = answering(
+        "Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)",
+        5,
+    );
+    let packed = packed_login();
+    let digits = packed.rsplit(':').next().unwrap().to_owned();
+    for (login, said) in [
+        (
+            packed,
+            "the login in STEAMSHIP_LOGIN was packed on 2026-09-28",
+        ),
+        (
+            format!("steamship-login-1:build_bot:{digits}"),
+            "the login in STEAMSHIP_LOGIN was packed by an earlier steamship",
+        ),
+    ] {
+        let (code, stdout, stderr) = steamship(
+            &["status"],
+            Some(home.path()),
+            &[("STEAMSHIP_LOGIN", &login), ("STEAMSHIP_ACCOUNT", "")],
+        );
+        assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+        assert_eq!(
+            failure(&stderr),
+            format!("not logged in: Expired Login Auth Code; {said}")
+        );
+        assert!(
+            stderr.ends_with(
+                "log in again with steamship login, then run steamship ci to pack the new login\n"
+            ),
+            "{stderr}"
+        );
+    }
 }
 
 #[cfg(unix)]
