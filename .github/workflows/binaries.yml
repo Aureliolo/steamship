@@ -120,10 +120,26 @@ jobs:
             --insert FlattenedMessages --quiet || status=$?
           echo "BinSkim exited with ${status}."
           jq -e 'all(.runs[].invocations[]; .executionSuccessful)' raw.sarif > /dev/null
+          # A result BinSkim left as a reference to its rule's wording gets that wording, with its
+          # arguments put in, since code scanning takes only text.
           jq --arg accepted "${ACCEPTED}" \
             '($accepted | split(" ")) as $accepted
-             | .runs[].results |= map(select(.ruleId as $rule | $accepted | index($rule) | not))' \
+             | .runs[] |= (
+                 ([.tool.driver.rules[]? | {key: .id, value: .messageStrings}] | from_entries) as $wording
+                 | .results |= map(
+                     select(.ruleId as $rule | $accepted | index($rule) | not)
+                     | if .message.text then . else
+                         (.message.arguments // []) as $arguments
+                         | .message.text = (
+                             reduce range($arguments | length) as $i
+                               ($wording[.ruleId][.message.id].text // .message.id // .ruleId;
+                                gsub("[{]\($i)[}]"; $arguments[$i]))
+                           )
+                       end
+                   )
+               )' \
             raw.sarif > binskim.sarif
+          jq -e 'all(.runs[].results[]; .message.text | type == "string")' binskim.sarif > /dev/null
 
       - name: Upload the results
         if: '!cancelled()'
