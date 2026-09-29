@@ -221,7 +221,7 @@ fn help_lists_every_command_with_one_short_line() {
         "  upload         Check, build and upload, then print the build ID\n",
         "  workshop       Upload a Workshop item, then print its ID\n",
         "  builds         Show an app's branches and last builds\n",
-        "  achievements   Show an app's achievements, or check them against a file\n",
+        "  achievements   Show an app's achievements and stats, or check them against a file\n",
         "  leaderboards   Show an app's leaderboards, or check them against a file and make those \
          missing\n",
         "  rich-presence  Upload an app's rich presence localisation\n",
@@ -3126,6 +3126,80 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
     );
     assert_eq!(failed, Some(1_i32), "{failure}");
     assert!(failure.contains("Steam answered HTTP 500"), "{failure}");
+}
+
+/// `GetSchemaForGame` for an app with stats and no achievements.
+const WITH_STATS: &str = r#"{"game": {"availableGameStats": {"stats": [
+    {"name": "NumGames", "defaultvalue": 0, "displayName": "Games played"},
+    {"name": "AverageSpeed", "defaultvalue": 1.5}
+]}}}"#;
+
+#[test]
+fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![
+        ("200 OK", WITH_STATS),
+        ("200 OK", WITH_STATS),
+        ("200 OK", WITH_STATS),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+
+    let (code, listed, _) = steamship(&["achievements", "480"], Some(home.path()), &set);
+    assert_eq!(code, Some(0_i32), "{listed}");
+    assert!(
+        listed.contains("\u{2713} 0 achievements and 2 stats on Steam\n")
+            && listed.contains("  stat NumGames Games played, starts at 0\n")
+            && listed.contains("  stat AverageSpeed starts at 1.5\n"),
+        "{listed}"
+    );
+
+    let unlisted = files.path().join("unlisted.json");
+    fs::write(&unlisted, r#"{"achievements": []}"#).unwrap();
+    let (matched, said, _) = steamship(
+        &[
+            "achievements",
+            "480",
+            "--check",
+            &unlisted.to_string_lossy(),
+        ],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(
+        matched,
+        Some(0_i32),
+        "no list, so the stats are not checked: {said}"
+    );
+    assert!(
+        said.contains("Steam's achievements match the file"),
+        "{said}"
+    );
+
+    let drifted = files.path().join("drifted.json");
+    fs::write(
+        &drifted,
+        r#"{"achievements": [], "stats": [
+            {"api_name": "NumGames", "name": "Games played", "default": 0},
+            {"api_name": "AverageSpeed", "default": 2}
+        ]}"#,
+    )
+    .unwrap();
+    let (refused, shown, why) = steamship(
+        &["achievements", "480", "--check", &drifted.to_string_lossy()],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{shown}{why}");
+    assert!(shown.contains("0 achievements and 2 stats\n"), "{shown}");
+    assert!(
+        why.contains("stat AverageSpeed: the default is \"1.5\" on Steam and \"2\" in the file"),
+        "{why}"
+    );
 }
 
 #[test]
