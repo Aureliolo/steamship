@@ -272,8 +272,8 @@ jobs:
           test "$("${program}" --version)" = "steamship ${version}"
           test "${OUTCOME}" = failure
 
-  # The formula, the Scoop manifest, the winget manifests and the AUR package for this release,
-  # from the checksums as published, each verified against the release's attestation the way a
+  # The formula, the Scoop manifest and the winget manifests for this release, from the checksums
+  # as published, each verified against the release's attestation the way a
   # user's download would be.
   packages-write:
     name: packages (write)
@@ -317,11 +317,7 @@ jobs:
             packages/Formula/steamship.rb
             packages/bucket/steamship.json
             packages/winget/*.yaml
-            packages/aur/PKGBUILD
-            packages/aur/.SRCINFO
           if-no-files-found: error
-          # .SRCINFO, which the AUR reads.
-          include-hidden-files: true
           retention-days: 1
 
   # Installed with Homebrew and Scoop from the files just written, before they go near main.
@@ -561,65 +557,6 @@ jobs:
           $PSNativeCommandUseErrorActionPreference = $true
           & "$env:RUNNER_TEMP\wingetcreate.exe" submit --prtitle "New version: Aureliolo.steamship version $env:VERSION" `
             --no-open packages/winget
-
-  # The AUR takes a package as a push to its Git repository over SSH, with a key registered on
-  # the maintainer's AUR account; the first push makes the package. This job runs once the
-  # repository variable AUR is set to `publish`, after the key is registered and kept here, and
-  # only after packages built and installed the PKGBUILD on Arch Linux.
-  aur:
-    name: aur
-    if: github.repository == 'Aureliolo/steamship' && vars.AUR == 'publish'
-    needs: [build, packages-test]
-    runs-on: ubuntu-26.04
-    timeout-minutes: 10
-    # The key is a secret of this environment, which only release tags can deploy to.
-    environment: aur
-    permissions: {}
-    env:
-      # Pinned rather than learnt on first contact: the Ed25519 host key whose fingerprint
-      # aur.archlinux.org publishes, SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4.
-      AUR_HOST_KEY: aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN
-
-    steps:
-      - name: Refuse to go on without the key
-        env:
-          KEY_SET: ${{ secrets.AUR_SSH_KEY != '' }}
-        run: |
-          if [[ "${KEY_SET}" != true ]]; then
-            echo "::error::AUR is set to publish, but the secret AUR_SSH_KEY is missing. See .github/release-process.md." >&2
-            exit 1
-          fi
-
-      - name: Download the package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: packages
-          path: packages
-
-      - name: Push it
-        env:
-          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
-          VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          set -euo pipefail
-          ssh="${RUNNER_TEMP}/ssh"
-          trap 'rm -rf "${ssh}"' EXIT
-          mkdir -m 700 "${ssh}"
-          (umask 077 && printf '%s\n' "${AUR_SSH_KEY}" > "${ssh}/key")
-          printf '%s\n' "${AUR_HOST_KEY}" > "${ssh}/known_hosts"
-          export GIT_SSH_COMMAND="ssh -i ${ssh}/key -o IdentitiesOnly=yes -o UserKnownHostsFile=${ssh}/known_hosts -o StrictHostKeyChecking=yes"
-          git clone --quiet ssh://aur@aur.archlinux.org/steamship-bin.git aur
-          cp packages/aur/PKGBUILD packages/aur/.SRCINFO aur/
-          git -C aur add PKGBUILD .SRCINFO
-          # A re-run after the push finds nothing to change.
-          if git -C aur diff --cached --quiet; then
-            echo "steamship-bin is at ${VERSION} already."
-            exit 0
-          fi
-          git -C aur -c user.name='Aurelio Amoroso' \
-            -c user.email='19254254+Aureliolo@users.noreply.github.com' \
-            commit --quiet --message "steamship ${VERSION}"
-          git -C aur push --quiet origin HEAD:master
 
   # crates.io, through trusted publishing: the OIDC token below is the whole credential, and no
   # crates.io token exists anywhere. A crate nobody has published cannot have a trusted publisher
