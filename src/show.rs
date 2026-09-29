@@ -85,7 +85,9 @@ pub fn title(command: &str) {
 
 /// A step: a label, then what it came to.
 pub fn field(label: &str, value: &str) {
-    anstream::println!("  {DIM}{label:<LABEL$}{DIM:#}{value}");
+    // A label as wide as the column, such as an achievement's API name, still gets a space.
+    let width = LABEL.max(label.chars().count().saturating_add(1));
+    anstream::println!("  {DIM}{label:<width$}{DIM:#}{value}");
 }
 
 /// A step that went as it should.

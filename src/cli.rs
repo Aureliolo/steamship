@@ -155,6 +155,20 @@ pub enum Command {
         #[arg(long, default_value_t = 10)]
         count: u32,
     },
+    /// Show an app's achievements, or check them against a file.
+    ///
+    /// Lists the achievements Steam holds for the app, in English, through Steam's partner Web
+    /// API with the publisher key as `builds` finds it. With `--check`, compares them with a
+    /// file by API name, and exits 2 naming every achievement missing on either side and every
+    /// display name, description, hidden flag or icon that differs. Nothing on Steam is changed.
+    Achievements {
+        /// The app, by its ID or its app build script.
+        app: String,
+        /// A JSON file of the achievements the app should have, each with its `api_name`,
+        /// `name`, `description` and `hidden`.
+        #[arg(long, value_name = "FILE")]
+        check: Option<PathBuf>,
+    },
     /// Set an uploaded build live on a branch.
     ///
     /// Sets a build live on a beta branch without uploading it again, through Steam's partner

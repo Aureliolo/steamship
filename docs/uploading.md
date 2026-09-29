@@ -144,3 +144,38 @@ A kept key is in the system's credential store: Windows Credential Manager, the 
 or GNOME Keyring or KWallet on Linux. It is sent in a request header, never in an address. The
 key can do everything its group may, for every app the group holds, so give it a group of its
 own with only the apps and permissions it needs.
+
+## Achievements
+
+```sh
+steamship achievements 480
+steamship achievements 480 --check steam/achievements.json
+```
+
+Steamworks is where achievements are made and published, and steamship changes nothing there.
+`achievements` lists those Steam holds for the app, in English, with the same Web API key as
+`builds`. With `--check`, it compares them with a file kept beside your scripts, and exits 2
+naming each achievement that is in the file but not on Steam or the other way round, each
+display name, description or hidden flag that differs, and each icon Steam has none of. Run it
+before a release, and the release waits while the two have drifted apart.
+
+The file lists each achievement by the API name the game unlocks it with:
+
+```json
+{
+  "app": 480,
+  "achievements": [
+    {
+      "api_name": "ACH_WIN_ONE_GAME",
+      "name": "Winner",
+      "description": "Win one game.",
+      "hidden": false
+    }
+  ]
+}
+```
+
+`description` and `hidden` may be left out, for none and `false`. `app`, when there, must be
+the app checked, and other keys, such as your own tools', are left alone. Achievements count on
+Steam only once published in Steamworks, so one entered but not yet published is missing from
+Steam's.
