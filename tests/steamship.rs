@@ -226,6 +226,7 @@ fn help_lists_every_command_with_one_short_line() {
          missing\n",
         "  rich-presence  Upload an app's rich presence localisation\n",
         "  promote        Set an uploaded build live on a branch\n",
+        "  branch         Set the description players see for a beta branch\n",
         "  ci             Set up uploads from CI, the login kept as a secret\n",
         "  logout         Forget the saved login\n",
         "  init           Write starter build scripts for an app\n",
@@ -3434,6 +3435,124 @@ fn a_leaderboards_file_that_is_not_one_is_refused_before_steam_and_create_needs_
     );
     assert_eq!(code, Some(2_i32), "{stderr}");
     assert!(stderr.contains("--check <FILE>"), "{stderr}");
+}
+
+/// `GetAppBetas` as Steam answered for Fantasy Guild Manager.
+const DESCRIBED: &str = r#"{"response": {"betas": {
+    "public": {"BuildID": 25585928, "Description": "Public default branch", "ReqPassword": 0},
+    "testing": {"BuildID": 25609118, "Description": "test1", "ReqPassword": 1}
+}, "result": 1, "message": ""}}"#;
+
+/// `UpdateAppBranchDescription` as Steam answered it.
+const UPDATED: &str =
+    r#"{"response": {"result": 1, "message": "Successfully updated beta branch description"}}"#;
+
+#[test]
+fn a_branch_is_described_only_when_its_description_differs() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![
+        ("200 OK", DESCRIBED),
+        ("200 OK", UPDATED),
+        ("200 OK", DESCRIBED),
+        ("200 OK", DESCRIBED),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+
+    let (code, stdout, stderr) = steamship(
+        &[
+            "branch",
+            "5335950",
+            "testing",
+            "--description",
+            "0.3.0 (abc1234)",
+        ],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  steam     \u{2713} described as \"test1\"\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("app 5335950: testing described as \"0.3.0 (abc1234)\""),
+        "{stdout}"
+    );
+    drop(requests.recv_timeout(Duration::from_secs(10)).unwrap());
+    let setting = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        setting.starts_with("POST /ISteamApps/UpdateAppBranchDescription/v1/ ")
+            && setting.ends_with("appid=5335950&betakey=testing&description=0.3.0+(abc1234)"),
+        "{setting}"
+    );
+
+    // Already so: nothing is sent, which the stand-in's next answer being a listing shows.
+    let (same, said, _) = steamship(
+        &["branch", "5335950", "testing", "--description", "test1"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(same, Some(0_i32), "{said}");
+    assert!(said.contains("testing is already described so"), "{said}");
+
+    let (missing, _, why) = steamship(
+        &["branch", "5335950", "beta", "--description", "x"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(missing, Some(2_i32), "{why}");
+    assert!(
+        why.contains(
+            "app 5335950 has no branch \"beta\"; create it in Steamworks under SteamPipe, Builds \
+             first"
+        ),
+        "{why}"
+    );
+}
+
+#[test]
+fn the_default_branch_is_described_in_steamworks_and_a_refusal_says_steams_reason() {
+    let home = tempfile::tempdir().unwrap();
+    // No stand-in for the first: the default branch is refused before Steam is asked.
+    let (code, _, stderr) = steamship(
+        &["branch", "5335950", "default", "--description", "x"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        ],
+    );
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(
+        stderr.contains("the default branch's description is set in Steamworks"),
+        "{stderr}"
+    );
+
+    let (host, _requests) = web_api(vec![
+        ("200 OK", DESCRIBED),
+        (
+            "404 Not Found",
+            r#"{"response": {"result": 2, "message": "Unable to find specificed betakey testing"}}"#,
+        ),
+    ]);
+    let (refused, _, why) = steamship(
+        &["branch", "5335950", "testing", "--description", "x"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!(refused, Some(1_i32), "{why}");
+    assert!(
+        why.contains("Steam answered HTTP 404: Unable to find specificed betakey testing"),
+        "{why}"
+    );
 }
 
 #[test]

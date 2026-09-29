@@ -62,8 +62,8 @@ pub enum Error {
     NotAKey,
     /// Steam refused the key for this app.
     Refused,
-    /// Steam answered with this HTTP status.
-    Status(u16),
+    /// Steam answered with this HTTP status, and the reason it gave, if any.
+    Status(u16, String),
     /// Steam could not be reached.
     Unreachable,
     /// Steam answered with something that is not what the method answers.
@@ -82,7 +82,10 @@ impl fmt::Display for Error {
                 "Steam refused the Web API key; it must be the publisher key of a group that \
                  holds the app",
             ),
-            Self::Status(status) => write!(formatter, "Steam answered HTTP {status}"),
+            Self::Status(status, said) if said.is_empty() => {
+                write!(formatter, "Steam answered HTTP {status}")
+            }
+            Self::Status(status, said) => write!(formatter, "Steam answered HTTP {status}: {said}"),
             Self::Unreachable => formatter.write_str("partner.steam-api.com could not be reached"),
             Self::Unreadable(what) => write!(formatter, "Steam's answer holds no {what}"),
             Self::Failed(message) => write!(formatter, "Steam says: {message}"),
@@ -336,12 +339,12 @@ pub fn builds_from(answer: &Value) -> Result<Vec<Build>, Error> {
     Ok(builds)
 }
 
-/// Whether `SetAppBuildLive` answered that it set the build live.
+/// Whether a method that changes something, such as `SetAppBuildLive`, answered that it did.
 ///
 /// # Errors
 ///
 /// When the answer is not one, or says the call failed.
-pub fn set_live_from(answer: &Value) -> Result<(), Error> {
+pub fn changed_from(answer: &Value) -> Result<(), Error> {
     let response = field(answer, &["response"]).ok_or(Error::Unreadable("response"))?;
     succeeded(response)
 }
@@ -395,14 +398,15 @@ pub fn apps_from(answer: &Value) -> Result<Vec<App>, Error> {
 /// live on default.
 #[must_use]
 pub fn no_build_yet(error: &Error, app: u32, apps: &[App]) -> Option<String> {
-    (matches!(error, Error::Status(500)) && apps.iter().any(|held| held.app_id == u64::from(app)))
-        .then(|| {
-            format!(
-                "this key holds app {app}, and Steam answers so while no build is live on its \
+    (matches!(error, Error::Status(500, _))
+        && apps.iter().any(|held| held.app_id == u64::from(app)))
+    .then(|| {
+        format!(
+            "this key holds app {app}, and Steam answers so while no build is live on its \
                  default branch: set one live there in Steamworks under SteamPipe, Builds, and \
                  its branches and builds can be asked for"
-            )
-        })
+        )
+    })
 }
 
 /// Whether `branch` names the default branch.
@@ -689,13 +693,30 @@ impl Api {
         read(response)
     }
 
+    /// Sets the description players see for `app`'s beta `branch`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::branches`], and when Steam refuses the change, as it does for the default
+    /// branch.
+    pub fn describe_branch(&self, app: u32, branch: &str, description: &str) -> Result<(), Error> {
+        changed_from(&self.post(
+            "ISteamApps/UpdateAppBranchDescription/v1",
+            &[
+                ("appid", app.to_string()),
+                ("betakey", branch.to_owned()),
+                ("description", description.to_owned()),
+            ],
+        )?)
+    }
+
     /// Sets `build` of `app` live on `branch`.
     ///
     /// # Errors
     ///
     /// As [`Api::branches`], and when Steam refuses the change.
     pub fn set_live(&self, app: u32, build: u64, branch: &str) -> Result<(), Error> {
-        set_live_from(&self.post(
+        changed_from(&self.post(
             "ISteamApps/SetAppBuildLive/v2",
             &[
                 ("appid", app.to_string()),
@@ -738,19 +759,27 @@ impl Api {
 /// is never shown, as it can name the address.
 fn read(response: Result<Response<Body>, ureq::Error>) -> Result<Value, Error> {
     let mut response = response.ok().ok_or(Error::Unreachable)?;
-    match response.status().as_u16() {
-        200..=299 => {}
-        401 | 403 => return Err(Error::Refused),
-        status => return Err(Error::Status(status)),
+    let status = response.status().as_u16();
+    if matches!(status, 401 | 403) {
+        return Err(Error::Refused);
     }
-    let body = response
-        .body_mut()
-        .read_to_string()
-        .ok()
-        .ok_or(Error::Unreachable)?;
-    serde_json::from_str(&body)
-        .ok()
-        .ok_or(Error::Unreadable("JSON"))
+    let body = response.body_mut().read_to_string().ok();
+    let answer = body.and_then(|body| serde_json::from_str::<Value>(&body).ok());
+    if !(200..=299).contains(&status) {
+        return Err(Error::Status(
+            status,
+            answer.as_ref().map(said).unwrap_or_default(),
+        ));
+    }
+    answer.ok_or(Error::Unreadable("JSON"))
+}
+
+/// The reason Steam gave in an answer, such as "Unable to find specificed betakey x" with a 404;
+/// empty when it gave none.
+fn said(answer: &Value) -> String {
+    field(answer, &["response", "result"])
+        .map(|inner| text(inner, &["message"]))
+        .unwrap_or_default()
 }
 
 /// The day `seconds` since 1970 fall on, in UTC, as a year, month and day.
@@ -910,20 +939,20 @@ mod tests {
             Err(Error::Unreadable("builds"))
         );
         assert_eq!(
-            set_live_from(&answer(
+            changed_from(&answer(
                 r#"{"response": {"result": 2, "message": "Invalid build"}}"#
             )),
             Err(Error::Failed("Invalid build".to_owned()))
         );
         assert_eq!(
-            set_live_from(&answer(r#"{"response": {"result": 8}}"#)),
+            changed_from(&answer(r#"{"response": {"result": 8}}"#)),
             Err(Error::Failed("result 8".to_owned()))
         );
         assert_eq!(
-            set_live_from(&answer(r#"{"response": {"result": 1}}"#)),
+            changed_from(&answer(r#"{"response": {"result": 1}}"#)),
             Ok(())
         );
-        assert_eq!(set_live_from(&answer(r#"{"response": {}}"#)), Ok(()));
+        assert_eq!(changed_from(&answer(r#"{"response": {}}"#)), Ok(()));
     }
 
     #[test]
@@ -934,7 +963,11 @@ mod tests {
                 "Steam refused the Web API key; it must be the publisher key of a group that \
                  holds the app",
             ),
-            (Error::Status(500), "Steam answered HTTP 500"),
+            (Error::Status(500, String::new()), "Steam answered HTTP 500"),
+            (
+                Error::Status(404, "Unable to find specificed betakey x".to_owned()),
+                "Steam answered HTTP 404: Unable to find specificed betakey x",
+            ),
             (
                 Error::Unreachable,
                 "partner.steam-api.com could not be reached",
@@ -1115,13 +1148,20 @@ mod tests {
             app_id: 5_335_970,
             name: "Ostinato".to_owned(),
         }];
-        let why = no_build_yet(&Error::Status(500), 5_335_970, &apps).unwrap();
+        let why = no_build_yet(&Error::Status(500, String::new()), 5_335_970, &apps).unwrap();
         assert!(
             why.starts_with("this key holds app 5335970, and Steam"),
             "{why}"
         );
-        assert_eq!(no_build_yet(&Error::Status(500), 480, &apps), None);
-        for other in [Error::Status(503), Error::Refused, Error::Unreachable] {
+        assert_eq!(
+            no_build_yet(&Error::Status(500, String::new()), 480, &apps),
+            None
+        );
+        for other in [
+            Error::Status(503, String::new()),
+            Error::Refused,
+            Error::Unreachable,
+        ] {
             assert_eq!(no_build_yet(&other, 5_335_970, &apps), None, "{other:?}");
         }
     }
@@ -1438,7 +1478,27 @@ mod tests {
             ("403 Forbidden", "", Error::Refused),
             // Only the code is read; the phrase after it is the server's to choose.
             ("401 Refused", "", Error::Refused),
-            ("500 Internal Server Error", "", Error::Status(500)),
+            (
+                "500 Internal Server Error",
+                "",
+                Error::Status(500, String::new()),
+            ),
+            // As Steam answered UpdateAppBranchDescription for a branch the app lacks.
+            (
+                "404 Not Found",
+                r#"{"response":{"result":2,"message":"Unable to find specificed betakey x"}}"#,
+                Error::Status(404, "Unable to find specificed betakey x".to_owned()),
+            ),
+            (
+                "400 Bad Request",
+                r#"{"result":{"result":8,"message":"Invalid parameter"}}"#,
+                Error::Status(400, "Invalid parameter".to_owned()),
+            ),
+            (
+                "503 Service Unavailable",
+                "<html>busy</html>",
+                Error::Status(503, String::new()),
+            ),
             ("200 OK", "<html>", Error::Unreadable("JSON")),
         ] {
             let (host, _requests) = answering(status, body);

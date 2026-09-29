@@ -362,16 +362,24 @@ pub fn commit_refused(reasons: &[String], set_live: Option<&str>) -> Option<Stri
 /// Steamworks offers no other branch until the default one has a build live.
 #[must_use]
 pub fn no_branch(app: u32, branch: &str, branches: &[webapi::Branch]) -> String {
+    format!(
+        "\"SetLive\" names \"{branch}\", but app {app} has no branch by that name; {}",
+        create_first(branches)
+    )
+}
+
+/// How to create a branch that an app with these `branches` lacks.
+#[must_use]
+pub fn create_first(branches: &[webapi::Branch]) -> &'static str {
     let fresh = branches
         .iter()
         .any(|found| webapi::is_default(&found.name) && found.build_id == 0);
-    let first = if fresh {
+    if fresh {
         "set a build live on its default branch, then create it, both in Steamworks under \
          SteamPipe, Builds"
     } else {
         "create it in Steamworks under SteamPipe, Builds first"
-    };
-    format!("\"SetLive\" names \"{branch}\", but app {app} has no branch by that name; {first}")
+    }
 }
 
 /// What Steam shows live on a branch an upload set live.
