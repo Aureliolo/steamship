@@ -2690,7 +2690,7 @@ fn login_with_web_api_key_keeps_a_key_steam_takes_and_logout_forgets_it() {
     assert!(!format!("{stdout}{stderr}").contains(KEY), "never shown");
     let request = requests.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(
-        request.starts_with("GET /ISteamApps/GetPartnerAppListForWebAPIKey/v2/ "),
+        request.starts_with("GET /ISteamApps/GetPartnerAppListForWebAPIKey/v2/?steamship="),
         "{request}"
     );
     assert!(
@@ -3082,6 +3082,16 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
         &set,
     );
     assert_eq!(matched, Some(0_i32), "{said}");
+    let fresh = |request: &str| {
+        let (_, after) = request.split_once("steamship=").unwrap();
+        after.split([' ', '&']).next().unwrap().to_owned()
+    };
+    let again = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert_ne!(
+        fresh(&asked),
+        fresh(&again),
+        "each ask is one Steam's cache has not answered"
+    );
     assert!(said.contains("2 achievements\n"), "{said}");
     assert!(
         said.contains("Steam's achievements match the file"),
