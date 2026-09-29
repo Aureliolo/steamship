@@ -78,6 +78,8 @@ pub fn read(text: &str) -> Result<Listed, String> {
 /// A way Steam's achievements and the file's differ.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Drift {
+    /// Steam holds no achievements at all, and the file this many: said once, not once for each.
+    NoneOnSteam(usize),
     /// In the file, not on Steam.
     NotOnSteam(String),
     /// On Steam, not in the file.
@@ -115,6 +117,11 @@ impl fmt::Display for Drift {
             Self::NoIcon { api_name, which } => {
                 write!(formatter, "{api_name}: Steam has no {which}")
             }
+            Self::NoneOnSteam(count) => write!(
+                formatter,
+                "Steam holds none of the file's {count} achievements: they count once entered and \
+                 published in Steamworks"
+            ),
         }
     }
 }
@@ -135,9 +142,12 @@ pub fn line(achievement: &Achievement) -> String {
 }
 
 /// Every way `held`, Steam's achievements, differ from those the file `wants`: first each of the
-/// file's in its order, then those only Steam has, in Steam's.
+/// file's in its order, then those only Steam has, in Steam's; or, when Steam holds none, that.
 #[must_use]
 pub fn compare(wants: &[Wanted], held: &[Achievement]) -> Vec<Drift> {
+    if held.is_empty() && !wants.is_empty() {
+        return vec![Drift::NoneOnSteam(wants.len())];
+    }
     let mut drift = Vec::new();
     for wanted in wants {
         let Some(steam) = held
@@ -282,6 +292,24 @@ mod tests {
         orbiter.hidden = true;
         orbiter.description = String::new();
         assert_eq!(line(&orbiter), "Orbiter, hidden");
+    }
+
+    #[test]
+    fn steam_holding_none_is_said_once_and_an_empty_file_against_none_is_no_drift() {
+        // As for Fantasy Guild Manager before its fifteen were entered in Steamworks.
+        let wants = [wanted("a", "A"), wanted("b", "B")];
+        let drift = compare(&wants, &[]);
+        assert_eq!(drift, [Drift::NoneOnSteam(2)]);
+        assert_eq!(
+            drift.first().unwrap().to_string(),
+            "Steam holds none of the file's 2 achievements: they count once entered and \
+             published in Steamworks"
+        );
+        assert_eq!(compare(&[], &[]), Vec::<Drift>::new());
+        assert_eq!(
+            compare(&[], &[held("a", "A")]),
+            [Drift::NotInFile("a".to_owned())]
+        );
     }
 
     #[test]
