@@ -128,6 +128,31 @@ pub fn check_login(account: &Account) -> Vec<OsString> {
     .into()
 }
 
+/// The commands that log `account` in with the login steamcmd saved, print `app`'s settings as
+/// Steam shows them to that account, and quit.
+///
+/// The settings are asked for afresh rather than read from steamcmd's cache. Like [`upload`], it
+/// never waits at a prompt.
+#[must_use]
+pub fn app_info(account: &Account, app: u32) -> Vec<OsString> {
+    let app = app.to_string();
+    [
+        "+@ShutdownOnFailedCommand",
+        "1",
+        "+@NoPromptForPassword",
+        "1",
+        "+login",
+        account.name(),
+        "+app_info_update",
+        "1",
+        "+app_info_print",
+        &app,
+        "+quit",
+    ]
+    .map(OsString::from)
+    .into()
+}
+
 /// The commands that log `account` in with the login steamcmd saved, upload the Workshop item
 /// `script` describes and quit. Like [`upload`], it never waits at a prompt.
 #[must_use]

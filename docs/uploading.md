@@ -149,6 +149,29 @@ or GNOME Keyring or KWallet on Linux. It is sent in a request header, never in a
 key can do everything its group may, for every app the group holds, so give it a group of its
 own with only the apps and permissions it needs.
 
+## Settings in Steamworks
+
+```sh
+steamship settings 480
+steamship settings 480 --save steam/settings.vdf
+steamship settings 480 --check steam/settings.vdf
+```
+
+A build runs only as Steamworks is set up for it: the install folder, each launch option's
+executable and system, the Linux runtime, each depot's system, and where Steam Cloud keeps
+saves. None of that is in the build scripts, and none of it can be changed but by hand in
+Steamworks. `settings` asks Steam for it through steamcmd with the saved login, as the build
+account sees the app (which works before the app is released), and shows it in Valve's own
+format.
+
+`--save` keeps it in a file beside your scripts, and `--check` exits 2 naming every setting
+that differs from that file, such as `config/launch/0/executable`. Run the check before a
+release, so that a launch option changed in Steamworks, by mistake or by someone else, stops
+it; when the change was meant, save the file again and commit it. Steam's own bookkeeping, the
+manifests of each depot and the build live on each branch, and the store details of a released
+app are left out, so the file changes only when the app's settings do. Nothing on Steam is
+changed.
+
 ## Achievements and stats
 
 ```sh

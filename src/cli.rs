@@ -173,6 +173,26 @@ pub enum Command {
         #[arg(long, value_name = "FILE")]
         check: Option<PathBuf>,
     },
+    /// Show an app's settings in Steamworks, or check them against a snapshot.
+    ///
+    /// Asks Steam, through steamcmd with the saved login, for the settings made in Steamworks
+    /// that a build depends on: the app's name, type and systems, its install folder, launch
+    /// options and runtime, its depots' systems, and Steam Cloud. `--save` keeps them in a file
+    /// beside the build scripts, in Valve's own format; `--check` exits 2 naming every setting
+    /// that differs from that file. Nothing on Steam is changed.
+    Settings {
+        /// The app, by its ID or its app build script.
+        app: String,
+        /// Write the settings to this file, replacing it, to check against later.
+        #[arg(long, value_name = "FILE", conflicts_with = "check")]
+        save: Option<PathBuf>,
+        /// Compare the settings with this file, as `--save` wrote it.
+        #[arg(long, value_name = "FILE")]
+        check: Option<PathBuf>,
+        /// The build account, if not the one the last login remembered.
+        #[arg(long, env = ACCOUNT)]
+        account: Option<String>,
+    },
     /// Show an app's leaderboards, or check them against a file and make those missing.
     ///
     /// Lists the leaderboards Steam holds for the app, through Steam's partner Web API with the
