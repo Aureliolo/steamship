@@ -231,6 +231,35 @@ mod tests {
     }
 
     #[test]
+    fn a_png_is_as_large_as_its_first_header_says() {
+        let mut second = 64_u32.to_be_bytes().to_vec();
+        second.extend_from_slice(&64_u32.to_be_bytes());
+        second.extend_from_slice(&[8, 6, 0, 0, 0]);
+        assert_eq!(
+            read(&png_with(920, 430, 2, &[chunk(b"IHDR", &second)])).unwrap(),
+            Picture {
+                format: Format::Png { transparent: false },
+                width: 920,
+                height: 430
+            }
+        );
+    }
+
+    #[test]
+    fn an_icon_of_one_small_image_is_that_size() {
+        let mut file = b"\x00\x00\x01\x00\x01\x00".to_vec();
+        file.extend_from_slice(&[48, 32, 0, 0, 1, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(
+            read(&file).unwrap(),
+            Picture {
+                format: Format::Ico,
+                width: 48,
+                height: 32
+            }
+        );
+    }
+
+    #[test]
     fn an_icon_is_as_large_as_its_largest_image_and_0_is_256() {
         let mut file = b"\x00\x00\x01\x00\x02\x00".to_vec();
         file.extend_from_slice(&[32, 32, 0, 0, 1, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0]);

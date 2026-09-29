@@ -205,8 +205,8 @@ pub fn problems(asset: &Asset, picture: &Picture) -> Vec<String> {
         Size::Widescreen => {
             let widescreen =
                 u64::from(width).saturating_mul(9) == u64::from(height).saturating_mul(16);
-            (width < 1920 || height < 1080 || !widescreen)
-                .then_some("at least 1920x1080, and 16:9".to_owned())
+            // At 16:9, below 1920 wide is below 1080 tall as well.
+            (width < 1920 || !widescreen).then_some("at least 1920x1080, and 16:9".to_owned())
         }
         Size::Logo => {
             let fits = (width == 1280 && height <= 720) || (height == 720 && width <= 1280);
