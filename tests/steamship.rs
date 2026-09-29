@@ -4080,6 +4080,25 @@ fn settings_are_shown_saved_and_checked_leaving_steams_bookkeeping_out() {
 
 #[cfg(unix)]
 #[test]
+fn settings_in_ci_are_asked_for_as_the_account_handed_over() {
+    // No login saved and no account remembered: only what `steamship ci` packed.
+    let home = faked_with(&app_info("spacewar"));
+    let (code, stdout, stderr) = steamship(
+        &["settings", "1000"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_LOGIN", &packed_login()),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        ],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(args.contains("+login build_bot "), "{args}");
+    assert!(steamcmd::saved_login(home.path(), Platform::THIS).exists());
+}
+
+#[cfg(unix)]
+#[test]
 fn a_snapshot_for_another_app_is_refused_before_steamcmd_and_an_app_steam_hides_is_a_failure() {
     let home = faked_with(
         "#!/bin/sh\n\
