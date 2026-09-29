@@ -56,19 +56,6 @@ Steam against, and carries a man page per command and tab completion for bash, z
 Check one as [Verifying a download](#verifying-a-download) shows, with the package's name in place
 of the archive's.
 
-## Arch Linux
-
-From the AUR, with multilib enabled for the same 32-bit libraries:
-
-```sh
-git clone https://aur.archlinux.org/steamship-bin.git
-cd steamship-bin
-makepkg -si
-```
-
-or with an AUR helper such as `yay -S steamship-bin`. makepkg installs the release's archive only
-if it matches the SHA-256 the release is signed over.
-
 Installed any other way on Linux, steamship needs those too: `lib32gcc-s1` and `ca-certificates`
 on Debian and Ubuntu, `glibc.i686`, `libgcc.i686` and `ca-certificates` on Fedora,
 `lib32-gcc-libs` and `ca-certificates` on Arch. Most systems have the certificates already; a
