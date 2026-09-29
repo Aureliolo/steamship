@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Writes the Homebrew formula, the Scoop manifest, the winget manifests and the AUR package for
-# one release, from the .sha256 files its build wrote beside the archives. Whoever calls this has
-# already checked those files against the release's attestation, so every hash below is one the
-# release is signed over.
+# Writes the Homebrew formula, the Scoop manifest and the winget manifests for one release, from
+# the .sha256 files its build wrote beside the archives. Whoever calls this has already checked
+# those files against the release's attestation, so every hash below is one the release is signed
+# over.
 #
 #   .github/packages.sh <version> <folder with the .sha256 files> <folder to write into>
 #
-# It writes <folder>/Formula/steamship.rb, <folder>/bucket/steamship.json, the three manifests
-# winget takes in <folder>/winget, and steamship-bin's PKGBUILD and .SRCINFO in <folder>/aur.
+# It writes <folder>/Formula/steamship.rb, <folder>/bucket/steamship.json, and the three
+# manifests winget takes in <folder>/winget.
 set -euo pipefail
 
 if [[ $# -ne 3 ]]; then
@@ -61,7 +61,7 @@ linux="$(hash_of "${linux_archive}")"
 windows="$(hash_of "${windows_archive}")"
 windows_arm="$(hash_of "${windows_arm_archive}")"
 
-mkdir -p "${out}/Formula" "${out}/bucket" "${out}/winget" "${out}/aur"
+mkdir -p "${out}/Formula" "${out}/bucket" "${out}/winget"
 
 cat > "${out}/Formula/steamship.rb" << FORMULA
 # Written by .github/packages.sh for each release, from the release's own signed checksums.
@@ -201,62 +201,3 @@ ReleaseNotesUrl: ${repository}/releases/tag/v${version}
 ManifestType: defaultLocale
 ManifestVersion: ${manifest_version}
 LOCALE
-
-# steamship-bin repackages the Linux archive. lib32-gcc-libs, from Arch's multilib repository,
-# brings the 32-bit C libraries Valve's steamcmd for Linux loads, and ca-certificates what it
-# checks Steam's servers against. The binary is static and already stripped, so makepkg is told
-# not to strip it or split out debug symbols it does not have.
-if [[ "${linux_archive}" != "steamship-${version}-x86_64-linux-musl.tar.gz" ]]; then
-  echo "The Linux archive is ${linux_archive}, not the one the PKGBUILD names." >&2
-  exit 1
-fi
-
-cat > "${out}/aur/PKGBUILD" << PKGBUILD
-# Maintainer: Aurelio Amoroso <19254254+Aureliolo@users.noreply.github.com>
-# Written by steamship's .github/packages.sh for each release, from the release's signed checksums.
-pkgname=steamship-bin
-pkgver=${version}
-pkgrel=1
-pkgdesc="Uploads game builds to Steam with Valve's steamcmd"
-arch=('x86_64')
-url='${repository}'
-license=('MIT OR Apache-2.0')
-depends=('lib32-gcc-libs' 'ca-certificates')
-provides=('steamship')
-conflicts=('steamship')
-options=('!strip' '!debug')
-source=("\${url}/releases/download/v\${pkgver}/steamship-\${pkgver}-x86_64-linux-musl.tar.gz")
-sha256sums=('${linux}')
-
-package() {
-  cd "steamship-\${pkgver}-x86_64-linux-musl"
-  install -Dm755 steamship "\${pkgdir}/usr/bin/steamship"
-  install -Dm644 -t "\${pkgdir}/usr/share/man/man1" man/*.1
-  install -Dm644 completions/steamship.bash "\${pkgdir}/usr/share/bash-completion/completions/steamship"
-  install -Dm644 completions/_steamship "\${pkgdir}/usr/share/zsh/site-functions/_steamship"
-  install -Dm644 completions/steamship.fish "\${pkgdir}/usr/share/fish/vendor_completions.d/steamship.fish"
-  install -Dm644 README.md "\${pkgdir}/usr/share/doc/steamship/README.md"
-  install -Dm644 -t "\${pkgdir}/usr/share/licenses/\${pkgname}" LICENSE-MIT LICENSE-APACHE
-}
-PKGBUILD
-
-# What `makepkg --printsrcinfo` prints for the PKGBUILD above, which the AUR reads in its place;
-# the packages workflow checks the two agree.
-printf '%s\n' \
-  "pkgbase = steamship-bin" \
-  "	pkgdesc = Uploads game builds to Steam with Valve's steamcmd" \
-  "	pkgver = ${version}" \
-  "	pkgrel = 1" \
-  "	url = ${repository}" \
-  "	arch = x86_64" \
-  "	license = MIT OR Apache-2.0" \
-  "	depends = lib32-gcc-libs" \
-  "	depends = ca-certificates" \
-  "	provides = steamship" \
-  "	conflicts = steamship" \
-  "	options = !strip" \
-  "	options = !debug" \
-  "	source = ${download}/${linux_archive}" \
-  "	sha256sums = ${linux}" \
-  "" \
-  "pkgname = steamship-bin" > "${out}/aur/.SRCINFO"
