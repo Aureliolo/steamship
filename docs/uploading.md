@@ -172,6 +172,23 @@ manifests of each depot and the build live on each branch, and the store details
 app are left out, so the file changes only when the app's settings do. Nothing on Steam is
 changed.
 
+## Steam DRM
+
+```sh
+steamship drm-wrap 480 build/windows/game.exe
+steamship drm-wrap 480 build/windows/game.exe --output wrapped/game.exe --compatibility
+```
+
+`drm-wrap` has Valve's servers add the app's Steam DRM to a Windows executable, through steamcmd
+with the saved login, before the build is uploaded. The executable is replaced by the wrapped
+one, or that is written to `--output`; either way nothing is replaced unless the wrap
+succeeded, and the wrapped file keeps the original's permissions. `--compatibility` asks for
+Valve's compatibility mode, for an executable the default wrap breaks.
+
+Valve's tool adds Steam DRM only to an executable that already imports `GetModuleHandleA` from
+`kernel32.dll`, as it says when it refuses one. Executables made by Godot and by Rust do not
+import it, so they cannot be wrapped; steamship passes the refusal on with that explanation.
+
 ## Achievements and stats
 
 ```sh
