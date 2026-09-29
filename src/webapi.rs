@@ -111,6 +111,53 @@ pub struct Build {
     pub created: u64,
 }
 
+/// An achievement as Steam holds it for an app.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Achievement {
+    /// The name the game unlocks it by.
+    pub api_name: String,
+    /// The name players see.
+    pub name: String,
+    pub description: String,
+    /// Whether players see it only once unlocked.
+    pub hidden: bool,
+    /// The address of its icon, and of the one shown while it is locked; empty when none.
+    pub icon: String,
+    pub icon_locked: String,
+}
+
+/// The achievements `GetSchemaForGame` answered, in Steam's order. An app with none is answered
+/// with an empty `game`, which is no achievements rather than an answer that cannot be read.
+///
+/// # Errors
+///
+/// When an achievement has no API name.
+pub fn achievements_from(answer: &Value) -> Result<Vec<Achievement>, Error> {
+    let Some(entries) = answer
+        .pointer("/game/availableGameStats/achievements")
+        .and_then(Value::as_array)
+    else {
+        return Ok(Vec::new());
+    };
+    entries
+        .iter()
+        .map(|entry| {
+            let api_name = text(entry, &["name"]);
+            if api_name.is_empty() {
+                return Err(Error::Unreadable("achievement name"));
+            }
+            Ok(Achievement {
+                api_name,
+                name: text(entry, &["displayName"]),
+                description: text(entry, &["description"]),
+                hidden: number(field(entry, &["hidden"])).is_some_and(|hidden| hidden != 0),
+                icon: text(entry, &["icon"]),
+                icon_locked: text(entry, &["icongray"]),
+            })
+        })
+        .collect()
+}
+
 /// `value` as a number, written as one or as text.
 fn number(value: Option<&Value>) -> Option<u64> {
     match value? {
@@ -439,6 +486,20 @@ impl Api {
         branches_from(&answer)
     }
 
+    /// The achievements Steam holds for `app`, in English.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::branches`].
+    pub fn achievements(&self, app: u32) -> Result<Vec<Achievement>, Error> {
+        let answer = self.get_from(
+            "ISteamUserStats",
+            "GetSchemaForGame/v2",
+            &[("appid", app.to_string()), ("l", "english".to_owned())],
+        )?;
+        achievements_from(&answer)
+    }
+
     /// The last `count` builds of `app`, newest first.
     ///
     /// # Errors
@@ -483,9 +544,18 @@ impl Api {
     }
 
     fn get(&self, method: &str, query: &[(&str, String)]) -> Result<Value, Error> {
+        self.get_from("ISteamApps", method, query)
+    }
+
+    fn get_from(
+        &self,
+        interface: &str,
+        method: &str,
+        query: &[(&str, String)],
+    ) -> Result<Value, Error> {
         let mut request = self
             .agent
-            .get(format!("{}/ISteamApps/{method}/", self.host))
+            .get(format!("{}/{interface}/{method}/", self.host))
             .header("x-webapi-key", self.key.0.as_str());
         for (name, value) in query {
             request = request.query(*name, value);
@@ -754,6 +824,49 @@ mod tests {
             created: 0,
         };
         assert_eq!(build_line(&older, &branches), "1970-01-01");
+    }
+
+    #[test]
+    fn achievements_are_read_as_steam_answers_them_and_none_is_none() {
+        // As Steam answered for Spacewar, trimmed to two.
+        let achievements = achievements_from(&answer(
+            r#"{"game": {"gameName": "Spacewar", "availableGameStats": {"achievements": [
+                {"name": "ACH_WIN_ONE_GAME", "defaultvalue": 0, "displayName": "Winner",
+                 "hidden": 0, "description": "Win one game.", "icon": "https://cdn/winner.jpg",
+                 "icongray": "https://cdn/winner_bw.jpg"},
+                {"name": "ACH_TRAVEL_FAR_SINGLE", "displayName": "Orbiter", "hidden": "1"}
+            ]}}}"#,
+        ))
+        .unwrap();
+        assert_eq!(
+            achievements,
+            [
+                Achievement {
+                    api_name: "ACH_WIN_ONE_GAME".to_owned(),
+                    name: "Winner".to_owned(),
+                    description: "Win one game.".to_owned(),
+                    hidden: false,
+                    icon: "https://cdn/winner.jpg".to_owned(),
+                    icon_locked: "https://cdn/winner_bw.jpg".to_owned(),
+                },
+                Achievement {
+                    api_name: "ACH_TRAVEL_FAR_SINGLE".to_owned(),
+                    name: "Orbiter".to_owned(),
+                    description: String::new(),
+                    hidden: true,
+                    icon: String::new(),
+                    icon_locked: String::new(),
+                },
+            ]
+        );
+        // As Steam answered for Fantasy Guild Manager before its achievements were entered.
+        assert_eq!(achievements_from(&answer(r#"{"game": {}}"#)).unwrap(), []);
+        assert!(matches!(
+            achievements_from(&answer(
+                r#"{"game": {"availableGameStats": {"achievements": [{"displayName": "x"}]}}}"#
+            )),
+            Err(Error::Unreadable("achievement name"))
+        ));
     }
 
     #[test]
