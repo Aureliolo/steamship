@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::account::Account;
+use crate::drm;
 use crate::install;
 use crate::platform::Platform;
 
@@ -153,6 +154,37 @@ pub fn app_info(account: &Account, app: u32) -> Vec<OsString> {
     .into()
 }
 
+/// The commands that log `account` in with the login steamcmd saved, wrap `input` in Steam DRM
+/// into `output`, and quit.
+///
+/// Valve's servers do the wrapping, for `app`, of the Windows executable. Like [`upload`], it
+/// never waits at a prompt.
+#[must_use]
+pub fn drm_wrap(
+    account: &Account,
+    app: u32,
+    input: &Path,
+    output: &Path,
+    mode: drm::Mode,
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> = [
+        "+@ShutdownOnFailedCommand",
+        "1",
+        "+@NoPromptForPassword",
+        "1",
+        "+login",
+        account.name(),
+        "+drm_wrap",
+    ]
+    .map(OsString::from)
+    .into();
+    args.push(app.to_string().into());
+    args.push(input.as_os_str().to_owned());
+    args.push(output.as_os_str().to_owned());
+    args.extend(["drmtoolp", mode.flags(), "+quit"].map(OsString::from));
+    args
+}
+
 /// The commands that log `account` in with the login steamcmd saved, upload the Workshop item
 /// `script` describes and quit. Like [`upload`], it never waits at a prompt.
 #[must_use]
@@ -175,6 +207,10 @@ pub fn workshop(account: &Account, script: &Path) -> Vec<OsString> {
 
 /// The longest a check of the saved login may run: logging in takes seconds.
 pub const CHECK_LIMIT: Duration = Duration::from_mins(2);
+
+/// The longest a DRM wrap may run: the executable goes to Valve's servers and back, which for a
+/// large one over a slow line takes many minutes.
+pub const WRAP_LIMIT: Duration = Duration::from_hours(1);
 
 /// The longest an upload may run before it is taken to have hung and is stopped. A large first
 /// upload over a slow line takes hours; steamcmd waiting at a prompt would wait forever.

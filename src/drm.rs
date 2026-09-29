@@ -12,6 +12,16 @@ pub enum Mode {
 }
 
 impl Mode {
+    /// The mode asked for: compatibility mode or the default.
+    #[must_use]
+    pub const fn chosen(compatibility: bool) -> Self {
+        if compatibility {
+            Self::Compatibility
+        } else {
+            Self::Default
+        }
+    }
+
     /// The flags steamcmd passes Valve's tool.
     #[must_use]
     pub const fn flags(self) -> &'static str {
@@ -166,6 +176,8 @@ mod tests {
 
     #[test]
     fn each_mode_has_valves_flags() {
+        assert_eq!(Mode::chosen(false), Mode::Default);
+        assert_eq!(Mode::chosen(true), Mode::Compatibility);
         assert_eq!(Mode::Default.flags(), "0");
         assert_eq!(Mode::Compatibility.flags(), "6");
     }
