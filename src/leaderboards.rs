@@ -113,7 +113,10 @@ impl fmt::Display for Drift {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotOnSteam(name) => {
-                write!(formatter, "{name}: in the file, not on Steam; --create makes it")
+                write!(
+                    formatter,
+                    "{name}: in the file, not on Steam; --create makes it"
+                )
             }
             Self::NotInFile(name) => write!(formatter, "{name}: on Steam, not in the file"),
             Self::Differs {
@@ -137,7 +140,10 @@ pub fn line(leaderboard: &Leaderboard) -> String {
         "{}, {}, {}",
         leaderboard.sort.to_ascii_lowercase(),
         display(&leaderboard.display),
-        show::counted(usize::try_from(leaderboard.entries).unwrap_or(usize::MAX), "score")
+        show::counted(
+            usize::try_from(leaderboard.entries).unwrap_or(usize::MAX),
+            "score"
+        )
     );
     if leaderboard.trusted_writes {
         line.push_str(", trusted writes only");
@@ -163,7 +169,10 @@ fn display(display: &str) -> String {
 pub fn compare(wants: &[Leaderboard], held: &[Leaderboard]) -> Vec<Drift> {
     let mut drift = Vec::new();
     for wanted in wants {
-        let Some(steam) = held.iter().find(|leaderboard| leaderboard.name == wanted.name) else {
+        let Some(steam) = held
+            .iter()
+            .find(|leaderboard| leaderboard.name == wanted.name)
+        else {
             drift.push(Drift::NotOnSteam(wanted.name.clone()));
             continue;
         };
@@ -174,7 +183,11 @@ pub fn compare(wants: &[Leaderboard], held: &[Leaderboard]) -> Vec<Drift> {
                 steam.sort.to_ascii_lowercase(),
                 wanted.sort.to_ascii_lowercase(),
             ),
-            ("the display", display(&steam.display), display(&wanted.display)),
+            (
+                "the display",
+                display(&steam.display),
+                display(&wanted.display),
+            ),
             (
                 "trusted writes only",
                 yes_no(steam.trusted_writes),
@@ -206,6 +219,8 @@ pub fn compare(wants: &[Leaderboard], held: &[Leaderboard]) -> Vec<Drift> {
 
 #[cfg(test)]
 mod tests {
+    use std::slice;
+
     use super::*;
 
     fn board(name: &str, sort: &str, display: &str) -> Leaderboard {
@@ -250,7 +265,10 @@ mod tests {
         for (text, why) in [
             ("[]".to_owned(), "there is no \"leaderboards\" list"),
             ("{".to_owned(), "not JSON"),
-            (r#"{"app": "x", "leaderboards": []}"#.to_owned(), "\"app\" is not"),
+            (
+                r#"{"app": "x", "leaderboards": []}"#.to_owned(),
+                "\"app\" is not",
+            ),
             (
                 r#"{"leaderboards": [{"sort": "ascending"}]}"#.to_owned(),
                 "leaderboard 1 has no \"name\"",
@@ -261,7 +279,7 @@ mod tests {
             ),
             (
                 format!(r#"{{"leaderboards": [{{"name": "{long}"}}]}}"#),
-                "longer than Steam's 128 bytes",
+                &format!("{long}: longer than Steam's 128 bytes"),
             ),
             (
                 r#"{"leaderboards": [{"name": "a", "display": "numeric"}]}"#.to_owned(),
@@ -306,9 +324,8 @@ mod tests {
 
     #[test]
     fn a_choice_reads_as_a_sentence() {
-        let words = |list: &[&str]| -> Vec<String> {
-            list.iter().map(|&word| word.to_owned()).collect()
-        };
+        let words =
+            |list: &[&str]| -> Vec<String> { list.iter().map(|&word| word.to_owned()).collect() };
         assert_eq!(or_list(&words(&[])), "");
         assert_eq!(or_list(&words(&["a"])), "a");
         assert_eq!(or_list(&words(&["a", "b"])), "a or b");
@@ -343,13 +360,16 @@ mod tests {
         let gold = board("gold", "Descending", "Numeric");
         let old = board("old", "Descending", "Numeric");
         assert_eq!(
-            compare(&[fastest.clone(), gold.clone()], &[fastest.clone(), gold.clone()]),
+            compare(
+                &[fastest.clone(), gold.clone()],
+                &[fastest.clone(), gold.clone()]
+            ),
             [],
             "the scores are not the file's to say"
         );
         let mut shown_differently = fastest.clone();
         shown_differently.sort = "ASCENDING".to_owned();
-        assert_eq!(compare(&[fastest.clone()], &[shown_differently]), []);
+        assert_eq!(compare(slice::from_ref(&fastest), &[shown_differently]), []);
         let drift = compare(&[fastest, gold], &[old, changed]);
         let said: Vec<String> = drift.iter().map(ToString::to_string).collect();
         assert_eq!(

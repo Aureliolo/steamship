@@ -213,8 +213,11 @@ fn leaderboard(entry: &Value) -> Result<Leaderboard, Error> {
         return Err(Error::Unreadable("leaderboard name"));
     }
     let flag = |key: &str| {
-        field(entry, &[key])
-            .is_some_and(|value| value.as_bool().unwrap_or_else(|| number(Some(value)) == Some(1)))
+        field(entry, &[key]).is_some_and(|value| {
+            value
+                .as_bool()
+                .unwrap_or_else(|| number(Some(value)) == Some(1))
+        })
     };
     Ok(Leaderboard {
         name,
@@ -645,11 +648,7 @@ impl Api {
     /// # Errors
     ///
     /// As [`Api::branches`], and when Steam's result says the call failed.
-    pub fn create_leaderboard(
-        &self,
-        app: u32,
-        wanted: &Leaderboard,
-    ) -> Result<Leaderboard, Error> {
+    pub fn create_leaderboard(&self, app: u32, wanted: &Leaderboard) -> Result<Leaderboard, Error> {
         let yes_no = |on: bool| if on { "true" } else { "false" }.to_owned();
         created_from(&self.post(
             "ISteamLeaderboards/FindOrCreateLeaderboard/v2",
@@ -1038,6 +1037,76 @@ mod tests {
             )),
             Err(Error::Unreadable("achievement name"))
         ));
+    }
+
+    #[test]
+    fn leaderboards_are_read_in_both_of_steams_shapes() {
+        // As Steam answered for Fantasy Guild Manager, with one leaderboard made for a trial.
+        let listed = leaderboards_from(&answer(
+            r#"{"response": {"result": 1, "leaderboards": [
+                {"id": 21153543, "name": "steamship_probe", "entries": 3,
+                 "sortmethod": "Ascending", "displaytype": "", "onlytrustedwrites": true,
+                 "onlyfriendsreads": true, "onlyusersinsameparty": false,
+                 "limitrangearounduser": 0, "limitglobaltopentries": 0},
+                {"id": 21153555, "name": "gold", "sortmethod": "Descending",
+                 "displaytype": "Numeric", "onlytrustedwrites": 0, "onlyfriendsreads": "1"}
+            ]}}"#,
+        ))
+        .unwrap();
+        let probe = Leaderboard {
+            name: "steamship_probe".to_owned(),
+            sort: "Ascending".to_owned(),
+            display: String::new(),
+            trusted_writes: true,
+            friends_only: true,
+            entries: 3,
+        };
+        let gold = Leaderboard {
+            name: "gold".to_owned(),
+            sort: "Descending".to_owned(),
+            display: "Numeric".to_owned(),
+            trusted_writes: false,
+            friends_only: true,
+            entries: 0,
+        };
+        assert_eq!(listed, [probe.clone(), gold]);
+        assert_eq!(
+            leaderboards_from(&answer(
+                r#"{"response": {"result": 1, "leaderboards": []}}"#
+            ))
+            .unwrap(),
+            []
+        );
+        assert!(matches!(
+            leaderboards_from(&answer(r#"{"response": {"leaderboards": [{"id": 1}]}}"#)),
+            Err(Error::Unreadable("leaderboard name"))
+        ));
+        assert_eq!(
+            leaderboards_from(&answer(r#"{"response": {"result": 8}}"#)),
+            Err(Error::Failed("result 8".to_owned()))
+        );
+
+        let made = r#"{"result": {"result": 1, "leaderboard": {"leaderboardName": "steamship_probe",
+            "leaderBoardID": 21153543, "leaderBoardEntries": 3, "leaderBoardSortMethod": "Ascending",
+            "leaderBoardDisplayType": "", "onlytrustedwrites": true, "onlyfriendsreads": true}}}"#;
+        assert_eq!(created_from(&answer(made)).unwrap(), probe);
+        assert_eq!(
+            created_from(&answer(&made.replace("21153543", "0"))),
+            Err(Error::Failed("Steam made no leaderboard".to_owned())),
+            "the ID Steam gives one it neither found nor made"
+        );
+        assert_eq!(
+            created_from(&answer(r#"{"result": {"result": 1}}"#)),
+            Err(Error::Unreadable("leaderboard"))
+        );
+        assert_eq!(
+            created_from(&answer(r#"{"response": {}}"#)),
+            Err(Error::Unreadable("result"))
+        );
+        assert_eq!(
+            created_from(&answer(r#"{"result": {"result": 2, "message": "no"}}"#)),
+            Err(Error::Failed("no".to_owned()))
+        );
     }
 
     #[test]

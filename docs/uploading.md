@@ -180,6 +180,47 @@ the app checked, and other keys, such as your own tools', are left alone. Achiev
 Steam only once published in Steamworks, so one entered but not yet published is missing from
 Steam's.
 
+## Leaderboards
+
+```sh
+steamship leaderboards 480
+steamship leaderboards 480 --check steam/leaderboards.json
+steamship leaderboards 480 --check steam/leaderboards.json --create
+```
+
+`leaderboards` lists those Steam holds for the app, with the same Web API key as `builds`.
+With `--check`, it compares them with a file by name, and exits 2 naming each leaderboard that
+is in the file but not on Steam or the other way round, and each setting that differs. With
+`--create` too, the file's leaderboards that Steam lacks are made first, as the file has them,
+so a release can bring in a new one before the build that uses it.
+
+Steam keeps an existing leaderboard's settings and its scores: asked to make one that is already
+there, it answers with the one it has. So steamship never changes, remakes or deletes a
+leaderboard. A setting that differs is changed in Steamworks, under Stats & Achievements,
+Leaderboards, and one on Steam but not in the file is left for you to delete there or add to
+the file.
+
+```json
+{
+  "app": 480,
+  "leaderboards": [
+    {
+      "name": "fastest_season",
+      "sort": "ascending",
+      "display": "seconds",
+      "trusted_writes": false,
+      "friends_only": false
+    }
+  ]
+}
+```
+
+`sort` is `ascending` (the lowest score first) or `descending`, and `display` is `numeric`,
+`seconds` or `milliseconds`; both are needed, so that no leaderboard is made with one guessed.
+`trusted_writes` (only the Web API may set scores, never the game) and `friends_only` (players
+see only their friends' scores) may be left out, for `false`. `app`, when there, must be the app
+checked, and other keys are left alone.
+
 ## Rich presence
 
 ```sh
