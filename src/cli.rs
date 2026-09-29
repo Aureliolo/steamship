@@ -173,6 +173,29 @@ pub enum Command {
         #[arg(long, value_name = "FILE")]
         check: Option<PathBuf>,
     },
+    /// Wrap a Windows executable in Steam DRM, before it is uploaded.
+    ///
+    /// Has Valve's servers add the app's Steam DRM to the executable, through steamcmd with the
+    /// saved login, and replaces the executable with the wrapped one, or writes that to
+    /// `--output`. Nothing is replaced unless the wrap succeeded. Valve's tool adds DRM only to an
+    /// executable that already imports `GetModuleHandleA`, which Godot's do not, and says so when
+    /// it refuses one.
+    #[command(name = "drm-wrap")]
+    DrmWrap {
+        /// The app, by its ID or its app build script.
+        app: String,
+        /// The Windows executable, such as `build/windows/game.exe`.
+        executable: PathBuf,
+        /// Write the wrapped executable here instead of replacing the one given.
+        #[arg(long, value_name = "FILE")]
+        output: Option<PathBuf>,
+        /// Valve's compatibility mode, for an executable the default wrap breaks.
+        #[arg(long)]
+        compatibility: bool,
+        /// The build account, if not the one the last login remembered.
+        #[arg(long, env = ACCOUNT)]
+        account: Option<String>,
+    },
     /// Show an app's settings in Steamworks, or check them against a snapshot.
     ///
     /// Asks Steam, through steamcmd with the saved login, for the settings made in Steamworks

@@ -25,8 +25,8 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    achievements, check, ci, conversation, dump, init, keychain, leaderboards, presence, run,
-    scripts, settings, steamcmd, upload, vdf, webapi, workshop,
+    achievements, check, ci, conversation, drm, dump, init, keychain, leaderboards, magic,
+    presence, run, scripts, settings, steamcmd, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -72,81 +72,70 @@ fn run(command: Command) -> ExitCode {
             account,
             secret,
             output,
-        } => match try_ci(&Setup {
+        } => either(try_ci(&Setup {
             script: script.as_deref(),
             repo: repo.as_deref(),
             account: named(account.as_deref()),
             secret: &secret,
             output: output.as_deref(),
-        }) {
-            Ok(code) | Err(code) => code,
-        },
+        })),
         Command::Install => run_install(),
         Command::Init {
             app,
             depots,
             folder,
         } => run_init(app, depots, &folder),
-        Command::Builds { app, count } => match try_builds(&app, count) {
-            Ok(code) | Err(code) => code,
-        },
-        Command::Achievements { app, check } => match try_achievements(&app, check.as_deref()) {
-            Ok(code) | Err(code) => code,
-        },
+        Command::Builds { app, count } => either(try_builds(&app, count)),
+        Command::Achievements { app, check } => either(try_achievements(&app, check.as_deref())),
+        Command::DrmWrap {
+            app,
+            executable,
+            output,
+            compatibility,
+            account,
+        } => either(try_drm_wrap(
+            &app,
+            &executable,
+            output.as_deref(),
+            drm::Mode::chosen(compatibility),
+            named(account.as_deref()),
+        )),
         Command::Settings {
             app,
             save,
             check,
             account,
-        } => match try_settings(
+        } => either(try_settings(
             &app,
             save.as_deref(),
             check.as_deref(),
             named(account.as_deref()),
-        ) {
-            Ok(code) | Err(code) => code,
-        },
+        )),
         Command::Leaderboards { app, check, create } => {
-            match try_leaderboards(&app, check.as_deref(), create) {
-                Ok(code) | Err(code) => code,
-            }
+            either(try_leaderboards(&app, check.as_deref(), create))
         }
         Command::RichPresence {
             app,
             files,
             preview,
-        } => match try_rich_presence(&app, &files, preview) {
-            Ok(code) | Err(code) => code,
-        },
-        Command::Promote { app, build, branch } => match try_promote(&app, build, &branch) {
-            Ok(code) | Err(code) => code,
-        },
+        } => either(try_rich_presence(&app, &files, preview)),
+        Command::Promote { app, build, branch } => either(try_promote(&app, build, &branch)),
         Command::Branch {
             app,
             branch,
             description,
-        } => match try_branch(&app, &branch, &description) {
-            Ok(code) | Err(code) => code,
-        },
+        } => either(try_branch(&app, &branch, &description)),
         Command::Workshop {
             script,
             account,
             new,
-        } => match try_workshop(&script, named(account.as_deref()), new) {
-            Ok(code) | Err(code) => code,
-        },
+        } => either(try_workshop(&script, named(account.as_deref()), new)),
         Command::Login {
             web_api_key: true, ..
-        } => match try_key_login() {
-            Ok(code) | Err(code) => code,
-        },
-        Command::Login { account, .. } => match try_login(named(account.as_deref())) {
-            Ok(code) | Err(code) => code,
-        },
+        } => either(try_key_login()),
+        Command::Login { account, .. } => either(try_login(named(account.as_deref()))),
         Command::Logout => run_logout(),
-        Command::Status { account } => match try_status(named(account.as_deref())) {
-            Ok(code) | Err(code) => code,
-        },
+        Command::Status { account } => either(try_status(named(account.as_deref()))),
         Command::Upload {
             script,
             version,
@@ -158,6 +147,13 @@ fn run(command: Command) -> ExitCode {
             preview,
             account: named(account.as_deref()),
         }),
+    }
+}
+
+/// The code a command exits with, whether it finished or stopped early.
+const fn either(result: Result<ExitCode, ExitCode>) -> ExitCode {
+    match result {
+        Ok(code) | Err(code) => code,
     }
 }
 
@@ -1536,6 +1532,102 @@ fn try_rich_presence(app: &str, files: &[PathBuf], preview: bool) -> Result<Exit
         "each language's tokens on Steam are now exactly its file's",
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn try_drm_wrap(
+    app: &str,
+    executable: &Path,
+    output: Option<&Path>,
+    mode: drm::Mode,
+    named: Option<&str>,
+) -> Result<ExitCode, ExitCode> {
+    show::title("drm-wrap");
+    let app_id = app_named(app)?;
+    let refused = |why: &dyn Display| fail(&format!("{}: {why}", executable.display()), REFUSED);
+    match magic::looks_like_windows_program(executable) {
+        Ok(true) => {}
+        Ok(false) => return Err(refused(&"is not a Windows executable")),
+        Err(error) => return Err(refused(&error)),
+    }
+    show::field("program", &executable.display().to_string());
+    let given = output.unwrap_or(executable);
+    if let Some(output) = output {
+        show::field("output", &output.display().to_string());
+    }
+    let input = path::absolute(executable).map_err(|error| refused(&error))?;
+    let destination = path::absolute(given)
+        .map_err(|error| fail(&format!("{}: {error}", given.display()), REFUSED))?;
+    let (Some(folder), Some(name)) = (destination.parent(), destination.file_name()) else {
+        return Err(fail(
+            &format!("{}: is not a file's path", destination.display()),
+            REFUSED,
+        ));
+    };
+    // Beside where it goes, so that it is moved into place whole, and never copied half-written.
+    let wrapped = folder.join(format!(".{}.steamship-drm", name.to_string_lossy()));
+    let packed = packed_login()?;
+    let account = match (&packed, named) {
+        (Some(packed), None) => packed.account().clone(),
+        _ => account(named, false)?.0,
+    };
+    let (home, manifest) = ready()?;
+    restore(packed.as_ref(), &home)?;
+    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
+    let root = home.join(install::FOLDER);
+    let program = steamcmd::program(&root, Platform::THIS);
+    drop(fs::remove_file(&wrapped));
+    let spinner = Spinner::start("steam", "wrapping", true);
+    let finished = run::run(
+        &program,
+        &steamcmd::drm_wrap(&account, app_id, &input, &wrapped, mode),
+        &steamcmd::environment(&home, Platform::THIS),
+        &root,
+        steamcmd::WRAP_LIMIT,
+        steamcmd::HOPELESS,
+    );
+    let took = show::took(spinner.elapsed());
+    let finished = match finished {
+        Ok(finished) => finished,
+        Err(error) => {
+            spinner.failed(&format!("could not start after {took}"));
+            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+        }
+    };
+    let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
+    let console = redactor.redact(&finished.output);
+    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    let written = fs::metadata(&wrapped).is_ok_and(|found| found.len() > 0);
+    match drm::judge(finished.code, &String::from_utf8_lossy(&console), written) {
+        drm::Outcome::Wrapped => {
+            let placed = fs::metadata(&input)
+                .and_then(|original| fs::set_permissions(&wrapped, original.permissions()))
+                .and_then(|()| fs::rename(&wrapped, &destination));
+            if let Err(error) = placed {
+                spinner.failed(&format!("wrapped in {took}, not placed"));
+                drop(fs::remove_file(&wrapped));
+                return Err(fail(&format!("{}: {error}", destination.display()), FAILED));
+            }
+            spinner.done(&format!("wrapped in {took}"));
+            show::success(
+                &format!("app {app_id}: {} is wrapped in Steam DRM", given.display()),
+                "",
+            );
+            Ok(ExitCode::SUCCESS)
+        }
+        drm::Outcome::NotLoggedIn(reason) => {
+            drop(fs::remove_file(&wrapped));
+            spinner.failed(&format!("refused after {took}"));
+            Err(login_refused(&reason, packed.as_ref()))
+        }
+        drm::Outcome::Failed(reasons) => {
+            drop(fs::remove_file(&wrapped));
+            spinner.failed(&format!("failed after {took}"));
+            for reason in &reasons {
+                show::failure(reason, "", None);
+            }
+            Err(ExitCode::from(FAILED))
+        }
+    }
 }
 
 /// The settings snapshot at `path`, refused before steamcmd is run when it is not `app`'s.
