@@ -158,6 +158,74 @@ pub fn achievements_from(answer: &Value) -> Result<Vec<Achievement>, Error> {
         .collect()
 }
 
+/// A leaderboard as Steam holds it, or as a file wants it made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Leaderboard {
+    /// The name the game finds it by.
+    pub name: String,
+    /// `Ascending` or `Descending`, Steam's words for whether the lowest score is first or the
+    /// highest.
+    pub sort: String,
+    /// `Numeric`, `Seconds` or `MilliSeconds`, how a score is shown; empty when none was set.
+    pub display: String,
+    /// Whether only the Web API, and never the game, may set scores.
+    pub trusted_writes: bool,
+    /// Whether players are shown only their friends' scores.
+    pub friends_only: bool,
+    /// How many scores it holds.
+    pub entries: u64,
+}
+
+/// The leaderboards `GetLeaderboardsForGame` answered, in Steam's order.
+///
+/// # Errors
+///
+/// When the answer is not one, says the call failed, or names no leaderboard.
+pub fn leaderboards_from(answer: &Value) -> Result<Vec<Leaderboard>, Error> {
+    entries(answer, "leaderboards")?
+        .into_iter()
+        .map(|(_, entry)| leaderboard(entry))
+        .collect()
+}
+
+/// The leaderboard `FindOrCreateLeaderboard` answered, which is Steam's whether it was just made
+/// or was already there.
+///
+/// # Errors
+///
+/// When the answer is not one, says the call failed, or holds no leaderboard.
+pub fn created_from(answer: &Value) -> Result<Leaderboard, Error> {
+    let result = field(answer, &["result"]).ok_or(Error::Unreadable("result"))?;
+    succeeded(result)?;
+    let entry = field(result, &["leaderboard"]).ok_or(Error::Unreadable("leaderboard"))?;
+    // Steam answers a leaderboard it neither found nor made with the ID 0.
+    if number(field(entry, &["leaderBoardID", "id"])).unwrap_or(0) == 0 {
+        return Err(Error::Failed("Steam made no leaderboard".to_owned()));
+    }
+    leaderboard(entry)
+}
+
+/// A leaderboard in either of Steam's shapes: `GetLeaderboardsForGame`'s, or the prefixed one of
+/// `FindOrCreateLeaderboard`.
+fn leaderboard(entry: &Value) -> Result<Leaderboard, Error> {
+    let name = text(entry, &["name", "leaderboardName"]);
+    if name.is_empty() {
+        return Err(Error::Unreadable("leaderboard name"));
+    }
+    let flag = |key: &str| {
+        field(entry, &[key])
+            .is_some_and(|value| value.as_bool().unwrap_or_else(|| number(Some(value)) == Some(1)))
+    };
+    Ok(Leaderboard {
+        name,
+        sort: text(entry, &["sortmethod", "leaderBoardSortMethod"]),
+        display: text(entry, &["displaytype", "leaderBoardDisplayType"]),
+        trusted_writes: flag("onlytrustedwrites"),
+        friends_only: flag("onlyfriendsreads"),
+        entries: number(field(entry, &["entries", "leaderBoardEntries"])).unwrap_or(0),
+    })
+}
+
 /// `value` as a number, written as one or as text.
 fn number(value: Option<&Value>) -> Option<u64> {
     match value? {
@@ -551,14 +619,58 @@ impl Api {
     ///
     /// As [`Api::branches`], and when Steam's result says the call failed.
     pub fn set_rich_presence(&self, input: &Value) -> Result<(), Error> {
+        self.post(
+            "IProductInfoService/SetRichPresenceLocalization/v1",
+            &[("input_json", input.to_string())],
+        )
+        .map(drop)
+    }
+
+    /// The leaderboards Steam holds for `app`, in Steam's order.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::branches`].
+    pub fn leaderboards(&self, app: u32) -> Result<Vec<Leaderboard>, Error> {
+        leaderboards_from(&self.get_from(
+            "ISteamLeaderboards",
+            "GetLeaderboardsForGame/v2",
+            &[("appid", app.to_string())],
+        )?)
+    }
+
+    /// Makes `wanted` for `app`, and answers the leaderboard as Steam then holds it. One that is
+    /// already there is answered as it is: Steam never changes its settings.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::branches`], and when Steam's result says the call failed.
+    pub fn create_leaderboard(
+        &self,
+        app: u32,
+        wanted: &Leaderboard,
+    ) -> Result<Leaderboard, Error> {
+        let yes_no = |on: bool| if on { "true" } else { "false" }.to_owned();
+        created_from(&self.post(
+            "ISteamLeaderboards/FindOrCreateLeaderboard/v2",
+            &[
+                ("appid", app.to_string()),
+                ("name", wanted.name.clone()),
+                ("sortmethod", wanted.sort.clone()),
+                ("displaytype", wanted.display.clone()),
+                ("createifnotfound", yes_no(true)),
+                ("onlytrustedwrites", yes_no(wanted.trusted_writes)),
+                ("onlyfriendsreads", yes_no(wanted.friends_only)),
+            ],
+        )?)
+    }
+
+    fn post(&self, method: &str, form: &[(&str, String)]) -> Result<Value, Error> {
         let response = self
             .agent
-            .post(format!(
-                "{}/IProductInfoService/SetRichPresenceLocalization/v1/",
-                self.host
-            ))
+            .post(format!("{}/{method}/", self.host))
             .header("x-webapi-key", self.key.0.as_str())
-            .send_form([("input_json", input.to_string())]);
+            .send_form(form.iter().map(|(name, value)| (*name, value.as_str())));
         // A service method can answer 200 and say it failed only in its result header.
         if let Ok(answer) = &response {
             let header = |name: &str| {
@@ -575,7 +687,7 @@ impl Api {
                 )));
             }
         }
-        read(response).map(drop)
+        read(response)
     }
 
     /// Sets `build` of `app` live on `branch`.
@@ -584,16 +696,14 @@ impl Api {
     ///
     /// As [`Api::branches`], and when Steam refuses the change.
     pub fn set_live(&self, app: u32, build: u64, branch: &str) -> Result<(), Error> {
-        let response = self
-            .agent
-            .post(format!("{}/ISteamApps/SetAppBuildLive/v2/", self.host))
-            .header("x-webapi-key", self.key.0.as_str())
-            .send_form([
+        set_live_from(&self.post(
+            "ISteamApps/SetAppBuildLive/v2",
+            &[
                 ("appid", app.to_string()),
                 ("buildid", build.to_string()),
                 ("betakey", branch.to_owned()),
-            ]);
-        set_live_from(&read(response)?)
+            ],
+        )?)
     }
 
     fn get(&self, method: &str, query: &[(&str, String)]) -> Result<Value, Error> {
