@@ -3370,19 +3370,19 @@ fn leaderboards_are_listed_and_checked_and_those_missing_are_made_as_the_file_ha
     drop(requests.recv_timeout(Duration::from_secs(10)).unwrap());
 
     let matching = leaderboards_file(files.path(), true);
-    let (made, said, stderr) = steamship(
+    let (made, making, stderr) = steamship(
         &["leaderboards", "480", "--check", &matching, "--create"],
         Some(home.path()),
         &set,
     );
-    assert_eq!(made, Some(0_i32), "{said}{stderr}");
+    assert_eq!(made, Some(0_i32), "{making}{stderr}");
     assert!(
-        said.contains("  steam     \u{2713} made fastest_season\n"),
-        "{said}"
+        making.contains("  steam     \u{2713} made fastest_season\n"),
+        "{making}"
     );
     assert!(
-        said.contains("Steam's leaderboards match the file"),
-        "{said}"
+        making.contains("Steam's leaderboards match the file"),
+        "{making}"
     );
     drop(requests.recv_timeout(Duration::from_secs(10)).unwrap());
     let creating = requests.recv_timeout(Duration::from_secs(10)).unwrap();
