@@ -129,28 +129,51 @@ pub struct Achievement {
     pub icon_locked: String,
 }
 
-/// The achievements `GetSchemaForGame` answered, in Steam's order. An app with none is answered
-/// with an empty `game`, which is no achievements rather than an answer that cannot be read.
+/// A stat as Steam holds it for an app.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Stat {
+    /// The name the game sets it by.
+    pub api_name: String,
+    /// The name players see; empty when none was given.
+    pub name: String,
+    /// The value it starts at.
+    pub default: f64,
+}
+
+/// An app's achievements and stats, as `GetSchemaForGame` answers them.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Schema {
+    pub achievements: Vec<Achievement>,
+    pub stats: Vec<Stat>,
+}
+
+/// The achievements and stats `GetSchemaForGame` answered, each in Steam's order. An app with
+/// none is answered with an empty `game`, which is none of either rather than an answer that
+/// cannot be read.
 ///
 /// # Errors
 ///
-/// When an achievement has no API name.
-pub fn achievements_from(answer: &Value) -> Result<Vec<Achievement>, Error> {
-    let Some(entries) = answer
-        .pointer("/game/availableGameStats/achievements")
-        .and_then(Value::as_array)
-    else {
-        return Ok(Vec::new());
+/// When an achievement or a stat has no API name.
+pub fn schema_from(answer: &Value) -> Result<Schema, Error> {
+    let listed = |which: &str| {
+        answer
+            .pointer(&format!("/game/availableGameStats/{which}"))
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
     };
-    entries
+    let api_name = |entry: &Value, what: &'static str| {
+        let api_name = text(entry, &["name"]);
+        if api_name.is_empty() {
+            Err(Error::Unreadable(what))
+        } else {
+            Ok(api_name)
+        }
+    };
+    let achievements = listed("achievements")
         .iter()
         .map(|entry| {
-            let api_name = text(entry, &["name"]);
-            if api_name.is_empty() {
-                return Err(Error::Unreadable("achievement name"));
-            }
             Ok(Achievement {
-                api_name,
+                api_name: api_name(entry, "achievement name")?,
                 name: text(entry, &["displayName"]),
                 description: text(entry, &["description"]),
                 hidden: number(field(entry, &["hidden"])).is_some_and(|hidden| hidden != 0),
@@ -158,7 +181,27 @@ pub fn achievements_from(answer: &Value) -> Result<Vec<Achievement>, Error> {
                 icon_locked: text(entry, &["icongray"]),
             })
         })
-        .collect()
+        .collect::<Result<_, Error>>()?;
+    let stats = listed("stats")
+        .iter()
+        .map(|entry| {
+            Ok(Stat {
+                api_name: api_name(entry, "stat name")?,
+                name: text(entry, &["displayName"]),
+                default: field(entry, &["defaultvalue"])
+                    .and_then(|value| {
+                        value
+                            .as_f64()
+                            .or_else(|| value.as_str()?.trim().parse().ok())
+                    })
+                    .unwrap_or(0.0_f64),
+            })
+        })
+        .collect::<Result<_, Error>>()?;
+    Ok(Schema {
+        achievements,
+        stats,
+    })
 }
 
 /// A leaderboard as Steam holds it, or as a file wants it made.
@@ -580,18 +623,18 @@ impl Api {
         branches_from(&answer)
     }
 
-    /// The achievements Steam holds for `app`, in English.
+    /// The achievements and stats Steam holds for `app`, in English.
     ///
     /// # Errors
     ///
     /// As [`Api::branches`].
-    pub fn achievements(&self, app: u32) -> Result<Vec<Achievement>, Error> {
+    pub fn schema(&self, app: u32) -> Result<Schema, Error> {
         let answer = self.get_from(
             "ISteamUserStats",
             "GetSchemaForGame/v2",
             &[("appid", app.to_string()), ("l", "english".to_owned())],
         )?;
-        achievements_from(&answer)
+        schema_from(&answer)
     }
 
     /// The last `count` builds of `app`, newest first.
@@ -1030,19 +1073,36 @@ mod tests {
     }
 
     #[test]
-    fn achievements_are_read_as_steam_answers_them_and_none_is_none() {
-        // As Steam answered for Spacewar, trimmed to two.
-        let achievements = achievements_from(&answer(
+    fn a_schema_is_read_as_steam_answers_it_and_none_is_none() {
+        // As Steam answered for Spacewar, trimmed to two achievements; its stats shaped as they.
+        let schema = schema_from(&answer(
             r#"{"game": {"gameName": "Spacewar", "availableGameStats": {"achievements": [
                 {"name": "ACH_WIN_ONE_GAME", "defaultvalue": 0, "displayName": "Winner",
                  "hidden": 0, "description": "Win one game.", "icon": "https://cdn/winner.jpg",
                  "icongray": "https://cdn/winner_bw.jpg"},
                 {"name": "ACH_TRAVEL_FAR_SINGLE", "displayName": "Orbiter", "hidden": "1"}
+            ], "stats": [
+                {"name": "NumGames", "defaultvalue": 0, "displayName": "Games played"},
+                {"name": "AverageSpeed", "defaultvalue": 1.5},
+                {"name": "Given", "defaultvalue": "7", "displayName": ""}
             ]}}}"#,
         ))
         .unwrap();
+        let stat = |api_name: &str, name: &str, default: f64| Stat {
+            api_name: api_name.to_owned(),
+            name: name.to_owned(),
+            default,
+        };
         assert_eq!(
-            achievements,
+            schema.stats,
+            [
+                stat("NumGames", "Games played", 0.0_f64),
+                stat("AverageSpeed", "", 1.5_f64),
+                stat("Given", "", 7.0_f64),
+            ]
+        );
+        assert_eq!(
+            schema.achievements,
             [
                 Achievement {
                     api_name: "ACH_WIN_ONE_GAME".to_owned(),
@@ -1063,13 +1123,35 @@ mod tests {
             ]
         );
         // As Steam answered for Fantasy Guild Manager before its achievements were entered.
-        assert_eq!(achievements_from(&answer(r#"{"game": {}}"#)).unwrap(), []);
-        assert!(matches!(
-            achievements_from(&answer(
+        assert_eq!(
+            schema_from(&answer(r#"{"game": {}}"#)).unwrap(),
+            Schema::default()
+        );
+        assert_eq!(
+            schema_from(&answer(
                 r#"{"game": {"availableGameStats": {"achievements": [{"displayName": "x"}]}}}"#
             )),
             Err(Error::Unreadable("achievement name"))
-        ));
+        );
+        assert_eq!(
+            schema_from(&answer(
+                r#"{"game": {"availableGameStats": {"stats": [{"displayName": "x"}]}}}"#
+            )),
+            Err(Error::Unreadable("stat name"))
+        );
+        assert_eq!(
+            schema_from(&answer(
+                r#"{"game": {"availableGameStats": {"stats": [{"name": "x"}]}}}"#
+            ))
+            .unwrap()
+            .stats,
+            [Stat {
+                api_name: "x".to_owned(),
+                name: String::new(),
+                default: 0.0
+            }],
+            "no default given is Steam's 0"
+        );
     }
 
     #[test]
