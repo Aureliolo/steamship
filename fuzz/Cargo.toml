@@ -63,3 +63,10 @@ path = "fuzz_targets/dbus.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "picture"
+path = "fuzz_targets/picture.rs"
+test = false
+doc = false
+bench = false

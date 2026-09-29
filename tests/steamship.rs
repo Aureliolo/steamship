@@ -222,6 +222,8 @@ fn help_lists_every_command_with_one_short_line() {
         "  workshop       Upload a Workshop item, then print its ID\n",
         "  builds         Show an app's branches and last builds\n",
         "  achievements   Show an app's achievements and stats, or check them against a file\n",
+        "  assets         Check store and library artwork against Valve's sizes, before it is \
+         uploaded\n",
         "  drm-wrap       Wrap a Windows executable in Steam DRM, before it is uploaded\n",
         "  settings       Show an app's settings in Steamworks, or check them against a snapshot\n",
         "  leaderboards   Show an app's leaderboards, or check them against a file and make those \
@@ -4310,4 +4312,53 @@ fn a_refused_wrap_says_why_and_a_file_that_is_no_windows_program_is_refused_firs
     assert_eq!(refused, Some(2_i32), "{stderr}");
     assert!(stderr.contains("is not a Windows executable"), "{stderr}");
     assert!(!home.path().join("args").exists(), "steamcmd was not run");
+}
+
+/// The start of a PNG `width` by `height`: its signature, header and end, which is all that is
+/// read of it.
+fn png_header(width: u32, height: u32) -> Vec<u8> {
+    let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+    png.extend_from_slice(&width.to_be_bytes());
+    png.extend_from_slice(&height.to_be_bytes());
+    png.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+    png.extend_from_slice(b"\x00\x00\x00\x00IEND\x00\x00\x00\x00");
+    png
+}
+
+#[test]
+fn artwork_is_checked_against_valves_sizes_with_nothing_sent() {
+    let folder = tempfile::tempdir().unwrap();
+    fs::write(
+        folder.path().join("header_capsule.png"),
+        png_header(920, 430),
+    )
+    .unwrap();
+    fs::write(folder.path().join("notes.txt"), "left alone").unwrap();
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let path = folder.path().to_string_lossy().into_owned();
+
+    let (code, stdout, stderr) = steamship(&["assets", &path], None, &quiet);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("header_capsule.png header capsule, 920x430 PNG\n")
+            && stdout.contains("the artwork is as Steamworks takes it"),
+        "{stdout}"
+    );
+
+    fs::write(
+        folder.path().join("library_hero.png"),
+        png_header(1920, 620),
+    )
+    .unwrap();
+    let (wrong, _, why) = steamship(&["assets", &path], None, &quiet);
+    assert_eq!(wrong, Some(2_i32), "{why}");
+    assert!(
+        why.contains("library_hero.png: the library hero must be 3840x1240, and it is 1920x620"),
+        "{why}"
+    );
+
+    let empty = tempfile::tempdir().unwrap();
+    let (none, _, said) = steamship(&["assets", &empty.path().to_string_lossy()], None, &quiet);
+    assert_eq!(none, Some(2_i32), "{said}");
+    assert!(said.contains("holds no PNG, JPEG or icon"), "{said}");
 }
