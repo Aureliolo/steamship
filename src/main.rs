@@ -25,7 +25,8 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    check, ci, conversation, dump, init, keychain, run, scripts, steamcmd, upload, webapi, workshop,
+    achievements, check, ci, conversation, dump, init, keychain, run, scripts, steamcmd, upload,
+    webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -75,6 +76,9 @@ fn main() -> ExitCode {
             folder,
         } => run_init(app, depots, &folder),
         Command::Builds { app, count } => match try_builds(&app, count) {
+            Ok(code) | Err(code) => code,
+        },
+        Command::Achievements { app, check } => match try_achievements(&app, check.as_deref()) {
             Ok(code) | Err(code) => code,
         },
         Command::Promote { app, build, branch } => match try_promote(&app, build, &branch) {
@@ -1346,6 +1350,61 @@ fn try_builds(app: &str, count: u32) -> Result<ExitCode, ExitCode> {
     }
     offer_to_keep(&home, &api, from);
     Ok(ExitCode::SUCCESS)
+}
+
+/// The achievements file at `path`, read, and refused when it is not one or names another app
+/// than `app`: before Steam is asked anything.
+fn achievements_file(path: &Path, app: u32) -> Result<achievements::Listed, ExitCode> {
+    let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
+    let text = fs::read_to_string(path).map_err(|error| refused(&error))?;
+    let listed = achievements::read(&text).map_err(|why| refused(&why))?;
+    if let Some(other) = listed.app.filter(|named| *named != u64::from(app)) {
+        return Err(refused(&format!("is for app {other}, not app {app}")));
+    }
+    show::field(
+        "file",
+        &format!(
+            "{}, {}",
+            path.display(),
+            show::counted(listed.achievements.len(), "achievement")
+        ),
+    );
+    Ok(listed)
+}
+
+fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCode> {
+    show::title("achievements");
+    let app_id = app_named(app)?;
+    let listed = check
+        .map(|path| achievements_file(path, app_id))
+        .transpose()?;
+    let home = home()?;
+    let (api, from) = web_api(&home)?;
+    let spinner = Spinner::start("steam", "asking for the achievements", false);
+    let held = match api.achievements(app_id) {
+        Ok(held) => held,
+        Err(error) => return Err(web_api_failed(spinner, &error)),
+    };
+    spinner.done(&format!(
+        "{} on Steam",
+        show::counted(held.len(), "achievement")
+    ));
+    offer_to_keep(&home, &api, from);
+    let Some(listed) = listed else {
+        for achievement in &held {
+            show::field(&achievement.api_name, &achievements::line(achievement));
+        }
+        return Ok(ExitCode::SUCCESS);
+    };
+    let drift = achievements::compare(&listed.achievements, &held);
+    if drift.is_empty() {
+        show::success("Steam's achievements match the file", "");
+        return Ok(ExitCode::SUCCESS);
+    }
+    for difference in &drift {
+        show::failure(&difference.to_string(), "", None);
+    }
+    Ok(ExitCode::from(REFUSED))
 }
 
 fn try_promote(app: &str, build: u64, branch: &str) -> Result<ExitCode, ExitCode> {

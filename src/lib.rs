@@ -2,6 +2,7 @@
 //! so that the tests and fuzz targets can reach them, and may change in any release.
 
 pub mod account;
+pub mod achievements;
 pub mod check;
 pub mod ci;
 pub mod cli;

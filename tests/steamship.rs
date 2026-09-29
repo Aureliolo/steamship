@@ -215,18 +215,19 @@ fn help_lists_every_command_with_one_short_line() {
         "named as it is typed, on Windows too: {stdout}"
     );
     for line in [
-        "  login        Log in to Steam, once, for uploads\n",
-        "  status       Show the login and steamcmd, checking the login with Steam\n",
-        "  check        Check the build scripts, without logging in\n",
-        "  upload       Check, build and upload, then print the build ID\n",
-        "  workshop     Upload a Workshop item, then print its ID\n",
-        "  builds       Show an app's branches and last builds\n",
-        "  promote      Set an uploaded build live on a branch\n",
-        "  ci           Set up uploads from CI, the login kept as a secret\n",
-        "  logout       Forget the saved login\n",
-        "  init         Write starter build scripts for an app\n",
-        "  install      Install or verify the pinned steamcmd\n",
-        "  completions  Print tab completion for bash, zsh, fish, PowerShell or elvish\n",
+        "  login         Log in to Steam, once, for uploads\n",
+        "  status        Show the login and steamcmd, checking the login with Steam\n",
+        "  check         Check the build scripts, without logging in\n",
+        "  upload        Check, build and upload, then print the build ID\n",
+        "  workshop      Upload a Workshop item, then print its ID\n",
+        "  builds        Show an app's branches and last builds\n",
+        "  achievements  Show an app's achievements, or check them against a file\n",
+        "  promote       Set an uploaded build live on a branch\n",
+        "  ci            Set up uploads from CI, the login kept as a secret\n",
+        "  logout        Forget the saved login\n",
+        "  init          Write starter build scripts for an app\n",
+        "  install       Install or verify the pinned steamcmd\n",
+        "  completions   Print tab completion for bash, zsh, fish, PowerShell or elvish\n",
     ] {
         assert!(stdout.contains(line), "{line:?} in {stdout}");
     }
@@ -3005,6 +3006,137 @@ fn builds_and_promote_that_steam_does_not_answer_say_so_and_exit_1() {
             "{stdout}"
         );
         assert!(!stdout.contains("live on"), "{stdout}");
+    }
+}
+
+/// `GetSchemaForGame` as Steam answered it for Spacewar, trimmed to two achievements.
+const SCHEMA: &str = r#"{"game": {"gameName": "Spacewar", "availableGameStats": {"achievements": [
+    {"name": "ACH_WIN_ONE_GAME", "displayName": "Winner", "hidden": 0,
+     "description": "Win one game.", "icon": "https://cdn/w.jpg", "icongray": "https://cdn/w_bw.jpg"},
+    {"name": "ACH_TRAVEL_FAR_SINGLE", "displayName": "Orbiter", "hidden": 1,
+     "description": "Travel 500 feet in one life.", "icon": "https://cdn/o.jpg",
+     "icongray": "https://cdn/o_bw.jpg"}
+]}}}"#;
+
+/// An achievements file for Spacewar, the second achievement's description as `orbiter` says.
+fn achievements_file(folder: &Path, orbiter: &str) -> String {
+    let path = folder.join("achievements.json");
+    fs::write(
+        &path,
+        format!(
+            r#"{{"app": 480, "achievements": [
+                {{"api_name": "ACH_WIN_ONE_GAME", "name": "Winner", "description": "Win one game."}},
+                {{"api_name": "ACH_TRAVEL_FAR_SINGLE", "name": "Orbiter", "description": "{orbiter}",
+                  "hidden": true, "glyph": "rocket"}}
+            ]}}"#
+        ),
+    )
+    .unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+#[test]
+fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![
+        ("200 OK", SCHEMA),
+        ("200 OK", SCHEMA),
+        ("200 OK", SCHEMA),
+        ("500 Internal Server Error", ""),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+
+    let (code, listed, _) = steamship(&["achievements", "480"], Some(home.path()), &set);
+    assert_eq!(code, Some(0_i32), "{listed}");
+    assert!(
+        listed.contains("  steam     \u{2713} 2 achievements on Steam\n"),
+        "{listed}"
+    );
+    assert!(
+        listed.contains("  ACH_WIN_ONE_GAME Winner: Win one game.\n"),
+        "{listed}"
+    );
+    assert!(
+        listed.contains("  ACH_TRAVEL_FAR_SINGLE Orbiter, hidden: Travel 500 feet in one life.\n"),
+        "{listed}"
+    );
+    let asked = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        asked.starts_with("GET /ISteamUserStats/GetSchemaForGame/v2/?")
+            && asked.contains("appid=480")
+            && asked.contains("l=english"),
+        "{asked}"
+    );
+
+    let files = tempfile::tempdir().unwrap();
+    let matching = achievements_file(files.path(), "Travel 500 feet in one life.");
+    let (matched, said, _) = steamship(
+        &["achievements", "480", "--check", &matching],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(matched, Some(0_i32), "{said}");
+    assert!(said.contains("2 achievements\n"), "{said}");
+    assert!(
+        said.contains("Steam's achievements match the file"),
+        "{said}"
+    );
+
+    let drifted = achievements_file(files.path(), "Go far.");
+    let (refused, _, why) = steamship(
+        &["achievements", "480", "--check", &drifted],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert!(
+        why.contains(
+            "ACH_TRAVEL_FAR_SINGLE: the description is \"Travel 500 feet in one life.\" on Steam \
+             and \"Go far.\" in the file"
+        ),
+        "{why}"
+    );
+
+    // Steam failing is a failure, not drift.
+    let (failed, _, failure) = steamship(
+        &["achievements", "480", "--check", &matching],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(failed, Some(1_i32), "{failure}");
+    assert!(failure.contains("Steam answered HTTP 500"), "{failure}");
+}
+
+#[test]
+fn an_achievements_file_that_is_not_one_or_names_another_app_is_refused_before_steam() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    // No stand-in is given: asking Steam would be a failure to reach it, exit 1, not 2.
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+    ];
+    let broken = files.path().join("broken.json");
+    fs::write(&broken, r#"{"achievements": [{"name": "A"}]}"#).unwrap();
+    let other = achievements_file(files.path(), "x");
+    for (file, why) in [
+        (
+            broken.to_string_lossy().into_owned(),
+            "achievement 1 has no \"api_name\" text",
+        ),
+        (other, "is for app 480, not app 5335950"),
+    ] {
+        let (code, _, stderr) = steamship(
+            &["achievements", "5335950", "--check", &file],
+            Some(home.path()),
+            &set,
+        );
+        assert_eq!(code, Some(2_i32), "{stderr}");
+        assert!(stderr.contains(why), "{why:?} in {stderr}");
     }
 }
 
