@@ -8,7 +8,7 @@ use std::fmt;
 
 use serde_json::Value;
 
-use crate::webapi::Achievement;
+use crate::webapi::{Achievement, Stat};
 
 /// An achievement as the file wants it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,17 +19,29 @@ pub struct Wanted {
     pub hidden: bool,
 }
 
-/// What the file holds: the app it is for, if it says, and the achievements in its order.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A stat as the file wants it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WantedStat {
+    pub api_name: String,
+    pub name: String,
+    pub default: f64,
+}
+
+/// What the file holds: the app it is for, if it says, the achievements in its order, and the
+/// stats when it lists them, which are checked only then.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Listed {
     pub app: Option<u64>,
     pub achievements: Vec<Wanted>,
+    pub stats: Option<Vec<WantedStat>>,
 }
 
-/// Reads the file's `text`: an object with an `achievements` list.
+/// Reads the file's `text`: an object with an `achievements` list, and a `stats` list if the
+/// app's stats are to be checked too.
 ///
-/// Each entry has its `api_name` and `name`, and its `description` and `hidden` when they are
-/// set. Other keys, such as what a game's own tools keep beside them, are left alone.
+/// Each achievement has its `api_name` and `name`, and its `description` and `hidden` when they
+/// are set; each stat its `api_name`, and its `name` and `default` when they are set. Other keys,
+/// such as what a game's own tools keep beside them, are left alone.
 ///
 /// # Errors
 ///
@@ -72,7 +84,51 @@ pub fn read(text: &str) -> Result<Listed, String> {
             api_name,
         });
     }
-    Ok(Listed { app, achievements })
+    let stats = match file.get("stats") {
+        None => None,
+        Some(Value::Array(listed)) => Some(stats(listed)?),
+        Some(_) => return Err("\"stats\" is not a list".to_owned()),
+    };
+    Ok(Listed {
+        app,
+        achievements,
+        stats,
+    })
+}
+
+/// The file's `stats` list.
+fn stats(entries: &[Value]) -> Result<Vec<WantedStat>, String> {
+    let mut seen = BTreeSet::new();
+    let mut stats = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        let api_name = match entry.get("api_name") {
+            Some(Value::String(api_name)) if !api_name.is_empty() => api_name.clone(),
+            _ => {
+                let place = index.saturating_add(1);
+                return Err(format!("stat {place} has no \"api_name\" text"));
+            }
+        };
+        let name = match entry.get("name") {
+            None => String::new(),
+            Some(Value::String(name)) => name.clone(),
+            Some(_) => return Err(format!("stat {api_name}: \"name\" is not text")),
+        };
+        let default = match entry.get("default") {
+            None => 0.0_f64,
+            Some(value) => value
+                .as_f64()
+                .ok_or_else(|| format!("stat {api_name}: \"default\" is not a number"))?,
+        };
+        if !seen.insert(api_name.clone()) {
+            return Err(format!("stat {api_name} is in the file twice"));
+        }
+        stats.push(WantedStat {
+            api_name,
+            name,
+            default,
+        });
+    }
+    Ok(stats)
 }
 
 /// A way Steam's achievements and the file's differ.
@@ -139,6 +195,59 @@ pub fn line(achievement: &Achievement) -> String {
         line.push_str(&achievement.description);
     }
     line
+}
+
+/// `stat` as `steamship achievements` lists it: its name when it has one, and the value it starts
+/// at.
+#[must_use]
+pub fn stat_line(stat: &Stat) -> String {
+    if stat.name.is_empty() {
+        format!("starts at {}", stat.default)
+    } else {
+        format!("{}, starts at {}", stat.name, stat.default)
+    }
+}
+
+/// Every way `held`, Steam's stats, differ from those the file `wants`, each named as a stat:
+/// first each of the file's in its order, then those only Steam has, in Steam's.
+#[must_use]
+pub fn compare_stats(wants: &[WantedStat], held: &[Stat]) -> Vec<Drift> {
+    let label = |api_name: &str| format!("stat {api_name}");
+    let mut drift = Vec::new();
+    for wanted in wants {
+        let Some(steam) = held.iter().find(|stat| stat.api_name == wanted.api_name) else {
+            drift.push(Drift::NotOnSteam(label(&wanted.api_name)));
+            continue;
+        };
+        if steam.name != wanted.name {
+            drift.push(Drift::Differs {
+                api_name: label(&wanted.api_name),
+                field: "the display name",
+                steam: steam.name.clone(),
+                file: wanted.name.clone(),
+            });
+        }
+        // Steam and the file both write a whole number with no fraction, or the same fraction,
+        // so an exact comparison is what each says.
+        #[expect(
+            clippy::float_cmp,
+            reason = "both are the value as written, not computed"
+        )]
+        if steam.default != wanted.default {
+            drift.push(Drift::Differs {
+                api_name: label(&wanted.api_name),
+                field: "the default",
+                steam: steam.default.to_string(),
+                file: wanted.default.to_string(),
+            });
+        }
+    }
+    drift.extend(
+        held.iter()
+            .filter(|steam| !wants.iter().any(|wanted| wanted.api_name == steam.api_name))
+            .map(|steam| Drift::NotInFile(label(&steam.api_name))),
+    );
+    drift
 }
 
 /// Every way `held`, Steam's achievements, differ from those the file `wants`: first each of the
@@ -247,7 +356,38 @@ mod tests {
                 },
             ]
         );
+        assert_eq!(listed.stats, None, "no list, so the stats are not checked");
         assert_eq!(read(r#"{"achievements": []}"#).unwrap().app, None);
+    }
+
+    #[test]
+    fn stats_are_read_when_the_file_lists_them() {
+        let listed = read(
+            r#"{"achievements": [], "stats": [
+                {"api_name": "NumGames", "name": "Games played", "default": 0},
+                {"api_name": "AverageSpeed", "default": 1.5, "unit": "ours"},
+                {"api_name": "Bare"}
+            ]}"#,
+        )
+        .unwrap();
+        let stat = |api_name: &str, name: &str, default: f64| WantedStat {
+            api_name: api_name.to_owned(),
+            name: name.to_owned(),
+            default,
+        };
+        assert_eq!(
+            listed.stats,
+            Some(vec![
+                stat("NumGames", "Games played", 0.0_f64),
+                stat("AverageSpeed", "", 1.5_f64),
+                stat("Bare", "", 0.0_f64),
+            ])
+        );
+        assert_eq!(
+            read(r#"{"achievements": [], "stats": []}"#).unwrap().stats,
+            Some(Vec::new()),
+            "an empty list checks that Steam holds none"
+        );
     }
 
     #[test]
@@ -278,6 +418,30 @@ mod tests {
             (
                 r#"{"achievements": [{"api_name": "a", "name": "A"}, {"api_name": "a", "name": "B"}]}"#,
                 "a is in the file twice",
+            ),
+            (
+                r#"{"achievements": [], "stats": {}}"#,
+                "\"stats\" is not a list",
+            ),
+            (
+                r#"{"achievements": [], "stats": [{"name": "N"}]}"#,
+                "stat 1 has no \"api_name\" text",
+            ),
+            (
+                r#"{"achievements": [], "stats": [{"api_name": ""}]}"#,
+                "stat 1 has no \"api_name\" text",
+            ),
+            (
+                r#"{"achievements": [], "stats": [{"api_name": "n", "name": 1}]}"#,
+                "stat n: \"name\" is not text",
+            ),
+            (
+                r#"{"achievements": [], "stats": [{"api_name": "n", "default": "0"}]}"#,
+                "stat n: \"default\" is not a number",
+            ),
+            (
+                r#"{"achievements": [], "stats": [{"api_name": "n"}, {"api_name": "n"}]}"#,
+                "stat n is in the file twice",
             ),
         ] {
             let error = read(text).unwrap_err();
@@ -349,6 +513,62 @@ mod tests {
                 "missing: in the file, not on Steam",
                 "b: Steam has no icon",
                 "extra: on Steam, not in the file",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_stat_is_listed_by_its_name_and_default() {
+        let stat = |name: &str, default: f64| Stat {
+            api_name: "NumGames".to_owned(),
+            name: name.to_owned(),
+            default,
+        };
+        assert_eq!(
+            stat_line(&stat("Games played", 0.0_f64)),
+            "Games played, starts at 0"
+        );
+        assert_eq!(stat_line(&stat("", 1.5_f64)), "starts at 1.5");
+    }
+
+    #[test]
+    fn every_stat_difference_is_named_as_a_stat_the_files_first_then_steams() {
+        let wanted = |api_name: &str, name: &str, default: f64| WantedStat {
+            api_name: api_name.to_owned(),
+            name: name.to_owned(),
+            default,
+        };
+        let held = |api_name: &str, name: &str, default: f64| Stat {
+            api_name: api_name.to_owned(),
+            name: name.to_owned(),
+            default,
+        };
+        assert_eq!(
+            compare_stats(
+                &[wanted("NumGames", "Games played", 0.0_f64)],
+                &[held("NumGames", "Games played", 0.0_f64)]
+            ),
+            []
+        );
+        let drift = compare_stats(
+            &[
+                wanted("NumGames", "Games played", 0.0_f64),
+                wanted("Missing", "", 0.0_f64),
+            ],
+            &[
+                held("Extra", "", 0.0_f64),
+                held("NumGames", "Games", 1.5_f64),
+            ],
+        );
+        let said: Vec<String> = drift.iter().map(ToString::to_string).collect();
+        assert_eq!(
+            said,
+            [
+                "stat NumGames: the display name is \"Games\" on Steam and \"Games played\" in \
+                 the file",
+                "stat NumGames: the default is \"1.5\" on Steam and \"0\" in the file",
+                "stat Missing: in the file, not on Steam",
+                "stat Extra: on Steam, not in the file",
             ]
         );
     }

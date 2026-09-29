@@ -1403,14 +1403,11 @@ fn achievements_file(path: &Path, app: u32) -> Result<achievements::Listed, Exit
     if let Some(other) = listed.app.filter(|named| *named != u64::from(app)) {
         return Err(refused(&format!("is for app {other}, not app {app}")));
     }
-    show::field(
-        "file",
-        &format!(
-            "{}, {}",
-            path.display(),
-            show::counted(listed.achievements.len(), "achievement")
-        ),
-    );
+    let mut holds = show::counted(listed.achievements.len(), "achievement");
+    if let Some(stats) = &listed.stats {
+        holds = format!("{holds} and {}", show::counted(stats.len(), "stat"));
+    }
+    show::field("file", &format!("{}, {holds}", path.display()));
     Ok(listed)
 }
 
@@ -1423,24 +1420,39 @@ fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCod
     let home = home()?;
     let (api, from) = web_api(&home)?;
     let spinner = Spinner::start("steam", "asking for the achievements", false);
-    let held = match api.achievements(app_id) {
+    let held = match api.schema(app_id) {
         Ok(held) => held,
         Err(error) => return Err(web_api_failed(spinner, &error)),
     };
-    spinner.done(&format!(
-        "{} on Steam",
-        show::counted(held.len(), "achievement")
-    ));
+    let mut holds = show::counted(held.achievements.len(), "achievement");
+    if !held.stats.is_empty() {
+        holds = format!("{holds} and {}", show::counted(held.stats.len(), "stat"));
+    }
+    spinner.done(&format!("{holds} on Steam"));
     offer_to_keep(&home, &api, from);
     let Some(listed) = listed else {
-        for achievement in &held {
+        for achievement in &held.achievements {
             show::field(&achievement.api_name, &achievements::line(achievement));
+        }
+        for stat in &held.stats {
+            show::field(
+                &format!("stat {}", stat.api_name),
+                &achievements::stat_line(stat),
+            );
         }
         return Ok(ExitCode::SUCCESS);
     };
-    let drift = achievements::compare(&listed.achievements, &held);
+    let mut drift = achievements::compare(&listed.achievements, &held.achievements);
+    if let Some(stats) = &listed.stats {
+        drift.extend(achievements::compare_stats(stats, &held.stats));
+    }
     if drift.is_empty() {
-        show::success("Steam's achievements match the file", "");
+        let what = if listed.stats.is_some() {
+            "achievements and stats"
+        } else {
+            "achievements"
+        };
+        show::success(&format!("Steam's {what} match the file"), "");
         return Ok(ExitCode::SUCCESS);
     }
     for difference in &drift {
