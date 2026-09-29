@@ -299,6 +299,37 @@ mod tests {
     }
 
     #[test]
+    fn wraps_in_drm_with_the_saved_login_and_never_waits_at_a_prompt() {
+        let account = Account::parse("build_bot").unwrap();
+        for (mode, flags) in [(drm::Mode::Default, "0"), (drm::Mode::Compatibility, "6")] {
+            assert_eq!(
+                drm_wrap(
+                    &account,
+                    480,
+                    Path::new("my game/game.exe"),
+                    Path::new("my game/.game.exe.steamship-drm"),
+                    mode
+                ),
+                [
+                    "+@ShutdownOnFailedCommand",
+                    "1",
+                    "+@NoPromptForPassword",
+                    "1",
+                    "+login",
+                    "build_bot",
+                    "+drm_wrap",
+                    "480",
+                    "my game/game.exe",
+                    "my game/.game.exe.steamship-drm",
+                    "drmtoolp",
+                    flags,
+                    "+quit"
+                ]
+            );
+        }
+    }
+
+    #[test]
     fn uploads_a_workshop_item_with_the_saved_login_and_never_waits_at_a_prompt() {
         let account = Account::parse("build_bot").unwrap();
         let script = Path::new("home (x86)/workshop/480/workshop_item.vdf");

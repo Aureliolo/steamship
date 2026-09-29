@@ -4135,9 +4135,10 @@ fn a_snapshot_for_another_app_is_refused_before_steamcmd_and_an_app_steam_hides_
 #[cfg(unix)]
 const WRAPS: &str = "#!/bin/sh\n\
     echo \"$*\" > \"$HOME/args\"\n\
-    while [ \"$1\" != +drm_wrap ]; do shift; done\n\
+    while [ $# -gt 0 ] && [ \"$1\" != +drm_wrap ]; do shift; done\n\
+    [ $# -ge 4 ] || exit 1\n\
     echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
-    printf 'MZwrapped' > \"$4\"\n\
+    printf \"$STEAMSHIP_FAKE_WRAPPED\" > \"$4\"\n\
     echo \"DRM wrap completed; output is in $4\"\n";
 
 /// A steamcmd whose DRM wrap Valve's tool refuses, as it refused Fantasy Guild Manager's Godot
@@ -4165,7 +4166,10 @@ fn an_executable_is_wrapped_in_place_or_into_the_output_keeping_its_permissions(
     let game = files.path().join("my game.exe");
     fs::write(&game, "MZplain").unwrap();
     fs::set_permissions(&game, fs::Permissions::from_mode(0o750)).unwrap();
-    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let quiet = [
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        ("STEAMSHIP_FAKE_WRAPPED", "MZwrapped"),
+    ];
 
     let (code, stdout, stderr) = steamship(
         &["drm-wrap", "1000", &game.to_string_lossy()],
@@ -4216,8 +4220,56 @@ fn an_executable_is_wrapped_in_place_or_into_the_output_keeping_its_permissions(
     assert_eq!(copied, Some(0_i32), "{said}");
     assert_eq!(fs::read_to_string(&game).unwrap(), "MZplain", "left alone");
     assert_eq!(fs::read_to_string(&copy).unwrap(), "MZwrapped");
+    let compatible = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(compatible.ends_with("drmtoolp 6 +quit\n"), "{compatible}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_wrap_in_ci_is_done_as_the_account_handed_over() {
+    // No login saved and no account remembered: only what `steamship ci` packed.
+    let home = faked_with(WRAPS);
+    let files = tempfile::tempdir().unwrap();
+    let game = files.path().join("game.exe");
+    fs::write(&game, "MZplain").unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["drm-wrap", "1000", &game.to_string_lossy()],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_LOGIN", &packed_login()),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            ("STEAMSHIP_FAKE_WRAPPED", "MZwrapped"),
+        ],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     let args = fs::read_to_string(home.path().join("args")).unwrap();
-    assert!(args.ends_with("drmtoolp 6 +quit\n"), "{args}");
+    assert!(args.contains("+login build_bot "), "{args}");
+    assert_eq!(fs::read_to_string(&game).unwrap(), "MZwrapped");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_wrap_said_done_that_wrote_nothing_is_a_failure_and_replaces_nothing() {
+    let home = faked_with(WRAPS);
+    saved_login(home.path());
+    let files = tempfile::tempdir().unwrap();
+    let game = files.path().join("game.exe");
+    fs::write(&game, "MZplain").unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["drm-wrap", "1000", &game.to_string_lossy()],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            ("STEAMSHIP_FAKE_WRAPPED", ""),
+        ],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(fs::read_to_string(&game).unwrap(), "MZplain", "left alone");
+    assert_eq!(
+        fs::read_dir(files.path()).unwrap().count(),
+        1,
+        "the empty file is not left beside it"
+    );
 }
 
 #[cfg(unix)]
