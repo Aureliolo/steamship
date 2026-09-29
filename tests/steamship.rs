@@ -222,6 +222,8 @@ fn help_lists_every_command_with_one_short_line() {
         "  workshop       Upload a Workshop item, then print its ID\n",
         "  builds         Show an app's branches and last builds\n",
         "  achievements   Show an app's achievements, or check them against a file\n",
+        "  leaderboards   Show an app's leaderboards, or check them against a file and make those \
+         missing\n",
         "  rich-presence  Upload an app's rich presence localisation\n",
         "  promote        Set an uploaded build live on a branch\n",
         "  ci             Set up uploads from CI, the login kept as a secret\n",
@@ -3288,6 +3290,150 @@ fn rich_presence_files_are_checked_before_steam_and_a_preview_sends_nothing() {
         assert_eq!(code, Some(2_i32), "{said}");
         assert!(said.contains(why), "{why:?} in {said}");
     }
+}
+
+/// `GetLeaderboardsForGame` answering with one leaderboard, shaped as Steam answered in a trial.
+const LEADERBOARDS: &str = r#"{"response": {"result": 1, "leaderboards": [
+    {"id": 7, "name": "gold", "entries": 12, "sortmethod": "Descending", "displaytype": "Numeric",
+     "onlytrustedwrites": true, "onlyfriendsreads": false}
+]}}"#;
+
+/// `FindOrCreateLeaderboard` answering that it made `fastest_season`.
+const MADE: &str = r#"{"result": {"result": 1, "leaderboard": {"leaderboardName": "fastest_season",
+    "leaderBoardID": 8, "leaderBoardEntries": 0, "leaderBoardSortMethod": "Ascending",
+    "leaderBoardDisplayType": "Seconds", "onlytrustedwrites": false, "onlyfriendsreads": true}}}"#;
+
+/// A leaderboards file for app 480 with `gold` as Steam has it, or not, and `fastest_season`.
+fn leaderboards_file(folder: &Path, gold_trusted: bool) -> String {
+    let path = folder.join("leaderboards.json");
+    fs::write(
+        &path,
+        format!(
+            r#"{{"app": 480, "leaderboards": [
+                {{"name": "gold", "sort": "descending", "display": "numeric",
+                  "trusted_writes": {gold_trusted}}},
+                {{"name": "fastest_season", "sort": "ascending", "display": "seconds",
+                  "friends_only": true}}
+            ]}}"#
+        ),
+    )
+    .unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+#[test]
+fn leaderboards_are_listed_and_checked_and_those_missing_are_made_as_the_file_has_them() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![
+        ("200 OK", LEADERBOARDS),
+        ("200 OK", LEADERBOARDS),
+        ("200 OK", LEADERBOARDS),
+        ("200 OK", MADE),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+
+    let (code, listed, _) = steamship(&["leaderboards", "480"], Some(home.path()), &set);
+    assert_eq!(code, Some(0_i32), "{listed}");
+    assert!(
+        listed.contains("  steam     \u{2713} 1 leaderboard on Steam\n"),
+        "{listed}"
+    );
+    assert!(
+        listed.contains("  gold      descending, numeric, 12 scores, trusted writes only\n"),
+        "{listed}"
+    );
+    let asked = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        asked.starts_with("GET /ISteamLeaderboards/GetLeaderboardsForGame/v2/?appid=480&"),
+        "{asked}"
+    );
+
+    // Not made without --create, and a setting that differs is said with where to change it.
+    let drifted = leaderboards_file(files.path(), false);
+    let (refused, said, why) = steamship(
+        &["leaderboards", "480", "--check", &drifted],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{said}{why}");
+    assert!(
+        why.contains("gold: trusted writes only is \"yes\" on Steam and \"no\" in the file")
+            && why.contains("fastest_season: in the file, not on Steam; --create makes it"),
+        "{why}"
+    );
+    assert!(said.contains("change them in Steamworks"), "{said}");
+    drop(requests.recv_timeout(Duration::from_secs(10)).unwrap());
+
+    let matching = leaderboards_file(files.path(), true);
+    let (made, making, stderr) = steamship(
+        &["leaderboards", "480", "--check", &matching, "--create"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(made, Some(0_i32), "{making}{stderr}");
+    assert!(
+        making.contains("  steam     \u{2713} made fastest_season\n"),
+        "{making}"
+    );
+    assert!(
+        making.contains("Steam's leaderboards match the file"),
+        "{making}"
+    );
+    drop(requests.recv_timeout(Duration::from_secs(10)).unwrap());
+    let creating = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        creating.starts_with("POST /ISteamLeaderboards/FindOrCreateLeaderboard/v2/ ")
+            && creating.ends_with(
+                "appid=480&name=fastest_season&sortmethod=Ascending&displaytype=Seconds\
+                 &createifnotfound=true&onlytrustedwrites=false&onlyfriendsreads=true"
+            ),
+        "only the one Steam lacks, as the file has it: {creating}"
+    );
+}
+
+#[test]
+fn a_leaderboards_file_that_is_not_one_is_refused_before_steam_and_create_needs_check() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    // No stand-in is given: asking Steam would be a failure to reach it, exit 1, not 2.
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+    ];
+    let broken = files.path().join("broken.json");
+    fs::write(
+        &broken,
+        r#"{"leaderboards": [{"name": "gold", "sort": "up"}]}"#,
+    )
+    .unwrap();
+    let other = leaderboards_file(files.path(), true);
+    for (file, why) in [
+        (
+            broken.to_string_lossy().into_owned(),
+            "gold: \"sort\" is not ascending or descending",
+        ),
+        (other, "is for app 480, not app 5335950"),
+    ] {
+        let (code, _, stderr) = steamship(
+            &["leaderboards", "5335950", "--check", &file, "--create"],
+            Some(home.path()),
+            &set,
+        );
+        assert_eq!(code, Some(2_i32), "{stderr}");
+        assert!(stderr.contains(why), "{why:?} in {stderr}");
+    }
+    let (code, _, stderr) = steamship(
+        &["leaderboards", "5335950", "--create"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(stderr.contains("--check <FILE>"), "{stderr}");
 }
 
 #[test]
