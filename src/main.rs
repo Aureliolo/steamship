@@ -25,7 +25,7 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    achievements, check, ci, conversation, drm, dump, init, keychain, leaderboards, magic,
+    achievements, assets, check, ci, conversation, drm, dump, init, keychain, leaderboards, magic,
     presence, run, scripts, settings, steamcmd, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
@@ -66,6 +66,7 @@ fn run(command: Command) -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Check { script } => run_check(&script),
+        Command::Assets { folder } => run_assets(&folder),
         Command::Ci {
             script,
             repo,
@@ -1532,6 +1533,64 @@ fn try_rich_presence(app: &str, files: &[PathBuf], preview: bool) -> Result<Exit
         "each language's tokens on Steam are now exactly its file's",
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn run_assets(folder: &Path) -> ExitCode {
+    show::title("assets");
+    show::field("folder", &folder.display().to_string());
+    let checked = match assets::check(folder) {
+        Ok(checked) => checked,
+        Err(error) => return fail(&format!("{}: {error}", folder.display()), REFUSED),
+    };
+    if checked.is_empty() {
+        return fail(
+            &format!("{}: holds no PNG, JPEG or icon", folder.display()),
+            REFUSED,
+        );
+    }
+    let mut wrong = false;
+    for file in &checked {
+        let name = file
+            .path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        match &file.found {
+            Some((asset, picture)) if file.problems.is_empty() => show::field(
+                &name,
+                &format!(
+                    "{}, {}x{} {}",
+                    asset.name(),
+                    picture.width,
+                    picture.height,
+                    picture.format
+                ),
+            ),
+            Some(_) | None => {
+                wrong = true;
+                for problem in &file.problems {
+                    show::failure(&format!("{name}: {problem}"), "", None);
+                }
+            }
+        }
+    }
+    if let Some(count) = assets::too_few_screenshots(&checked) {
+        wrong = true;
+        show::failure(
+            &format!(
+                "Steamworks needs at least {} screenshots for a store page, and the folder has \
+                 {count}",
+                assets::SCREENSHOTS
+            ),
+            "",
+            None,
+        );
+    }
+    if wrong {
+        return ExitCode::from(REFUSED);
+    }
+    show::success("the artwork is as Steamworks takes it", "");
+    ExitCode::SUCCESS
 }
 
 fn try_drm_wrap(

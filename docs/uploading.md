@@ -172,6 +172,38 @@ manifests of each depot and the build live on each branch, and the store details
 app are left out, so the file changes only when the app's settings do. Nothing on Steam is
 changed.
 
+## Store and library artwork
+
+```sh
+steamship assets steam/store
+```
+
+Steamworks takes its artwork by hand, one upload at a time, and says only then that a picture
+is the wrong size. `assets` checks a folder of it first, without sending anything: every PNG,
+JPEG and icon in it, each named for the asset it is, against Valve's sizes and formats. It exits
+2 naming each one that is wrong, each named for no asset, and too few screenshots.
+
+| File | Size | Format |
+| --- | --- | --- |
+| `header_capsule` | 920x430 | PNG or JPEG |
+| `small_capsule` | 462x174 | PNG or JPEG |
+| `main_capsule` | 1232x706 | PNG or JPEG |
+| `vertical_capsule` | 748x896 | PNG or JPEG |
+| `screenshot…`, at least five | 1920x1080 or larger, 16:9 | PNG or JPEG |
+| `page_background` | 1438x810 | PNG or JPEG |
+| `bundle_header` | 707x232 | PNG or JPEG |
+| `library_capsule` | 600x900 | PNG |
+| `library_header` | 920x430 | PNG |
+| `library_hero` | 3840x1240 | PNG |
+| `library_logo` | 1280 wide or 720 tall, no larger | PNG with transparency |
+| `shortcut_icon` | 256x256 | icon or PNG |
+| `app_icon` | 184x184 | JPEG |
+| `event_cover` | 800x450 | PNG or JPEG |
+| `event_header` | 1920x622 | PNG or JPEG |
+
+Names match regardless of case, and screenshots are any names starting with `screenshot`,
+such as `screenshot_01.jpg`. Other files in the folder are left alone.
+
 ## Steam DRM
 
 ```sh
