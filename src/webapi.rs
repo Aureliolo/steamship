@@ -10,7 +10,7 @@ use std::cmp::Reverse;
 use std::env;
 use std::error;
 use std::fmt;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 use ureq::Body;
@@ -613,6 +613,14 @@ impl Api {
         for (name, value) in query {
             request = request.query(*name, value);
         }
+        // Steam's cache in front of some methods keeps an answer for up to an hour, heeds no
+        // request to skip it, and its nodes hold different ones, so a leaderboard deleted minutes
+        // earlier can still be listed. A query it has not seen is answered from Steam itself.
+        let now = SystemTime::now().duration_since(UNIX_EPOCH);
+        request = request.query(
+            "steamship",
+            now.map_or(0, |since| since.as_nanos()).to_string(),
+        );
         read(request.call())
     }
 }
@@ -1061,9 +1069,12 @@ mod tests {
         assert_eq!(branches.first().map(|branch| branch.build_id), Some(1234));
         let request = received(&requests);
         let first = request.lines().next().unwrap();
-        assert_eq!(
-            first,
-            "GET /ISteamApps/GetAppBetas/v1/?appid=5335950 HTTP/1.1"
+        let fresh = first
+            .strip_prefix("GET /ISteamApps/GetAppBetas/v1/?appid=5335950&steamship=")
+            .and_then(|rest| rest.strip_suffix(" HTTP/1.1"));
+        assert!(
+            fresh.is_some_and(|nanos| nanos.parse::<u128>().is_ok_and(|nanos| nanos > 0)),
+            "asked past Steam's cache, by the time: {first}"
         );
         assert!(
             request
@@ -1149,7 +1160,8 @@ mod tests {
         assert_eq!(builds.first().map(|build| build.build_id), Some(1234));
         let request = received(&requests);
         assert!(
-            request.starts_with("GET /ISteamApps/GetAppBuilds/v1/?appid=5335950&count=25 "),
+            request
+                .starts_with("GET /ISteamApps/GetAppBuilds/v1/?appid=5335950&count=25&steamship="),
             "{request}"
         );
     }
@@ -1201,7 +1213,7 @@ mod tests {
         );
         let request = received(&requests);
         assert!(
-            request.starts_with("GET /ISteamApps/GetPartnerAppListForWebAPIKey/v2/ "),
+            request.starts_with("GET /ISteamApps/GetPartnerAppListForWebAPIKey/v2/?steamship="),
             "{request}"
         );
         assert_eq!(
