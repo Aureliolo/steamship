@@ -222,6 +222,7 @@ fn help_lists_every_command_with_one_short_line() {
         "  workshop       Upload a Workshop item, then print its ID\n",
         "  builds         Show an app's branches and last builds\n",
         "  achievements   Show an app's achievements and stats, or check them against a file\n",
+        "  settings       Show an app's settings in Steamworks, or check them against a snapshot\n",
         "  leaderboards   Show an app's leaderboards, or check them against a file and make those \
          missing\n",
         "  rich-presence  Upload an app's rich presence localisation\n",
@@ -3989,5 +3990,121 @@ fn ctrl_c_during_an_upload_ends_steamcmd_with_steamship() {
     assert!(
         soon(|| !signal("-0", &steamcmd)),
         "steamcmd outlived steamship"
+    );
+}
+
+/// A steamcmd that prints app 1000's info as steamcmd 1788292693 printed Fantasy Guild
+/// Manager's, trimmed, with the executable `executable`, keeping what it was started with in
+/// `args`.
+#[cfg(unix)]
+fn app_info(executable: &str) -> String {
+    format!(
+        "#!/bin/sh\n\
+         echo \"$*\" > \"$HOME/args\"\n\
+         echo 'Logging in using cached credentials.'\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+         echo 'AppID : 1000, change number : 5/5, last change : Tue Sep 29 20:07:48 2026 '\n\
+         printf '\"1000\"\\n{{\\n'\n\
+         printf '\\t\"common\"\\n\\t{{\\n\\t\\t\"name\"\\t\\t\"Spacewar\"\\n'\n\
+         printf '\\t\\t\"ReleaseState\"\\t\\t\"unavailable\"\\n\\t}}\\n'\n\
+         printf '\\t\"config\"\\n\\t{{\\n\\t\\t\"installdir\"\\t\\t\"Spacewar\"\\n'\n\
+         printf '\\t\\t\"launch\"\\n\\t\\t{{\\n\\t\\t\\t\"0\"\\n\\t\\t\\t{{\\n'\n\
+         printf '\\t\\t\\t\\t\"executable\"\\t\\t\"{executable}\"\\n\\t\\t\\t}}\\n\\t\\t}}\\n\\t}}\\n'\n\
+         printf '\\t\"depots\"\\n\\t{{\\n\\t\\t\"1001\"\\n\\t\\t{{\\n'\n\
+         printf '\\t\\t\\t\"manifests\"\\n\\t\\t\\t{{\\n\\t\\t\\t}}\\n\\t\\t}}\\n\\t}}\\n}}\\n'\n\
+         echo 'Unloading Steam API...OK'\n"
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn settings_are_shown_saved_and_checked_leaving_steams_bookkeeping_out() {
+    let home = faked_with(&app_info("spacewar"));
+    saved_login(home.path());
+    let files = tempfile::tempdir().unwrap();
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+
+    let (code, stdout, stderr) = steamship(&["settings", "1000"], Some(home.path()), &quiet);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("\"1000\"\n{\n\t\"common\"\n\t{\n\t\t\"name\"\t\t\"Spacewar\"\n\t}\n")
+            && stdout.contains("\t\t\t\t\"executable\"\t\t\"spacewar\"\n")
+            && stdout.contains("\t\"depots\"\n\t{\n\t\t\"1001\"\n\t\t{\n\t\t}\n\t}\n"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("ReleaseState") && !stdout.contains("manifests"));
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(
+        args.contains("+login build_bot +app_info_update 1 +app_info_print 1000 +quit"),
+        "{args}"
+    );
+
+    let kept = files.path().join("settings.vdf");
+    let kept_text = kept.to_string_lossy().into_owned();
+    let (saved, said, _) = steamship(
+        &["settings", "1000", "--save", &kept_text],
+        Some(home.path()),
+        &quiet,
+    );
+    assert_eq!(saved, Some(0_i32), "{said}");
+    assert!(said.contains("app 1000: settings saved to "), "{said}");
+    let (matched, checked, _) = steamship(
+        &["settings", "1000", "--check", &kept_text],
+        Some(home.path()),
+        &quiet,
+    );
+    assert_eq!(matched, Some(0_i32), "{checked}");
+    assert!(
+        checked.contains("Steam's settings match the file"),
+        "{checked}"
+    );
+
+    // Someone changed the executable in Steamworks.
+    let changed = faked_with(&app_info("spacewar.x86_64"));
+    saved_login(changed.path());
+    let (drifted, shown, why) = steamship(
+        &["settings", "1000", "--check", &kept_text],
+        Some(changed.path()),
+        &quiet,
+    );
+    assert_eq!(drifted, Some(2_i32), "{shown}{why}");
+    assert!(
+        why.contains(
+            "config/launch/0/executable is \"spacewar.x86_64\" on Steam and \"spacewar\" in the \
+             file"
+        ),
+        "{why}"
+    );
+    assert!(shown.contains("settings --save` the file again"), "{shown}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_snapshot_for_another_app_is_refused_before_steamcmd_and_an_app_steam_hides_is_a_failure() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"$*\" > \"$HOME/args\"\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+         printf '\"1000\"\\n{\\n}\\n'\n",
+    );
+    saved_login(home.path());
+    let files = tempfile::tempdir().unwrap();
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let other = files.path().join("other.vdf");
+    fs::write(&other, "\"480\"\n{\n}\n").unwrap();
+    let (code, _, stderr) = steamship(
+        &["settings", "1000", "--check", &other.to_string_lossy()],
+        Some(home.path()),
+        &quiet,
+    );
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(stderr.contains("is for app 480, not app 1000"), "{stderr}");
+    assert!(!home.path().join("args").exists(), "steamcmd was not run");
+
+    let (hidden, _, why) = steamship(&["settings", "1000"], Some(home.path()), &quiet);
+    assert_eq!(hidden, Some(1_i32), "{why}");
+    assert!(
+        why.contains("Steam shows the build account no settings for app 1000"),
+        "{why}"
     );
 }

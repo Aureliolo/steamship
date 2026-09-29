@@ -30,6 +30,7 @@ pub mod run;
 pub mod scripts;
 #[cfg(target_os = "linux")]
 pub mod secret_service;
+pub mod settings;
 pub mod show;
 pub mod steamcmd;
 pub mod terminal;
