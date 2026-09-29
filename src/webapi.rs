@@ -315,6 +315,22 @@ pub fn apps_from(answer: &Value) -> Result<Vec<App>, Error> {
     Ok(found)
 }
 
+/// Why Steam gave `error` about `app`, when it is the one Steam gives while an app has no build.
+///
+/// That is an HTTP 500 about an app the key holds, among `apps`: Steam answered so for Ostinato's
+/// before its first upload, when it refused an app the key did not hold instead.
+#[must_use]
+pub fn no_build_yet(error: &Error, app: u32, apps: &[App]) -> Option<String> {
+    (matches!(error, Error::Status(500)) && apps.iter().any(|held| held.app_id == u64::from(app)))
+        .then(|| {
+            format!(
+                "this key holds app {app}, and Steam answers so while an app has no build: \
+                 upload one, set it live on default in Steamworks under SteamPipe, Builds, and \
+                 its branches and builds can be asked for"
+            )
+        })
+}
+
 /// Whether `branch` names the default branch.
 #[must_use]
 pub fn is_default(branch: &str) -> bool {
@@ -867,6 +883,23 @@ mod tests {
             )),
             Err(Error::Unreadable("achievement name"))
         ));
+    }
+
+    #[test]
+    fn a_500_about_an_app_the_key_holds_is_an_app_with_no_build_yet() {
+        let apps = [App {
+            app_id: 5_335_970,
+            name: "Ostinato".to_owned(),
+        }];
+        let why = no_build_yet(&Error::Status(500), 5_335_970, &apps).unwrap();
+        assert!(
+            why.starts_with("this key holds app 5335970, and Steam"),
+            "{why}"
+        );
+        assert_eq!(no_build_yet(&Error::Status(500), 480, &apps), None);
+        for other in [Error::Status(503), Error::Refused, Error::Unreachable] {
+            assert_eq!(no_build_yet(&other, 5_335_970, &apps), None, "{other:?}");
+        }
     }
 
     #[test]

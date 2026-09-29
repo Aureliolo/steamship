@@ -2986,7 +2986,9 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
 #[test]
 fn builds_and_promote_that_steam_does_not_answer_say_so_and_exit_1() {
     let home = tempfile::tempdir().unwrap();
+    // The second answer is for what `builds` asks after a 500: which apps the key holds.
     let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", ""),
         ("500 Internal Server Error", ""),
         ("500 Internal Server Error", ""),
     ]);
@@ -3138,6 +3140,65 @@ fn an_achievements_file_that_is_not_one_or_names_another_app_is_refused_before_s
         assert_eq!(code, Some(2_i32), "{stderr}");
         assert!(stderr.contains(why), "{why:?} in {stderr}");
     }
+}
+
+#[test]
+fn a_500_about_an_app_the_key_holds_is_said_to_be_an_app_with_no_build_yet() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", ""),
+        ("200 OK", APPS),
+        ("500 Internal Server Error", ""),
+        ("200 OK", APPS),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    // As Steam answered for Ostinato's app before its first upload.
+    let (code, stdout, stderr) = steamship(&["builds", "5335970"], Some(home.path()), &set);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(stderr.contains("Steam answered HTTP 500"), "{stderr}");
+    assert!(
+        stderr
+            .contains("this key holds app 5335970, and Steam answers so while an app has no build"),
+        "{stderr}"
+    );
+    // The same answer about an app the key does not hold is left as it came.
+    let (other, _, alone) = steamship(&["builds", "480"], Some(home.path()), &set);
+    assert_eq!(other, Some(1_i32), "{alone}");
+    assert!(alone.contains("Steam answered HTTP 500"), "{alone}");
+    assert!(!alone.contains("this key holds"), "{alone}");
+}
+
+#[test]
+fn check_says_why_it_could_not_check_the_branch_of_an_app_with_no_build_yet() {
+    let home = tempfile::tempdir().unwrap();
+    let holds_480 = r#"{"applist": {"apps": {"app": [
+        {"appid": 480, "app_type": "game", "app_name": "Spacewar"}
+    ]}}}"#;
+    let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", ""),
+        ("200 OK", holds_480),
+    ]);
+    let (_folder, script) = setting_live("testing");
+    let script = script.to_string_lossy().into_owned();
+    let (code, said, _) = steamship(
+        &["check", &script],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!(code, Some(0_i32), "{said}");
+    assert!(said.contains("not checked"), "{said}");
+    assert!(
+        said.contains("this key holds app 480, and Steam answers so while an app has no build"),
+        "{said}"
+    );
 }
 
 /// A session bus that hangs up on everyone who connects, at a socket in the folder given back.
