@@ -1350,7 +1350,7 @@ fn app_named(app: &str) -> Result<u32, ExitCode> {
 /// Why Steam gave `error` about `app`, when the apps the key holds can say: asked only for the
 /// one error that needs them.
 fn why_unanswered(api: &webapi::Api, app: u32, error: &webapi::Error) -> Option<String> {
-    if !matches!(error, webapi::Error::Status(500)) {
+    if !matches!(error, webapi::Error::Status(500, _)) {
         return None;
     }
     webapi::no_build_yet(error, app, &api.apps().ok()?)
