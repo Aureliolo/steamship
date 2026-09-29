@@ -215,19 +215,20 @@ fn help_lists_every_command_with_one_short_line() {
         "named as it is typed, on Windows too: {stdout}"
     );
     for line in [
-        "  login         Log in to Steam, once, for uploads\n",
-        "  status        Show the login and steamcmd, checking the login with Steam\n",
-        "  check         Check the build scripts, without logging in\n",
-        "  upload        Check, build and upload, then print the build ID\n",
-        "  workshop      Upload a Workshop item, then print its ID\n",
-        "  builds        Show an app's branches and last builds\n",
-        "  achievements  Show an app's achievements, or check them against a file\n",
-        "  promote       Set an uploaded build live on a branch\n",
-        "  ci            Set up uploads from CI, the login kept as a secret\n",
-        "  logout        Forget the saved login\n",
-        "  init          Write starter build scripts for an app\n",
-        "  install       Install or verify the pinned steamcmd\n",
-        "  completions   Print tab completion for bash, zsh, fish, PowerShell or elvish\n",
+        "  login          Log in to Steam, once, for uploads\n",
+        "  status         Show the login and steamcmd, checking the login with Steam\n",
+        "  check          Check the build scripts, without logging in\n",
+        "  upload         Check, build and upload, then print the build ID\n",
+        "  workshop       Upload a Workshop item, then print its ID\n",
+        "  builds         Show an app's branches and last builds\n",
+        "  achievements   Show an app's achievements, or check them against a file\n",
+        "  rich-presence  Upload an app's rich presence localisation\n",
+        "  promote        Set an uploaded build live on a branch\n",
+        "  ci             Set up uploads from CI, the login kept as a secret\n",
+        "  logout         Forget the saved login\n",
+        "  init           Write starter build scripts for an app\n",
+        "  install        Install or verify the pinned steamcmd\n",
+        "  completions    Print tab completion for bash, zsh, fish, PowerShell or elvish\n",
     ] {
         assert!(stdout.contains(line), "{line:?} in {stdout}");
     }
@@ -2582,7 +2583,8 @@ const SET_LIVE: &str = r#"{"response": {"result": 1}}"#;
 
 /// A stand-in for Steam's partner Web API on this machine, which a debug build of steamship is
 /// sent to through `STEAMSHIP_WEB_API_STAND_IN`. It answers one request with each status and body
-/// in `answers`, in turn, and hands over each request it read.
+/// in `answers`, in turn, and hands over each request it read. A status can carry header lines
+/// after it, as Steam's service methods give their result in one.
 fn web_api(answers: Vec<(&'static str, &'static str)>) -> (String, mpsc::Receiver<String>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -3149,6 +3151,142 @@ fn an_achievements_file_that_is_not_one_or_names_another_app_is_refused_before_s
         );
         assert_eq!(code, Some(2_i32), "{stderr}");
         assert!(stderr.contains(why), "{why:?} in {stderr}");
+    }
+}
+
+/// A rich presence file for `language`, its tokens given as VDF pairs.
+fn presence_file(folder: &Path, language: &str, tokens: &str) -> String {
+    let path = folder.join(format!("rich_presence_{language}.vdf"));
+    fs::write(
+        &path,
+        format!(
+            "\"lang\"\n{{\n\t\"Language\"\t\"{language}\"\n\t\"Tokens\"\n\t{{\n{tokens}\t}}\n}}\n"
+        ),
+    )
+    .unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+/// A form's body as it was meant, its `+` and `%XX` escapes undone.
+fn unformed(body: &str) -> String {
+    let mut bytes = Vec::with_capacity(body.len());
+    let mut rest = body.as_bytes();
+    while let Some((&byte, after)) = rest.split_first() {
+        rest = after;
+        match byte {
+            b'+' => bytes.push(b' '),
+            b'%' => {
+                let (hex, beyond) = rest.split_at(2);
+                bytes.push(u8::from_str_radix(&String::from_utf8_lossy(hex), 16).unwrap());
+                rest = beyond;
+            }
+            other => bytes.push(other),
+        }
+    }
+    String::from_utf8(bytes).unwrap()
+}
+
+#[test]
+fn rich_presence_is_sent_whole_for_every_file_and_a_result_steam_refuses_is_a_failure() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let english = presence_file(
+        files.path(),
+        "english",
+        "\t\t\"#menu\"\t\"At the menu\"\n\t\t\"#season_autumn\"\t\"Autumn\"\n\
+         \t\t\"#running\"\t\"In {#season_%season%}\"\n",
+    );
+    let german = presence_file(files.path(), "german", "\t\t\"#menu\"\t\"Im Men\u{fc}\"\n");
+    let (host, requests) = web_api(vec![
+        ("200 OK\r\nX-eresult: 1", r#"{"response": {}}"#),
+        (
+            "200 OK\r\nX-eresult: 8\r\nX-error_message: Invalid token",
+            r#"{"response": {}}"#,
+        ),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let command = ["rich-presence", "480", &english, &german];
+
+    let (code, stdout, stderr) = steamship(&command, Some(home.path()), &set);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("  english   3 tokens, from "), "{stdout}");
+    assert!(stdout.contains("  german    1 token, from "), "{stdout}");
+    assert!(
+        stdout.contains("app 480: rich presence replaced for english, german"),
+        "{stdout}"
+    );
+    let request = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        request.starts_with("POST /IProductInfoService/SetRichPresenceLocalization/v1/ ")
+            && request
+                .to_ascii_lowercase()
+                .contains(&format!("x-webapi-key: {KEY}")),
+        "{request}"
+    );
+    let (_, body) = request.split_once("\r\n\r\n").unwrap();
+    assert_eq!(
+        unformed(body),
+        "input_json={\"appid\":480,\"languages\":[\
+         {\"language\":\"english\",\"tokens\":[\
+         {\"token\":\"#menu\",\"value\":\"At the menu\"},\
+         {\"token\":\"#season_autumn\",\"value\":\"Autumn\"},\
+         {\"token\":\"#running\",\"value\":\"In {#season_%season%}\"}]},\
+         {\"language\":\"german\",\"tokens\":[{\"token\":\"#menu\",\"value\":\"Im Men\u{fc}\"}]}]}",
+        "every token of every file, and no SteamID"
+    );
+
+    let (refused, _, why) = steamship(&command, Some(home.path()), &set);
+    assert_eq!(refused, Some(1_i32), "{why}");
+    assert!(why.contains("EResult 8, Invalid token"), "{why}");
+}
+
+#[test]
+fn rich_presence_files_are_checked_before_steam_and_a_preview_sends_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    // No stand-in is given: asking Steam would be a failure to reach it, exit 1, not 0 or 2.
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+    ];
+    let english = presence_file(files.path(), "english", "\t\t\"#menu\"\t\"At the menu\"\n");
+
+    let (previewed, stdout, stderr) = steamship(
+        &["rich-presence", "480", &english, "--preview"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(previewed, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("  english   1 token, from "), "{stdout}");
+    assert!(stdout.contains("nothing was sent"), "{stdout}");
+
+    let unnamed = presence_file(
+        files.path(),
+        "french",
+        "\t\t\"#running\"\t\"In {#season_%s%}\"\n",
+    );
+    let again = files.path().join("again.vdf");
+    let _: u64 = fs::copy(&english, &again).unwrap();
+    let missing = files.path().join("missing.vdf");
+    for (file, why) in [
+        (unnamed, "no token starts #season_"),
+        (
+            again.to_string_lossy().into_owned(),
+            "is a second file for english",
+        ),
+        (missing.to_string_lossy().into_owned(), "missing.vdf: "),
+    ] {
+        let (code, _, said) = steamship(
+            &["rich-presence", "480", &english, &file],
+            Some(home.path()),
+            &set,
+        );
+        assert_eq!(code, Some(2_i32), "{said}");
+        assert!(said.contains(why), "{why:?} in {said}");
     }
 }
 
