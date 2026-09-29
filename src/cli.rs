@@ -170,6 +170,25 @@ pub enum Command {
         #[arg(long, value_name = "FILE")]
         check: Option<PathBuf>,
     },
+    /// Show an app's leaderboards, or check them against a file and make those missing.
+    ///
+    /// Lists the leaderboards Steam holds for the app, through Steam's partner Web API with the
+    /// publisher key as `builds` finds it. With `--check`, compares them with a file by name, and
+    /// exits 2 naming every leaderboard missing on either side and every setting that differs.
+    /// With `--create` too, those in the file that Steam lacks are made first, as the file has
+    /// them. Steam keeps an existing leaderboard's settings and scores, so none is ever changed,
+    /// made again or deleted.
+    Leaderboards {
+        /// The app, by its ID or its app build script.
+        app: String,
+        /// A JSON file of the leaderboards the app should have, each with its `name`, `sort`,
+        /// `display`, `trusted_writes` and `friends_only`.
+        #[arg(long, value_name = "FILE")]
+        check: Option<PathBuf>,
+        /// Make the file's leaderboards that Steam lacks, before checking.
+        #[arg(long, requires = "check")]
+        create: bool,
+    },
     /// Upload an app's rich presence localisation.
     ///
     /// Sends Valve's rich presence files, one per language, through Steam's partner Web API with

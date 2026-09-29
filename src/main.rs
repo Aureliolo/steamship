@@ -25,8 +25,8 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    achievements, check, ci, conversation, dump, init, keychain, presence, run, scripts, steamcmd,
-    upload, webapi, workshop,
+    achievements, check, ci, conversation, dump, init, keychain, leaderboards, presence, run,
+    scripts, steamcmd, upload, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -48,7 +48,19 @@ fn main() -> ExitCode {
     } else {
         update_check()
     };
-    let code = match command {
+    let code = run(command);
+    if let Some(latest) = update.and_then(update::Check::newer) {
+        show::upgrade(
+            &latest.to_string(),
+            env!("CARGO_PKG_VERSION"),
+            installed().hint(),
+        );
+    }
+    code
+}
+
+fn run(command: Command) -> ExitCode {
+    match command {
         Command::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "steamship", &mut io::stdout());
             ExitCode::SUCCESS
@@ -81,6 +93,11 @@ fn main() -> ExitCode {
         Command::Achievements { app, check } => match try_achievements(&app, check.as_deref()) {
             Ok(code) | Err(code) => code,
         },
+        Command::Leaderboards { app, check, create } => {
+            match try_leaderboards(&app, check.as_deref(), create) {
+                Ok(code) | Err(code) => code,
+            }
+        }
         Command::RichPresence {
             app,
             files,
@@ -121,15 +138,7 @@ fn main() -> ExitCode {
             preview,
             account: named(account.as_deref()),
         }),
-    };
-    if let Some(latest) = update.and_then(update::Check::newer) {
-        show::upgrade(
-            &latest.to_string(),
-            env!("CARGO_PKG_VERSION"),
-            installed().hint(),
-        );
     }
-    code
 }
 
 /// How this steamship was installed, which is how it is upgraded.
@@ -1495,6 +1504,86 @@ fn try_rich_presence(app: &str, files: &[PathBuf], preview: bool) -> Result<Exit
         "each language's tokens on Steam are now exactly its file's",
     );
     Ok(ExitCode::SUCCESS)
+}
+
+fn leaderboards_file(path: &Path, app: u32) -> Result<leaderboards::Listed, ExitCode> {
+    let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
+    let text = fs::read_to_string(path).map_err(|error| refused(&error))?;
+    let listed = leaderboards::read(&text).map_err(|why| refused(&why))?;
+    if let Some(other) = listed.app.filter(|named| *named != u64::from(app)) {
+        return Err(refused(&format!("is for app {other}, not app {app}")));
+    }
+    show::field(
+        "file",
+        &format!(
+            "{}, {}",
+            path.display(),
+            show::counted(listed.leaderboards.len(), "leaderboard")
+        ),
+    );
+    Ok(listed)
+}
+
+fn try_leaderboards(app: &str, check: Option<&Path>, create: bool) -> Result<ExitCode, ExitCode> {
+    show::title("leaderboards");
+    let app_id = app_named(app)?;
+    let listed = check
+        .map(|path| leaderboards_file(path, app_id))
+        .transpose()?;
+    let home = home()?;
+    let (api, from) = web_api(&home)?;
+    let asking = Spinner::start("steam", "asking for the leaderboards", false);
+    let mut held = match api.leaderboards(app_id) {
+        Ok(held) => held,
+        Err(error) => return Err(web_api_failed(asking, &error)),
+    };
+    asking.done(&format!(
+        "{} on Steam",
+        show::counted(held.len(), "leaderboard")
+    ));
+    offer_to_keep(&home, &api, from);
+    let Some(listed) = listed else {
+        for leaderboard in &held {
+            show::field(&leaderboard.name, &leaderboards::line(leaderboard));
+        }
+        return Ok(ExitCode::SUCCESS);
+    };
+    if create {
+        for wanted in &listed.leaderboards {
+            if held
+                .iter()
+                .any(|leaderboard| leaderboard.name == wanted.name)
+            {
+                continue;
+            }
+            let spinner = Spinner::start("steam", &format!("making {}", wanted.name), false);
+            match api.create_leaderboard(app_id, wanted) {
+                Ok(made) => {
+                    spinner.done(&format!("made {}", made.name));
+                    held.push(made);
+                }
+                Err(error) => return Err(web_api_failed(spinner, &error)),
+            }
+        }
+    }
+    let drift = leaderboards::compare(&listed.leaderboards, &held);
+    if drift.is_empty() {
+        show::success("Steam's leaderboards match the file", "");
+        return Ok(ExitCode::SUCCESS);
+    }
+    for difference in &drift {
+        show::failure(&difference.to_string(), "", None);
+    }
+    if drift
+        .iter()
+        .any(|difference| matches!(difference, leaderboards::Drift::Differs { .. }))
+    {
+        show::aside(
+            "Steam keeps a leaderboard's settings: change them in Steamworks, under Stats & \
+             Achievements, Leaderboards",
+        );
+    }
+    Ok(ExitCode::from(REFUSED))
 }
 
 fn try_promote(app: &str, build: u64, branch: &str) -> Result<ExitCode, ExitCode> {
