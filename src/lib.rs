@@ -3,6 +3,7 @@
 
 pub mod account;
 pub mod achievements;
+pub mod assets;
 pub mod check;
 pub mod ci;
 pub mod cli;
@@ -24,6 +25,7 @@ pub mod macos;
 pub mod magic;
 pub mod manifest;
 pub mod pattern;
+pub mod picture;
 pub mod platform;
 pub mod presence;
 pub mod redact;
