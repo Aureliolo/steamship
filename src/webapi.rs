@@ -544,6 +544,40 @@ impl Api {
         })
     }
 
+    /// Replaces the rich presence of the languages in `input`, the `input_json` of
+    /// `IProductInfoService/SetRichPresenceLocalization`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::branches`], and when Steam's result says the call failed.
+    pub fn set_rich_presence(&self, input: &Value) -> Result<(), Error> {
+        let response = self
+            .agent
+            .post(format!(
+                "{}/IProductInfoService/SetRichPresenceLocalization/v1/",
+                self.host
+            ))
+            .header("x-webapi-key", self.key.0.as_str())
+            .send_form([("input_json", input.to_string())]);
+        // A service method can answer 200 and say it failed only in its result header.
+        if let Ok(answer) = &response {
+            let header = |name: &str| {
+                answer
+                    .headers()
+                    .get(name)
+                    .and_then(|value| value.to_str().ok())
+                    .map(ToOwned::to_owned)
+            };
+            if let Some(result) = header("x-eresult").filter(|result| result != "1") {
+                return Err(Error::Failed(header("x-error_message").map_or_else(
+                    || format!("EResult {result}"),
+                    |message| format!("EResult {result}, {message}"),
+                )));
+            }
+        }
+        read(response).map(drop)
+    }
+
     /// Sets `build` of `app` live on `branch`.
     ///
     /// # Errors
