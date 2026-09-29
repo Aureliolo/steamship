@@ -26,7 +26,7 @@ use steamship::update::{self, Installed};
 use steamship::windows::Terminal;
 use steamship::{
     achievements, check, ci, conversation, dump, init, keychain, leaderboards, presence, run,
-    scripts, steamcmd, upload, webapi, workshop,
+    scripts, settings, steamcmd, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -91,6 +91,19 @@ fn run(command: Command) -> ExitCode {
             Ok(code) | Err(code) => code,
         },
         Command::Achievements { app, check } => match try_achievements(&app, check.as_deref()) {
+            Ok(code) | Err(code) => code,
+        },
+        Command::Settings {
+            app,
+            save,
+            check,
+            account,
+        } => match try_settings(
+            &app,
+            save.as_deref(),
+            check.as_deref(),
+            named(account.as_deref()),
+        ) {
             Ok(code) | Err(code) => code,
         },
         Command::Leaderboards { app, check, create } => {
@@ -1523,6 +1536,108 @@ fn try_rich_presence(app: &str, files: &[PathBuf], preview: bool) -> Result<Exit
         "each language's tokens on Steam are now exactly its file's",
     );
     Ok(ExitCode::SUCCESS)
+}
+
+/// The settings snapshot at `path`, refused before steamcmd is run when it is not `app`'s.
+fn settings_file(path: &Path, app: u32) -> Result<vdf::Block, ExitCode> {
+    let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
+    let text = fs::read_to_string(path).map_err(|error| refused(&error))?;
+    let wanted = settings::read(&text, app).map_err(|why| refused(&why))?;
+    show::field("file", &path.display().to_string());
+    Ok(wanted)
+}
+
+/// `app`'s settings, as Steam shows them to `account` through steamcmd.
+fn asked_settings(
+    account: &Account,
+    app: u32,
+    packed: Option<&ci::Login>,
+) -> Result<vdf::Block, ExitCode> {
+    let (home, manifest) = ready()?;
+    restore(packed, &home)?;
+    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
+    let root = home.join(install::FOLDER);
+    let program = steamcmd::program(&root, Platform::THIS);
+    let spinner = Spinner::start("steam", "asking for the settings", true);
+    let finished = match run::run(
+        &program,
+        &steamcmd::app_info(account, app),
+        &steamcmd::environment(&home, Platform::THIS),
+        &root,
+        steamcmd::CHECK_LIMIT,
+        steamcmd::HOPELESS,
+    ) {
+        Ok(finished) => finished,
+        Err(error) => {
+            spinner.failed("could not start");
+            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+        }
+    };
+    let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
+    let console = redactor.redact(&finished.output);
+    let console = String::from_utf8_lossy(&console);
+    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    match upload::judge_login(finished.code, &console) {
+        upload::Login::Taken => {}
+        judged @ (upload::Login::Refused(_) | upload::Login::Failed(_)) => {
+            spinner.failed("not logged in");
+            return Err(verdict(judged, packed));
+        }
+    }
+    match settings::from_console(&console, app) {
+        Ok(shown) => {
+            spinner.done("shown");
+            Ok(shown)
+        }
+        Err(why) => {
+            spinner.failed("none shown");
+            Err(fail(&why, FAILED))
+        }
+    }
+}
+
+fn try_settings(
+    app: &str,
+    save: Option<&Path>,
+    check: Option<&Path>,
+    named: Option<&str>,
+) -> Result<ExitCode, ExitCode> {
+    show::title("settings");
+    let app_id = app_named(app)?;
+    let wanted = check.map(|path| settings_file(path, app_id)).transpose()?;
+    let packed = packed_login()?;
+    let account = match (&packed, named) {
+        (Some(packed), None) => packed.account().clone(),
+        _ => account(named, false)?.0,
+    };
+    let shown = asked_settings(&account, app_id, packed.as_ref())?;
+    let written = settings::snapshot(app_id, &shown).map_err(|why| fail(&why, FAILED))?;
+    if let Some(path) = save {
+        fs::write(path, &written)
+            .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
+        show::success(
+            &format!("app {app_id}: settings saved to {}", path.display()),
+            "`steamship settings --check` compares Steam's with them",
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    let Some(wanted) = wanted else {
+        anstream::print!("{written}");
+        return Ok(ExitCode::SUCCESS);
+    };
+    let drift = settings::compare(&wanted, &shown);
+    if drift.is_empty() {
+        show::success("Steam's settings match the file", "");
+        return Ok(ExitCode::SUCCESS);
+    }
+    for difference in &drift {
+        show::failure(&difference.to_string(), "", None);
+    }
+    show::aside(
+        "change the app in Steamworks, or `steamship settings --save` the file again if the \
+         change was meant",
+    );
+    Ok(ExitCode::from(REFUSED))
 }
 
 fn leaderboards_file(path: &Path, app: u32) -> Result<leaderboards::Listed, ExitCode> {
