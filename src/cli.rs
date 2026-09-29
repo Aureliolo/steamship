@@ -173,6 +173,16 @@ pub enum Command {
         #[arg(long, value_name = "FILE")]
         check: Option<PathBuf>,
     },
+    /// Check store and library artwork against Valve's sizes, before it is uploaded.
+    ///
+    /// Reads every PNG, JPEG and icon in the folder, each named for the asset it is
+    /// (`header_capsule.png`, `library_logo.png`, `screenshot_01.jpg`), and exits 2 naming every
+    /// one that is not the size or format Steamworks takes, is named for no asset, or cannot be
+    /// read, and too few screenshots. Nothing is sent anywhere.
+    Assets {
+        /// The folder the artwork is kept in, such as `steam/store`.
+        folder: PathBuf,
+    },
     /// Wrap a Windows executable in Steam DRM, before it is uploaded.
     ///
     /// Has Valve's servers add the app's Steam DRM to the executable, through steamcmd with the
