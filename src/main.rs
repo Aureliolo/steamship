@@ -758,6 +758,9 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<(), ExitCo
         Err(error) => {
             spinner.failed("not checked");
             show::aside(&error.to_string());
+            if let Some(why) = why_unanswered(&api, app, &error) {
+                show::aside(&why);
+            }
             Ok(())
         }
     }
@@ -1328,6 +1331,15 @@ fn app_named(app: &str) -> Result<u32, ExitCode> {
     Ok(app_id)
 }
 
+/// Why Steam gave `error` about `app`, when the apps the key holds can say: asked only for the
+/// one error that needs them.
+fn why_unanswered(api: &webapi::Api, app: u32, error: &webapi::Error) -> Option<String> {
+    if !matches!(error, webapi::Error::Status(500)) {
+        return None;
+    }
+    webapi::no_build_yet(error, app, &api.apps().ok()?)
+}
+
 /// Says why the Web API did not answer, and the exit code for it.
 fn web_api_failed(spinner: Spinner, error: &webapi::Error) -> ExitCode {
     spinner.failed("no answer");
@@ -1342,7 +1354,14 @@ fn try_builds(app: &str, count: u32) -> Result<ExitCode, ExitCode> {
     let spinner = Spinner::start("steam", "asking for the branches and builds", false);
     let overview = match api.overview(app_id, count) {
         Ok(overview) => overview,
-        Err(error) => return Err(web_api_failed(spinner, &error)),
+        Err(error) => {
+            let why = why_unanswered(&api, app_id, &error);
+            let code = web_api_failed(spinner, &error);
+            if let Some(why) = why {
+                show::note(&why);
+            }
+            return Err(code);
+        }
     };
     spinner.done(&overview.summary());
     for (label, line) in overview.lines() {
