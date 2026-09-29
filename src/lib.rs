@@ -15,6 +15,7 @@ pub mod elf;
 pub mod init;
 pub mod install;
 pub mod keychain;
+pub mod leaderboards;
 pub mod login;
 pub mod macho;
 #[cfg(target_os = "macos")]
