@@ -56,7 +56,7 @@ pub const VARIABLES: [(&str, &str); 5] = [
     ),
     (
         webapi::KEY,
-        "The publisher Web API key `builds` and `promote` use, before any kept one",
+        "The publisher Web API key, for `builds` and the other Web API commands, before any kept one",
     ),
     (
         update::OPT_OUT,
@@ -84,7 +84,8 @@ pub enum Command {
     /// Asks for the account's name when none is given or remembered, then the password, and a
     /// Steam Guard code or approval in the Steam Mobile app. What you type is passed directly to
     /// steamcmd, never logged or saved. At a terminal it then offers to keep the publisher Web
-    /// API key that `builds` and `promote` use, in the system's credential store.
+    /// API key, which `builds` and the other commands that ask Steam's Web API use, in the
+    /// system's credential store.
     Login {
         /// The build account, if not the one the last login remembered.
         #[arg(long, env = ACCOUNT)]
@@ -169,6 +170,24 @@ pub enum Command {
         #[arg(long, value_name = "FILE")]
         check: Option<PathBuf>,
     },
+    /// Upload an app's rich presence localisation.
+    ///
+    /// Sends Valve's rich presence files, one per language, through Steam's partner Web API with
+    /// the publisher key as `builds` finds it. Each language's tokens on Steam are replaced by the
+    /// file's, so a token taken out of the file is gone from Steam after the upload. Files are
+    /// checked first: a token that does not start with `#`, a token twice, or a text referring to
+    /// tokens that none starts as, and nothing is sent while one is wrong.
+    #[command(name = "rich-presence")]
+    RichPresence {
+        /// The app, by its ID or its app build script.
+        app: String,
+        /// The rich presence files, such as `steam/rich_presence_english.vdf`.
+        #[arg(required = true)]
+        files: Vec<PathBuf>,
+        /// Check the files and show what would be sent, without sending anything.
+        #[arg(long)]
+        preview: bool,
+    },
     /// Set an uploaded build live on a branch.
     ///
     /// Sets a build live on a beta branch without uploading it again, through Steam's partner
@@ -210,7 +229,7 @@ pub enum Command {
     /// Forget the saved login.
     ///
     /// Removes the login steamcmd saved, the account steamship remembered and the Web API key
-    /// kept for `builds` and `promote`; the next upload needs `steamship login` first.
+    /// kept for the Web API; the next upload needs `steamship login` first.
     Logout,
     /// Write starter build scripts for an app.
     ///

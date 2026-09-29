@@ -179,3 +179,33 @@ The file lists each achievement by the API name the game unlocks it with:
 the app checked, and other keys, such as your own tools', are left alone. Achievements count on
 Steam only once published in Steamworks, so one entered but not yet published is missing from
 Steam's.
+
+## Rich presence
+
+```sh
+steamship rich-presence 480 steam/rich_presence_english.vdf steam/rich_presence_german.vdf
+steamship rich-presence 480 steam/rich_presence_*.vdf --preview
+```
+
+`rich-presence` uploads the localisation files Steamworks takes under Community, Rich Presence,
+in Valve's own format, one per language, with the same Web API key as `builds`:
+
+```vdf
+"lang"
+{
+    "Language"  "english"
+    "Tokens"
+    {
+        "#menu"             "At the menu"
+        "#running"          "Running the %guild% guild in {#season_%season%}"
+        "#season_autumn"    "Autumn"
+    }
+}
+```
+
+Each file replaces all of its language's tokens on Steam, so the files are the whole truth: a
+token taken out of a file is gone from Steam after the next upload, and languages with no file
+are left as they are. Every file is checked before anything is sent, and one that names no
+language, holds no tokens, has a token that does not start with `#` or is there twice, or a
+text that refers to tokens (`{#season_%season%}`) that none starts as, is refused with exit 2;
+so are two files for the same language. `--preview` checks the files and sends nothing.
