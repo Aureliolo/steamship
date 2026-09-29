@@ -12,8 +12,7 @@ use steamship::picture;
 fuzz_target!(|data: &[u8]| {
     match picture::read(data) {
         Ok(read) if read.width == 0 || read.height == 0 => panic!("read with no size: {read:?}"),
-        Ok(_) => {}
         Err(why) if why.is_empty() => panic!("refused with no reason"),
-        Err(_) => {}
+        Ok(_) | Err(_) => {}
     }
 });
