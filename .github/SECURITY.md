@@ -31,9 +31,10 @@ Only the latest release gets fixes.
   name the key; a value that is not a key is refused without being repeated. A typed key is
   shown as dots and kept only after Steam has accepted it, in Windows Credential Manager (this
   machine only, never roaming), the macOS Keychain (never synchronised to iCloud) or the Linux
-  Secret Service, one for each steamship home; `logout` removes it. On Linux steamship reaches the Secret Service with its own small D-Bus
-  client, fuzzed, rather than a large third-party stack; the key crosses only the local socket to
-  the session bus, which the kernel keeps to your user.
+  Secret Service, one for each steamship home; `logout` removes it. On Linux steamship reaches
+  the Secret Service with its own small D-Bus client, fuzzed, rather than a large third-party
+  stack; the key crosses only the local socket to the session bus, which the kernel keeps to your
+  user.
 - **Nothing secret on the command line.** A password or Steam Guard code reaches steamship only as
   typed at `login`, or piped to it, never as a command-line argument, which other users of the
   machine can list.
