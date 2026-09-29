@@ -108,6 +108,13 @@ fn run(command: Command) -> ExitCode {
         Command::Promote { app, build, branch } => match try_promote(&app, build, &branch) {
             Ok(code) | Err(code) => code,
         },
+        Command::Branch {
+            app,
+            branch,
+            description,
+        } => match try_branch(&app, &branch, &description) {
+            Ok(code) | Err(code) => code,
+        },
         Command::Workshop {
             script,
             account,
@@ -1350,7 +1357,7 @@ fn app_named(app: &str) -> Result<u32, ExitCode> {
 /// Why Steam gave `error` about `app`, when the apps the key holds can say: asked only for the
 /// one error that needs them.
 fn why_unanswered(api: &webapi::Api, app: u32, error: &webapi::Error) -> Option<String> {
-    if !matches!(error, webapi::Error::Status(500)) {
+    if !matches!(error, webapi::Error::Status(500, _)) {
         return None;
     }
     webapi::no_build_yet(error, app, &api.apps().ok()?)
@@ -1584,6 +1591,65 @@ fn try_leaderboards(app: &str, check: Option<&Path>, create: bool) -> Result<Exi
         );
     }
     Ok(ExitCode::from(REFUSED))
+}
+
+fn try_branch(app: &str, branch: &str, description: &str) -> Result<ExitCode, ExitCode> {
+    show::title("branch");
+    let app_id = app_named(app)?;
+    if webapi::is_default(branch) {
+        return Err(fail(
+            &"the default branch's description is set in Steamworks, not by steamship",
+            REFUSED,
+        ));
+    }
+    show::field("branch", branch);
+    let home = home()?;
+    let (api, from) = web_api(&home)?;
+    let asking = Spinner::start("steam", "asking for the branches", false);
+    let branches = match api.branches(app_id) {
+        Ok(branches) => branches,
+        Err(error) => {
+            let why = why_unanswered(&api, app_id, &error);
+            let code = web_api_failed(asking, &error);
+            if let Some(why) = why {
+                show::note(&why);
+            }
+            return Err(code);
+        }
+    };
+    let Some(found) = branches.iter().find(|found| found.name == branch) else {
+        asking.failed("not on Steam");
+        return Err(fail(
+            &format!(
+                "app {app_id} has no branch \"{branch}\"; {}",
+                upload::create_first(&branches)
+            ),
+            REFUSED,
+        ));
+    };
+    if found.description.is_empty() {
+        asking.done("no description");
+    } else {
+        asking.done(&format!("described as \"{}\"", found.description));
+    }
+    offer_to_keep(&home, &api, from);
+    if found.description == description {
+        show::success(
+            &format!("app {app_id}: {branch} is already described so"),
+            "",
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    let setting = Spinner::start("steam", "setting the description", false);
+    if let Err(error) = api.describe_branch(app_id, branch, description) {
+        return Err(web_api_failed(setting, &error));
+    }
+    setting.done("set");
+    show::success(
+        &format!("app {app_id}: {branch} described as \"{description}\""),
+        "",
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 fn try_promote(app: &str, build: u64, branch: &str) -> Result<ExitCode, ExitCode> {

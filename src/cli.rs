@@ -222,6 +222,20 @@ pub enum Command {
         #[arg(long)]
         branch: String,
     },
+    /// Set the description players see for a beta branch.
+    ///
+    /// Sets the text Steam shows for a beta branch where players choose one, in the game's
+    /// Betas properties, through Steam's partner Web API with the publisher key as `builds`
+    /// finds it. The default branch's is set in Steamworks only.
+    Branch {
+        /// The app, by its ID or its app build script.
+        app: String,
+        /// The beta branch.
+        branch: String,
+        /// Its new description, such as the version live on it.
+        #[arg(long)]
+        description: String,
+    },
     /// Set up uploads from CI, the login kept as a secret.
     ///
     /// Finds the GitHub repository, its app build script and the saved login, checks the script,

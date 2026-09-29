@@ -121,19 +121,23 @@ with no `publishedfileid` is refused unless `--new` is given.
 ```sh
 steamship builds 480
 steamship promote 480 --build 12345678 --branch testing
+steamship branch 480 testing --description "0.3.0, the season update"
 ```
 
 `builds` lists each branch with the build live on it, and the last builds uploaded, with the day
 each was uploaded and where it is live. `promote` sets an uploaded build live on a beta branch
 without uploading it again; the default branch is set live in Steamworks only, so `promote`
-refuses it. An app is named by its ID or by its app build script.
+refuses it. `branch` sets the description players see beside a beta branch when they choose
+it in the game's Betas properties, such as the version live on it; nothing is sent when it
+already reads so, and the default branch's description is set in Steamworks only. An app is
+named by its ID or by its app build script.
 
 A new app has only its default branch, and Steamworks lets you create others only once a build
 is live on it. So the first upload of a script that sets a beta branch live leaves the build on
 Steam, live nowhere. In Steamworks, under SteamPipe, Builds, set that build live on the default
 branch, create the branch the script names, then upload again or `promote` the build.
 
-Both use Steam's partner Web API, which steamcmd cannot reach, with the publisher Web API key of
+All three use Steam's partner Web API, which steamcmd cannot reach, with the publisher key of
 a group that holds the app, from Steamworks under Users & Permissions, Manage Groups. The key
 comes from `STEAMSHIP_WEB_API_KEY`, or else from the one steamship keeps. At a terminal with
 neither, it is asked for, and once the command works, offered to be kept. `steamship login`
