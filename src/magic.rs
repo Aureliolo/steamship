@@ -23,9 +23,23 @@ const PROGRAM_STARTS: [&[u8]; 8] = [
 ///
 /// When `path` cannot be read.
 pub fn looks_like_program(path: &Path) -> io::Result<bool> {
+    let start = start(path)?;
+    Ok(PROGRAM_STARTS.iter().any(|magic| start.starts_with(magic)))
+}
+
+/// Whether `path` starts the way a Windows executable does.
+///
+/// # Errors
+///
+/// When `path` cannot be read.
+pub fn looks_like_windows_program(path: &Path) -> io::Result<bool> {
+    Ok(start(path)?.starts_with(b"MZ"))
+}
+
+fn start(path: &Path) -> io::Result<Vec<u8>> {
     let mut start = Vec::new();
     let _: usize = File::open(path)?.take(4).read_to_end(&mut start)?;
-    Ok(PROGRAM_STARTS.iter().any(|magic| start.starts_with(magic)))
+    Ok(start)
 }
 
 #[cfg(test)]
@@ -56,6 +70,30 @@ mod tests {
         }
         assert!(
             looks_like_program(&folder.path().join("absent"))
+                .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+        );
+    }
+
+    #[test]
+    fn knows_a_windows_program_from_the_others() {
+        let folder = tempfile::tempdir().unwrap();
+        let cases: [(&[u8], bool); 4] = [
+            (b"MZ\x90\x00", true),
+            (b"\x7fELF\x02", false),
+            (b"M", false),
+            (b"", false),
+        ];
+        for (start, windows) in cases {
+            let path = folder.path().join("file");
+            fs::write(&path, start).unwrap();
+            assert_eq!(
+                looks_like_windows_program(&path).unwrap(),
+                windows,
+                "{start:?}"
+            );
+        }
+        assert!(
+            looks_like_windows_program(&folder.path().join("absent"))
                 .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
         );
     }
