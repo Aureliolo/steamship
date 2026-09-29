@@ -3156,13 +3156,15 @@ fn a_500_about_an_app_the_key_holds_is_said_to_be_an_app_with_no_build_yet() {
         ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
         (STAND_IN, &host),
     ];
-    // As Steam answered for Ostinato's app before its first upload.
+    // As Steam answered for Ostinato's app while no build was live on its default branch.
     let (code, stdout, stderr) = steamship(&["builds", "5335970"], Some(home.path()), &set);
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     assert!(stderr.contains("Steam answered HTTP 500"), "{stderr}");
     assert!(
-        stderr
-            .contains("this key holds app 5335970, and Steam answers so while an app has no build"),
+        stderr.contains(
+            "this key holds app 5335970, and Steam answers so while no build is live on its \
+             default branch"
+        ),
         "{stderr}"
     );
     // The same answer about an app the key does not hold is left as it came.
@@ -3196,7 +3198,10 @@ fn check_says_why_it_could_not_check_the_branch_of_an_app_with_no_build_yet() {
     assert_eq!(code, Some(0_i32), "{said}");
     assert!(said.contains("not checked"), "{said}");
     assert!(
-        said.contains("this key holds app 480, and Steam answers so while an app has no build"),
+        said.contains(
+            "this key holds app 480, and Steam answers so while no build is live on its default \
+             branch"
+        ),
         "{said}"
     );
 }

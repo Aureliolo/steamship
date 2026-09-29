@@ -315,17 +315,20 @@ pub fn apps_from(answer: &Value) -> Result<Vec<App>, Error> {
     Ok(found)
 }
 
-/// Why Steam gave `error` about `app`, when it is the one Steam gives while an app has no build.
+/// Why Steam gave `error` about `app`, when it is the one Steam gives while an app has no build
+/// live on its default branch.
 ///
 /// That is an HTTP 500 about an app the key holds, among `apps`: Steam answered so for Ostinato's
-/// before its first upload, when it refused an app the key did not hold instead.
+/// both before its first upload and after it, while that build was live nowhere, when it refused
+/// an app the key did not hold instead, and answered for Fantasy Guild Manager's, which had one
+/// live on default.
 #[must_use]
 pub fn no_build_yet(error: &Error, app: u32, apps: &[App]) -> Option<String> {
     (matches!(error, Error::Status(500)) && apps.iter().any(|held| held.app_id == u64::from(app)))
         .then(|| {
             format!(
-                "this key holds app {app}, and Steam answers so while an app has no build: \
-                 upload one, set it live on default in Steamworks under SteamPipe, Builds, and \
+                "this key holds app {app}, and Steam answers so while no build is live on its \
+                 default branch: set one live there in Steamworks under SteamPipe, Builds, and \
                  its branches and builds can be asked for"
             )
         })
