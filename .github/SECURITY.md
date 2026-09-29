@@ -25,8 +25,8 @@ Only the latest release gets fixes.
   hands it to `gh` on its input, never on a command line or the screen, or writes it to a file
   readable by its owner alone. In CI, `upload` and `status` write it back where steamcmd reads it,
   and a value that is not one is refused without being repeated.
-- **The Web API key.** `builds` and `promote` take the publisher key from `STEAMSHIP_WEB_API_KEY`,
-  or else from the system's credential store, and send it in the `x-webapi-key` header, never in
+- **The Web API key.** `builds`, `promote`, `achievements` and `rich-presence` take the publisher
+  key from `STEAMSHIP_WEB_API_KEY`, or else from the system's credential store, and send it in the `x-webapi-key` header, never in
   an address, so that no error which names an address can name the key; a value that is not a key
   is refused without being repeated. A typed key is shown as dots and kept only after Steam has
   accepted it, in Windows Credential Manager (this machine only, never roaming), the macOS

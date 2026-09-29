@@ -25,8 +25,8 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    achievements, check, ci, conversation, dump, init, keychain, run, scripts, steamcmd, upload,
-    webapi, workshop,
+    achievements, check, ci, conversation, dump, init, keychain, presence, run, scripts, steamcmd,
+    upload, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -79,6 +79,13 @@ fn main() -> ExitCode {
             Ok(code) | Err(code) => code,
         },
         Command::Achievements { app, check } => match try_achievements(&app, check.as_deref()) {
+            Ok(code) | Err(code) => code,
+        },
+        Command::RichPresence {
+            app,
+            files,
+            preview,
+        } => match try_rich_presence(&app, &files, preview) {
             Ok(code) | Err(code) => code,
         },
         Command::Promote { app, build, branch } => match try_promote(&app, build, &branch) {
@@ -503,7 +510,7 @@ fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     Ok(verdict(judged, packed.as_ref()))
 }
 
-/// Where `builds` and `promote` would find the Web API key, found out without unlocking anything.
+/// Where the Web API commands would find the key, found out without unlocking anything.
 fn status_key(home: &Path) {
     if key_variable().is_some() {
         show::field("api key", &format!("from {}", webapi::KEY));
@@ -1253,7 +1260,7 @@ fn try_key_login() -> Result<ExitCode, ExitCode> {
     }
     show::success(
         "Web API key kept",
-        "`steamship builds` and `promote` use it; `steamship logout` forgets it",
+        "`steamship builds` and the other Web API commands use it; `steamship logout` forgets it",
     );
     Ok(ExitCode::SUCCESS)
 }
@@ -1272,7 +1279,7 @@ fn offer_key(home: &Path) {
         }
         Err(_) => return,
     }
-    show::aside("`steamship builds` and `promote` also need the publisher Web API key;");
+    show::aside("`steamship builds` and the other Web API commands need the publisher key;");
     show::aside(&format!("{WHERE_KEY}. Enter skips it"));
     let key = match typed_key() {
         Ok(Some(key)) => key,
@@ -1424,6 +1431,70 @@ fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCod
         show::failure(&difference.to_string(), "", None);
     }
     Ok(ExitCode::from(REFUSED))
+}
+
+/// The rich presence files, each read and checked, refused before Steam is asked anything when
+/// one is wrong or two are for the same language.
+fn presence_files(files: &[PathBuf]) -> Result<Vec<presence::Language>, ExitCode> {
+    let mut languages: Vec<presence::Language> = Vec::with_capacity(files.len());
+    for path in files {
+        let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
+        let text = fs::read_to_string(path).map_err(|error| refused(&error))?;
+        let language = presence::read(&text).map_err(|why| refused(&why))?;
+        if languages
+            .iter()
+            .any(|other| other.language == language.language)
+        {
+            return Err(refused(&format!(
+                "is a second file for {}",
+                language.language
+            )));
+        }
+        show::field(
+            &language.language,
+            &format!(
+                "{}, from {}",
+                show::counted(language.tokens.len(), "token"),
+                path.display()
+            ),
+        );
+        languages.push(language);
+    }
+    Ok(languages)
+}
+
+fn try_rich_presence(app: &str, files: &[PathBuf], preview: bool) -> Result<ExitCode, ExitCode> {
+    show::title(if preview {
+        "rich-presence, preview"
+    } else {
+        "rich-presence"
+    });
+    let app_id = app_named(app)?;
+    let languages = presence_files(files)?;
+    if preview {
+        show::success("the files are sound; nothing was sent, as asked", "");
+        return Ok(ExitCode::SUCCESS);
+    }
+    let home = home()?;
+    let (api, from) = web_api(&home)?;
+    let spinner = Spinner::start("steam", "sending the rich presence", false);
+    if let Err(error) = api.set_rich_presence(&presence::request(app_id, &languages)) {
+        return Err(web_api_failed(spinner, &error));
+    }
+    spinner.done("taken");
+    offer_to_keep(&home, &api, from);
+    let names: Vec<&str> = languages
+        .iter()
+        .map(|language| language.language.as_str())
+        .collect();
+    show::success(
+        &format!(
+            "app {app_id}: rich presence replaced for {}",
+            names.join(", ")
+        ),
+        "each language's tokens on Steam are now exactly its file's",
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 fn try_promote(app: &str, build: u64, branch: &str) -> Result<ExitCode, ExitCode> {
