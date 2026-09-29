@@ -39,10 +39,10 @@ and then publishes and packages:
 9. **site** builds <https://aureliolo.github.io/steamship> from the tag and publishes it, so the
    site always describes the latest release: its version, its archives and its commands. The
    `github-pages` environment admits `v*` tags only, so nothing else can publish it.
-10. **packages** writes the Homebrew formula, the Scoop manifest, the winget manifests and the
-    AUR package from the release's checksums, each verified against the attestation first, and
-    installs them as a user would: with Homebrew on Linux and macOS, with Scoop on x86-64 and Arm
-    Windows, by the release's address and as a bucket, and with makepkg on Arch Linux. Then it
+10. **packages** writes the Homebrew formula, the Scoop manifest and the winget manifests from
+    the release's checksums, each verified against the attestation first, and installs them as a
+    user would: with Homebrew on Linux and macOS, and with Scoop on x86-64 and Arm Windows, by
+    the release's address and as a bucket. Then it
     opens a pull request putting the formula and the Scoop manifest on `main`, as the packaging
     app, and merges it once every required check has passed; a check that fails, or anything
     else that keeps it from merging, fails the job with the reason.
@@ -50,7 +50,6 @@ and then publishes and packages:
     hash and the path of the program inside it, and submits them with Microsoft's
     `wingetcreate` to `microsoft/winget-pkgs`, where Microsoft's checks and moderators merge
     them.
-12. **aur** pushes `steamship-bin`'s PKGBUILD and .SRCINFO to the AUR.
 
 ## What a release carries
 
@@ -145,25 +144,6 @@ The job runs only with `WINGET` set, as **crates** does with `CRATES_IO`: before
 is in winget-pkgs, each release would open a second request for a new package. With it set, a
 missing token fails the release. When the token expires, the job fails; make a new one the same
 way.
-
-## AUR
-
-The AUR takes `steamship-bin` as a push over SSH to `aur.archlinux.org/steamship-bin.git`, with a
-key registered on an AUR account; the first push makes the package, owned by that account. The
-key can push to every package its account maintains, so the account is one kept for this alone,
-as winget's is:
-
-1. Create an AUR account used for nothing else.
-2. Make an Ed25519 key pair for it with no passphrase (`ssh-keygen -t ed25519 -N '' -f aur`), and
-   add the public half, `aur.pub`, to the account's SSH keys.
-3. Create an environment named `aur`, limited to tags matching `v*`, and put the private half,
-   `aur`, in its secret `AUR_SSH_KEY`. Then delete both files.
-4. Set the repository variable `AUR` to `publish`.
-
-The next release makes the package. From then on, each release pushes its PKGBUILD once
-**packages** has built and installed it on Arch Linux. The AUR's host key is pinned in
-`release.yml`: if the AUR ever changes it, the push fails until the pin is raised to the key whose
-fingerprint the AUR's home page lists.
 
 ## When a release fails
 
