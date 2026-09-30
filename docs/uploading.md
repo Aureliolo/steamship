@@ -104,7 +104,7 @@ one line of JSON, once steamcmd has run, and sends everything meant for a person
 error:
 
 ```json
-{"app":1000,"branch":"testing","build_id":4242,"description":"1.4.0 (4f3c2a1)","live":true,"outcome":"uploaded"}
+{"app":1000,"branch":"testing","build_id":4242,"description":"1.4.0 4f3c2a1e9b07","live":true,"outcome":"uploaded"}
 ```
 
 `outcome` is `uploaded`, `previewed`, `not-live` (built, but Steam shows another build on the
