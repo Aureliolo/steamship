@@ -643,6 +643,31 @@ fn an_upload_with_json_prints_only_what_came_of_it_on_standard_output() {
 
 #[cfg(unix)]
 #[test]
+fn an_upload_with_json_draws_its_spinner_on_the_terminal_standard_error_is() {
+    // Slow enough that the spinner is drawn before the upload ends.
+    let home = faked_with(&format!("{BUILT}sleep 1\n"));
+    let (folder, script) = project(true);
+    let summary = folder.path().join("summary.json");
+    let line = format!(
+        "'{}' upload '{}' --version 1.4.0 --account build_bot --json > '{}'; echo \"exited $?\"",
+        env!("CARGO_BIN_EXE_steamship"),
+        script.display(),
+        summary.display()
+    );
+    let mut session = Session::start(&line, home.path());
+    // Drawn with how long it has been, where elsewhere it would be written once, ending "...".
+    session.wait_for(" uploading 0 s");
+    session.wait_for("exited 0");
+    let seen = session.seen();
+    assert!(!seen.contains("uploading..."), "{seen}");
+    assert!(seen.contains("app 1000: BuildID 4242"), "{seen}");
+    assert_eq!(session.end().wait().unwrap(), Some(0_i32));
+    let written = fs::read_to_string(&summary).unwrap();
+    assert!(written.starts_with("{\"app\":1000,"), "{written}");
+}
+
+#[cfg(unix)]
+#[test]
 fn a_failed_upload_with_json_still_says_what_steam_kept() {
     let home = faked_with(BUILT_THEN_FAILED);
     let (_project, script) = project(true);
