@@ -162,7 +162,8 @@ executable and system, the Linux runtime, each depot's system, and where Steam C
 saves. None of that is in the build scripts, and none of it can be changed but by hand in
 Steamworks. `settings` asks Steam for it through steamcmd with the saved login, as the build
 account sees the app (which works before the app is released), and shows it in Valve's own
-format.
+format. It also says whether Steam Cloud is set up, since an app with none has no Cloud section
+at all, and a snapshot without one would otherwise read the same either way.
 
 `--save` keeps it in a file beside your scripts, and `--check` exits 2 naming every setting
 that differs from that file, such as `config/launch/0/executable`. Run the check before a

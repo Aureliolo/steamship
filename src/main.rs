@@ -1738,6 +1738,7 @@ fn asked_settings(
     match settings::from_console(&console, app) {
         Ok(shown) => {
             spinner.done("shown");
+            show::field("cloud", settings::cloud(&shown));
             Ok(shown)
         }
         Err(why) => {
