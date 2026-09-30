@@ -142,11 +142,13 @@ fn run(command: Command) -> ExitCode {
             version,
             preview,
             account,
+            json,
         } => run_upload(&Upload {
             script: &script,
             version: &version,
             preview,
             account: named(account.as_deref()),
+            json,
         }),
     }
 }
@@ -829,6 +831,7 @@ struct Upload<'command> {
     version: &'command str,
     preview: bool,
     account: Option<&'command str>,
+    json: bool,
 }
 
 fn run_upload(upload: &Upload<'_>) -> ExitCode {
@@ -838,6 +841,9 @@ fn run_upload(upload: &Upload<'_>) -> ExitCode {
 }
 
 fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
+    if request.json {
+        show::divert();
+    }
     show::title(if request.preview {
         "upload, preview"
     } else {
@@ -900,7 +906,13 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         request.preview,
     );
     let outcome = found_on_steam(outcome, &prepared, &description);
-    let code = report(&outcome, spinner, &took, &prepared, &saved, packed.as_ref());
+    let (code, live) = report(&outcome, spinner, &took, &prepared, &saved, packed.as_ref());
+    if request.json {
+        show::plain(&format!(
+            "{}\n",
+            summary(&outcome, live, &prepared, &description)
+        ));
+    }
     if matches!(
         outcome,
         upload::Outcome::Failed(_) | upload::Outcome::BuiltThenFailed { .. }
@@ -989,6 +1001,8 @@ fn found_on_steam(
     }
 }
 
+/// Says what `outcome` came to, and answers its exit code and whether the build is live on the
+/// branch the script sets live.
 fn report(
     outcome: &upload::Outcome,
     spinner: Spinner,
@@ -996,20 +1010,20 @@ fn report(
     prepared: &upload::Prepared,
     saved: &Path,
     packed: Option<&ci::Login>,
-) -> ExitCode {
+) -> (ExitCode, bool) {
     let app = prepared.app_id;
     let logs = format!(
         "log  {}, and steamcmd's own in {}",
         saved.display(),
         prepared.log().display()
     );
-    match outcome {
+    let code = match outcome {
         upload::Outcome::Built { build_id } => {
             spinner.done(&format!("uploaded in {took}"));
             hand_on(*build_id);
             let Some(branch) = &prepared.set_live else {
                 show::success(&format!("app {app}: BuildID {build_id}"), &logs);
-                return ExitCode::SUCCESS;
+                return (ExitCode::SUCCESS, false);
             };
             if !confirmed_live(app, branch, *build_id) {
                 show::failure(
@@ -1027,13 +1041,13 @@ fn report(
                     }),
                 );
                 show::note(&logs);
-                return ExitCode::from(FAILED);
+                return (ExitCode::from(FAILED), false);
             }
             show::success(
                 &format!("app {app}: BuildID {build_id}, set live on {branch}"),
                 &logs,
             );
-            ExitCode::SUCCESS
+            return (ExitCode::SUCCESS, true);
         }
         upload::Outcome::Previewed => {
             spinner.done(&format!("preview finished in {took}"));
@@ -1087,7 +1101,41 @@ fn report(
             show::note(&logs);
             ExitCode::from(FAILED)
         }
-    }
+    };
+    (code, false)
+}
+
+/// What an upload came to, for the program that ran steamship with `--json`: the outcome, the
+/// app, the build Steam made of it if any, the branch the script sets live and whether the build
+/// is live there, and the build's description.
+fn summary(
+    outcome: &upload::Outcome,
+    live: bool,
+    prepared: &upload::Prepared,
+    description: &str,
+) -> serde_json::Value {
+    let (said, build_id) = match outcome {
+        upload::Outcome::Built { build_id } => {
+            let said = if prepared.set_live.is_some() && !live {
+                "not-live"
+            } else {
+                "uploaded"
+            };
+            (said, Some(*build_id))
+        }
+        upload::Outcome::Previewed => ("previewed", None),
+        upload::Outcome::NotLoggedIn(_) => ("not-logged-in", None),
+        upload::Outcome::BuiltThenFailed { build_id, .. } => ("built-then-failed", Some(*build_id)),
+        upload::Outcome::Failed(_) => ("failed", None),
+    };
+    serde_json::json!({
+        "outcome": said,
+        "app": prepared.app_id,
+        "build_id": build_id,
+        "branch": prepared.set_live,
+        "live": live,
+        "description": description,
+    })
 }
 
 /// Steam's logs of a failed run, as collapsed groups in a GitHub Actions job's log: `files` as

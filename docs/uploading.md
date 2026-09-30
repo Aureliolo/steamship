@@ -99,6 +99,19 @@ build by its description and gives its BuildID and the `promote` command, as abo
 `--preview` is Valve's dry run: the whole build is computed and logged, nothing is uploaded and
 nothing is set live.
 
+For a script that runs steamship, `--json` prints what came of the upload on standard output as
+one line of JSON, once steamcmd has run, and sends everything meant for a person to standard
+error:
+
+```json
+{"app":1000,"branch":"testing","build_id":4242,"description":"1.4.0 (4f3c2a1)","live":true,"outcome":"uploaded"}
+```
+
+`outcome` is `uploaded`, `previewed`, `not-live` (built, but Steam shows another build on the
+branch), `built-then-failed`, `failed` or `not-logged-in`; `build_id` is the build Steam made,
+when it made one, and `branch` the one the script sets live, when it names one. The exit code is
+as without it, and a run refused before steamcmd starts prints no JSON.
+
 ## Workshop items
 
 ```sh
