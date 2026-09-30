@@ -591,6 +591,60 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
     }
 }
 
+/// The one line of JSON `upload --json` printed on standard output, which must be all there is.
+#[cfg(unix)]
+fn summary_of(stdout: &str) -> serde_json::Value {
+    let mut lines = stdout.lines();
+    let line = lines.next().unwrap_or_default();
+    assert_eq!(lines.next(), None, "one line only: {stdout}");
+    serde_json::from_str(line).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_with_json_prints_only_what_came_of_it_on_standard_output() {
+    let home = faked_with(BUILT);
+    let (_project, script) = project(true);
+    let (host, _requests) = web_api(vec![("200 OK", BETAS), ("200 OK", testing_live(4242))]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let summary = summary_of(&stdout);
+    assert_eq!(summary["outcome"], "uploaded", "{summary}");
+    assert_eq!(summary["app"], 1000, "{summary}");
+    assert_eq!(summary["build_id"], 4242, "{summary}");
+    assert_eq!(summary["branch"], "testing", "{summary}");
+    assert_eq!(summary["live"], true, "{summary}");
+    assert!(
+        summary["description"]
+            .as_str()
+            .is_some_and(|description| description.starts_with("1.4.0 ")),
+        "{summary}"
+    );
+    assert!(
+        stderr.contains("app 1000: BuildID 4242, set live on testing"),
+        "what is shown for a person goes to standard error: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_upload_with_json_still_says_what_steam_kept() {
+    let home = faked_with(BUILT_THEN_FAILED);
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) =
+        upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let summary = summary_of(&stdout);
+    assert_eq!(summary["outcome"], "built-then-failed", "{summary}");
+    assert_eq!(summary["build_id"], 777, "{summary}");
+    assert_eq!(summary["live"], false, "{summary}");
+}
+
 #[cfg(unix)]
 #[test]
 fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_key() {
