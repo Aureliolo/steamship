@@ -116,6 +116,20 @@ fn without_bookkeeping(block: &Block) -> Vec<Pair> {
         .collect()
 }
 
+/// Whether `settings` hold Steam Cloud, said plainly: an app with none set up in Steamworks has
+/// no `ufs` section at all, which a snapshot alone cannot tell from one that left it out.
+#[must_use]
+pub fn cloud(settings: &Block) -> &'static str {
+    if settings
+        .block("ufs")
+        .is_some_and(|ufs| !ufs.pairs.is_empty())
+    {
+        "Steam Cloud set up in Steamworks"
+    } else {
+        "Steam Cloud not set up in Steamworks"
+    }
+}
+
 /// `settings` for `app` as a snapshot file: Valve's own format, as `app_info_print` shows it.
 ///
 /// # Errors
@@ -316,6 +330,23 @@ mod tests {
             settings,
             "read back as written"
         );
+    }
+
+    #[test]
+    fn steam_cloud_is_said_to_be_set_up_or_not() {
+        let with = from_console(CONSOLE, 5_335_950).unwrap();
+        assert_eq!(cloud(&with), "Steam Cloud set up in Steamworks");
+        for text in [
+            "\"config\" { \"installdir\" \"Ostinato\" }",
+            "\"ufs\" { }",
+            "\"ufs\" \"0\"",
+        ] {
+            assert_eq!(
+                cloud(&vdf::parse(text).unwrap()),
+                "Steam Cloud not set up in Steamworks",
+                "{text}"
+            );
+        }
     }
 
     #[test]
