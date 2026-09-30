@@ -127,6 +127,11 @@ pub enum Command {
         /// The build account, if not the one the last login remembered.
         #[arg(long, env = ACCOUNT)]
         account: Option<String>,
+        /// Once steamcmd has run, print what came of it on standard output as one line of JSON:
+        /// `outcome`, `app`, `build_id`, `branch`, `live` and `description`. Everything else goes
+        /// to standard error.
+        #[arg(long)]
+        json: bool,
     },
     /// Upload a Workshop item, then print its ID.
     ///

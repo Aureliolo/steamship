@@ -591,6 +591,99 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
     }
 }
 
+/// The one line of JSON `upload --json` printed on standard output, which must be all there is.
+#[cfg(unix)]
+fn summary_of(stdout: &str) -> serde_json::Value {
+    let mut lines = stdout.lines();
+    let line = lines.next().unwrap_or_default();
+    assert_eq!(lines.next(), None, "one line only: {stdout}");
+    serde_json::from_str(line).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_with_json_prints_only_what_came_of_it_on_standard_output() {
+    let home = faked_with(BUILT);
+    let (_project, script) = project(true);
+    let (host, _requests) = web_api(vec![("200 OK", BETAS), ("200 OK", testing_live(4242))]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let mut summary = summary_of(&stdout);
+    // The description names the commit the test's repository is at, which differs each run.
+    let description = summary
+        .as_object_mut()
+        .and_then(|fields| fields.remove("description"));
+    assert!(
+        description
+            .as_ref()
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|description| description.starts_with("1.4.0 ")),
+        "{description:?}"
+    );
+    assert_eq!(
+        summary,
+        serde_json::json!({
+            "outcome": "uploaded",
+            "app": 1000_u32,
+            "build_id": 4242_u64,
+            "branch": "testing",
+            "live": true,
+        })
+    );
+    assert!(
+        stderr.contains("app 1000: BuildID 4242, set live on testing"),
+        "what is shown for a person goes to standard error: {stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_with_json_draws_its_spinner_on_the_terminal_standard_error_is() {
+    // Slow enough that the spinner is drawn before the upload ends.
+    let home = faked_with(&format!("{BUILT}sleep 1\n"));
+    let (folder, script) = project(true);
+    let summary = folder.path().join("summary.json");
+    let line = format!(
+        "'{}' upload '{}' --version 1.4.0 --account build_bot --json > '{}'; echo \"exited $?\"",
+        env!("CARGO_BIN_EXE_steamship"),
+        script.display(),
+        summary.display()
+    );
+    let mut session = Session::start(&line, home.path());
+    // Drawn with how long it has been, where elsewhere it would be written once, ending "...".
+    session.wait_for(" uploading 0 s");
+    session.wait_for("exited 0");
+    let seen = session.seen();
+    assert!(!seen.contains("uploading..."), "{seen}");
+    assert!(seen.contains("app 1000: BuildID 4242"), "{seen}");
+    assert_eq!(session.end().wait().unwrap(), Some(0_i32));
+    let written = fs::read_to_string(&summary).unwrap();
+    assert!(written.starts_with("{\"app\":1000,"), "{written}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_upload_with_json_still_says_what_steam_kept() {
+    let home = faked_with(BUILT_THEN_FAILED);
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) =
+        upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let summary = summary_of(&stdout);
+    for (field, expected) in [
+        ("outcome", serde_json::json!("built-then-failed")),
+        ("build_id", serde_json::json!(777_u64)),
+        ("live", serde_json::json!(false)),
+    ] {
+        assert_eq!(summary.get(field), Some(&expected), "{field}: {summary}");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_key() {
