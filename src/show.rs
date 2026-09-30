@@ -26,6 +26,29 @@ const CYAN: Style = AnsiColor::Cyan.on_default();
 /// The width labels are padded to, so that what follows them lines up.
 const LABEL: usize = 10;
 
+/// Whether what is shown for a person goes to standard error, leaving standard output to what a
+/// program reads, as `--json` asks.
+static DIVERTED: AtomicBool = AtomicBool::new(false);
+
+/// Sends what is shown for a person to standard error from now on.
+///
+/// Standard output then holds only what a program reads: a summary, and GitHub Actions' workflow
+/// commands, which it reads from standard output alone.
+pub fn divert() {
+    DIVERTED.store(true, Ordering::Relaxed);
+}
+
+/// A line for a person, on standard output, or standard error once [`divert`]ed.
+macro_rules! say {
+    ($($line:tt)*) => {
+        if DIVERTED.load(Ordering::Relaxed) {
+            anstream::eprintln!($($line)*);
+        } else {
+            anstream::println!($($line)*);
+        }
+    };
+}
+
 const FRAMES: [char; 10] = [
     '\u{280b}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283c}', '\u{2834}', '\u{2826}', '\u{2827}',
     '\u{2807}', '\u{280f}',
@@ -80,14 +103,14 @@ pub fn banner_on_terminal() {
 
 /// `steamship <command>`, the first thing a command shows.
 pub fn title(command: &str) {
-    anstream::println!("{BOLD}steamship{BOLD:#} {DIM}{command}{DIM:#}");
+    say!("{BOLD}steamship{BOLD:#} {DIM}{command}{DIM:#}");
 }
 
 /// A step: a label, then what it came to.
 pub fn field(label: &str, value: &str) {
     // A label as wide as the column, such as an achievement's API name, still gets a space.
     let width = LABEL.max(label.chars().count().saturating_add(1));
-    anstream::println!("  {DIM}{label:<width$}{DIM:#}{value}");
+    say!("  {DIM}{label:<width$}{DIM:#}{value}");
 }
 
 /// A step that went as it should.
@@ -112,9 +135,9 @@ pub fn prompt(label: &str) -> io::Result<()> {
 
 /// The command's outcome, when it is what was asked for.
 pub fn success(headline: &str, detail: &str) {
-    anstream::println!("  {GREEN}\u{2713}{GREEN:#} {BOLD}{headline}{BOLD:#}");
+    say!("  {GREEN}\u{2713}{GREEN:#} {BOLD}{headline}{BOLD:#}");
     if !detail.is_empty() {
-        anstream::println!("    {DIM}{detail}{DIM:#}");
+        say!("    {DIM}{detail}{DIM:#}");
     }
 }
 
@@ -184,7 +207,7 @@ pub fn verbatim(text: &str) {
 
 /// A line of another program's that steamship has no meaning for, passed on, set apart.
 pub fn aside(line: &str) {
-    anstream::println!("    {DIM}{line}{DIM:#}");
+    say!("    {DIM}{line}{DIM:#}");
 }
 
 /// `count` `noun`s, the count in groups of three digits.
@@ -260,6 +283,13 @@ fn terminal() -> Option<AutoStream<io::Stdout>> {
         .then(|| AutoStream::auto(io::stdout()))
 }
 
+/// Standard error, when it is a terminal a spinner can be drawn on, for output [`divert`]ed.
+fn error_terminal() -> Option<AutoStream<io::Stderr>> {
+    io::stderr()
+        .is_terminal()
+        .then(|| AutoStream::auto(io::stderr()))
+}
+
 /// A step under way, with a spinner and how long it has taken, redrawn on a terminal. Anywhere
 /// else it is written once, and its end once more.
 #[derive(Debug)]
@@ -275,7 +305,11 @@ impl Spinner {
     /// Starts showing `label` and `text`; `clock` adds the time it has taken.
     #[must_use]
     pub fn start(label: &str, text: &str, clock: bool) -> Self {
-        Self::begun(label, text, clock, Instant::now(), terminal())
+        if DIVERTED.load(Ordering::Relaxed) {
+            Self::begun(label, text, clock, Instant::now(), error_terminal())
+        } else {
+            Self::begun(label, text, clock, Instant::now(), terminal())
+        }
     }
 
     /// A spinner for a step that began at `started`, drawn on `out`, or written once without.
