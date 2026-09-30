@@ -4036,6 +4036,10 @@ fn settings_are_shown_saved_and_checked_leaving_steams_bookkeeping_out() {
         "{stdout}"
     );
     assert!(!stdout.contains("ReleaseState") && !stdout.contains("manifests"));
+    assert!(
+        stdout.contains("  cloud     Steam Cloud not set up in Steamworks\n"),
+        "{stdout}"
+    );
     let args = fs::read_to_string(home.path().join("args")).unwrap();
     assert!(
         args.contains("+login build_bot +app_info_update 1 +app_info_print 1000 +quit"),
