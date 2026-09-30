@@ -613,17 +613,27 @@ fn an_upload_with_json_prints_only_what_came_of_it_on_standard_output() {
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
-    let summary = summary_of(&stdout);
-    assert_eq!(summary["outcome"], "uploaded", "{summary}");
-    assert_eq!(summary["app"], 1000, "{summary}");
-    assert_eq!(summary["build_id"], 4242, "{summary}");
-    assert_eq!(summary["branch"], "testing", "{summary}");
-    assert_eq!(summary["live"], true, "{summary}");
+    let mut summary = summary_of(&stdout);
+    // The description names the commit the test's repository is at, which differs each run.
+    let description = summary
+        .as_object_mut()
+        .and_then(|fields| fields.remove("description"));
     assert!(
-        summary["description"]
-            .as_str()
+        description
+            .as_ref()
+            .and_then(serde_json::Value::as_str)
             .is_some_and(|description| description.starts_with("1.4.0 ")),
-        "{summary}"
+        "{description:?}"
+    );
+    assert_eq!(
+        summary,
+        serde_json::json!({
+            "outcome": "uploaded",
+            "app": 1000_u32,
+            "build_id": 4242_u64,
+            "branch": "testing",
+            "live": true,
+        })
     );
     assert!(
         stderr.contains("app 1000: BuildID 4242, set live on testing"),
@@ -640,9 +650,13 @@ fn a_failed_upload_with_json_still_says_what_steam_kept() {
         upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     let summary = summary_of(&stdout);
-    assert_eq!(summary["outcome"], "built-then-failed", "{summary}");
-    assert_eq!(summary["build_id"], 777, "{summary}");
-    assert_eq!(summary["live"], false, "{summary}");
+    for (field, expected) in [
+        ("outcome", serde_json::json!("built-then-failed")),
+        ("build_id", serde_json::json!(777_u64)),
+        ("live", serde_json::json!(false)),
+    ] {
+        assert_eq!(summary.get(field), Some(&expected), "{field}: {summary}");
+    }
 }
 
 #[cfg(unix)]
