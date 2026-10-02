@@ -4107,9 +4107,10 @@ fn uploading(launcher: Option<&str>) -> (Child, String, tempfile::TempDir, tempf
         .spawn()
         .unwrap();
     let pid_file = home.path().join("steamcmd.pid");
-    assert!(soon(
-        || fs::read_to_string(&pid_file).is_ok_and(|pid| pid.ends_with('\n'))
-    ));
+    assert!(
+        soon(|| fs::read_to_string(&pid_file).is_ok_and(|pid| pid.ends_with('\n'))),
+        "steamcmd never started"
+    );
     let steamcmd = fs::read_to_string(&pid_file).unwrap().trim().to_owned();
     (started, steamcmd, home, project)
 }
@@ -4127,7 +4128,7 @@ fn ending(steamship: &mut Child) -> Option<i32> {
         }),
         "steamship went on"
     );
-    ended.and_then(|status| status.signal())
+    ended?.signal()
 }
 
 #[cfg(unix)]
