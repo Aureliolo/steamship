@@ -14,11 +14,17 @@ name: Mutants
 # before the test fails; the minimum timeout is set above that so such a mutant counts as caught
 # rather than timed out. Two mutants are built and tested at a time, one for each pair of the
 # runner's four cores.
+#
+# The whole crate is too much for one job: Linux's share is some 1,600 mutants at about 6 s each,
+# three hours against a job's one. So the weekly run splits each system's share into eight shards,
+# dealt out in turn so that the slow mutants spread across them.
 on:
   # Every pull request, whatever it targets, so that one stacked on another is checked too.
   pull_request:
   schedule:
     - cron: '41 3 * * 2'
+  # The weekly run, started by hand.
+  workflow_dispatch:
 
 permissions: {}
 
@@ -28,10 +34,13 @@ concurrency:
 
 jobs:
   mutants:
-    name: mutants (${{ matrix.platform }})
+    # A pull request's one job for each system keeps the name its required check is known by.
+    name: mutants (${{ matrix.platform }}${{ github.event_name != 'pull_request' && format(' {0}/8', matrix.shard) || '' }})
     strategy:
       fail-fast: false
       matrix:
+        platform: [linux, windows, macos]
+        shard: ${{ fromJSON(github.event_name == 'pull_request' && '[0]' || '[0, 1, 2, 3, 4, 5, 6, 7]') }}
         include:
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
@@ -119,19 +128,22 @@ jobs:
           cargo mutants --in-diff "${RUNNER_TEMP}/change.diff" "${mutate[@]}" \
             --no-shuffle --minimum-test-timeout 120 --jobs 2
 
-      - name: Mutate everything
-        if: github.event_name == 'schedule'
+      - name: Mutate everything, one shard
+        if: github.event_name != 'pull_request'
         env:
           MUTATE: ${{ matrix.mutate }}
+          SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
           read -ra mutate <<< "${MUTATE}"
-          cargo mutants "${mutate[@]}" --no-shuffle --minimum-test-timeout 120 --jobs 2
+          cargo mutants "${mutate[@]}" --shard "${SHARD}/8" --sharding round-robin \
+            --no-shuffle --minimum-test-timeout 120 --jobs 2
 
+      # A job stopped at its timeout ends cancelled, not failed, and its report matters as much.
       - name: Keep the report
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: mutants-${{ matrix.platform }}
+          name: mutants-${{ matrix.platform }}-${{ matrix.shard }}
           path: mutants.out/
           if-no-files-found: ignore
