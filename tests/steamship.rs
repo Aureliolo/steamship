@@ -18,6 +18,8 @@ use std::net::TcpListener;
 #[cfg(target_os = "linux")]
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::process::Child;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -4056,17 +4058,50 @@ fn signal(which: &str, pid: &str) -> bool {
         .success()
 }
 
-#[cfg(unix)]
-#[test]
-fn ctrl_c_during_an_upload_ends_steamcmd_with_steamship() {
-    use std::os::unix::process::ExitStatusExt as _;
+/// SIGHUP, SIGINT and SIGTERM, the signals that end steamship from outside, as bits of the masks
+/// Linux shows a process's signals in: signal n is bit n - 1.
+#[cfg(target_os = "linux")]
+const HANGUP: u64 = 0x1;
+#[cfg(target_os = "linux")]
+const INTERRUPT: u64 = 0x2;
+#[cfg(target_os = "linux")]
+const TERMINATE: u64 = 0x4000;
+#[cfg(target_os = "linux")]
+const ENDING: u64 = HANGUP | INTERRUPT | TERMINATE;
 
+/// Which of the signals that end steamship the process `pid` catches, and which it ignores.
+///
+/// Looked at directly, because whether a signal sent too early meets steamship's handler or the
+/// default is a race that a test only sending signals could lose either way.
+#[cfg(target_os = "linux")]
+fn ending_signals(pid: u32) -> (u64, u64) {
+    let status = fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+    let mask = |name: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|hex| u64::from_str_radix(hex.trim(), 16).ok())
+            .unwrap()
+            & ENDING
+    };
+    (mask("SigCgt:"), mask("SigIgn:"))
+}
+
+/// steamship uploading through a steamcmd that runs until it is stopped, started through
+/// `launcher` when there is one. Returned once steamcmd has started, with steamcmd's process id
+/// and the folders the upload uses, which must outlive it.
+#[cfg(unix)]
+fn uploading(launcher: Option<&str>) -> (Child, String, tempfile::TempDir, tempfile::TempDir) {
     let home = faked_with("#!/bin/sh\necho $$ > \"$HOME/steamcmd.pid\"\nexec sleep 60\n");
-    let (_project, script) = project(true);
-    let mut steamship = steamship_command()
+    let (project, script) = project(true);
+    let steamship = env!("CARGO_BIN_EXE_steamship");
+    let started = Command::new(launcher.unwrap_or(steamship))
+        .args(launcher.map(|_| steamship))
+        .envs(common::store_environment())
         .args(["upload", script.to_str().unwrap(), "--version", "1.4.0"])
         .args(["--account", "build_bot"])
         .env("STEAMSHIP_HOME", home.path())
+        .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -4076,13 +4111,58 @@ fn ctrl_c_during_an_upload_ends_steamcmd_with_steamship() {
         || fs::read_to_string(&pid_file).is_ok_and(|pid| pid.ends_with('\n'))
     ));
     let steamcmd = fs::read_to_string(&pid_file).unwrap().trim().to_owned();
-    assert!(signal("-INT", &steamship.id().to_string()));
+    (started, steamcmd, home, project)
+}
+
+/// The signal that ended `steamship`, once it has ended.
+#[cfg(unix)]
+fn ending(steamship: &mut Child) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt as _;
+
     let mut ended = None;
-    assert!(soon(|| {
-        ended = steamship.try_wait().unwrap();
-        ended.is_some()
-    }));
-    assert_eq!(ended.unwrap().signal(), Some(2_i32), "ended by Ctrl+C");
+    assert!(
+        soon(|| {
+            ended = steamship.try_wait().unwrap();
+            ended.is_some()
+        }),
+        "steamship went on"
+    );
+    ended.and_then(|status| status.signal())
+}
+
+#[cfg(unix)]
+#[test]
+fn ctrl_c_during_an_upload_ends_steamcmd_with_steamship() {
+    let (mut steamship, steamcmd, _home, _project) = uploading(None);
+    #[cfg(target_os = "linux")]
+    assert!(
+        soon(|| ending_signals(steamship.id()) == (ENDING, 0_u64)),
+        "steamship catches every signal that ends it"
+    );
+    assert!(signal("-INT", &steamship.id().to_string()));
+    assert_eq!(ending(&mut steamship), Some(2_i32), "ended by Ctrl+C");
+    assert!(
+        soon(|| !signal("-0", &steamcmd)),
+        "steamcmd outlived steamship"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_signal_steamship_was_started_to_ignore_stays_ignored_and_the_others_still_end_it() {
+    let (mut steamship, steamcmd, _home, _project) = uploading(Some("nohup"));
+    #[cfg(target_os = "linux")]
+    assert!(
+        soon(|| ending_signals(steamship.id()) == (INTERRUPT | TERMINATE, HANGUP)),
+        "steamship catches the signals that end it but the one nohup ignores"
+    );
+    let pid = steamship.id().to_string();
+    assert!(signal("-HUP", &pid) && signal("-TERM", &pid));
+    assert_eq!(
+        ending(&mut steamship),
+        Some(15_i32),
+        "the terminal closing went unheeded, and kill ended it"
+    );
     assert!(
         soon(|| !signal("-0", &steamcmd)),
         "steamcmd outlived steamship"
