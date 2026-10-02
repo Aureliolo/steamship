@@ -208,6 +208,27 @@ mod tests {
     }
 
     #[test]
+    fn a_login_file_steamcmd_removed_after_it_was_listed_holds_nothing_to_hide() {
+        let folder = tempfile::tempdir().unwrap();
+        let there = folder.path().join("config.vdf");
+        fs::write(&there, CONFIG).unwrap();
+        assert_eq!(
+            read_if_there(&there).unwrap(),
+            Some(CONFIG.as_bytes().to_vec())
+        );
+        assert_eq!(
+            read_if_there(&folder.path().join("gone.vdf")).unwrap(),
+            None
+        );
+        // Anything else that keeps a listed file from being read is not passed over.
+        assert_ne!(
+            read_if_there(folder.path()).unwrap_err().kind(),
+            io::ErrorKind::NotFound,
+            "a folder is no file"
+        );
+    }
+
+    #[test]
     fn reads_bare_words_and_files_no_parser_would_take() {
         let text = b"{ key bare_word_that_is_long_enough other \"unterminated_quoted_secret_value";
         let redactor = Redactor::from_texts(&[text.to_vec()]);
