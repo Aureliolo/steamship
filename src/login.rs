@@ -233,7 +233,7 @@ mod tests {
         let mut person = Scripted::default();
         let ending = converse(&mut output, &mut input, &mut person).unwrap();
         assert_eq!(ending, Ending::Finished);
-        assert!(input.is_empty());
+        assert_eq!(input, b"");
         assert_eq!(person.seen, ["saved"]);
     }
 
@@ -243,7 +243,7 @@ mod tests {
         let mut input = Vec::new();
         let error = converse(&mut output, &mut input, &mut Scripted::default()).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Interrupted);
-        assert!(input.is_empty());
+        assert_eq!(input, b"");
     }
 
     #[test]
