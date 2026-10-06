@@ -1500,11 +1500,13 @@ fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCod
         }
         return Ok(ExitCode::SUCCESS);
     };
-    let mut drift = achievements::compare(&listed.achievements, &held.achievements);
-    if let Some(stats) = &listed.stats {
-        drift.extend(achievements::compare_stats(stats, &held.stats));
-    }
-    if drift.is_empty() {
+    let drift = achievements::compare(&listed.achievements, &held.achievements);
+    let stat_drift = listed
+        .stats
+        .as_ref()
+        .map(|stats| achievements::compare_stats(stats, &held.stats))
+        .unwrap_or_default();
+    if drift.is_empty() && stat_drift.is_empty() {
         let what = if listed.stats.is_some() {
             "achievements and stats"
         } else {
@@ -1513,8 +1515,19 @@ fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCod
         show::success(&format!("Steam's {what} match the file"), "");
         return Ok(ExitCode::SUCCESS);
     }
-    for difference in &drift {
+    for difference in drift.iter().chain(&stat_drift) {
         show::failure(&difference.to_string(), "", None);
+    }
+    if !drift.is_empty() {
+        let tally = achievements::tally(&drift, listed.achievements.len(), "achievement");
+        show::failure(&tally, "", None);
+    }
+    if let Some(stats) = listed.stats.as_ref().filter(|_| !stat_drift.is_empty()) {
+        show::failure(
+            &achievements::tally(&stat_drift, stats.len(), "stat"),
+            "",
+            None,
+        );
     }
     Ok(ExitCode::from(REFUSED))
 }
