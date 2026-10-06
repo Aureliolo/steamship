@@ -1058,7 +1058,7 @@ mod tests {
         assert_eq!(read.serial, 7);
         assert_eq!(read.path.as_deref(), Some("/org/freedesktop/DBus"));
         assert_eq!(read.member.as_deref(), Some("Hello"));
-        assert!(read.body.is_empty());
+        assert_eq!(read.body, Vec::<Value>::new());
     }
 
     /// Worked out by hand from the specification, so that a mistake the writer and the reader
@@ -1537,10 +1537,14 @@ mod tests {
                 Place::Path(PathBuf::from("/x"))
             ]
         );
-        assert!(addresses("unix:path=/bad%4").is_empty());
-        assert!(addresses("unix:path=/bad%zz").is_empty());
-        assert!(addresses("unix:tmpdir=/tmp").is_empty());
-        assert!(addresses("").is_empty());
+        for nowhere in [
+            "unix:path=/bad%4",
+            "unix:path=/bad%zz",
+            "unix:tmpdir=/tmp",
+            "",
+        ] {
+            assert_eq!(addresses(nowhere), Vec::<Place>::new(), "{nowhere}");
+        }
     }
 
     #[test]
