@@ -36,8 +36,8 @@ env:
   # Scoop's own code, pinned by commit; its installer always fetches the tip of master, so it is
   # not used. The pin is raised by Renovate from the tag.
   # renovate: datasource=github-tags depName=ScoopInstaller/Scoop
-  SCOOP_TAG: v0.5.3
-  SCOOP_COMMIT: b588a06e41d920d2123ec70aee682bae14935939
+  SCOOP_TAG: v0.6.0
+  SCOOP_COMMIT: e6aa3b366bdee8ed138c1e0f7b85192ebdd35d0f
 
 jobs:
   # A pull request can change the files by hand; what reaches users has to be exactly what the
