@@ -126,11 +126,12 @@ restriction = { level = "warn", priority = -1 }
 # each other or Rust's own idioms. It is enabled on purpose; the ones that do are the ones below.
 blanket_clippy_restriction_lints = "allow"
 # Each of these has an opposite in the same group (needless_return, unseparated_literal_suffix,
-# pub_without_shorthand, the other byte order), so one of every pair has to go. The halves kept
-# are the idiomatic ones.
+# pub_without_shorthand, unneeded_field_pattern, the other byte order), so one of every pair has
+# to go. The halves kept are the idiomatic ones.
 implicit_return = "allow"
 separated_literal_suffix = "allow"
 pub_with_shorthand = "allow"
+rest_pattern_accessible_field = "allow"
 # The ELF reader reads a format that states its own byte order in its header, so both orders are
 # spelled out on purpose; host_endian_bytes, the one that would be a bug, stays on.
 big_endian_bytes = "allow"

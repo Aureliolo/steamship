@@ -269,7 +269,10 @@ mod tests {
     #[test]
     fn keeps_steamcmds_state_in_the_home_where_it_would_follow_home() {
         let home = Path::new("home");
-        assert!(environment(home, Platform::Windows).is_empty());
+        assert_eq!(
+            environment(home, Platform::Windows),
+            Vec::<(OsString, OsString)>::new()
+        );
         for platform in [Platform::MacOs, Platform::Linux] {
             assert_eq!(
                 environment(home, platform),

@@ -39,7 +39,7 @@ const SECOND: &str = "fedcba9876543210fedcba9876543210";
 fn store() {
     static SET: Once = Once::new();
     SET.call_once(|| {
-        let address = common::secret_service();
+        let address = common::store::secret_service();
         // SAFETY: every test here calls this before anything else, and `Once` holds each one
         // until the first has set it, so no thread of this process reads the environment while
         // it changes.
@@ -55,7 +55,7 @@ const fn store() {}
 #[test]
 fn a_key_is_kept_replaced_read_back_and_forgotten_for_its_home_alone() {
     store();
-    let _store = common::store_lock();
+    let _store = common::store::lock();
     let home = tempfile::tempdir().unwrap();
     let other = tempfile::tempdir().unwrap();
     let home = home.path();
@@ -83,7 +83,7 @@ fn a_key_is_kept_replaced_read_back_and_forgotten_for_its_home_alone() {
 #[test]
 fn what_is_kept_that_is_not_a_key_is_refused_not_used() {
     store();
-    let _store = common::store_lock();
+    let _store = common::store::lock();
     let home = tempfile::tempdir().unwrap();
     let account = home.path().display().to_string();
     for kept in [&b"not a key"[..], &[0xff, 0xfe][..]] {

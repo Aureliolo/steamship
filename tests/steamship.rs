@@ -44,7 +44,7 @@ use steamship::{ci, steamcmd};
 /// and never the session's.
 fn steamship_command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_steamship"));
-    let _: &mut Command = command.envs(common::store_environment());
+    let _: &mut Command = command.envs(common::store::environment());
     command
 }
 
@@ -85,7 +85,7 @@ fn steamship_in(
         None => command.env_clear(),
     };
     // After the environment may have been cleared, so that nothing reaches the session's store.
-    let _: &mut Command = command.envs(common::store_environment());
+    let _: &mut Command = command.envs(common::store::environment());
     let output = command.envs(variables.iter().copied()).output().unwrap();
     (
         output.status.code(),
@@ -1833,7 +1833,7 @@ impl Session {
                 .chain(
                     variables
                         .iter()
-                        .chain(&common::store_environment())
+                        .chain(&common::store::environment())
                         .map(|&(name, value)| (name, OsStr::new(value))),
                 )
                 .map(|(name, value)| (OsString::from(name), value.to_owned()))
@@ -2762,7 +2762,7 @@ fn login_with_key(
 
 #[test]
 fn login_with_web_api_key_keeps_a_key_steam_takes_and_logout_forgets_it() {
-    let _store = common::store_lock();
+    let _store = common::store::lock();
     let home = tempfile::tempdir().unwrap();
     let (host, requests) = web_api(vec![("200 OK", APPS)]);
     let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY, &[]);
@@ -2872,7 +2872,7 @@ fn login_with_web_api_key_keeps_nothing_steam_refuses() {
 
 #[test]
 fn builds_at_a_terminal_asks_for_the_key_then_offers_to_keep_it() {
-    let _store = common::store_lock();
+    let _store = common::store::lock();
     let steamship_program = env!("CARGO_BIN_EXE_steamship");
     #[cfg(windows)]
     let line = format!("{steamship_program} builds 5335950");
@@ -2905,7 +2905,7 @@ fn builds_at_a_terminal_asks_for_the_key_then_offers_to_keep_it() {
 #[cfg(unix)]
 #[test]
 fn login_on_a_terminal_keeps_the_key_typed_at_its_offer_and_offers_no_more() {
-    let _store = common::store_lock();
+    let _store = common::store::lock();
     let home = asking();
     let (host, _requests) = web_api(vec![("200 OK", APPS)]);
     let login = format!(
@@ -4102,7 +4102,7 @@ fn uploading(launcher: Option<&str>) -> (Child, String, tempfile::TempDir, tempf
     let steamship = env!("CARGO_BIN_EXE_steamship");
     let started = Command::new(launcher.unwrap_or(steamship))
         .args(launcher.map(|_| steamship))
-        .envs(common::store_environment())
+        .envs(common::store::environment())
         .args(["upload", script.to_str().unwrap(), "--version", "1.4.0"])
         .args(["--account", "build_bot"])
         .env("STEAMSHIP_HOME", home.path())

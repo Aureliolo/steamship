@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use steamship::check::{Report, check};
+use steamship::scripts::Problem;
 
 pub mod common;
 
@@ -275,7 +276,7 @@ fn no_set_live_is_fine() {
         .unwrap()
         .replace("\"SetLive\" \"testing\"", "");
     fs::write(&app, text).unwrap();
-    assert!(check(&app).problems.is_empty());
+    assert_eq!(check(&app).problems, Vec::<Problem>::new());
 }
 
 #[test]
@@ -453,7 +454,7 @@ fn run(script: &Path) -> (Option<i32>, String, String) {
         .arg(script)
         .env("STEAMSHIP_HOME", home.path())
         .env_remove("STEAMSHIP_WEB_API_KEY")
-        .envs(common::store_environment())
+        .envs(common::store::environment())
         .output();
     let output = output.unwrap();
     (
