@@ -3216,6 +3216,7 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
         ),
         "{why}"
     );
+    assert!(why.ends_with("1 achievement differs, 1 matches\n"), "{why}");
 
     // Steam failing is a failure, not drift.
     let (failed, _, failure) = steamship(
@@ -3298,6 +3299,10 @@ fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
     assert!(
         why.contains("stat AverageSpeed: the default is \"1.5\" on Steam and \"2\" in the file"),
         "{why}"
+    );
+    assert!(
+        why.ends_with("1 stat differs, 1 matches\n") && !why.contains("achievements differ"),
+        "the achievements match, so only the stats are counted: {why}"
     );
 }
 
