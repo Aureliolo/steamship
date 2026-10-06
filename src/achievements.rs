@@ -8,6 +8,7 @@ use std::fmt;
 
 use serde_json::Value;
 
+use crate::show;
 use crate::webapi::{Achievement, Stat};
 
 /// An achievement as the file wants it.
@@ -302,6 +303,42 @@ pub fn compare(wants: &[Wanted], held: &[Achievement]) -> Vec<Drift> {
     drift
 }
 
+/// How many `noun`s differ in `drift`, each once however many ways it does, and how many of the
+/// `wanted` the file lists match: a line that sizes a list too long to count by eye.
+#[must_use]
+pub fn tally(drift: &[Drift], wanted: usize, noun: &str) -> String {
+    let mut differing: Vec<&str> = Vec::new();
+    let mut only_on_steam = 0_usize;
+    for difference in drift {
+        match difference {
+            Drift::NoneOnSteam(count) => return said(*count, 0, noun),
+            Drift::NotInFile(_) => only_on_steam = only_on_steam.saturating_add(1),
+            Drift::NotOnSteam(api_name)
+            | Drift::Differs { api_name, .. }
+            | Drift::NoIcon { api_name, .. } => {
+                if !differing.contains(&api_name.as_str()) {
+                    differing.push(api_name);
+                }
+            }
+        }
+    }
+    said(
+        differing.len().saturating_add(only_on_steam),
+        wanted.saturating_sub(differing.len()),
+        noun,
+    )
+}
+
+fn said(differ: usize, matched: usize, noun: &str) -> String {
+    let verb = if differ == 1 { "differs" } else { "differ" };
+    let matching = match matched {
+        0 => "none match".to_owned(),
+        1 => "1 matches".to_owned(),
+        _ => format!("{matched} match"),
+    };
+    format!("{} {verb}, {matching}", show::counted(differ, noun))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -514,6 +551,35 @@ mod tests {
                 "b: Steam has no icon",
                 "extra: on Steam, not in the file",
             ]
+        );
+        assert_eq!(
+            tally(&drift, 3, "achievement"),
+            "4 achievements differ, none match",
+            "each counted once however many ways it differs, Steam's own among those differing"
+        );
+    }
+
+    #[test]
+    fn a_tally_says_each_count_in_its_own_number() {
+        let differs = |api_name: &str| Drift::NoIcon {
+            api_name: api_name.to_owned(),
+            which: "icon",
+        };
+        assert_eq!(
+            tally(&[differs("a")], 3, "achievement"),
+            "1 achievement differs, 2 match"
+        );
+        assert_eq!(
+            tally(&[differs("a")], 2, "achievement"),
+            "1 achievement differs, 1 matches"
+        );
+        assert_eq!(
+            tally(&[differs("a"), differs("b")], 2, "stat"),
+            "2 stats differ, none match"
+        );
+        assert_eq!(
+            tally(&[Drift::NoneOnSteam(15)], 15, "achievement"),
+            "15 achievements differ, none match"
         );
     }
 
