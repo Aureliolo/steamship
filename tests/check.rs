@@ -390,7 +390,7 @@ fn a_linux_program_needs_its_executable_bit() {
         ["is a Linux program without its executable bit; run chmod +x on it"]
     );
     fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
-    assert!(check(&app).problems.is_empty());
+    assert_eq!(check(&app).problems, Vec::<Problem>::new());
 }
 
 #[cfg(unix)]
