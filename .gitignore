@@ -1,5 +1,6 @@
 /target/
 /drafts/
 /mutants.out*/
+/.github/accessibility/node_modules/
 # What a binary built for coverage writes when the tests run it.
 *.profraw
