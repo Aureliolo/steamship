@@ -179,6 +179,29 @@ jobs:
             exit 1
           fi
 
+  # No marketing filler. The words are listed in .github/hype-words.txt, one to a line, matched
+  # whole and in any case; the list is the one file left out of the search.
+  hype:
+    name: hype
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the files it checks.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check for hype
+        run: |
+          set -euo pipefail
+          if git grep -n -I -i -w -F -f .github/hype-words.txt -- . ':!.github/hype-words.txt'; then
+            echo "::error::Say what steamship does, plainly, without the words in .github/hype-words.txt."
+            exit 1
+          fi
+
   # The .deb and the .rpm, from a Linux archive packed as the release packs it, linted and then
   # installed and used on bare Debian and Fedora, so a change that breaks them fails here rather
   # than at a release.
