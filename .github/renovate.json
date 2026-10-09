@@ -19,7 +19,7 @@
     "enabled": false
   },
   "lockFileMaintenance": {
-    "description": "Both lock files regenerated the day after the raises, which is where the transitive crates move.",
+    "description": "The lock files regenerated the day after the raises, which is where the transitive crates and packages move.",
     "enabled": true,
     "schedule": ["before 6am on tuesday"]
   },

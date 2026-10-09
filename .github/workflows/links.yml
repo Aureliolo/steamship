@@ -1,0 +1,57 @@
+name: Links
+
+# Links to other sites, in every tracked Markdown file and the action's metadata. They break on
+# their own, with nothing here changing, so they are checked weekly rather than on every pull
+# request, where a site being down would fail an unrelated change; a pull request that changes
+# this workflow runs it too. Links within the site are checked by its build on every pull request.
+on:
+  schedule:
+    - cron: '17 4 * * 3'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/links.yml
+      - .github/lychee.toml
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  links:
+    name: links
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read # Reads the files whose links it follows.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install lychee
+        env:
+          # renovate: datasource=github-release-attachments depName=lycheeverse/lychee versioning=regex:^lychee-v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          LYCHEE_TAG: lychee-v0.24.2
+          LYCHEE_SHA256: 73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5
+        run: |
+          set -euo pipefail
+          archive="${RUNNER_TEMP}/lychee-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
+            "https://github.com/lycheeverse/lychee/releases/download/${LYCHEE_TAG}/lychee-x86_64-unknown-linux-musl.tar.gz"
+          echo "${LYCHEE_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/lychee-x86_64-unknown-linux-musl" >> "${GITHUB_PATH}"
+
+      # The token only raises GitHub's rate limit for the links to github.com; it can read this
+      # repository and nothing else.
+      - name: Check the links
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git ls-files -z '*.md' action.yml | xargs -0 lychee --config .github/lychee.toml --format compact
