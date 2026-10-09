@@ -578,3 +578,13 @@ jobs:
 
       - name: Lint
         uses: DavidAnson/markdownlint-cli2-action@21c1be1b93ad9ed58fa840aacc3f279cde2a72ff # v24.2.0
+
+      # Claude Code reads AGENTS.md only where no CLAUDE.md sits beside it, so one added anywhere,
+      # as `claude /init` writes one, would quietly stop the project's instructions loading there.
+      - name: Keep the instructions in AGENTS.md
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -iE '(^|/)CLAUDE\.md$'; then
+            echo "::error::The project's instructions live in AGENTS.md; fold this into it instead."
+            exit 1
+          fi
