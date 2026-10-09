@@ -3,6 +3,9 @@
 How changes are made here, for people and coding agents alike. CI enforces most of it; the rest
 is what review asks for.
 
+These instructions live in this file alone. Claude Code reads AGENTS.md only where no CLAUDE.md
+sits beside it, so CI fails on a CLAUDE.md anywhere in the tree.
+
 ## Writing
 
 Everything a person reads counts: messages, help text, docs, comments, commit messages.
@@ -27,6 +30,18 @@ Everything a person reads counts: messages, help text, docs, comments, commit me
   allowed are listed there with the reason. Fix a lint rather than silence it; an `#[expect]`
   says why in its `reason`.
 - `unsafe` stays in `src/unix.rs` and `src/windows.rs`, each block with a `SAFETY:` comment.
+
+## Layout
+
+- `src/` is one crate, library and binary. The command line is the supported interface; the
+  library's modules are public only for the tests and fuzz targets.
+- `docs/` is the site's source. `docs-site/` renders it, with every command's help, into
+  `target/site`.
+- `fuzz/` holds a cargo-fuzz target per parser, a workspace member so it shares the lint table.
+- `pins/` holds steamcmd's manifests, compiled into steamship. Renovate raises them;
+  `cargo run --example pins` rewrites them by hand.
+- `.github/packages.sh` writes `Formula/` and `bucket/` at each release; leave them to it.
+- Releases start from the Actions tab, as `.github/release-process.md` describes.
 
 ## Steam
 
@@ -53,6 +68,15 @@ cargo test --locked
 markdownlint-cli2
 typos
 ```
+
+`typos` comes from the `typos-cli` crate and `markdownlint-cli2` from npm. On Linux the tests
+start their own D-Bus and GNOME Keyring, so `dbus-daemon` and `gnome-keyring-daemon` must be
+installed.
+
+`cargo test` covers the steamship crate alone. When `docs/`, `docs-site/` or a command's help
+changes, also run `cargo test --locked -p steamship-docs-site` and
+`cargo run --locked -p steamship-docs-site`; the build refuses a dead link or anchor and code
+too wide for the page.
 
 CI runs everything else on the pull request: the tests on Linux, macOS and Windows, line
 coverage of at least 97 %, cargo-mutants on the changed lines, a fuzzing pass over each parser,
