@@ -19,7 +19,8 @@
   --ink: #eef4ff;
   --body: #c8d3e6;
   --muted: #8795ad;
-  --faint: #6f7d96;
+  /* The quietest text still meets WCAG AA's 4.5:1 on every ground it sits on. */
+  --faint: #7886a0;
 
   --signal: #22d3ee;
   --signal-ink: #062a33;
@@ -54,7 +55,7 @@
     --ink: #0b1224;
     --body: #2c3a52;
     --muted: #56657d;
-    --faint: #6b7a92;
+    --faint: #5c6b83;
 
     --signal: #0e7490;
     --signal-ink: #e6fbff;
@@ -733,10 +734,14 @@ summary:hover {
   margin-bottom: 9px;
 }
 
-.card h3 {
+/* A heading under the page's own, so the outline runs h1, h2 with nothing skipped; set small. */
+.card h2 {
   margin: 0 0 7px;
+  padding-bottom: 0;
+  border-bottom: none;
   font-size: 16px;
   font-weight: 600;
+  line-height: inherit;
 }
 
 .card p {

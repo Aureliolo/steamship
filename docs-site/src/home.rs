@@ -184,7 +184,7 @@ pub fn html(version: &str) -> String {
     for card in CARDS {
         let _card: fmt::Result = write!(
             page,
-            "<div class=\"card\"><span class=\"kicker\">{}</span><h3>{}</h3><p>{}</p>\
+            "<div class=\"card\"><span class=\"kicker\">{}</span><h2>{}</h2><p>{}</p>\
              <a class=\"go\" href=\"{}\">{}</a></div>",
             card.kicker,
             inline(card.title),
