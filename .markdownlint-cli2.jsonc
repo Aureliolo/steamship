@@ -7,5 +7,11 @@
   },
   // Every Markdown file, so a run on a developer's machine lints what CI lints.
   "globs": ["**/*.md"],
-  "ignores": ["target/**", "fuzz/target/**", "drafts/**", "mutants.out*/**"]
+  "ignores": [
+    "target/**",
+    "fuzz/target/**",
+    "drafts/**",
+    "mutants.out*/**",
+    ".github/accessibility/node_modules/**"
+  ]
 }

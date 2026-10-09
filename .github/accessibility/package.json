@@ -1,0 +1,10 @@
+{
+  "name": "steamship-site-accessibility",
+  "description": "Checks every page of the built documentation site with axe-core, in the light and the dark scheme.",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "axe-core": "4.14.0",
+    "puppeteer-core": "25.13.0"
+  }
+}

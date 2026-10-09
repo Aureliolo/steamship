@@ -2,7 +2,8 @@ name: Docs
 
 # The site at https://aureliolo.github.io/steamship, built from docs/ and the command line itself
 # by docs-site/. Every pull request builds it, which refuses a page nothing publishes and any
-# link or anchor that goes nowhere. Only a release publishes it, from its tag, so the site never
+# link or anchor that goes nowhere, and checks every page against WCAG 2.2 AA with axe-core, in
+# the light scheme and the dark. Only a release publishes it, from its tag, so the site never
 # describes a version whose archives are not out; the github-pages environment admits v* tags and
 # nothing else.
 on:
@@ -46,6 +47,16 @@ jobs:
 
       - name: Build the site
         run: cargo run --locked -p steamship-docs-site
+
+      # axe-core and the code that drives the browser, at the versions and hashes in the lock file,
+      # with no package's install scripts run. The browser and Node are the runner image's own.
+      - name: Install the accessibility check
+        run: npm ci --prefix .github/accessibility --ignore-scripts --no-audit --no-fund
+
+      - name: Check the site's accessibility
+        run: |
+          set -euo pipefail
+          CHROME="$(command -v google-chrome)" node .github/accessibility/check.mjs target/site
 
       - name: Package it for Pages
         if: inputs.publish

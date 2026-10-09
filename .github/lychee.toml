@@ -1,0 +1,12 @@
+# What the weekly link check leaves alone, each because following it says nothing about the link.
+exclude = [
+  # The install page's archive addresses carry {{version}}, which the site fills in with the
+  # release it describes; a release's own packaging job fetches every archive it publishes.
+  '%7B%7Bversion%7D%7D',
+  # Steamworks pages for signed-in partners, which send anyone else to the sign-in page.
+  '^https://partner\.steamgames\.com/pub/',
+]
+
+# A link that has moved but still lands somewhere is not broken.
+max_redirects = 5
+no_progress = true
