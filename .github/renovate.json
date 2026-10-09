@@ -63,12 +63,14 @@
   },
   "customManagers": [
     {
-      "description": "Rust: the toolchain CI and developers build with, and the rust-version the crate declares, which is the same version on purpose.",
+      "description": "Rust: the toolchain CI and developers build with, the rust-version the crate declares, which is the same version on purpose, and the README's badge naming it.",
       "customType": "regex",
-      "managerFilePatterns": ["/^rust-toolchain\\.toml$/", "/^Cargo\\.toml$/"],
+      "managerFilePatterns": ["/^rust-toolchain\\.toml$/", "/^Cargo\\.toml$/", "/^README\\.md$/"],
       "matchStrings": [
         "channel = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
-        "rust-version = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+        "rust-version = \"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "\\[!\\[Rust (?<currentValue>\\d+\\.\\d+\\.\\d+)\\]",
+        "badge/rust-(?<currentValue>\\d+\\.\\d+\\.\\d+)-"
       ],
       "depNameTemplate": "rust-lang/rust",
       "datasourceTemplate": "github-releases",
