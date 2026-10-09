@@ -1,3 +1,0 @@
-# steamship
-
-@AGENTS.md
