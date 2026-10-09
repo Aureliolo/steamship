@@ -56,8 +56,9 @@ typos
 
 CI runs everything else on the pull request: the tests on Linux, macOS and Windows, line
 coverage of at least 97 %, cargo-mutants on the changed lines, a fuzzing pass over each parser,
-cargo-deny, actionlint and zizmor on the workflows, and the Linux packages built and installed on
-Debian and Fedora. Leave those to CI rather than running them locally.
+cargo-deny, actionlint and zizmor on the workflows, the documentation site against WCAG 2.2 AA,
+and the Linux packages built and installed on Debian and Fedora. Leave those to CI rather than
+running them locally. Links to other sites are checked weekly.
 
 A commit message is one capitalised sentence in the imperative saying what the change does, such
 as "Count the drift an achievements check finds", with no prefix. `main` takes signed commits
