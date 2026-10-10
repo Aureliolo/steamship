@@ -3257,8 +3257,9 @@ fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
     assert!(
         listed.contains("\u{2713} 0 achievements and 2 stats on Steam\n")
             && listed.contains("  stat NumGames Games played, starts at 0\n")
-            && listed.contains("  stat AverageSpeed starts at 1.5\n"),
-        "{listed}"
+            && listed.contains("  stat AverageSpeed starts at 1.5\n")
+            && !listed.contains("Stats & Achievements"),
+        "stats alone are something on Steam: {listed}"
     );
 
     let unlisted = files.path().join("unlisted.json");
