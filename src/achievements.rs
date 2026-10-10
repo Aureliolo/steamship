@@ -8,7 +8,6 @@ use std::fmt;
 
 use serde_json::Value;
 
-use crate::show;
 use crate::webapi::{Achievement, Stat};
 
 /// An achievement as the file wants it.
@@ -303,40 +302,51 @@ pub fn compare(wants: &[Wanted], held: &[Achievement]) -> Vec<Drift> {
     drift
 }
 
-/// How many `noun`s differ in `drift`, each once however many ways it does, and how many of the
-/// `wanted` the file lists match: a line that sizes a list too long to count by eye.
+/// How many of the `wanted` `kind` the file lists match Steam's.
+///
+/// When not all do, it goes on to how many differ, how many are not on Steam and how many only
+/// Steam has, each counted once however many ways it differs, so the line sizes a list too long
+/// to count by eye.
 #[must_use]
-pub fn tally(drift: &[Drift], wanted: usize, noun: &str) -> String {
+pub fn tally(drift: &[Drift], wanted: usize, kind: &str) -> String {
     let mut differing: Vec<&str> = Vec::new();
+    let mut not_on_steam = 0_usize;
     let mut only_on_steam = 0_usize;
     for difference in drift {
         match difference {
-            Drift::NoneOnSteam(count) => return said(*count, 0, noun),
+            Drift::NoneOnSteam(count) => not_on_steam = not_on_steam.saturating_add(*count),
+            Drift::NotOnSteam(_) => not_on_steam = not_on_steam.saturating_add(1),
             Drift::NotInFile(_) => only_on_steam = only_on_steam.saturating_add(1),
-            Drift::NotOnSteam(api_name)
-            | Drift::Differs { api_name, .. }
-            | Drift::NoIcon { api_name, .. } => {
+            Drift::Differs { api_name, .. } | Drift::NoIcon { api_name, .. } => {
                 if !differing.contains(&api_name.as_str()) {
                     differing.push(api_name);
                 }
             }
         }
     }
-    said(
-        differing.len().saturating_add(only_on_steam),
-        wanted.saturating_sub(differing.len()),
-        noun,
-    )
-}
-
-fn said(differ: usize, matched: usize, noun: &str) -> String {
-    let verb = if differ == 1 { "differs" } else { "differ" };
-    let matching = match matched {
-        0 => "none match".to_owned(),
-        1 => "1 matches".to_owned(),
-        _ => format!("{matched} match"),
+    let matched = wanted
+        .saturating_sub(differing.len())
+        .saturating_sub(not_on_steam);
+    let verb = if differing.len() == 1 {
+        "differs"
+    } else {
+        "differ"
     };
-    format!("{} {verb}, {matching}", show::counted(differ, noun))
+    let counts: Vec<String> = [
+        (differing.len(), verb),
+        (not_on_steam, "not on Steam"),
+        (only_on_steam, "on Steam only"),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, what)| format!("{count} {what}"))
+    .collect();
+    let line = format!("{matched} of {wanted} {kind} match");
+    if counts.is_empty() {
+        line
+    } else {
+        format!("{line}: {}", counts.join(", "))
+    }
 }
 
 #[cfg(test)]
@@ -553,33 +563,41 @@ mod tests {
             ]
         );
         assert_eq!(
-            tally(&drift, 3, "achievement"),
-            "4 achievements differ, none match",
-            "each counted once however many ways it differs, Steam's own among those differing"
+            tally(&drift, 3, "achievements"),
+            "0 of 3 achievements match: 2 differ, 1 not on Steam, 1 on Steam only",
+            "each counted once however many ways it differs"
         );
     }
 
     #[test]
-    fn a_tally_says_each_count_in_its_own_number() {
+    fn a_tally_says_how_many_of_the_files_match_and_why_the_rest_do_not() {
         let differs = |api_name: &str| Drift::NoIcon {
             api_name: api_name.to_owned(),
             which: "icon",
         };
         assert_eq!(
-            tally(&[differs("a")], 3, "achievement"),
-            "1 achievement differs, 2 match"
+            tally(&[], 15, "achievements"),
+            "15 of 15 achievements match"
         );
         assert_eq!(
-            tally(&[differs("a")], 2, "achievement"),
-            "1 achievement differs, 1 matches"
+            tally(&[differs("a")], 3, "achievements"),
+            "2 of 3 achievements match: 1 differs"
         );
         assert_eq!(
-            tally(&[differs("a"), differs("b")], 2, "stat"),
-            "2 stats differ, none match"
+            tally(
+                &[Drift::NotOnSteam("stat years_open".to_owned())],
+                1,
+                "stats"
+            ),
+            "0 of 1 stats match: 1 not on Steam"
         );
         assert_eq!(
-            tally(&[Drift::NoneOnSteam(15)], 15, "achievement"),
-            "15 achievements differ, none match"
+            tally(&[Drift::NotInFile("extra".to_owned())], 2, "stats"),
+            "2 of 2 stats match: 1 on Steam only"
+        );
+        assert_eq!(
+            tally(&[Drift::NoneOnSteam(15)], 15, "achievements"),
+            "0 of 15 achievements match: 15 not on Steam"
         );
     }
 

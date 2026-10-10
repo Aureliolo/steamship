@@ -1489,6 +1489,15 @@ fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCod
     spinner.done(&format!("{holds} on Steam"));
     offer_to_keep(&home, &api, from);
     let Some(listed) = listed else {
+        if held.achievements.is_empty() && held.stats.is_empty() {
+            show::field(
+                "steamworks",
+                &format!(
+                    "where app {app_id}'s achievements and stats are made and published, under \
+                     Stats & Achievements"
+                ),
+            );
+        }
         for achievement in &held.achievements {
             show::field(&achievement.api_name, &achievements::line(achievement));
         }
@@ -1518,16 +1527,20 @@ fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCod
     for difference in drift.iter().chain(&stat_drift) {
         show::failure(&difference.to_string(), "", None);
     }
-    if !drift.is_empty() {
-        let tally = achievements::tally(&drift, listed.achievements.len(), "achievement");
-        show::failure(&tally, "", None);
-    }
-    if let Some(stats) = listed.stats.as_ref().filter(|_| !stat_drift.is_empty()) {
-        show::failure(
-            &achievements::tally(&stat_drift, stats.len(), "stat"),
-            "",
-            None,
-        );
+    for (kind, wanted, kind_drift) in [
+        ("achievements", Some(listed.achievements.len()), &drift),
+        ("stats", listed.stats.as_ref().map(Vec::len), &stat_drift),
+    ] {
+        // A kind the file lists none of and Steam agrees on has nothing to count.
+        let Some(wanted) = wanted.filter(|wanted| *wanted > 0 || !kind_drift.is_empty()) else {
+            continue;
+        };
+        let tally = achievements::tally(kind_drift, wanted, kind);
+        if kind_drift.is_empty() {
+            show::success(&tally, "");
+        } else {
+            show::failure(&tally, "", None);
+        }
     }
     Ok(ExitCode::from(REFUSED))
 }
