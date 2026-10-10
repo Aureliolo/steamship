@@ -247,8 +247,9 @@ nothing there. `achievements` lists those Steam holds for the app, in English, w
 Web API key as `builds`. With `--check`, it compares them with a file kept beside your scripts,
 and exits 2 naming each achievement that is in the file but not on Steam or the other way
 round, each display name, description or hidden flag that differs, and each icon Steam has none
-of, then how many differ and how many match. Run it before a release, and the release waits
-while the two have drifted apart.
+of. It ends with how many of the file's achievements match, and of its stats when it lists
+any, such as `14 of 15 achievements match: 1 differs`. Run it before a release, and the release
+waits while the two have drifted apart.
 
 The file lists each achievement by the API name the game unlocks it with, and each stat by the
 one the game sets it by:
