@@ -1491,9 +1491,9 @@ fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCod
     let Some(listed) = listed else {
         if held.achievements.is_empty() && held.stats.is_empty() {
             show::field(
-                "steamworks",
+                "next",
                 &format!(
-                    "where app {app_id}'s achievements and stats are made and published, under \
+                    "make and publish app {app_id}'s achievements and stats in Steamworks, under \
                      Stats & Achievements"
                 ),
             );
