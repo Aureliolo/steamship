@@ -3329,10 +3329,10 @@ fn an_app_with_nothing_on_steam_is_listed_as_none_with_where_they_are_made() {
     assert!(
         listed.contains("\u{2713} 0 achievements on Steam\n")
             && listed.contains(
-                "where app 480's achievements and stats are made and published, under Stats & \
-                 Achievements\n"
+                "\n  next      make and publish app 480's achievements and stats in Steamworks, \
+                 under Stats & Achievements\n"
             ),
-        "{listed}"
+        "in the same column as the lines above it: {listed}"
     );
 
     let file = achievements_file(files.path(), "Travel 500 feet in one life.");
