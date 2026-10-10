@@ -3216,7 +3216,10 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
         ),
         "{why}"
     );
-    assert!(why.ends_with("1 achievement differs, 1 matches\n"), "{why}");
+    assert!(
+        why.ends_with("1 of 2 achievements match: 1 differs\n"),
+        "{why}"
+    );
 
     // Steam failing is a failure, not drift.
     let (failed, _, failure) = steamship(
@@ -3301,8 +3304,84 @@ fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
         "{why}"
     );
     assert!(
-        why.ends_with("1 stat differs, 1 matches\n") && !why.contains("achievements differ"),
-        "the achievements match, so only the stats are counted: {why}"
+        why.ends_with("1 of 2 stats match: 1 differs\n") && !shown.contains("achievements match"),
+        "the file lists no achievements, so only the stats are counted: {shown}{why}"
+    );
+}
+
+#[test]
+fn an_app_with_nothing_on_steam_is_listed_as_none_with_where_they_are_made() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![
+        ("200 OK", r#"{"game": {}}"#),
+        ("200 OK", r#"{"game": {}}"#),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+
+    let (code, listed, _) = steamship(&["achievements", "480"], Some(home.path()), &set);
+    assert_eq!(code, Some(0_i32), "{listed}");
+    assert!(
+        listed.contains("\u{2713} 0 achievements on Steam\n")
+            && listed.contains(
+                "where app 480's achievements and stats are made and published, under Stats & \
+                 Achievements\n"
+            ),
+        "{listed}"
+    );
+
+    let file = achievements_file(files.path(), "Travel 500 feet in one life.");
+    let (refused, shown, why) = steamship(
+        &["achievements", "480", "--check", &file],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{shown}{why}");
+    assert!(
+        why.contains("Steam holds none of the file's 2 achievements")
+            && why.ends_with("0 of 2 achievements match: 2 not on Steam\n")
+            && !shown.contains("Stats & Achievements"),
+        "{shown}{why}"
+    );
+}
+
+#[test]
+fn a_check_with_drift_in_its_stats_still_says_its_achievements_match() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", SCHEMA)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let file = achievements_file(files.path(), "Travel 500 feet in one life.");
+    let listed = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        listed.replacen(
+            r#""achievements":"#,
+            r#""stats": [{"api_name": "years_open", "default": 0}], "achievements":"#,
+            1,
+        ),
+    )
+    .unwrap();
+
+    let (refused, shown, why) = steamship(
+        &["achievements", "480", "--check", &file],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{shown}{why}");
+    assert!(shown.contains("2 of 2 achievements match\n"), "{shown}");
+    assert!(
+        why.contains("stat years_open: in the file, not on Steam\n")
+            && why.ends_with("0 of 1 stats match: 1 not on Steam\n"),
+        "{why}"
     );
 }
 
