@@ -115,10 +115,16 @@ fn check_loaded(app: &AppScript) -> Report {
 fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> {
     let root = &depot.content_root;
     if !root.is_dir() {
+        let what = if matches!(root.try_exists(), Ok(false)) {
+            "does not exist; put the depot's files there, or point ContentRoot at the folder they \
+             are in"
+        } else {
+            "is not a folder; point ContentRoot at the folder the depot's files are in"
+        };
         problems.push(Problem::new(
             &depot.path,
             format!(
-                "depot {}: ContentRoot {} is not a folder",
+                "depot {}: ContentRoot {} {what}",
                 depot.depot_id,
                 root.display()
             ),
