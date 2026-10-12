@@ -118,7 +118,9 @@ where
 pub fn ask(label: &str, echo: Echo) -> io::Result<Zeroizing<String>> {
     let keys = native::Keys::open()?;
     show::prompt(label)?;
-    let mut shown = anstream::stdout();
+    // What is typed is shown without colour, and a stream that strips colour, as anstream's does
+    // under NO_COLOR, strips the backspaces that take a character back off the screen with it.
+    let mut shown = io::stdout();
     if let Some(mut keys) = keys {
         return line(&mut keys, &mut shown, echo);
     }
