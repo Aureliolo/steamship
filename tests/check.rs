@@ -325,10 +325,30 @@ fn a_missing_content_root_is_refused() {
     fs::remove_dir_all(project.root.join("export")).unwrap();
     let found = messages(&check(&app));
     assert_eq!(found.len(), 2, "{found:?}");
+    for (message, depot) in found.iter().zip(["1001", "1002"]) {
+        assert!(
+            message.starts_with(&format!("depot {depot}: ContentRoot "))
+                && message.ends_with(
+                    " does not exist; put the depot's files there, or point ContentRoot at the \
+                     folder they are in"
+                ),
+            "{message}"
+        );
+    }
+}
+
+#[test]
+fn a_content_root_that_is_a_file_is_refused() {
+    let (project, app) = Project::shipping("");
+    fs::remove_dir_all(project.root.join("export")).unwrap();
+    project.put("export", b"not a folder");
+    let found = messages(&check(&app));
+    assert_eq!(found.len(), 2, "{found:?}");
     assert!(
-        found
-            .iter()
-            .all(|message| message.contains("is not a folder"))
+        found.iter().all(|message| message.ends_with(
+            " is not a folder; point ContentRoot at the folder the depot's files are in"
+        )),
+        "{found:?}"
     );
 }
 
