@@ -206,7 +206,7 @@ fn git(folder: &Path, args: &[&str]) {
             "-c",
             "user.email=steamship@example.invalid",
         ])
-        .args(["-c", "commit.gpgsign=false"])
+        .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
         .args(args)
         .current_dir(folder)
         .status()
