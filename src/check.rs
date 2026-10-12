@@ -19,6 +19,8 @@ pub struct Report {
     pub set_live: Option<String>,
     pub depots: Vec<DepotFiles>,
     pub problems: Vec<Problem>,
+    /// Whether the content the scripts map was checked too, and the depots' files counted.
+    pub content: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,18 +40,30 @@ const DO_NOT_SHIP: [&str; 2] = [
 /// Checks the app script at `path`, its depot scripts, and the content they map.
 #[must_use]
 pub fn check(path: &Path) -> Report {
+    checked(path, true)
+}
+
+/// Checks the app script at `path` and its depot scripts alone, as can be done before the build
+/// they map exists.
+#[must_use]
+pub fn scripts_only(path: &Path) -> Report {
+    checked(path, false)
+}
+
+fn checked(path: &Path, content: bool) -> Report {
     match scripts::load(path) {
-        Ok(app) => check_loaded(&app),
+        Ok(app) => check_loaded(&app, content),
         Err(problems) => Report {
             app_id: None,
             set_live: None,
             depots: Vec::new(),
             problems,
+            content,
         },
     }
 }
 
-fn check_loaded(app: &AppScript) -> Report {
+fn check_loaded(app: &AppScript, content: bool) -> Report {
     let mut problems = Vec::new();
     match app
         .set_live
@@ -92,7 +106,12 @@ fn check_loaded(app: &AppScript) -> Report {
         .depots
         .iter()
         .map(|depot| {
-            let files = files(depot, &mut problems);
+            let files = if content {
+                files(depot, &mut problems)
+            } else {
+                mappings(depot, &mut problems);
+                BTreeSet::new()
+            };
             DepotFiles {
                 depot_id: depot.depot_id,
                 debug_symbols: files.iter().filter(|file| is_debug_symbols(file)).count(),
@@ -108,7 +127,39 @@ fn check_loaded(app: &AppScript) -> Report {
             .filter(|branch| !branch.trim().is_empty()),
         depots,
         problems,
+        content,
     }
+}
+
+/// A problem for each of `depot`'s mappings that no content could make right.
+fn mappings(depot: &DepotScript, problems: &mut Vec<Problem>) {
+    for mapping in &depot.mappings {
+        if let Some(message) = unmappable(mapping) {
+            problems.push(Problem::new(
+                &depot.path,
+                format!(
+                    "depot {}: LocalPath \"{}\" {message}",
+                    depot.depot_id, mapping.local_path
+                ),
+            ));
+        }
+    }
+}
+
+/// The local path's folder and file name, split where steamcmd splits them.
+fn split(mapping: &FileMapping) -> (String, String) {
+    let local = scripts::native(&mapping.local_path);
+    let (folder, name) = local
+        .rsplit_once(is_separator)
+        .unwrap_or(("", local.as_str()));
+    (folder.to_owned(), name.to_owned())
+}
+
+/// Why `mapping` can never be mapped, if it cannot.
+fn unmappable(mapping: &FileMapping) -> Option<&'static str> {
+    split(mapping).0.contains(['*', '?']).then_some(
+        "has a wildcard in a folder name, which steamship cannot map the way steamcmd does",
+    )
 }
 
 /// The files `depot` maps, after its exclusions, with a problem for everything wrong in them.
@@ -228,19 +279,12 @@ fn same_file(one: &Path, other: &Path) -> bool {
 }
 
 fn mapped_by(root: &Path, mapping: &FileMapping) -> Result<Vec<PathBuf>, String> {
-    let local = scripts::native(&mapping.local_path);
-    let (folder, name) = local
-        .rsplit_once(is_separator)
-        .unwrap_or(("", local.as_str()));
-    if folder.contains(['*', '?']) {
-        return Err(
-            "has a wildcard in a folder name, which steamship cannot map the way steamcmd \
-                    does"
-                .to_owned(),
-        );
+    if let Some(message) = unmappable(mapping) {
+        return Err(message.to_owned());
     }
+    let (folder, name) = split(mapping);
     let mut found = Vec::new();
-    walk(&root.join(folder), name, mapping.recursive, &mut found)
+    walk(&root.join(folder), &name, mapping.recursive, &mut found)
         .map_err(|error| format!("cannot be read: {error}"))?;
     Ok(found)
 }
