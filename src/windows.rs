@@ -911,31 +911,39 @@ pub fn restrict(folder: &Path) -> io::Result<bool> {
     if Security::of(&name)?.is_only(&user) {
         return Ok(false);
     }
-    // SAFETY: the SID lives in `user`, which outlives the call.
-    let sid_length = unsafe { GetLengthSid(user.sid()) };
+    allow_alone(&name, &[user.sid()]).map(|()| true)
+}
+
+/// Gives the file or folder `name` permissions of its own, not inherited from above: one entry
+/// for each of `sids`, allowing everything and passed down to all a folder holds.
+fn allow_alone(name: &[u16], sids: &[PSID]) -> io::Result<()> {
     // An entry's size counts its SID in place of the SidStart field that marks where it begins.
-    let size = size_of_u32::<ACL>()
-        .saturating_add(size_of_u32::<ACCESS_ALLOWED_ACE>())
-        .saturating_sub(size_of_u32::<u32>())
-        .saturating_add(sid_length);
+    let entry = size_of_u32::<ACCESS_ALLOWED_ACE>().saturating_sub(size_of_u32::<u32>());
+    let size = sids.iter().fold(size_of_u32::<ACL>(), |size, &sid| {
+        // SAFETY: the caller's SIDs are valid for the length of this function.
+        let sid_length = unsafe { GetLengthSid(sid) };
+        size.saturating_add(entry).saturating_add(sid_length)
+    });
     let mut storage = vec![0_u32; usize::try_from(size.div_ceil(4)).map_err(io::Error::other)?];
     let acl: *mut ACL = storage.as_mut_ptr().cast();
     // SAFETY: `storage` holds at least `size` bytes, aligned as an ACL must be.
     if unsafe { InitializeAcl(acl, size, ACL_REVISION) } == 0_i32 {
         return Err(io::Error::last_os_error());
     }
-    // SAFETY: the list was sized for exactly this one entry, and the SID is copied into it.
-    if unsafe {
-        AddAccessAllowedAceEx(
-            acl,
-            ACL_REVISION,
-            OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
-            FILE_ALL_ACCESS,
-            user.sid(),
-        )
-    } == 0_i32
-    {
-        return Err(io::Error::last_os_error());
+    for &sid in sids {
+        // SAFETY: the list was sized for exactly these entries, and each SID is copied into it.
+        if unsafe {
+            AddAccessAllowedAceEx(
+                acl,
+                ACL_REVISION,
+                OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+                FILE_ALL_ACCESS,
+                sid,
+            )
+        } == 0_i32
+        {
+            return Err(io::Error::last_os_error());
+        }
     }
     // SAFETY: `name` is NUL-terminated and `acl` is a complete list; the owner, the group and the
     // audit list are left as they are.
@@ -950,7 +958,7 @@ pub fn restrict(folder: &Path) -> io::Result<bool> {
             ptr::null(),
         )
     };
-    win32(status).map(|()| true)
+    win32(status)
 }
 
 fn win32(status: WIN32_ERROR) -> io::Result<()> {
@@ -1309,7 +1317,9 @@ mod tests {
     use std::slice;
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::Globalization::lstrlenW;
-    use windows_sys::Win32::Security::INHERITED_ACE;
+    use windows_sys::Win32::Security::{
+        CreateWellKnownSid, INHERITED_ACE, SECURITY_MAX_SID_SIZE, WinLocalSystemSid,
+    };
     use windows_sys::Win32::System::StationsAndDesktops::EnumDesktopWindows;
     use windows_sys::Win32::System::StationsAndDesktops::{DESKTOP_READOBJECTS, OpenDesktopW};
     use windows_sys::Win32::System::Threading::GetProcessId;
@@ -1510,21 +1520,41 @@ mod tests {
 
     #[test]
     fn a_new_folder_takes_its_permissions_from_its_parent_and_is_not_only_its_users() {
-        let folder = tempfile::tempdir().unwrap();
+        let parent = tempfile::tempdir().unwrap();
         let user = User::current().unwrap();
-        let security = Security::of(&wide(folder.path().as_os_str())).unwrap();
-        assert!(!security.is_protected());
-        let entries = security.entries(&user);
-        let allowed = |mine: bool| {
-            entries
-                .iter()
-                .any(|entry| entry.0 == ACCESS_ALLOWED_ACE_TYPE && entry.3 == mine)
+        let mut system = vec![0_u32; usize::try_from(SECURITY_MAX_SID_SIZE.div_ceil(4)).unwrap()];
+        let mut size = SECURITY_MAX_SID_SIZE;
+        // SAFETY: `system` holds `size` bytes, aligned as a SID must be.
+        let made = unsafe {
+            CreateWellKnownSid(
+                WinLocalSystemSid,
+                ptr::null_mut(),
+                system.as_mut_ptr().cast(),
+                &raw mut size,
+            )
         };
-        // The temporary folder is shared with the system and administrators, besides its user.
-        assert!(allowed(true) && allowed(false), "{entries:?}");
-        assert!(restrict(folder.path()).unwrap());
+        assert_ne!(made, 0_i32, "{}", io::Error::last_os_error());
+        // Wherever the temporary folder lives, the parent is shared by its user and the system.
+        allow_alone(
+            &wide(parent.path().as_os_str()),
+            &[user.sid(), system.as_mut_ptr().cast()],
+        )
+        .unwrap();
+        let folder = parent.path().join("steamcmd");
+        fs::create_dir_all(&folder).unwrap();
+        let security = Security::of(&wide(folder.as_os_str())).unwrap();
+        assert!(!security.is_protected());
+        let passed_down = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE | INHERITED_ACE;
+        assert_eq!(
+            security.entries(&user),
+            [
+                (ACCESS_ALLOWED_ACE_TYPE, passed_down, FILE_ALL_ACCESS, true),
+                (ACCESS_ALLOWED_ACE_TYPE, passed_down, FILE_ALL_ACCESS, false),
+            ]
+        );
+        assert!(restrict(&folder).unwrap());
         assert!(
-            Security::of(&wide(folder.path().as_os_str()))
+            Security::of(&wide(folder.as_os_str()))
                 .unwrap()
                 .is_protected()
         );
