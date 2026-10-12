@@ -300,7 +300,8 @@ fn a_package_that_would_write_outside_is_refused() {
     let evil = setup.package("steamcmd_evil", &[("../outside.txt", Entry::File(b"x"))]);
     let result = setup.install(&Setup::manifest(1, vec![evil]), &Cell::new(0));
     assert!(
-        matches!(&result, Err(Error::Package { reason, .. }) if reason.contains("outside steamcmd's folder")),
+        matches!(&result, Err(Error::Package { reason, .. })
+            if reason == "holds \"../outside.txt\", which would land outside steamcmd's folder"),
         "{result:?}"
     );
     assert!(!setup.home.join("outside.txt").exists());
