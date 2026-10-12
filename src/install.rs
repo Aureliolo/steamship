@@ -349,7 +349,7 @@ fn unpack(archive: &Path, into: &Path, name: &str) -> Result<(), Error> {
         let Some(relative) = entry.enclosed_name() else {
             return Err(refuse(format!(
                 "holds \"{}\", which would land outside steamcmd's folder",
-                entry.name()
+                String::from_utf8_lossy(entry.name_raw())
             )));
         };
         let target = into.join(&relative);
