@@ -65,7 +65,10 @@ fn run(command: Command) -> ExitCode {
             clap_complete::generate(shell, &mut Cli::command(), "steamship", &mut io::stdout());
             ExitCode::SUCCESS
         }
-        Command::Check { script } => run_check(&script),
+        Command::Check {
+            script,
+            scripts_only,
+        } => run_check(&script, scripts_only),
         Command::Assets { folder } => run_assets(&folder),
         Command::Ci {
             script,
@@ -733,18 +736,27 @@ fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Refuses, naming every problem, when `check` found any; otherwise shows what was checked.
-fn checked(script: &Path) -> Result<check::Report, ExitCode> {
-    let report = check::check(script);
+/// Refuses, naming every problem, when `check` found any; otherwise shows what was checked. With
+/// `scripts_only`, the content the scripts map is left unchecked.
+fn checked(script: &Path, scripts_only: bool) -> Result<check::Report, ExitCode> {
+    let report = if scripts_only {
+        check::scripts_only(script)
+    } else {
+        check::check(script)
+    };
     if report.problems.is_empty() {
-        let files = report.depots.iter().map(|depot| depot.files.len()).sum();
+        let what = if report.content {
+            let files = report.depots.iter().map(|depot| depot.files.len()).sum();
+            format!("{}, checked", show::counted(files, "file"))
+        } else {
+            "scripts checked".to_owned()
+        };
         show::done(
             "app",
             &format!(
-                "{}, {}, {}, checked",
+                "{}, {}, {what}",
                 report.app_id.unwrap_or_default(),
                 show::counted(report.depots.len(), "depot"),
-                show::counted(files, "file"),
             ),
         );
         if let (Some(app), Some(branch)) = (report.app_id, report.set_live.as_deref()) {
@@ -854,7 +866,7 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         (Some(packed), None) => packed.account().clone(),
         _ => account(request.account, false)?.0,
     };
-    drop(checked(request.script)?);
+    drop(checked(request.script, false)?);
     let description = upload::commit(request.script)
         .and_then(|commit| upload::description(request.version, &commit))
         .map_err(|error| fail(&error, REFUSED))?;
@@ -1182,12 +1194,15 @@ fn depot_logs(output: &Path) -> Vec<(String, PathBuf)> {
     found
 }
 
-fn run_check(script: &Path) -> ExitCode {
+fn run_check(script: &Path, scripts_only: bool) -> ExitCode {
     show::title("check");
     show::field("script", &script.display().to_string());
-    match checked(script) {
+    match checked(script, scripts_only) {
         Ok(report) => {
-            for depot in &report.depots {
+            if !report.content {
+                show::field("content", "not checked (--scripts-only)");
+            }
+            for depot in report.depots.iter().filter(|_| report.content) {
                 let symbols = match depot.debug_symbols {
                     0 => String::new(),
                     count => format!(", {count} of them debug symbols"),
@@ -2206,7 +2221,7 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
     }
     let root = repository_root(Path::new("."));
     let script = ci_script(setup.script, root.as_deref())?;
-    drop(checked(&script)?);
+    drop(checked(&script, false)?);
     let repository = match setup.output {
         Some(_) => None,
         None => Some(ci_repository(setup.repo, &script)?),

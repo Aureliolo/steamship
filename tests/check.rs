@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use steamship::check::{Report, check};
+use steamship::check::{Report, check, scripts_only};
 use steamship::scripts::Problem;
 
 pub mod common;
@@ -292,6 +292,38 @@ fn preview_and_local_in_the_script_are_refused() {
 }
 
 #[test]
+fn the_scripts_alone_are_checked_without_the_content_they_map() {
+    let (project, app) = Project::shipping("");
+    fs::remove_dir_all(project.root.join("export")).unwrap();
+    let report = scripts_only(&app);
+    assert_eq!(messages(&report), Vec::<String>::new());
+    assert!(!report.content, "the content was not checked");
+    assert_eq!(report.app_id, Some(1000));
+    assert_eq!(
+        report
+            .depots
+            .iter()
+            .map(|depot| (depot.depot_id, depot.files.len()))
+            .collect::<Vec<_>>(),
+        [(1001, 0), (1002, 0)]
+    );
+    assert!(check(&app).content, "a full check counts the content");
+}
+
+#[test]
+fn the_scripts_alone_still_refuse_preview_and_local() {
+    let (project, app) = Project::shipping(r#""Preview" "1" "Local" "..\htdocs""#);
+    fs::remove_dir_all(project.root.join("export")).unwrap();
+    assert_eq!(
+        messages(&scripts_only(&app)),
+        [
+            "\"Preview\" is set in the script; pass --preview",
+            "\"Local\" is set, which sends the build to a local content server, not to Steam",
+        ]
+    );
+}
+
+#[test]
 fn a_shipped_steam_appid_txt_is_refused() {
     let (project, app) = Project::shipping("");
     let planted = project.file("export/windows/Steam_AppID.txt", b"1000");
@@ -468,10 +500,16 @@ fn elf_program() -> Vec<u8> {
 /// `steamship check` on `script`, in a home of its own and with no key set: a key kept for the
 /// home of whoever runs the tests would otherwise have `check` ask Steam about the test's app.
 fn run(script: &Path) -> (Option<i32>, String, String) {
+    run_with(script, &[])
+}
+
+/// [`run`], with `extra` arguments after the script.
+fn run_with(script: &Path, extra: &[&str]) -> (Option<i32>, String, String) {
     let home = tempfile::tempdir().unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_steamship"))
         .arg("check")
         .arg(script)
+        .args(extra)
         .env("STEAMSHIP_HOME", home.path())
         .env_remove("STEAMSHIP_WEB_API_KEY")
         .envs(common::store::environment())
@@ -503,6 +541,34 @@ fn the_command_says_what_it_mapped_and_exits_0() {
              \u{2713} nothing refused\n",
             app.display()
         )
+    );
+}
+
+#[test]
+fn the_command_checks_the_scripts_alone_before_the_build_and_says_the_content_was_not() {
+    let (project, app) = Project::shipping("");
+    fs::remove_dir_all(project.root.join("export")).unwrap();
+    let (code, stdout, stderr) = run_with(&app, &["--scripts-only"]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
+    assert_eq!(
+        stdout,
+        format!(
+            "steamship check\n  \
+             script    {}\n  \
+             app       \u{2713} 1000, 2 depots, scripts checked\n  \
+             branch    testing, not checked: no Web API key at hand\n    \
+             a branch the app does not have leaves the build uploaded but not live; steamship \
+             login --web-api-key keeps a key to check it with\n  \
+             content   not checked (--scripts-only)\n  \
+             \u{2713} nothing refused\n",
+            app.display()
+        )
+    );
+    let (full, _, _) = run(&app);
+    assert_eq!(
+        full,
+        Some(2_i32),
+        "without the flag, the missing build is refused"
     );
 }
 
@@ -546,6 +612,16 @@ fn refusals(app: &str, depot: Option<&str>) -> Vec<String> {
     }
     let app = project.file("scripts/app.vdf", app.as_bytes());
     messages(&check(&app))
+}
+
+/// The same scripts with no content anywhere, and what `check` says about the scripts alone.
+fn script_refusals(app: &str, depot: Option<&str>) -> Vec<String> {
+    let project = Project::new();
+    if let Some(depot) = depot {
+        project.put("scripts/depot.vdf", depot.as_bytes());
+    }
+    let app = project.file("scripts/app.vdf", app.as_bytes());
+    messages(&scripts_only(&app))
 }
 
 const MAPPING: &str = r#""FileMapping" { "LocalPath" "*" "DepotPath" "." }"#;
@@ -633,6 +709,11 @@ fn every_malformed_script_is_refused_with_what_is_wrong() {
     ];
     for (app, depot, expected) in cases {
         assert_eq!(refusals(&app, depot), [expected], "{app}");
+        assert_eq!(
+            script_refusals(&app, depot),
+            [expected],
+            "the scripts alone: {app}"
+        );
     }
 }
 

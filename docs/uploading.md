@@ -63,6 +63,14 @@ steamship check steam/app_build.vdf
 It also counts the debug symbols each depot ships (`.pdb`, `.dSYM`, `.debug`) without refusing
 them, since some teams ship them on purpose.
 
+Before the build exists, as in a checkout where only CI builds the game, `--scripts-only` checks
+the scripts alone: everything above except what needs the content, which it says was not
+checked.
+
+```sh
+steamship check steam/app_build.vdf --scripts-only
+```
+
 Keys steamship does not know are passed to steamcmd unchanged. `upload` runs the same check
 first, so a script it would refuse is never sent.
 

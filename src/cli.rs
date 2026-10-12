@@ -110,6 +110,10 @@ pub enum Command {
     Check {
         /// The app build script, such as `steam/app_build.vdf`.
         script: PathBuf,
+        /// Check the scripts alone, not the content they map, as before the build exists;
+        /// `upload` still checks both.
+        #[arg(long)]
+        scripts_only: bool,
     },
     /// Check, build and upload, then print the build ID.
     ///
