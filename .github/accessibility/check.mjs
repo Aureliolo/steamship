@@ -24,7 +24,13 @@ if (pages.length === 0) {
 }
 const axe = await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8");
 
-const browser = await puppeteer.launch({ executablePath: process.env.CHROME, headless: true });
+// The browser's own output goes to the log, since a launch that times out reports nothing else
+// about why the browser never came up.
+const browser = await puppeteer.launch({
+  executablePath: process.env.CHROME,
+  headless: true,
+  dumpio: true,
+});
 let violations = 0;
 try {
   for (const scheme of ["light", "dark"]) {
