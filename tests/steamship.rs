@@ -1930,8 +1930,19 @@ fn login_then_look() -> String {
 
 #[test]
 fn login_on_a_terminal_asks_for_the_account_shows_it_as_typed_and_refuses_a_bad_one() {
+    typing_a_bad_account(&[("STEAMSHIP_NO_UPDATE_CHECK", "1"), ("NO_COLOR", "")]);
+}
+
+#[test]
+fn backspace_at_a_prompt_takes_the_character_off_the_screen_with_colour_turned_off() {
+    typing_a_bad_account(&[("STEAMSHIP_NO_UPDATE_CHECK", "1"), ("NO_COLOR", "1")]);
+}
+
+/// Types an account name that is not one at `steamship login`, with `variables` set, taking a
+/// character back on the way.
+fn typing_a_bad_account(variables: &[(&str, &str)]) {
     let home = tempfile::tempdir().unwrap();
-    let mut session = Session::start(&login_then_look(), home.path());
+    let mut session = Session::start_with(&login_then_look(), home.path(), variables);
     session.wait_for("account");
     assert!(
         session.seen().contains("uploads your build to Steam"),
@@ -1943,7 +1954,10 @@ fn login_on_a_terminal_asks_for_the_account_shows_it_as_typed_and_refuses_a_bad_
     session.type_in("\r");
     session.wait_for("\"+quit\u{e9}\u{20ac}\u{1f600}\" is not a Steam account name");
     looks_as_it_was(&mut session, "exited 2");
-    assert!(!home.path().join("account").exists());
+    assert!(
+        !home.path().join("account").exists(),
+        "a refused account is not kept"
+    );
 }
 
 /// A home in which GitHub was last found, a moment ago, to have steamship 99.0.0 out.
