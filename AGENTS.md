@@ -3,9 +3,6 @@
 How changes are made here, for people and coding agents alike. CI enforces most of it; the rest
 is what review asks for.
 
-These instructions live in this file alone. Claude Code reads AGENTS.md only where no CLAUDE.md
-sits beside it, so CI fails on a CLAUDE.md anywhere in the tree.
-
 ## Writing
 
 Everything a person reads counts: messages, help text, docs, comments, commit messages.
@@ -16,6 +13,8 @@ Everything a person reads counts: messages, help text, docs, comments, commit me
   `dashes` job fails on either.
 - No marketing filler. The words in `.github/hype-words.txt` fail the `hype` job. Say what
   steamship does, and give a number only when it was measured.
+- Describe steamship as it is meant to be: no status lines, "not yet" or caveats for a gap that
+  is about to close.
 - A message says what happened and what to do next, naming the file, app or branch it is about.
 - Never print, log or write in plain text a password, a Steam Guard code, a login token or a Web
   API key, nor anything that holds one.
@@ -49,8 +48,11 @@ Everything a person reads counts: messages, help text, docs, comments, commit me
   its arguments.
 - steamship never sets the default branch live and never describes it: Valve keeps both to the
   Steamworks site, and `check` refuses a script that tries.
+- Every line steamcmd or Steam is expected to print, in code or a test fixture, is copied from a
+  real run, never guessed.
 - In scope: getting a game's builds, content and configuration into Steamworks, and checking
-  them there. Out of scope: financial reports and live operations.
+  them there. Out of scope: financial reports (sales, wishlists) and live operations (Workshop
+  moderation, game server tokens, cheat reports).
 
 ## Supply chain
 
