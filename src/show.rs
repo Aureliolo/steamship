@@ -38,6 +38,12 @@ pub fn divert() {
     DIVERTED.store(true, Ordering::Relaxed);
 }
 
+/// Whether standard output is kept for what a program reads, after [`divert`].
+#[must_use]
+pub fn diverted() -> bool {
+    DIVERTED.load(Ordering::Relaxed)
+}
+
 /// A line for a person, on standard output, or standard error once [`divert`]ed.
 macro_rules! say {
     ($($line:tt)*) => {

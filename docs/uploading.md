@@ -158,6 +158,43 @@ is live on it. So the first upload of a script that sets a beta branch live leav
 Steam, live nowhere. In Steamworks, under SteamPipe, Builds, set that build live on the default
 branch, create the branch the script names, then upload again or `promote` the build.
 
+For a script that runs steamship, `builds --json` prints the branches and builds on standard
+output as one line of JSON, here spread out, and sends everything meant for a person to
+standard error:
+
+```json
+{
+  "app": 480,
+  "branches": [
+    {"name": "testing", "build_id": 12345678, "description": "0.3.0", "password": true}
+  ],
+  "builds": [
+    {
+      "build_id": 12345678,
+      "created": "2026-10-13T17:01:31Z",
+      "description": "0.3.0 a1b2c3d4e5f6",
+      "version": "0.3.0",
+      "commit": "a1b2c3d4e5f6",
+      "live_on": ["testing"]
+    }
+  ]
+}
+```
+
+`password` says whether players need the branch's password. A build's `version` and `commit`
+are read back from the description `upload` gave it, and are null for a build described
+otherwise; Steam does not say when a build was set live. When Steam does not answer, the line
+is an `error` with a `code` and a `message`, and the exit code is 1:
+
+```json
+{"app": 480, "error": {"code": "no-build-live", "message": "Steam answered HTTP 500; ..."}}
+```
+
+`no-build-live` is Steam's answer while no build is live on the app's default branch. The
+other codes are `key-refused`, `http-error`, `unreachable`, `unreadable` and `steam-failed`. A
+run refused before Steam is asked, such as one with no key, prints no JSON and exits 2; with
+`--json`, steamship never asks for a key.
+
 All three use Steam's partner Web API, which steamcmd cannot reach, with the publisher key of
 a group that holds the app, from Steamworks under Users & Permissions, Manage Groups. The key
 comes from `STEAMSHIP_WEB_API_KEY`, or else from the one steamship keeps. At a terminal with
@@ -258,6 +295,11 @@ round, each display name, description or hidden flag that differs, and each icon
 of. It ends with how many of the file's achievements match, and of its stats when it lists
 any, such as `14 of 15 achievements match: 1 differs`. Run it before a release, and the release
 waits while the two have drifted apart.
+
+`achievements --json` prints what Steam holds on standard output as one line of JSON, with the
+achievements and stats in the keys the file below uses, each achievement's `icon` and
+`icon_locked` added as addresses, or null where Steam has none. Steam failing is an `error` as
+`builds --json` gives it. It does not go with `--check`.
 
 The file lists each achievement by the API name the game unlocks it with, and each stat by the
 one the game sets it by:
