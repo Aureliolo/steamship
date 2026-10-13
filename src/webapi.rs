@@ -12,7 +12,7 @@ use std::error;
 use std::fmt;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use ureq::Body;
 use ureq::http::Response;
 use zeroize::Zeroizing;
@@ -94,6 +94,32 @@ impl fmt::Display for Error {
 }
 
 impl error::Error for Error {}
+
+impl Error {
+    /// What went wrong, as a word a program can match on, which `--json` gives with the message.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::NotAKey => "not-a-key",
+            Self::Refused => "key-refused",
+            Self::Status(..) => "http-error",
+            Self::Unreachable => "unreachable",
+            Self::Unreadable(_) => "unreadable",
+            Self::Failed(_) => "steam-failed",
+        }
+    }
+}
+
+/// What `--json` prints when Steam did not answer about `app`: the code from [`Error::code`],
+/// or `no-build-live` when `why` says that is the reason, and the message a person would read.
+#[must_use]
+pub fn error_json(app: u32, error: &Error, why: Option<&str>) -> Value {
+    let (code, message) = why.map_or_else(
+        || (error.code(), error.to_string()),
+        |why| ("no-build-live", format!("{error}; {why}")),
+    );
+    json!({ "app": app, "error": { "code": code, "message": message } })
+}
 
 /// A branch of an app, and the build live on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -545,6 +571,107 @@ impl Overview {
         });
         branches.chain(builds).collect()
     }
+
+    /// The branches and builds of `app` as `builds --json` prints them. A build's `version` and
+    /// `commit` are read back from the description `upload` wrote, and are null for a build
+    /// described otherwise; `created` is null when Steam gave no time.
+    #[must_use]
+    pub fn json(&self, app: u32) -> Value {
+        let branches: Vec<Value> = self
+            .branches
+            .iter()
+            .map(|branch| {
+                json!({
+                    "name": shown_name(&branch.name),
+                    "build_id": branch.build_id,
+                    "description": branch.description,
+                    "password": branch.locked,
+                })
+            })
+            .collect();
+        let builds: Vec<Value> = self
+            .builds
+            .iter()
+            .map(|build| {
+                let (version, commit) = version_and_commit(&build.description).unzip();
+                let live_on: Vec<&str> = self
+                    .branches
+                    .iter()
+                    .filter(|branch| branch.build_id == build.build_id)
+                    .map(|branch| shown_name(&branch.name))
+                    .collect();
+                json!({
+                    "build_id": build.build_id,
+                    "created": (build.created > 0).then(|| timestamp(build.created)),
+                    "description": build.description,
+                    "version": version,
+                    "commit": commit,
+                    "live_on": live_on,
+                })
+            })
+            .collect();
+        json!({ "app": app, "branches": branches, "builds": builds })
+    }
+}
+
+impl Schema {
+    /// The achievements and stats of `app` as `achievements --json` prints them; an icon Steam
+    /// gave none of is null.
+    #[must_use]
+    pub fn json(&self, app: u32) -> Value {
+        let icon = |address: &str| (!address.is_empty()).then(|| address.to_owned());
+        let achievements: Vec<Value> = self
+            .achievements
+            .iter()
+            .map(|achievement| {
+                json!({
+                    "api_name": achievement.api_name,
+                    "name": achievement.name,
+                    "description": achievement.description,
+                    "hidden": achievement.hidden,
+                    "icon": icon(&achievement.icon),
+                    "icon_locked": icon(&achievement.icon_locked),
+                })
+            })
+            .collect();
+        let stats: Vec<Value> = self
+            .stats
+            .iter()
+            .map(|stat| {
+                json!({
+                    "api_name": stat.api_name,
+                    "name": stat.name,
+                    "default": stat.default,
+                })
+            })
+            .collect();
+        json!({ "app": app, "achievements": achievements, "stats": stats })
+    }
+}
+
+/// The version and commit in a description `upload` wrote, which is the version, a space and
+/// the commit Git abbreviated: 7 to 40 lowercase hexadecimal digits.
+#[must_use]
+pub fn version_and_commit(description: &str) -> Option<(&str, &str)> {
+    let (version, commit) = description.rsplit_once(' ')?;
+    let hexadecimal = (7..=40).contains(&commit.len())
+        && commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    (hexadecimal && !version.trim().is_empty()).then_some((version, commit))
+}
+
+/// `seconds` since 1970 as an ISO 8601 time in UTC, such as `2026-10-13T14:02:11Z`.
+#[must_use]
+pub fn timestamp(seconds: u64) -> String {
+    let (year, month, day) = date(seconds);
+    let of_day = seconds.rem_euclid(86_400);
+    format!(
+        "{year}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        of_day.div_euclid(3_600),
+        of_day.rem_euclid(3_600).div_euclid(60),
+        of_day.rem_euclid(60)
+    )
 }
 
 /// Where a debug build, as the tests run, may be sent instead of Steam.
@@ -1620,5 +1747,125 @@ mod tests {
         assert_eq!(date(951_782_400), (2000, 2, 29));
         assert_eq!(date(1_790_553_599), (2026, 9, 27));
         assert_eq!(date(4_107_542_400), (2100, 3, 1));
+    }
+
+    #[test]
+    fn a_time_is_written_in_iso_8601_to_the_second_in_utc() {
+        assert_eq!(timestamp(0), "1970-01-01T00:00:00Z");
+        assert_eq!(timestamp(1_790_553_599), "2026-09-27T23:59:59Z");
+        assert_eq!(timestamp(1_791_910_891), "2026-10-13T17:01:31Z");
+    }
+
+    #[test]
+    fn only_a_description_upload_wrote_gives_a_version_and_commit() {
+        for (description, expected) in [
+            ("0.1.0 960e3285f582", Some(("0.1.0", "960e3285f582"))),
+            ("1.4.0 beta 2 abc1234", Some(("1.4.0 beta 2", "abc1234"))),
+            (
+                "v2 0123456789abcdef0123456789abcdef01234567",
+                Some(("v2", "0123456789abcdef0123456789abcdef01234567")),
+            ),
+            ("0.1.0", None),
+            ("0.1.0 abc123", None),
+            ("0.1.0 0123456789abcdef0123456789abcdef012345678", None),
+            ("0.1.0 960E3285F582", None),
+            ("0.1.0 960e3285g582", None),
+            (" 960e3285f582", None),
+            ("Public default branch", None),
+        ] {
+            assert_eq!(version_and_commit(description), expected, "{description:?}");
+        }
+    }
+
+    #[test]
+    fn an_icon_steam_gave_none_of_is_null() {
+        let schema = Schema {
+            achievements: vec![Achievement {
+                api_name: "first_job".to_owned(),
+                name: "Open for business".to_owned(),
+                description: String::new(),
+                hidden: false,
+                icon: "https://cdn/w.jpg".to_owned(),
+                icon_locked: String::new(),
+            }],
+            stats: Vec::new(),
+        };
+        assert_eq!(
+            schema.json(5_335_950),
+            json!({"app": 5_335_950_u32, "stats": [], "achievements": [{
+                "api_name": "first_job", "name": "Open for business", "description": "",
+                "hidden": false, "icon": "https://cdn/w.jpg", "icon_locked": null,
+            }]})
+        );
+    }
+
+    #[test]
+    fn a_build_with_no_time_is_created_null_and_one_live_on_both_names_both() {
+        let overview = Overview {
+            branches: vec![
+                Branch {
+                    name: "public".to_owned(),
+                    build_id: 7,
+                    description: String::new(),
+                    locked: false,
+                },
+                Branch {
+                    name: "testing".to_owned(),
+                    build_id: 7,
+                    description: String::new(),
+                    locked: false,
+                },
+            ],
+            builds: vec![Build {
+                build_id: 7,
+                description: "0.1.0".to_owned(),
+                created: 0,
+            }],
+        };
+        assert_eq!(
+            overview.json(480).pointer("/builds/0"),
+            Some(&json!({
+                "build_id": 7_u64, "created": null, "description": "0.1.0", "version": null,
+                "commit": null, "live_on": ["default", "testing"],
+            }))
+        );
+    }
+
+    #[test]
+    fn every_failure_has_a_code_of_its_own() {
+        let codes: Vec<&str> = [
+            Error::NotAKey,
+            Error::Refused,
+            Error::Status(500, String::new()),
+            Error::Unreachable,
+            Error::Unreadable("betas"),
+            Error::Failed("no".to_owned()),
+        ]
+        .iter()
+        .map(Error::code)
+        .collect();
+        assert_eq!(
+            codes,
+            [
+                "not-a-key",
+                "key-refused",
+                "http-error",
+                "unreachable",
+                "unreadable",
+                "steam-failed"
+            ]
+        );
+        let held = error_json(
+            5_335_970,
+            &Error::Status(500, String::new()),
+            Some("none live"),
+        );
+        assert_eq!(
+            held,
+            json!({"app": 5_335_970_u32, "error": {
+                "code": "no-build-live",
+                "message": "Steam answered HTTP 500; none live",
+            }})
+        );
     }
 }

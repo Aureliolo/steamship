@@ -164,6 +164,10 @@ pub enum Command {
         /// How many of the last builds to list.
         #[arg(long, default_value_t = 10)]
         count: u32,
+        /// Print the branches and builds on standard output as one line of JSON, or what Steam
+        /// failed with as an `error` holding a `code`. Everything else goes to standard error.
+        #[arg(long)]
+        json: bool,
     },
     /// Show an app's achievements and stats, or check them against a file.
     ///
@@ -181,6 +185,11 @@ pub enum Command {
         /// with its `api_name`, `name` and `default`.
         #[arg(long, value_name = "FILE")]
         check: Option<PathBuf>,
+        /// Print the achievements and stats on standard output as one line of JSON, or what
+        /// Steam failed with as an `error` holding a `code`. Everything else goes to standard
+        /// error.
+        #[arg(long, conflicts_with = "check")]
+        json: bool,
     },
     /// Check store and library artwork against Valve's sizes, before it is uploaded.
     ///

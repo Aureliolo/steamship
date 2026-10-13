@@ -89,8 +89,10 @@ fn run(command: Command) -> ExitCode {
             depots,
             folder,
         } => run_init(app, depots, &folder),
-        Command::Builds { app, count } => either(try_builds(&app, count)),
-        Command::Achievements { app, check } => either(try_achievements(&app, check.as_deref())),
+        Command::Builds { app, count, json } => either(try_builds(&app, count, json)),
+        Command::Achievements { app, check, json } => {
+            either(try_achievements(&app, check.as_deref(), json))
+        }
         Command::DrmWrap {
             app,
             executable,
@@ -1270,7 +1272,8 @@ fn web_api(home: &Path) -> Result<(webapi::Api, KeyFrom), ExitCode> {
             return Err(fail(&error, FAILED));
         }
     }
-    if !io::stdin().is_terminal() {
+    // A program reading standard output cannot be asked for a key on it.
+    if !io::stdin().is_terminal() || show::diverted() {
         let keep = Hint {
             before: "run ",
             command: "steamship login --web-api-key",
@@ -1445,7 +1448,10 @@ fn web_api_failed(spinner: Spinner, error: &webapi::Error) -> ExitCode {
     fail(error, FAILED)
 }
 
-fn try_builds(app: &str, count: u32) -> Result<ExitCode, ExitCode> {
+fn try_builds(app: &str, count: u32, json: bool) -> Result<ExitCode, ExitCode> {
+    if json {
+        show::divert();
+    }
     show::title("builds");
     let app_id = app_named(app)?;
     let home = home()?;
@@ -1456,8 +1462,14 @@ fn try_builds(app: &str, count: u32) -> Result<ExitCode, ExitCode> {
         Err(error) => {
             let why = why_unanswered(&api, app_id, &error);
             let code = web_api_failed(spinner, &error);
-            if let Some(why) = why {
-                show::note(&why);
+            if let Some(why) = &why {
+                show::note(why);
+            }
+            if json {
+                show::plain(&format!(
+                    "{}\n",
+                    webapi::error_json(app_id, &error, why.as_deref())
+                ));
             }
             return Err(code);
         }
@@ -1465,6 +1477,9 @@ fn try_builds(app: &str, count: u32) -> Result<ExitCode, ExitCode> {
     spinner.done(&overview.summary());
     show::fields(&overview.lines());
     offer_to_keep(&home, &api, from);
+    if json {
+        show::plain(&format!("{}\n", overview.json(app_id)));
+    }
     Ok(ExitCode::SUCCESS)
 }
 
@@ -1485,7 +1500,10 @@ fn achievements_file(path: &Path, app: u32) -> Result<achievements::Listed, Exit
     Ok(listed)
 }
 
-fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCode> {
+fn try_achievements(app: &str, check: Option<&Path>, json: bool) -> Result<ExitCode, ExitCode> {
+    if json {
+        show::divert();
+    }
     show::title("achievements");
     let app_id = app_named(app)?;
     let listed = check
@@ -1496,7 +1514,13 @@ fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCod
     let spinner = Spinner::start("steam", "asking for the achievements", false);
     let held = match api.schema(app_id) {
         Ok(held) => held,
-        Err(error) => return Err(web_api_failed(spinner, &error)),
+        Err(error) => {
+            let code = web_api_failed(spinner, &error);
+            if json {
+                show::plain(&format!("{}\n", webapi::error_json(app_id, &error, None)));
+            }
+            return Err(code);
+        }
     };
     let mut holds = show::counted(held.achievements.len(), "achievement");
     if !held.stats.is_empty() {
@@ -1527,6 +1551,9 @@ fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCod
             )
         });
         show::fields(&achievements.chain(stats).collect::<Vec<_>>());
+        if json {
+            show::plain(&format!("{}\n", held.json(app_id)));
+        }
         return Ok(ExitCode::SUCCESS);
     };
     let drift = achievements::compare(&listed.achievements, &held.achievements);
