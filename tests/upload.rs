@@ -77,7 +77,7 @@ fn steamcmd_gets_a_copy_with_every_path_absolute_and_steamships_keys_set() {
     let steam = project.root.join("steam");
     assert_eq!(
         app.text("ContentRoot"),
-        Some(format!("{}/../export/", slashed(&steam)).as_str())
+        Some(format!("{}/export/", slashed(&project.root)).as_str())
     );
     assert_eq!(
         app.text("BuildOutput"),
@@ -105,7 +105,7 @@ fn a_script_named_by_a_relative_path_gets_absolute_paths_in_its_copy() {
     let steam = path::absolute(relative.parent().unwrap()).unwrap();
     assert_eq!(
         app.text("ContentRoot"),
-        Some(format!("{}/../content/", slashed(&steam)).as_str())
+        Some(format!("{}/content/", slashed(steam.parent().unwrap())).as_str())
     );
     assert_eq!(
         app.block("Depots").unwrap().text("481"),
