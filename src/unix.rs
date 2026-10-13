@@ -6,11 +6,11 @@
 )]
 
 use std::ffi::OsString;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read as _, Seek as _, SeekFrom};
 use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
-use std::os::unix::fs::{PermissionsExt as _, symlink as make_symlink};
+use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _, symlink as make_symlink};
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::panic;
 use std::path::Path;
@@ -442,6 +442,24 @@ pub fn restrict(folder: &Path) -> io::Result<bool> {
     }
     fs::set_permissions(folder, fs::Permissions::from_mode(0o700))?;
     Ok(true)
+}
+
+/// Opens `path` to write, made or emptied, readable and writable by its owner alone before
+/// anything is in it.
+///
+/// # Errors
+///
+/// When the file cannot be opened, or its permissions cannot be set.
+pub fn create_private(path: &Path) -> io::Result<File> {
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    // A file already there keeps its own mode through `open`.
+    file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    Ok(file)
 }
 
 /// Makes `link` a symbolic link to `target`, which is written as given.
