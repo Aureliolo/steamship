@@ -70,9 +70,10 @@ the next run uploads.
 steamship ci --output login.txt
 ```
 
-`--output` writes the login to a file instead of a secret. Give its contents to your CI as the
-variable `STEAMSHIP_LOGIN`, then delete the file. `steamship upload` reads it from there, and
-nothing else about uploading changes.
+`--output` writes the login to a file instead of a secret, readable by you alone whatever its
+folder allows others. Give its contents to your CI as the variable `STEAMSHIP_LOGIN`, then
+delete the file. `steamship upload` reads it from there, and nothing else about uploading
+changes.
 
 A job in a Docker container needs `--security-opt seccomp=unconfined`: Docker's default seccomp
 filter refuses the socket call Valve's 32-bit steamcmd makes, and steamcmd never reaches Steam.
