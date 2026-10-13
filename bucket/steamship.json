@@ -1,18 +1,18 @@
 {
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Uploads game builds to Steam with Valve's steamcmd.",
   "homepage": "https://github.com/Aureliolo/steamship",
   "license": "MIT|Apache-2.0",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/Aureliolo/steamship/releases/download/v0.9.0/steamship-0.9.0-x86_64-pc-windows-msvc.zip",
-      "hash": "0ebb0f3441b093ff530dbc31e7a063493e2d826fe1b76e55853de085d0007bf5",
-      "extract_dir": "steamship-0.9.0-x86_64-pc-windows-msvc"
+      "url": "https://github.com/Aureliolo/steamship/releases/download/v0.9.1/steamship-0.9.1-x86_64-pc-windows-msvc.zip",
+      "hash": "d09cc54bfe48856808bfa4a8c4923e3e77ecea9bdfad1c87e7ec353c3c9e21eb",
+      "extract_dir": "steamship-0.9.1-x86_64-pc-windows-msvc"
     },
     "arm64": {
-      "url": "https://github.com/Aureliolo/steamship/releases/download/v0.9.0/steamship-0.9.0-aarch64-pc-windows-msvc.zip",
-      "hash": "ec6a6d12df4568348035c90c66afa009c75190fd2eedd9ce1a82804cb1f4d87f",
-      "extract_dir": "steamship-0.9.0-aarch64-pc-windows-msvc"
+      "url": "https://github.com/Aureliolo/steamship/releases/download/v0.9.1/steamship-0.9.1-aarch64-pc-windows-msvc.zip",
+      "hash": "7e52f1d60eb76a2424d95803c60e758448bedebf534ceddc6d49acca3428e3f3",
+      "extract_dir": "steamship-0.9.1-aarch64-pc-windows-msvc"
     }
   },
   "bin": "steamship.exe",
