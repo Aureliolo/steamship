@@ -593,8 +593,8 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
     }
 }
 
-/// The one line of JSON `upload --json` printed on standard output, which must be all there is.
-#[cfg(unix)]
+/// The one line of JSON a `--json` command printed on standard output, which must be all there
+/// is.
 fn summary_of(stdout: &str) -> serde_json::Value {
     let mut lines = stdout.lines();
     let line = lines.next().unwrap_or_default();
@@ -3012,6 +3012,97 @@ fn builds_and_promote_use_the_key_set_and_say_what_steam_answered() {
     );
 }
 
+/// `GetAppBetas` and `GetAppBuilds` as Steam answered them for Falcon Ridge Overseer, the builds
+/// trimmed to two and their depots left out.
+const FGM_BETAS: &str = r#"{"response":{"betas":{"public":{"BuildID":25585928,"Description":"Public default branch","ReqPassword":0,"ReqLocalCS":0},"testing":{"BuildID":25913268,"Description":"0.1.0 (960e328)","ReqPassword":1,"ReqLocalCS":0}},"result":1,"message":""}}"#;
+const FGM_BUILDS: &str = r#"{"response":{"builds":{"25913268":{"BuildID":25913268,"CreationTime":1791910891,"Description":"0.1.0 960e3285f582","AccountIDCreator":100556863},"25911651":{"BuildID":25911651,"CreationTime":1791906331,"Description":"0.1.0 d442c9cf02ff","AccountIDCreator":100556863}},"result":1,"message":""}}"#;
+
+#[test]
+fn builds_json_prints_the_branches_and_builds_alone_on_standard_output() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", FGM_BETAS), ("200 OK", FGM_BUILDS)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let (code, stdout, stderr) = steamship(
+        &["builds", "1000010", "--count", "2", "--json"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(
+        summary_of(&stdout),
+        serde_json::json!({
+            "app": 1_000_010_u32,
+            "branches": [
+                {"name": "default", "build_id": 25_585_928_u64,
+                 "description": "Public default branch", "password": false},
+                {"name": "testing", "build_id": 25_913_268_u64,
+                 "description": "0.1.0 (960e328)", "password": true},
+            ],
+            "builds": [
+                {"build_id": 25_913_268_u64, "created": "2026-10-13T17:01:31Z",
+                 "description": "0.1.0 960e3285f582", "version": "0.1.0",
+                 "commit": "960e3285f582", "live_on": ["testing"]},
+                {"build_id": 25_911_651_u64, "created": "2026-10-13T15:45:31Z",
+                 "description": "0.1.0 d442c9cf02ff", "version": "0.1.0",
+                 "commit": "d442c9cf02ff", "live_on": []},
+            ],
+        })
+    );
+    assert!(stderr.contains("2 branches and 2 builds"), "{stderr}");
+    assert!(!stderr.contains(KEY), "never shown");
+}
+
+#[test]
+fn builds_json_names_an_app_with_no_build_live_apart_from_steam_failing() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", ""),
+        ("200 OK", APPS),
+        ("500 Internal Server Error", ""),
+        ("200 OK", APPS),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    for (app, code) in [("1000030", "no-build-live"), ("480", "http-error")] {
+        let (exit, stdout, stderr) = steamship(&["builds", app, "--json"], Some(home.path()), &set);
+        assert_eq!(exit, Some(1_i32), "{stdout}{stderr}");
+        let said = summary_of(&stdout);
+        let app_id: u32 = app.parse().unwrap();
+        assert_eq!(said.get("app"), Some(&app_id.into()), "{said}");
+        assert_eq!(said.pointer("/error/code"), Some(&code.into()), "{said}");
+        let message = said
+            .pointer("/error/message")
+            .and_then(|text| text.as_str());
+        assert!(
+            message.is_some_and(|text| text.starts_with("Steam answered HTTP 500")),
+            "{said}"
+        );
+    }
+}
+
+#[test]
+fn builds_json_with_no_key_asks_for_none_and_prints_no_json() {
+    let _store = common::store::lock();
+    let home = tempfile::tempdir().unwrap();
+    let steamship_program = env!("CARGO_BIN_EXE_steamship");
+    #[cfg(windows)]
+    let line = format!("{steamship_program} builds 1000010 --json");
+    #[cfg(unix)]
+    let line = format!("'{steamship_program}' builds 1000010 --json");
+    let mut session = Session::start(&line, home.path());
+    session.wait_for("no Web API key");
+    assert_eq!(session.end().wait().unwrap(), Some(2_i32));
+    let seen = session.seen();
+    assert!(!seen.contains('{'), "{seen}");
+}
+
 /// An app script for Spacewar's content that sets `branch` live, in a folder of its own.
 fn setting_live(branch: &str) -> (tempfile::TempDir, PathBuf) {
     let folder = tempfile::tempdir().unwrap();
@@ -3248,6 +3339,60 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
     );
     assert_eq!(failed, Some(1_i32), "{failure}");
     assert!(failure.contains("Steam answered HTTP 500"), "{failure}");
+}
+
+#[test]
+fn achievements_json_prints_them_alone_on_standard_output_and_not_with_check() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", SCHEMA), ("200 OK", WITH_STATS)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let (code, stdout, stderr) =
+        steamship(&["achievements", "480", "--json"], Some(home.path()), &set);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(
+        summary_of(&stdout),
+        serde_json::json!({
+            "app": 480_u32,
+            "achievements": [
+                {"api_name": "ACH_WIN_ONE_GAME", "name": "Winner", "description": "Win one game.",
+                 "hidden": false, "icon": "https://cdn/w.jpg", "icon_locked": "https://cdn/w_bw.jpg"},
+                {"api_name": "ACH_TRAVEL_FAR_SINGLE", "name": "Orbiter",
+                 "description": "Travel 500 feet in one life.", "hidden": true,
+                 "icon": "https://cdn/o.jpg", "icon_locked": "https://cdn/o_bw.jpg"},
+            ],
+            "stats": [],
+        })
+    );
+    assert!(stderr.contains("2 achievements on Steam"), "{stderr}");
+
+    let (with_stats, statted, _) =
+        steamship(&["achievements", "480", "--json"], Some(home.path()), &set);
+    assert_eq!(with_stats, Some(0_i32), "{statted}");
+    assert_eq!(
+        summary_of(&statted).get("stats"),
+        Some(&serde_json::json!([
+            {"api_name": "NumGames", "name": "Games played", "default": 0.0_f64},
+            {"api_name": "AverageSpeed", "name": "", "default": 1.5_f64},
+        ]))
+    );
+
+    let (refused, nothing, why) = steamship(
+        &[
+            "achievements",
+            "480",
+            "--json",
+            "--check",
+            "achievements.json",
+        ],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!((refused, nothing.as_str()), (Some(2_i32), ""), "{why}");
+    assert!(why.contains("cannot be used with"), "{why}");
 }
 
 /// `GetSchemaForGame` for an app with stats and no achievements.
