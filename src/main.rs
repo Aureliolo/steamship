@@ -1308,9 +1308,12 @@ fn check_key(api: &webapi::Api) -> Result<(), ExitCode> {
                 "Steam takes the key, for {}",
                 show::counted(apps.len(), "app")
             ));
-            for app in &apps {
-                show::field(&app.app_id.to_string(), &app.name);
-            }
+            show::fields(
+                &apps
+                    .iter()
+                    .map(|app| (app.app_id.to_string(), app.name.clone()))
+                    .collect::<Vec<_>>(),
+            );
             Ok(())
         }
         Err(error) => Err(web_api_failed(spinner, &error)),
@@ -1460,9 +1463,7 @@ fn try_builds(app: &str, count: u32) -> Result<ExitCode, ExitCode> {
         }
     };
     spinner.done(&overview.summary());
-    for (label, line) in overview.lines() {
-        show::field(&label, &line);
-    }
+    show::fields(&overview.lines());
     offer_to_keep(&home, &api, from);
     Ok(ExitCode::SUCCESS)
 }
@@ -1513,15 +1514,19 @@ fn try_achievements(app: &str, check: Option<&Path>) -> Result<ExitCode, ExitCod
                 ),
             );
         }
-        for achievement in &held.achievements {
-            show::field(&achievement.api_name, &achievements::line(achievement));
-        }
-        for stat in &held.stats {
-            show::field(
-                &format!("stat {}", stat.api_name),
-                &achievements::stat_line(stat),
-            );
-        }
+        let achievements = held.achievements.iter().map(|achievement| {
+            (
+                achievement.api_name.clone(),
+                achievements::line(achievement),
+            )
+        });
+        let stats = held.stats.iter().map(|stat| {
+            (
+                format!("stat {}", stat.api_name),
+                achievements::stat_line(stat),
+            )
+        });
+        show::fields(&achievements.chain(stats).collect::<Vec<_>>());
         return Ok(ExitCode::SUCCESS);
     };
     let drift = achievements::compare(&listed.achievements, &held.achievements);
@@ -1918,9 +1923,12 @@ fn try_leaderboards(app: &str, check: Option<&Path>, create: bool) -> Result<Exi
     ));
     offer_to_keep(&home, &api, from);
     let Some(listed) = listed else {
-        for leaderboard in &held {
-            show::field(&leaderboard.name, &leaderboards::line(leaderboard));
-        }
+        show::fields(
+            &held
+                .iter()
+                .map(|leaderboard| (leaderboard.name.clone(), leaderboards::line(leaderboard)))
+                .collect::<Vec<_>>(),
+        );
         return Ok(ExitCode::SUCCESS);
     };
     if create {

@@ -3182,7 +3182,7 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
         "{listed}"
     );
     assert!(
-        listed.contains("  ACH_WIN_ONE_GAME Winner: Win one game.\n"),
+        listed.contains("  ACH_WIN_ONE_GAME      Winner: Win one game.\n"),
         "{listed}"
     );
     assert!(
@@ -3275,7 +3275,7 @@ fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
     assert_eq!(code, Some(0_i32), "{listed}");
     assert!(
         listed.contains("\u{2713} 0 achievements and 2 stats on Steam\n")
-            && listed.contains("  stat NumGames Games played, starts at 0\n")
+            && listed.contains("  stat NumGames     Games played, starts at 0\n")
             && listed.contains("  stat AverageSpeed starts at 1.5\n")
             && !listed.contains("Stats & Achievements"),
         "stats alone are something on Steam: {listed}"
