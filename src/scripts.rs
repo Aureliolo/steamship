@@ -330,6 +330,9 @@ pub fn native(written: &str) -> String {
 mod tests {
     use std::path::MAIN_SEPARATOR;
 
+    #[cfg(unix)]
+    use crate::unix::make_link;
+
     use super::*;
 
     fn separators(path: &Path) -> Vec<char> {
@@ -402,7 +405,7 @@ mod tests {
         let project = tempfile::tempdir().unwrap();
         let elsewhere = tempfile::tempdir().unwrap();
         let steam = project.path().join("steam");
-        crate::unix::make_link(&elsewhere.path().to_string_lossy(), &steam).unwrap();
+        make_link(&elsewhere.path().to_string_lossy(), &steam).unwrap();
         assert_eq!(
             resolve(&steam, "../export"),
             steam.join("..").join("export")
