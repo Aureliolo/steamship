@@ -647,7 +647,10 @@ impl Api {
             "GetAppBuilds/v1",
             &[("appid", app.to_string()), ("count", count.to_string())],
         )?;
-        builds_from(&answer)
+        // Steam answers two builds more than it is asked for.
+        let mut builds = builds_from(&answer)?;
+        builds.truncate(usize::try_from(count).unwrap_or(usize::MAX));
+        Ok(builds)
     }
 
     /// The branches of `app` and its last `count` builds.
@@ -1464,6 +1467,22 @@ mod tests {
             request
                 .starts_with("GET /ISteamApps/GetAppBuilds/v1/?appid=1000010&count=25&steamship="),
             "{request}"
+        );
+    }
+
+    #[test]
+    fn only_the_newest_builds_asked_for_are_kept_of_the_two_more_steam_answers() {
+        let (host, _requests) = answering(
+            "200 OK",
+            r#"{"response": {"builds": {"1232": {}, "1234": {}, "1233": {}}}}"#,
+        );
+        let builds = api(&host).builds(1_000_010, 1).unwrap();
+        assert_eq!(
+            builds
+                .iter()
+                .map(|build| build.build_id)
+                .collect::<Vec<_>>(),
+            [1234]
         );
     }
 
