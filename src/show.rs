@@ -108,8 +108,30 @@ pub fn title(command: &str) {
 
 /// A step: a label, then what it came to.
 pub fn field(label: &str, value: &str) {
-    // A label as wide as the column, such as an achievement's API name, still gets a space.
-    let width = LABEL.max(label.chars().count().saturating_add(1));
+    field_in(width(&[label]), label, value);
+}
+
+/// A list of labels and what each holds, such as an app's achievements, every value in one
+/// column however long a label runs.
+pub fn fields(rows: &[(String, String)]) {
+    let labels: Vec<&str> = rows.iter().map(|(label, _)| label.as_str()).collect();
+    let width = width(&labels);
+    for (label, value) in rows {
+        field_in(width, label, value);
+    }
+}
+
+/// The column values start at after `labels`: the usual one, or past the longest label by a
+/// space.
+fn width(labels: &[&str]) -> usize {
+    labels
+        .iter()
+        .map(|label| label.chars().count().saturating_add(1))
+        .fold(LABEL, usize::max)
+}
+
+/// A field whose value starts at `width`, so that it lines up with the others shown with it.
+fn field_in(width: usize, label: &str, value: &str) {
     say!("  {DIM}{label:<width$}{DIM:#}{value}");
 }
 
