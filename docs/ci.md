@@ -11,7 +11,8 @@ steamship ci
 ```
 
 `ci` finds the repository from `origin` and the app build script by what it holds, checks the
-script, and logs in with the saved login to be sure Steam takes it. Then it sets the login as the
+scripts but not the content they map, which need not be built yet, and logs in with the saved
+login to be sure Steam takes it. Then it sets the login as the
 repository secret `STEAMSHIP_LOGIN` through the GitHub command line,
 [`gh`](https://cli.github.com), and shows the step to add to your workflow, after the step that
 builds your content:
