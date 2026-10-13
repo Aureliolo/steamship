@@ -8,7 +8,7 @@
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::vdf::{self, Block, Value};
 
@@ -278,6 +278,9 @@ fn parent(path: &Path) -> PathBuf {
 /// was meant as. The result is rebuilt from its parts, so it is shown with the system's own
 /// separator throughout, however `base` and the script were written; a trailing separator, which
 /// marks a folder in `ContentRoot`, is kept.
+///
+/// A `..` goes with the folder before it wherever the system would take both out anyway, so a
+/// person reads `export` rather than `steam/../export`.
 #[must_use]
 pub fn resolve(base: &Path, written: &str) -> PathBuf {
     let native = native(written);
@@ -287,12 +290,30 @@ pub fn resolve(base: &Path, written: &str) -> PathBuf {
     } else {
         base.join(path)
     };
-    let rebuilt: PathBuf = joined.components().collect();
+    let mut rebuilt = PathBuf::new();
+    for component in joined.components() {
+        let folded = component == Component::ParentDir && cancels(&rebuilt) && rebuilt.pop();
+        if !folded {
+            rebuilt.push(component);
+        }
+    }
+    if rebuilt.as_os_str().is_empty() {
+        rebuilt.push(".");
+    }
     if native.ends_with(['/', '\\']) {
         rebuilt.join("")
     } else {
         rebuilt
     }
+}
+
+/// Whether a `..` after `folder` leads where `folder`'s own parent is.
+///
+/// Windows takes a `..` out with the name before it, whatever is on disk. Elsewhere `..` leads
+/// to the parent of where a symbolic link points, so it cancels only a real folder.
+fn cancels(folder: &Path) -> bool {
+    matches!(folder.components().next_back(), Some(Component::Normal(_)))
+        && (cfg!(windows) || fs::symlink_metadata(folder).is_ok_and(|found| found.is_dir()))
 }
 
 /// A script path with the host's separator. On Windows both already work.
@@ -359,6 +380,32 @@ mod tests {
             !resolve(Path::new("steam"), "../export")
                 .to_string_lossy()
                 .ends_with(MAIN_SEPARATOR)
+        );
+    }
+
+    #[test]
+    fn a_parent_after_a_real_folder_is_shown_as_where_it_leads() {
+        let project = tempfile::tempdir().unwrap();
+        let steam = project.path().join("steam");
+        fs::create_dir_all(&steam).unwrap();
+        assert_eq!(
+            resolve(&steam, "..\\export\\"),
+            project.path().join("export").join("")
+        );
+        assert_eq!(resolve(&steam, "../.."), project.path().parent().unwrap());
+        assert_eq!(resolve(Path::new("src"), "..").as_os_str(), ".");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_parent_after_a_symbolic_link_is_kept_since_it_leads_past_where_the_link_points() {
+        let project = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        let steam = project.path().join("steam");
+        crate::unix::make_link(&elsewhere.path().to_string_lossy(), &steam).unwrap();
+        assert_eq!(
+            resolve(&steam, "../export"),
+            steam.join("..").join("export")
         );
     }
 }
