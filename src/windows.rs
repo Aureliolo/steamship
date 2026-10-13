@@ -7,11 +7,12 @@
 
 use std::env;
 use std::ffi::{OsStr, OsString, c_void};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{self, PipeReader, PipeWriter};
 use std::iter;
 use std::mem::MaybeUninit;
 use std::os::windows::ffi::OsStrExt as _;
+use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle, RawHandle};
 use std::panic;
 use std::path::Path;
@@ -24,12 +25,12 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use windows_sys::Win32::Foundation::{
-    ERROR_NOT_FOUND, ERROR_SUCCESS, GENERIC_ALL, HANDLE, HANDLE_FLAG_INHERIT, HLOCAL,
-    INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    ERROR_NOT_FOUND, ERROR_SUCCESS, GENERIC_ALL, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT,
+    HLOCAL, INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
     WIN32_ERROR,
 };
 use windows_sys::Win32::Security::Authorization::{
-    GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+    GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW, SetSecurityInfo,
 };
 use windows_sys::Win32::Security::Credentials::{
     CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree, CredReadW,
@@ -41,7 +42,7 @@ use windows_sys::Win32::Security::{
     GetTokenInformation, InitializeAcl, OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
     PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows_sys::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+use windows_sys::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, WRITE_DAC};
 use windows_sys::Win32::System::Console::{
     CONSOLE_MODE, COORD, ClosePseudoConsole, CreatePseudoConsole, ENABLE_ECHO_INPUT,
     ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, GetConsoleMode, GetStdHandle, HPCON, ReadConsoleW,
@@ -914,9 +915,64 @@ pub fn restrict(folder: &Path) -> io::Result<bool> {
     allow_alone(&name, &[user.sid()]).map(|()| true)
 }
 
+/// Opens `path` to write, made or emptied, as the current user's alone: its permissions are its
+/// own, not its folder's, before anything is in it.
+///
+/// # Errors
+///
+/// When the file cannot be opened, or its permissions cannot be set.
+pub fn create_private(path: &Path) -> io::Result<File> {
+    // Nobody else can open the file while it is held, so nobody can in the moment between its
+    // being made with its folder's permissions and its getting its own.
+    let file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .access_mode(GENERIC_WRITE | WRITE_DAC)
+        .share_mode(0)
+        .open(path)?;
+    let user = User::current()?;
+    let list = list_allowing(&[user.sid()], 0)?;
+    // SAFETY: the handle is open with WRITE_DAC, and `list` is a complete list; the owner, the
+    // group and the audit list are left as they are.
+    let status = unsafe {
+        SetSecurityInfo(
+            file.as_raw_handle(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            list.as_ptr().cast(),
+            ptr::null(),
+        )
+    };
+    win32(status)?;
+    Ok(file)
+}
+
 /// Gives the file or folder `name` permissions of its own, not inherited from above: one entry
 /// for each of `sids`, allowing everything and passed down to all a folder holds.
 fn allow_alone(name: &[u16], sids: &[PSID]) -> io::Result<()> {
+    let list = list_allowing(sids, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)?;
+    // SAFETY: `name` is NUL-terminated and `list` is a complete list; the owner, the group and
+    // the audit list are left as they are.
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            ptr::null_mut(),
+            ptr::null_mut(),
+            list.as_ptr().cast(),
+            ptr::null(),
+        )
+    };
+    win32(status)
+}
+
+/// An access list with one entry for each of `sids`, allowing everything, with `flags`; held in
+/// words so that it is aligned as an ACL must be.
+fn list_allowing(sids: &[PSID], flags: u32) -> io::Result<Vec<u32>> {
     // An entry's size counts its SID in place of the SidStart field that marks where it begins.
     let entry = size_of_u32::<ACCESS_ALLOWED_ACE>().saturating_sub(size_of_u32::<u32>());
     let size = sids.iter().fold(size_of_u32::<ACL>(), |size, &sid| {
@@ -932,33 +988,12 @@ fn allow_alone(name: &[u16], sids: &[PSID]) -> io::Result<()> {
     }
     for &sid in sids {
         // SAFETY: the list was sized for exactly these entries, and each SID is copied into it.
-        if unsafe {
-            AddAccessAllowedAceEx(
-                acl,
-                ACL_REVISION,
-                OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
-                FILE_ALL_ACCESS,
-                sid,
-            )
-        } == 0_i32
+        if unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION, flags, FILE_ALL_ACCESS, sid) } == 0_i32
         {
             return Err(io::Error::last_os_error());
         }
     }
-    // SAFETY: `name` is NUL-terminated and `acl` is a complete list; the owner, the group and the
-    // audit list are left as they are.
-    let status = unsafe {
-        SetNamedSecurityInfoW(
-            name.as_ptr(),
-            SE_FILE_OBJECT,
-            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            acl,
-            ptr::null(),
-        )
-    };
-    win32(status)
+    Ok(storage)
 }
 
 fn win32(status: WIN32_ERROR) -> io::Result<()> {
@@ -1518,8 +1553,9 @@ mod tests {
         assert!(!restrict(folder.path()).unwrap(), "already so");
     }
 
-    #[test]
-    fn a_new_folder_takes_its_permissions_from_its_parent_and_is_not_only_its_users() {
+    /// A temporary folder shared by the current user and the system, wherever the temporary folder
+    /// lives.
+    fn shared_folder() -> tempfile::TempDir {
         let parent = tempfile::tempdir().unwrap();
         let user = User::current().unwrap();
         let mut system = vec![0_u32; usize::try_from(SECURITY_MAX_SID_SIZE.div_ceil(4)).unwrap()];
@@ -1534,12 +1570,52 @@ mod tests {
             )
         };
         assert_ne!(made, 0_i32, "{}", io::Error::last_os_error());
-        // Wherever the temporary folder lives, the parent is shared by its user and the system.
         allow_alone(
             &wide(parent.path().as_os_str()),
             &[user.sid(), system.as_mut_ptr().cast()],
         )
         .unwrap();
+        parent
+    }
+
+    #[test]
+    fn a_private_file_is_its_users_alone_whatever_its_folder_allows_new_or_already_there() {
+        let parent = shared_folder();
+        let user = User::current().unwrap();
+        let fresh = parent.path().join("login.txt");
+        let there = parent.path().join("older login.txt");
+        fs::write(&there, "an older login").unwrap();
+        assert_eq!(
+            Security::of(&wide(there.as_os_str()))
+                .unwrap()
+                .entries(&user)
+                .len(),
+            2
+        );
+        for path in [&fresh, &there] {
+            let held = create_private(path).unwrap();
+            assert!(
+                File::open(path).is_err(),
+                "{} can be opened while it is held",
+                path.display()
+            );
+            drop(held);
+            let security = Security::of(&wide(path.as_os_str())).unwrap();
+            assert!(security.is_protected(), "{}", path.display());
+            assert_eq!(
+                security.entries(&user),
+                [(ACCESS_ALLOWED_ACE_TYPE, 0, FILE_ALL_ACCESS, true)],
+                "{}",
+                path.display()
+            );
+            assert_eq!(fs::read(path).unwrap(), b"", "{}", path.display());
+        }
+    }
+
+    #[test]
+    fn a_new_folder_takes_its_permissions_from_its_parent_and_is_not_only_its_users() {
+        let parent = shared_folder();
+        let user = User::current().unwrap();
         let folder = parent.path().join("steamcmd");
         fs::create_dir_all(&folder).unwrap();
         let security = Security::of(&wide(folder.as_os_str())).unwrap();
@@ -1660,7 +1736,7 @@ mod tests {
     fn a_kept_key_is_shown_in_credential_manager_by_what_it_is() {
         // The lock the integration tests take (tests/common): the Credential Manager loses
         // changes made at the same moment by different processes.
-        let store = fs::OpenOptions::new()
+        let store = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(false)

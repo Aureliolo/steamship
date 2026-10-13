@@ -2,13 +2,14 @@
 //!
 //! steamcmd's saved login is a token in one file. `steamship ci` packs that file, the build
 //! account's name and the day it packed them into one value for a CI secret, and `upload` and
-//! `status` unpack it into the home when `STEAMSHIP_LOGIN` holds it. It never holds a password or a Steam Guard secret, but
-//! it logs the account in until the token expires, so it is kept like one.
+//! `status` unpack it into the home when `STEAMSHIP_LOGIN` holds it. It never holds a password
+//! or a Steam Guard secret, but it logs the account in until the token expires, so it is kept
+//! like one.
 
 use std::error;
 use std::fmt;
 use std::fs;
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use zeroize::Zeroizing;
@@ -17,8 +18,12 @@ use crate::account::Account;
 use crate::digest;
 use crate::platform::Platform;
 use crate::steamcmd;
+#[cfg(unix)]
+use crate::unix as native;
 use crate::vdf;
 use crate::webapi;
+#[cfg(windows)]
+use crate::windows as native;
 
 /// The environment variable a CI hands the packed login over in, and the secret's name.
 pub const VARIABLE: &str = "STEAMSHIP_LOGIN";
@@ -224,26 +229,14 @@ pub fn day(seconds: u64) -> String {
     format!("{year:04}-{month:02}-{day:02}")
 }
 
-/// Writes `contents` to `path` readable by its owner alone where the file system says who may
-/// read; on Windows the file takes the permissions of its folder.
+/// Writes `contents` to `path`, for the current user alone to read, whatever its folder allows
+/// others.
 ///
 /// # Errors
 ///
 /// When the file cannot be written.
 pub fn write_private(path: &Path, contents: &[u8]) -> io::Result<()> {
-    let mut options = fs::OpenOptions::new();
-    let options = options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    let options = {
-        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
-
-        // A file already there keeps its own mode through `open`, so it is set as well.
-        if path.exists() {
-            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-        }
-        options.mode(0o600)
-    };
-    io::Write::write_all(&mut options.open(path)?, contents)
+    native::create_private(path)?.write_all(contents)
 }
 
 /// Whether `name` can name a GitHub Actions secret: letters, digits and underscores, not
