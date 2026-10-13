@@ -2221,7 +2221,10 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
     }
     let root = repository_root(Path::new("."));
     let script = ci_script(setup.script, root.as_deref())?;
-    drop(checked(&script, false)?);
+    // CI is set up before it has built anything, and a checkout seldom holds the build, so the
+    // content is left to the check each upload makes.
+    drop(checked(&script, true)?);
+    show::field("content", "not checked; each upload checks it");
     let repository = match setup.output {
         Some(_) => None,
         None => Some(ci_repository(setup.repo, &script)?),
