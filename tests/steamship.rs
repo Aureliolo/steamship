@@ -912,9 +912,10 @@ fn ci_outside_a_repository_asks_for_the_script_and_exits_2() {
 }
 
 #[test]
-fn ci_finds_the_script_but_needs_a_github_origin_and_exits_2() {
+fn ci_checks_the_scripts_alone_before_the_build_exists_but_needs_a_github_origin_and_exits_2() {
     let (project, _) = project(true);
     let root = project.path().join("fgm gate (x86) 1a2b");
+    fs::remove_dir_all(root.join("content")).unwrap();
     let home = tempfile::tempdir().unwrap();
     let (code, stdout, stderr) = steamship_in(&root, &["ci"], Some(home.path()), &[]);
     assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
@@ -924,7 +925,11 @@ fn ci_finds_the_script_but_needs_a_github_origin_and_exits_2() {
         "{stdout}"
     );
     assert!(
-        stdout.contains("\u{2713} 1000, 1 depot, 1 file, checked"),
+        stdout.contains("  app       \u{2713} 1000, 1 depot, scripts checked\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("  content   not checked; each upload checks it\n"),
         "{stdout}"
     );
     assert!(
@@ -1368,7 +1373,7 @@ fn ci_on_a_terminal_asks_which_script_when_there_are_several() {
         "{seen}"
     );
     assert!(
-        seen.contains("\u{2713} 1000, 1 depot, 1 file, checked"),
+        seen.contains("\u{2713} 1000, 1 depot, scripts checked"),
         "{seen}"
     );
 }
