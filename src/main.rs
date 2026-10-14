@@ -90,9 +90,7 @@ fn run(command: Command) -> ExitCode {
             folder,
         } => run_init(app, depots, &folder),
         Command::Builds { app, count, json } => either(try_builds(&app, count, json)),
-        Command::Achievements { app, check, json } => {
-            either(try_achievements(&app, check.as_deref(), json))
-        }
+        Command::Achievements { app, check, json } => either(try_achievements(&app, &check, json)),
         Command::DrmWrap {
             app,
             executable,
@@ -1497,6 +1495,23 @@ fn achievements_file(path: &Path, app: u32) -> Result<achievements::Listed, Exit
         holds = format!("{holds} and {}", show::counted(stats.len(), "stat"));
     }
     show::field("file", &format!("{}, {holds}", path.display()));
+    Ok(listed)
+}
+
+/// The achievements files at `paths`, each read as `achievements_file` reads one, as one; or none
+/// when there are none to check against.
+fn achievements_files(
+    paths: &[PathBuf],
+    app: u32,
+) -> Result<Option<achievements::Listed>, ExitCode> {
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let mut files = Vec::with_capacity(paths.len());
+    for path in paths {
+        files.push((path.display().to_string(), achievements_file(path, app)?));
+    }
+    let listed = achievements::together(files).map_err(|why| fail(&why, REFUSED))?;
     if !listed.unchecked.is_empty() {
         show::field(
             "unchecked",
@@ -1506,18 +1521,16 @@ fn achievements_file(path: &Path, app: u32) -> Result<achievements::Listed, Exit
             ),
         );
     }
-    Ok(listed)
+    Ok(Some(listed))
 }
 
-fn try_achievements(app: &str, check: Option<&Path>, json: bool) -> Result<ExitCode, ExitCode> {
+fn try_achievements(app: &str, check: &[PathBuf], json: bool) -> Result<ExitCode, ExitCode> {
     if json {
         show::divert();
     }
     show::title("achievements");
     let app_id = app_named(app)?;
-    let listed = check
-        .map(|path| achievements_file(path, app_id))
-        .transpose()?;
+    let listed = achievements_files(check, app_id)?;
     let home = home()?;
     let (api, from) = web_api(&home)?;
     let spinner = Spinner::start("steam", "asking for the achievements", false);
@@ -1577,7 +1590,8 @@ fn try_achievements(app: &str, check: Option<&Path>, json: bool) -> Result<ExitC
         } else {
             "achievements"
         };
-        show::success(&format!("Steam's {what} match the file"), "");
+        let files = if check.len() > 1 { "files" } else { "file" };
+        show::success(&format!("Steam's {what} match the {files}"), "");
         return Ok(ExitCode::SUCCESS);
     }
     for difference in drift.iter().chain(&stat_drift) {
