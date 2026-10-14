@@ -193,12 +193,37 @@ fn home() -> Result<PathBuf, ExitCode> {
         .map_err(|error| fail(&error, FAILED))
 }
 
-/// The home, and the pinned steamcmd in it, installed or verified.
-fn ready() -> Result<(PathBuf, Manifest), ExitCode> {
+/// The home, held, waiting for any other steamship using it to finish first.
+fn hold(home: &Path) -> Result<install::Held, ExitCode> {
+    let mut waiting = None;
+    let held = install::hold(home, || {
+        waiting = Some(Spinner::start(
+            "steamcmd",
+            &format!(
+                "waiting for another steamship using {} to finish",
+                home.display()
+            ),
+            true,
+        ));
+    });
+    if let Some(spinner) = waiting {
+        let waited = show::took(spinner.elapsed());
+        match &held {
+            Ok(_) => spinner.done(&format!("free after {waited}")),
+            Err(_) => spinner.failed("not free"),
+        }
+    }
+    held.map_err(|error| steamcmd_failed(&error))
+}
+
+/// The home, held until the returned [`install::Held`] is dropped, and the pinned steamcmd in it,
+/// installed or verified.
+fn ready() -> Result<(install::Held, PathBuf, Manifest), ExitCode> {
     let home = home()?;
     let manifest = Manifest::pinned(Platform::THIS).map_err(|error| fail(&error, FAILED))?;
+    let held = hold(&home)?;
     let spinner = Spinner::start("steamcmd", "checking the pinned version", false);
-    match install::install(&home, &manifest) {
+    match install::install(&held, &manifest) {
         Ok(Outcome::Installed) => spinner.done(&format!(
             "{} ({}), installed as pinned",
             manifest.version, manifest.system
@@ -208,11 +233,17 @@ fn ready() -> Result<(PathBuf, Manifest), ExitCode> {
             manifest.version, manifest.system
         )),
         Err(error) => {
-            spinner.failed("not as pinned");
+            spinner.failed(match error {
+                install::Error::Altered { .. } => "not as pinned",
+                install::Error::Withdrawn { .. } => "no longer served",
+                install::Error::Download(_)
+                | install::Error::Io { .. }
+                | install::Error::Package { .. } => "not installed",
+            });
             return Err(steamcmd_failed(&error));
         }
     }
-    Ok((home, manifest))
+    Ok((held, home, manifest))
 }
 
 fn run_init(app: u32, mut depots: Vec<init::Depot>, folder: &Path) -> ExitCode {
@@ -272,7 +303,7 @@ fn run_init(app: u32, mut depots: Vec<init::Depot>, folder: &Path) -> ExitCode {
 fn run_install() -> ExitCode {
     show::title("install");
     match ready() {
-        Ok((home, _)) => {
+        Ok((_held, home, _)) => {
             show::field("folder", &home.join(install::FOLDER).display().to_string());
             ExitCode::SUCCESS
         }
@@ -400,6 +431,12 @@ fn not_logged_in(reason: &str) -> ExitCode {
 fn run_logout() -> ExitCode {
     show::title("logout");
     let forgot = home().and_then(|home| {
+        // Not while another steamship's steamcmd may be signed in with what is about to go.
+        let _held = if home.exists() {
+            Some(hold(&home)?)
+        } else {
+            None
+        };
         let files = steamcmd::login_files(&home)
             .map_err(|error| fail(&format!("{}: {error}", home.display()), FAILED))?;
         for file in &files {
@@ -588,7 +625,7 @@ fn check_saved_login(
     account: &Account,
     packed: Option<&ci::Login>,
 ) -> Result<upload::Login, ExitCode> {
-    let (home, manifest) = ready()?;
+    let (held, home, manifest) = ready()?;
     restore(packed, &home)?;
     match packed.map(ci::Login::packed_on) {
         Some(Some(day)) => show::field("login", &format!("from {}, packed {day}", ci::VARIABLE)),
@@ -622,7 +659,7 @@ fn check_saved_login(
         upload::Login::Refused(_) => spinner.failed("Steam refused the saved login"),
         upload::Login::Failed(_) => spinner.failed("could not check"),
     }
-    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(judged)
 }
 
@@ -683,7 +720,7 @@ fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
         Source::Remembered => show::field("account", "remembered"),
         Source::Typed => {}
     }
-    let (home, manifest) = ready()?;
+    let (held, home, manifest) = ready()?;
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
     let environment = steamcmd::environment(&home, Platform::THIS);
@@ -710,7 +747,7 @@ fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     let code = terminal
         .wait()
         .map_err(|error| not_logged_in(&format!("{}: {error}", program.display())))?;
-    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     if let Ending::Refused(reason) = ending {
         return Err(not_logged_in(&conversation::explain(&reason)));
     }
@@ -871,7 +908,7 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         .and_then(|commit| upload::description(request.version, &commit))
         .map_err(|error| fail(&error, REFUSED))?;
     show::field("build", &description);
-    let (home, manifest) = ready()?;
+    let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let prepared = upload::prepare(&home, request.script, &description, request.preview)
         .map_err(|error| fail(&error, FAILED))?;
@@ -936,7 +973,7 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         files.extend(depot_logs(&prepared.output));
         dump_in_actions(&files, &marks.added(&steamcmd_logs), &redactor);
     }
-    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(code)
 }
 
@@ -1773,7 +1810,7 @@ fn try_drm_wrap(
         (Some(packed), None) => packed.account().clone(),
         _ => account(named, false)?.0,
     };
-    let (home, manifest) = ready()?;
+    let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
     let root = home.join(install::FOLDER);
@@ -1798,7 +1835,7 @@ fn try_drm_wrap(
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
     let console = redactor.redact(&finished.output);
-    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     let written = fs::metadata(&wrapped).is_ok_and(|found| found.len() > 0);
     match drm::judge(finished.code, &String::from_utf8_lossy(&console), written) {
         drm::Outcome::Wrapped => {
@@ -1848,7 +1885,7 @@ fn asked_settings(
     app: u32,
     packed: Option<&ci::Login>,
 ) -> Result<vdf::Block, ExitCode> {
-    let (home, manifest) = ready()?;
+    let (held, home, manifest) = ready()?;
     restore(packed, &home)?;
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
     let root = home.join(install::FOLDER);
@@ -1871,7 +1908,7 @@ fn asked_settings(
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
     let console = redactor.redact(&finished.output);
     let console = String::from_utf8_lossy(&console);
-    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     match upload::judge_login(finished.code, &console) {
         upload::Login::Taken => {}
         judged @ (upload::Login::Refused(_) | upload::Login::Failed(_)) => {
@@ -2113,7 +2150,7 @@ fn try_workshop(script: &Path, named: Option<&str>, new: bool) -> Result<ExitCod
         _ => account(named, false)?.0,
     };
     let item = checked_item(script, new)?;
-    let (home, manifest) = ready()?;
+    let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let copy =
         workshop::prepare(&home, script, item.app_id).map_err(|error| fail(&error, FAILED))?;
@@ -2191,7 +2228,7 @@ fn try_workshop(script: &Path, named: Option<&str>, new: bool) -> Result<ExitCod
             ExitCode::from(FAILED)
         }
     };
-    install::verify(&home, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(code)
 }
 
