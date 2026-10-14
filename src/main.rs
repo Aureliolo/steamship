@@ -1729,7 +1729,8 @@ fn run_assets(folder: &Path) -> ExitCode {
             REFUSED,
         );
     }
-    let mut wrong = false;
+    let mut taken = Vec::new();
+    let mut refused = Vec::new();
     for file in &checked {
         let name = file
             .path
@@ -1737,23 +1738,27 @@ fn run_assets(folder: &Path) -> ExitCode {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         match &file.found {
-            Some((asset, picture)) if file.problems.is_empty() => show::field(
-                &name,
-                &format!(
+            Some((asset, picture)) if file.problems.is_empty() => taken.push((
+                name,
+                format!(
                     "{}, {}x{} {}",
                     asset.name(),
                     picture.width,
                     picture.height,
                     picture.format
                 ),
+            )),
+            Some(_) | None => refused.extend(
+                file.problems
+                    .iter()
+                    .map(|problem| format!("{name}: {problem}")),
             ),
-            Some(_) | None => {
-                wrong = true;
-                for problem in &file.problems {
-                    show::failure(&format!("{name}: {problem}"), "", None);
-                }
-            }
         }
+    }
+    show::fields(&taken);
+    let mut wrong = !refused.is_empty();
+    for problem in &refused {
+        show::failure(problem, "", None);
     }
     if let Some(count) = assets::too_few_screenshots(&checked) {
         wrong = true;
