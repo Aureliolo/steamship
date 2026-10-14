@@ -10,8 +10,11 @@ use std::cell::Cell;
 use std::fs::{self, File};
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
-use steamship::install::{self, Error, Outcome, State};
+use steamship::install::{self, Error, Held, Outcome, State};
 use steamship::manifest::{Manifest, Package};
 use steamship::{digest, download};
 use zip::ZipWriter;
@@ -79,11 +82,16 @@ impl Setup {
 
     /// Installs, counting the packages fetched.
     fn install(&self, manifest: &Manifest, fetched: &Cell<usize>) -> Result<Outcome, Error> {
-        install::using(&self.home, manifest, |package, into| {
+        install::using(&self.held(), manifest, |package, into| {
             fetched.set(fetched.get().saturating_add(1));
             let _: u64 = fs::copy(self.packages.join(&package.file), into).unwrap();
             Ok(())
         })
+    }
+
+    /// The home, held, which nothing else in a test holds.
+    fn held(&self) -> Held {
+        install::hold(&self.home, || panic!("nothing else holds the home")).unwrap()
     }
 
     fn root(&self) -> PathBuf {
@@ -160,7 +168,7 @@ fn installs_once_then_verifies_without_fetching_again() {
         Ok(Outcome::Verified)
     ));
     assert_eq!(fetched.get(), 2);
-    install::verify(&setup.home, &manifest).unwrap();
+    install::verify(&setup.held(), &manifest).unwrap();
 }
 
 #[test]
@@ -216,7 +224,7 @@ fn every_change_to_the_install_is_named() {
         ]
     );
     assert!(
-        install::verify(&setup.home, &manifest)
+        install::verify(&setup.held(), &manifest)
             .is_err_and(|error| matches!(error, Error::Altered { .. }))
     );
 }
@@ -235,7 +243,7 @@ fn steamcmd_is_told_its_version_and_not_to_update_itself_and_held_to_both() {
     assert_eq!(fs::read_to_string(&copy).unwrap(), manifest.text);
     fs::write(&settings, "").unwrap();
     fs::write(&copy, "").unwrap();
-    let mut found = changes(install::verify(&setup.home, &manifest).map(|()| Outcome::Verified));
+    let mut found = changes(install::verify(&setup.held(), &manifest).map(|()| Outcome::Verified));
     found.sort();
     assert_eq!(
         found,
@@ -271,7 +279,7 @@ fn a_new_version_replaces_the_install_and_keeps_the_login() {
         !setup.root().join("public").exists(),
         "nothing of the old version is left"
     );
-    install::verify(&setup.home, &manifest).unwrap();
+    install::verify(&setup.held(), &manifest).unwrap();
 }
 
 #[test]
@@ -312,7 +320,7 @@ fn a_package_that_would_write_outside_is_refused() {
 fn a_fetch_that_brings_the_wrong_file_is_refused() {
     let setup = Setup::new();
     let manifest = steamcmd(&setup);
-    let result = install::using(&setup.home, &manifest, |_, into| {
+    let result = install::using(&setup.held(), &manifest, |_, into| {
         fs::write(into, b"not the package").unwrap();
         Ok(())
     });
@@ -327,7 +335,7 @@ fn a_package_the_cdn_no_longer_has_is_the_pin_withdrawn_and_any_other_refusal_is
     let setup = Setup::new();
     let manifest = steamcmd(&setup);
     for (status, withdrawn) in [(404, true), (410, true), (403, false)] {
-        let result = install::using(&setup.home, &manifest, |package, _| {
+        let result = install::using(&setup.held(), &manifest, |package, _| {
             Err(Error::Download(download::Error::Gone {
                 url: package.file.clone(),
                 status,
@@ -354,7 +362,7 @@ fn a_package_the_cdn_no_longer_has_is_the_pin_withdrawn_and_any_other_refusal_is
             other => panic!("{status}: {other:?}"),
         }
     }
-    let result = install::using(&setup.home, &manifest, |package, _| {
+    let result = install::using(&setup.held(), &manifest, |package, _| {
         Err(Error::Download(download::Error::GaveUp {
             url: package.file.clone(),
             last: "answered 503".to_owned(),
@@ -398,14 +406,14 @@ fn an_unreadable_inventory_means_installing_afresh() {
         setup.install(&manifest, &fetched),
         Ok(Outcome::Installed)
     ));
-    install::verify(&setup.home, &manifest).unwrap();
+    install::verify(&setup.held(), &manifest).unwrap();
 }
 
 #[test]
 fn verifying_with_nothing_installed_says_so() {
     let setup = Setup::new();
     let manifest = steamcmd(&setup);
-    let error = install::verify(&setup.home, &manifest).unwrap_err();
+    let error = install::verify(&setup.held(), &manifest).unwrap_err();
     assert!(
         error
             .to_string()
@@ -415,14 +423,23 @@ fn verifying_with_nothing_installed_says_so() {
 }
 
 #[test]
-fn a_second_run_at_the_same_time_is_turned_away() {
+fn a_second_steamship_waits_until_the_first_lets_go_of_the_home() {
     let setup = Setup::new();
-    fs::create_dir_all(&setup.home).unwrap();
-    let held = File::create(setup.home.join("steamship.lock")).unwrap();
-    held.try_lock().unwrap();
-    let result = setup.install(&steamcmd(&setup), &Cell::new(0));
-    assert!(matches!(result, Err(Error::Busy { .. })), "{result:?}");
-    held.unlock().unwrap();
+    let first = setup.held();
+    let (told, waiting) = mpsc::channel();
+    let home = setup.home.clone();
+    let second = thread::spawn(move || {
+        install::hold(&home, || told.send(()).unwrap()).map(|held| held.home().to_path_buf())
+    });
+    waiting.recv_timeout(Duration::from_secs(10)).unwrap();
+    thread::sleep(Duration::from_millis(200));
+    assert!(
+        !second.is_finished(),
+        "it waits while the first holds the home"
+    );
+    drop(first);
+    assert_eq!(second.join().unwrap().unwrap(), setup.home);
+    drop(install::hold(&setup.home, || panic!("the second let go when it ended")).unwrap());
 }
 
 #[cfg(unix)]
@@ -495,7 +512,7 @@ fn an_install_of_another_version_does_not_verify() {
     let installed = steamcmd(&setup);
     let _: Outcome = setup.install(&installed, &Cell::new(0)).unwrap();
     let newer = Setup::manifest(2, installed.packages);
-    let error = install::verify(&setup.home, &newer).unwrap_err();
+    let error = install::verify(&setup.held(), &newer).unwrap_err();
     assert!(
         error
             .to_string()
@@ -528,14 +545,14 @@ fn a_recorded_link_that_is_not_there_is_named() {
 /// Unix, for a user who is not root, does it with permissions: none on the file, and a folder
 /// whose entries cannot change. Windows does it by holding the file open and sharing it with
 /// nobody, which is what a virus scanner or an open editor does to a file there.
-struct Held {
+struct Kept {
     #[cfg(unix)]
     path: PathBuf,
     #[cfg(windows)]
     _open: File,
 }
 
-impl Held {
+impl Kept {
     #[cfg(unix)]
     fn new(path: &Path) -> Self {
         use std::os::unix::fs::PermissionsExt as _;
@@ -558,7 +575,7 @@ impl Held {
 }
 
 #[cfg(unix)]
-impl Drop for Held {
+impl Drop for Kept {
     fn drop(&mut self) {
         use std::os::unix::fs::PermissionsExt as _;
 
@@ -577,7 +594,7 @@ fn a_download_that_cannot_be_read_is_an_error_not_a_refetch() {
     fs::create_dir_all(&downloads).unwrap();
     let unreadable = downloads.join(&manifest.packages.first().unwrap().file);
     fs::write(&unreadable, b"whatever").unwrap();
-    let held = Held::new(&unreadable);
+    let held = Kept::new(&unreadable);
     let fetched = Cell::new(0);
     let result = setup.install(&manifest, &fetched);
     drop(held);
@@ -594,7 +611,7 @@ fn leftovers_that_cannot_be_cleared_are_an_error() {
     let staging = setup.home.join("steamcmd.new");
     fs::create_dir_all(staging.join("stuck")).unwrap();
     fs::write(staging.join("stuck/file"), b"x").unwrap();
-    let held = Held::new(&staging.join("stuck/file"));
+    let held = Kept::new(&staging.join("stuck/file"));
     let result = setup.install(&steamcmd(&setup), &Cell::new(0));
     drop(held);
     assert!(

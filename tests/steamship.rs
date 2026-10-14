@@ -143,14 +143,25 @@ fn install_names_what_changed_and_exits_4() {
 }
 
 #[test]
-fn install_turns_a_second_run_away_and_exits_1() {
+fn install_waits_for_another_steamship_using_the_home_then_goes_on() {
     let home = recorded("");
     let held = File::create(home.path().join("steamship.lock")).unwrap();
     held.try_lock().unwrap();
-    let (code, _, stderr) = run(Some(home.path()));
-    assert_eq!(code, Some(1_i32));
-    assert!(stderr.contains("another steamship is using"), "{stderr}");
+    let path = home.path().to_path_buf();
+    let second = thread::spawn(move || run(Some(&path)));
+    thread::sleep(Duration::from_secs(2));
+    assert!(!second.is_finished(), "it waits while the home is held");
     held.unlock().unwrap();
+    let (code, stdout, stderr) = second.join().unwrap();
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
+    assert!(
+        stdout.contains(&format!(
+            "  steamcmd  waiting for another steamship using {} to finish...\n",
+            home.path().display()
+        )) && stdout.contains("\u{2713} free after ")
+            && stdout.contains(", pinned and verified\n"),
+        "{stdout}"
+    );
 }
 
 #[test]

@@ -71,9 +71,6 @@ pub enum Error {
         root: PathBuf,
         changes: Vec<String>,
     },
-    Busy {
-        home: PathBuf,
-    },
 }
 
 impl fmt::Display for Error {
@@ -97,13 +94,6 @@ impl fmt::Display for Error {
                 root.display(),
                 changes.join("; ")
             ),
-            Self::Busy { home } => {
-                write!(
-                    formatter,
-                    "another steamship is using {} right now",
-                    home.display()
-                )
-            }
         }
     }
 }
@@ -116,11 +106,9 @@ impl Error {
     pub const fn remedy(&self) -> Option<&'static str> {
         match self {
             Self::Withdrawn { .. } => Some("a newer steamship pins a steamcmd Valve still serves"),
-            Self::Download(_)
-            | Self::Io { .. }
-            | Self::Package { .. }
-            | Self::Altered { .. }
-            | Self::Busy { .. } => None,
+            Self::Download(_) | Self::Io { .. } | Self::Package { .. } | Self::Altered { .. } => {
+                None
+            }
         }
     }
 }
@@ -136,14 +124,68 @@ fn at(path: &Path) -> impl FnOnce(io::Error) -> Error {
     move |error| Error::Io { path, error }
 }
 
-/// Installs the steamcmd `manifest` pins into `home`, or checks the one already there.
+/// A home no other steamship is installing, running or checking steamcmd in, for as long as this
+/// is kept.
+///
+/// steamcmd's install and its login are one per home, and every repository on a machine shares
+/// that home, whichever steamship it pins: two steamcmd at once would write the same login and
+/// logs, and a check during another's run would see its files mid-change. The system lets go when
+/// the process ends, however it ends, so a crash never leaves the home held.
+#[derive(Debug)]
+pub struct Held {
+    home: PathBuf,
+    _lock: File,
+}
+
+impl Held {
+    #[must_use]
+    pub fn home(&self) -> &Path {
+        &self.home
+    }
+}
+
+/// Holds `home`, made if it is not there yet; when another steamship holds it, `waiting` is told
+/// before this waits for that one to let go.
 ///
 /// # Errors
 ///
-/// When a package cannot be fetched or is not the pinned one, when the install already there has
-/// been altered, or when another steamship holds the home.
-pub fn install(home: &Path, manifest: &Manifest) -> Result<Outcome, Error> {
-    using(home, manifest, |package, into| {
+/// When the home or its lock file cannot be made or locked.
+pub fn hold<Waiting>(home: &Path, waiting: Waiting) -> Result<Held, Error>
+where
+    Waiting: FnOnce(),
+{
+    fs::create_dir_all(home).map_err(at(home))?;
+    // The home holds steamcmd's login token, which can publish builds.
+    let _: bool = native::restrict(home).map_err(at(home))?;
+    let path = home.join(LOCK);
+    let file = File::options()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .map_err(at(&path))?;
+    match file.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => {
+            waiting();
+            file.lock().map_err(at(&path))?;
+        }
+        Err(TryLockError::Error(error)) => return Err(Error::Io { path, error }),
+    }
+    Ok(Held {
+        home: home.to_path_buf(),
+        _lock: file,
+    })
+}
+
+/// Installs the steamcmd `manifest` pins into the `held` home, or checks the one already there.
+///
+/// # Errors
+///
+/// When a package cannot be fetched or is not the pinned one, or when the install already there
+/// has been altered.
+pub fn install(held: &Held, manifest: &Manifest) -> Result<Outcome, Error> {
+    using(held, manifest, |package, into| {
         let url = format!("{}{}", download::CDN, package.file);
         download::file(&url, into, package.size, &package.sha256).map_err(Error::from)
     })
@@ -154,14 +196,11 @@ pub fn install(home: &Path, manifest: &Manifest) -> Result<Outcome, Error> {
 /// # Errors
 ///
 /// As [`install`], and whatever `fetch` returns.
-pub fn using<Fetch>(home: &Path, manifest: &Manifest, fetch: Fetch) -> Result<Outcome, Error>
+pub fn using<Fetch>(held: &Held, manifest: &Manifest, fetch: Fetch) -> Result<Outcome, Error>
 where
     Fetch: Fn(&Package, &Path) -> Result<(), Error>,
 {
-    fs::create_dir_all(home).map_err(at(home))?;
-    // The home holds steamcmd's login token, which can publish builds.
-    let _: bool = native::restrict(home).map_err(at(home))?;
-    let _held = lock(home)?;
+    let home = held.home();
     let root = home.join(FOLDER);
     if let Some(inventory) = Inventory::read(&home.join(INVENTORY))
         && inventory.describes(manifest)
@@ -172,14 +211,15 @@ where
     Ok(Outcome::Installed)
 }
 
-/// Checks that the steamcmd in `home` is exactly the one `manifest` pins, as after every run.
+/// Checks that the steamcmd in the `held` home is exactly the one `manifest` pins, as after every
+/// run.
 ///
 /// # Errors
 ///
 /// When there is no install of that version, or it has been altered since it was installed.
-pub fn verify(home: &Path, manifest: &Manifest) -> Result<(), Error> {
-    let root = home.join(FOLDER);
-    match Inventory::read(&home.join(INVENTORY)) {
+pub fn verify(held: &Held, manifest: &Manifest) -> Result<(), Error> {
+    let root = held.home().join(FOLDER);
+    match Inventory::read(&held.home().join(INVENTORY)) {
         Some(inventory) if inventory.describes(manifest) => inventory.check(&root),
         _ => Err(Error::Altered {
             root,
@@ -214,25 +254,6 @@ pub fn state(home: &Path, manifest: &Manifest) -> Result<State, Error> {
             inventory.check(&home.join(FOLDER)).map(|()| State::Pinned)
         }
         Some(_) => Ok(State::Earlier),
-    }
-}
-
-/// Held for as long as the returned file is open; the system releases it when the process ends,
-/// however it ends, so a crash never leaves the home locked.
-fn lock(home: &Path) -> Result<File, Error> {
-    let path = home.join(LOCK);
-    let file = File::options()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .map_err(at(&path))?;
-    match file.try_lock() {
-        Ok(()) => Ok(file),
-        Err(TryLockError::WouldBlock) => Err(Error::Busy {
-            home: home.to_path_buf(),
-        }),
-        Err(TryLockError::Error(error)) => Err(Error::Io { path, error }),
     }
 }
 
@@ -679,12 +700,6 @@ mod tests {
                     "steamcmd in {} is no longer the pinned one: a; b",
                     home.join("steamcmd").display()
                 ),
-            ),
-            (
-                Error::Busy {
-                    home: home.to_path_buf(),
-                },
-                "another steamship is using home right now".to_owned(),
             ),
         ];
         for (error, said) in cases {
