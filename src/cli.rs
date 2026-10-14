@@ -182,7 +182,8 @@ pub enum Command {
         app: String,
         /// A JSON file of the achievements the app should have, each with its `api_name`,
         /// `name`, `description` and `hidden`, and of its stats if they are to be checked, each
-        /// with its `api_name`, `name` and `default`.
+        /// with its `api_name`, `name` and `default`; or a list of godot-kit's records, those
+        /// typed `achievement` and `stat` read the same way by the API name in `steam`.
         #[arg(long, value_name = "FILE")]
         check: Option<PathBuf>,
         /// Print the achievements and stats on standard output as one line of JSON, or what

@@ -333,6 +333,29 @@ checked, and other keys, such as your own tools', are left alone. Achievements a
 on Steam only once published in Steamworks, so one entered but not yet published is missing
 from Steam's.
 
+A game made with godot-kit can be checked against its own achievement records instead, a list
+in which those typed `achievement` and `stat` are read as above, by the API name in `steam`:
+
+```json
+[
+  { "type": "stat", "id": "base:floors", "steam": "floors", "kind": "int" },
+  {
+    "type": "achievement",
+    "id": "base:room_to_grow",
+    "steam": "ROOM_TO_GROW",
+    "name": "Room to Grow",
+    "description": "Build a second floor of guest rooms.",
+    "stat": "base:floors",
+    "at": 2
+  }
+]
+```
+
+Records of other types are left alone. The list is all of the game's stats, so they are always
+checked, a stat's `name` and `default` only when its record sets them. Steam's Web API does not
+give a stat's type or an achievement's progress stat and maximum, so `kind`, `stat` and `at` go
+unchecked, and the check says so.
+
 ## Leaderboards
 
 ```sh
