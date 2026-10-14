@@ -3550,6 +3550,76 @@ fn a_check_with_drift_in_its_stats_still_says_its_achievements_match() {
     );
 }
 
+/// `GetSchemaForGame` as Steam answered it for Tall Tales Inn, trimmed to two stats and two
+/// achievements.
+const TTI_SCHEMA: &str = r#"{"game":{"gameName":"Tall Tales Inn","gameVersion":"2","availableGameStats":{"stats":[{"name":"floors","defaultvalue":0,"displayName":"Floors standing above the taproom"},{"name":"staff","defaultvalue":0,"displayName":"Staff working in the inn"}],"achievements":[{"name":"ROOM_TO_GROW","defaultvalue":0,"displayName":"Room to Grow","hidden":0,"description":"Build a second floor of guest rooms.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/5440760/f895e737db45e18257a61fac5b6d409aa6872b82.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/5440760/a25a9ca72da3dae23b05f2fb6f712527cf3634d9.jpg"},{"name":"BUILT_BY_HAND","defaultvalue":0,"displayName":"Brick by Brick","hidden":0,"description":"Build a floor by hand.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/5440760/41373b0acc59cfbe2c973699975640bc1db1026a.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/5440760/c4d7c246b05fc3bacc39c9106295794b52faee45.jpg"}]}}}"#;
+
+#[test]
+fn godot_kits_records_are_checked_saying_what_steam_does_not_give() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", TTI_SCHEMA), ("200 OK", TTI_SCHEMA)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let records = |by_hand: &str| {
+        let path = files.path().join("achievements.json");
+        fs::write(
+            &path,
+            format!(
+                r#"[
+                {{"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"}},
+                {{"type": "stat", "id": "base:staff", "steam": "staff", "kind": "int"}},
+                {{"type": "achievement", "id": "base:room_to_grow", "steam": "ROOM_TO_GROW",
+                  "name": "Room to Grow", "description": "Build a second floor of guest rooms.",
+                  "stat": "base:floors", "at": 2}},
+                {{"type": "achievement", "id": "base:built_by_hand", "steam": "BUILT_BY_HAND",
+                  "name": "Brick by Brick", "description": "{by_hand}"}}
+            ]"#
+            ),
+        )
+        .unwrap();
+        path.to_string_lossy().into_owned()
+    };
+
+    let matching = records("Build a floor by hand.");
+    let (matched, said, _) = steamship(
+        &["achievements", "5440760", "--check", &matching],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(matched, Some(0_i32), "{said}");
+    assert!(said.contains("2 achievements and 2 stats\n"), "{said}");
+    assert!(
+        said.contains(
+            "  unchecked the stats' types and the achievements' progress, which Steam's Web API \
+             does not give\n"
+        ),
+        "{said}"
+    );
+    assert!(
+        said.contains("Steam's achievements and stats match the file"),
+        "{said}"
+    );
+
+    let drifted = records("Lay a floor yourself.");
+    let (refused, _, why) = steamship(
+        &["achievements", "5440760", "--check", &drifted],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert!(
+        why.contains(
+            "BUILT_BY_HAND: the description is \"Build a floor by hand.\" on Steam and \"Lay a \
+             floor yourself.\" in the file"
+        ) && why.contains("1 of 2 achievements match: 1 differs\n"),
+        "{why}"
+    );
+}
+
 #[test]
 fn an_achievements_file_that_is_not_one_or_names_another_app_is_refused_before_steam() {
     let home = tempfile::tempdir().unwrap();
