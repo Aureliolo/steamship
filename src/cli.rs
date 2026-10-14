@@ -169,23 +169,24 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Show an app's achievements and stats, or check them against a file.
+    /// Show an app's achievements and stats, or check them against files.
     ///
     /// Lists the achievements and stats Steam holds for the app, in English, through Steam's
     /// partner Web API with the publisher key as `builds` finds it. With `--check`, compares them
-    /// with a file by API name, and exits 2 naming every achievement missing on either side and
-    /// every display name, description, hidden flag or icon that differs; and the same of the
-    /// stats, their display names and defaults, when the file lists them. Nothing on Steam is
-    /// changed.
+    /// with the files, read together, by API name, and exits 2 naming every achievement missing
+    /// on either side and every display name, description, hidden flag or icon that differs; and
+    /// the same of the stats, their display names and defaults, when a file lists them. Nothing
+    /// on Steam is changed.
     Achievements {
         /// The app, by its ID or its app build script.
         app: String,
-        /// A JSON file of the achievements the app should have, each with its `api_name`,
-        /// `name`, `description` and `hidden`, and of its stats if they are to be checked, each
-        /// with its `api_name`, `name` and `default`; or a list of games-kit's records, those
-        /// typed `achievement` and `stat` read the same way by the API name in `steam`.
-        #[arg(long, value_name = "FILE")]
-        check: Option<PathBuf>,
+        /// JSON files of the achievements the app should have, each with its `api_name`, `name`,
+        /// `description` and `hidden`, and of its stats if they are to be checked, each with its
+        /// `api_name`, `name` and `default`; or lists of games-kit's records, those typed
+        /// `achievement` and `stat` read the same way by the API name in `steam`. Each
+        /// achievement and stat is in one file only.
+        #[arg(long, value_name = "FILE", num_args = 1..)]
+        check: Vec<PathBuf>,
         /// Print the achievements and stats on standard output as one line of JSON, or what
         /// Steam failed with as an `error` holding a `code`. Everything else goes to standard
         /// error.
