@@ -351,8 +351,12 @@ in which those typed `achievement` and `stat` are read as above, by the API name
 ]
 ```
 
-Records of other types are left alone. The list is all of the game's stats, so they are always
-checked, a stat's `name` and `default` only when its record sets them. Steam's Web API does not
+Records of other types are left alone. The records are all of the game's stats, so they are
+always checked, a stat's `name` and `default` only when its record sets them.
+
+`--check` takes several files, after it or each after its own `--check`, and reads them
+together, so achievements and stats kept in more than one file are checked as one list. An
+achievement or stat in two of them is refused, naming both. Steam's Web API does not
 give a stat's type or an achievement's progress stat and maximum, so `kind`, `stat` and `at` go
 unchecked, and the check says so.
 

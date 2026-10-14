@@ -3,7 +3,7 @@
 //! This is what `steamship achievements --check` reports, so that a release can refuse to go out
 //! while the two have drifted apart.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde_json::Value;
@@ -187,6 +187,51 @@ fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String
         name,
         default,
     })
+}
+
+/// The `files`, each read and named, as one: the app the first that says names, the achievements
+/// and stats of each in turn, the stats checked when any file lists them, and all that any leaves
+/// unchecked.
+///
+/// # Errors
+///
+/// When an achievement or a stat is in two of the files, naming both.
+pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
+    let mut whole = Listed {
+        app: None,
+        achievements: Vec::new(),
+        stats: None,
+        unchecked: Vec::new(),
+    };
+    let mut achievements_from: BTreeMap<String, String> = BTreeMap::new();
+    let mut stats_from: BTreeMap<String, String> = BTreeMap::new();
+    for (file, listed) in files {
+        whole.app = whole.app.or(listed.app);
+        for wanted in listed.achievements {
+            if let Some(first) = achievements_from.insert(wanted.api_name.clone(), file.clone()) {
+                return Err(format!("{} is in both {first} and {file}", wanted.api_name));
+            }
+            whole.achievements.push(wanted);
+        }
+        if let Some(stats) = listed.stats {
+            let all = whole.stats.get_or_insert_with(Vec::new);
+            for wanted in stats {
+                if let Some(first) = stats_from.insert(wanted.api_name.clone(), file.clone()) {
+                    return Err(format!(
+                        "stat {} is in both {first} and {file}",
+                        wanted.api_name
+                    ));
+                }
+                all.push(wanted);
+            }
+        }
+        for what in listed.unchecked {
+            if !whole.unchecked.contains(&what) {
+                whole.unchecked.push(what);
+            }
+        }
+    }
+    Ok(whole)
 }
 
 /// Refuses the first of `api_names` that is there twice, said with `kind` before it.
@@ -664,6 +709,61 @@ mod tests {
             let error = read(text).unwrap_err();
             assert!(error.starts_with(why), "{text}: {error}");
         }
+    }
+
+    #[test]
+    fn several_files_are_read_as_one_and_none_may_repeat_another() {
+        let file = |text: &str| read(text).unwrap();
+        let feats = file(
+            r#"[{"type": "achievement", "steam": "A", "name": "A", "stat": "base:s", "at": 1}]"#,
+        );
+        let counters = file(r#"[{"type": "stat", "steam": "s"}]"#);
+        let older = file(r#"{"app": 480, "achievements": [{"api_name": "B", "name": "B"}]}"#);
+        let whole = together(vec![
+            ("feats.json".to_owned(), feats.clone()),
+            ("counters.json".to_owned(), counters.clone()),
+            ("older.json".to_owned(), older),
+        ])
+        .unwrap();
+        assert_eq!(whole.app, Some(480));
+        assert_eq!(
+            whole
+                .achievements
+                .iter()
+                .map(|wanted| wanted.api_name.as_str())
+                .collect::<Vec<_>>(),
+            ["A", "B"]
+        );
+        assert_eq!(
+            whole.stats.unwrap().len(),
+            1,
+            "the stats are checked, since a file lists them"
+        );
+        assert_eq!(whole.unchecked, ["the achievements' progress"]);
+        let no_stats = file(r#"{"achievements": []}"#);
+        assert_eq!(
+            together(vec![("a.json".to_owned(), no_stats)])
+                .unwrap()
+                .stats,
+            None
+        );
+
+        assert_eq!(
+            together(vec![
+                ("feats.json".to_owned(), feats.clone()),
+                ("more.json".to_owned(), feats),
+            ])
+            .unwrap_err(),
+            "A is in both feats.json and more.json"
+        );
+        assert_eq!(
+            together(vec![
+                ("counters.json".to_owned(), counters.clone()),
+                ("again.json".to_owned(), counters),
+            ])
+            .unwrap_err(),
+            "stat s is in both counters.json and again.json"
+        );
     }
 
     #[test]
