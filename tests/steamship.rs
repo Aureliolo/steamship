@@ -223,7 +223,7 @@ fn help_lists_every_command_with_one_short_line() {
         "  upload         Check, build and upload, then print the build ID\n",
         "  workshop       Upload a Workshop item, then print its ID\n",
         "  builds         Show an app's branches and last builds\n",
-        "  achievements   Show an app's achievements and stats, or check them against a file\n",
+        "  achievements   Show an app's achievements and stats, or check them against files\n",
         "  assets         Check store and library artwork against Valve's sizes, before it is \
          uploaded\n",
         "  drm-wrap       Wrap a Windows executable in Steam DRM, before it is uploaded\n",
@@ -3308,7 +3308,7 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
     );
     assert!(said.contains("2 achievements\n"), "{said}");
     assert!(
-        said.contains("Steam's achievements match the file"),
+        said.contains("Steam's achievements match the file\n"),
         "{said}"
     );
 
@@ -3444,7 +3444,7 @@ fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
         "no list, so the stats are not checked: {said}"
     );
     assert!(
-        said.contains("Steam's achievements match the file"),
+        said.contains("Steam's achievements match the file\n"),
         "{said}"
     );
 
@@ -3600,7 +3600,7 @@ fn godot_kits_records_are_checked_saying_what_steam_does_not_give() {
         "{said}"
     );
     assert!(
-        said.contains("Steam's achievements and stats match the file"),
+        said.contains("Steam's achievements and stats match the file\n"),
         "{said}"
     );
 
@@ -3616,6 +3616,84 @@ fn godot_kits_records_are_checked_saying_what_steam_does_not_give() {
             "BUILT_BY_HAND: the description is \"Build a floor by hand.\" on Steam and \"Lay a \
              floor yourself.\" in the file"
         ) && why.contains("1 of 2 achievements match: 1 differs\n"),
+        "{why}"
+    );
+}
+
+#[test]
+fn records_split_over_several_files_are_checked_as_one_and_none_may_repeat() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", TTI_SCHEMA), ("200 OK", TTI_SCHEMA)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let file = |name: &str, records: &str| {
+        let path = files.path().join(name);
+        fs::write(&path, records).unwrap();
+        path.to_string_lossy().into_owned()
+    };
+    let stats = file(
+        "stats.json",
+        r#"[{"type": "stat", "steam": "floors"}, {"type": "stat", "steam": "staff"}]"#,
+    );
+    let building = file(
+        "building.json",
+        r#"[{"type": "achievement", "steam": "ROOM_TO_GROW", "name": "Room to Grow",
+             "description": "Build a second floor of guest rooms."}]"#,
+    );
+    let by_hand = file(
+        "by_hand.json",
+        r#"[{"type": "achievement", "steam": "BUILT_BY_HAND", "name": "Brick by Brick",
+             "description": "Build a floor by hand."}]"#,
+    );
+
+    for args in [
+        vec![
+            "achievements",
+            "5440760",
+            "--check",
+            &stats,
+            &building,
+            &by_hand,
+        ],
+        vec![
+            "achievements",
+            "5440760",
+            "--check",
+            &stats,
+            "--check",
+            &building,
+            "--check",
+            &by_hand,
+        ],
+    ] {
+        let (matched, said, _) = steamship(&args, Some(home.path()), &set);
+        assert_eq!(matched, Some(0_i32), "{said}");
+        assert!(
+            said.contains("by_hand.json, 1 achievement and 0 stats\n")
+                && said.contains("Steam's achievements and stats match the files"),
+            "{said}"
+        );
+    }
+
+    let (refused, _, why) = steamship(
+        &[
+            "achievements",
+            "5440760",
+            "--check",
+            &by_hand,
+            &stats,
+            &by_hand,
+        ],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert!(
+        why.contains(&format!("BUILT_BY_HAND is in both {by_hand} and {by_hand}")),
         "{why}"
     );
 }
