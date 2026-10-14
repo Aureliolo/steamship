@@ -3308,7 +3308,7 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
     );
     assert!(said.contains("2 achievements\n"), "{said}");
     assert!(
-        said.contains("Steam's achievements match the file"),
+        said.contains("Steam's achievements match the file\n"),
         "{said}"
     );
 
@@ -3444,7 +3444,7 @@ fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
         "no list, so the stats are not checked: {said}"
     );
     assert!(
-        said.contains("Steam's achievements match the file"),
+        said.contains("Steam's achievements match the file\n"),
         "{said}"
     );
 
@@ -3600,7 +3600,7 @@ fn godot_kits_records_are_checked_saying_what_steam_does_not_give() {
         "{said}"
     );
     assert!(
-        said.contains("Steam's achievements and stats match the file"),
+        said.contains("Steam's achievements and stats match the file\n"),
         "{said}"
     );
 
