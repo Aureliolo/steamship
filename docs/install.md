@@ -176,3 +176,8 @@ and how to upgrade to a steamship that pins one it does.
 steamcmd, its login token and the build output live in steamship's home, a per-user folder
 unless `STEAMSHIP_HOME` names another. The token can do everything the build account may, so
 treat that folder like a password.
+
+Every steamship on the machine shares that home, whichever release each repository pins. One
+using steamcmd holds the home from its check of the install to the check after steamcmd's run,
+and another started meanwhile waits for it, saying so, then goes on. A release that pins another
+steamcmd installs its own over the one there, keeping the login.
