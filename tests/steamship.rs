@@ -3550,6 +3550,76 @@ fn a_check_with_drift_in_its_stats_still_says_its_achievements_match() {
     );
 }
 
+/// `GetSchemaForGame` as Steam answered it for Tidal Mill Inn, trimmed to two stats and two
+/// achievements.
+const INN_SCHEMA: &str = r#"{"game":{"gameName":"Tidal Mill Inn","gameVersion":"2","availableGameStats":{"stats":[{"name":"floors","defaultvalue":0,"displayName":"Floodwater held behind the sluice"},{"name":"staff","defaultvalue":0,"displayName":"Staff working the stones"}],"achievements":[{"name":"LONG_JOURNEY","defaultvalue":0,"displayName":"Rising Water","hidden":0,"description":"Bring the millpond up to its brim.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/f895e737db45e18257a61fac5b6d409aa6872b82.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/a25a9ca72da3dae23b05f2fb6f712527cf3634d9.jpg"},{"name":"CRAFTED_ALONE","defaultvalue":0,"displayName":"Bushel by Bushel","hidden":0,"description":"Bag a sack of flour by hand.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/41373b0acc59cfbe2c973699975640bc1db1026a.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/c4d7c246b05fc3bacc39c9106295794b52faee45.jpg"}]}}}"#;
+
+#[test]
+fn games_kits_records_are_checked_saying_what_steam_does_not_give() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", INN_SCHEMA), ("200 OK", INN_SCHEMA)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let records = |by_hand: &str| {
+        let path = files.path().join("achievements.json");
+        fs::write(
+            &path,
+            format!(
+                r#"[
+                {{"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"}},
+                {{"type": "stat", "id": "base:staff", "steam": "staff", "kind": "int"}},
+                {{"type": "achievement", "id": "base:long_journey", "steam": "LONG_JOURNEY",
+                  "name": "Rising Water", "description": "Bring the millpond up to its brim.",
+                  "stat": "base:floors", "at": 2}},
+                {{"type": "achievement", "id": "base:crafted_alone", "steam": "CRAFTED_ALONE",
+                  "name": "Bushel by Bushel", "description": "{by_hand}"}}
+            ]"#
+            ),
+        )
+        .unwrap();
+        path.to_string_lossy().into_owned()
+    };
+
+    let matching = records("Bag a sack of flour by hand.");
+    let (matched, said, _) = steamship(
+        &["achievements", "1000050", "--check", &matching],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(matched, Some(0_i32), "{said}");
+    assert!(said.contains("2 achievements and 2 stats\n"), "{said}");
+    assert!(
+        said.contains(
+            "  unchecked the stats' types and the achievements' progress, which Steam's Web API \
+             does not give\n"
+        ),
+        "{said}"
+    );
+    assert!(
+        said.contains("Steam's achievements and stats match the file"),
+        "{said}"
+    );
+
+    let drifted = records("Bag the flour yourself.");
+    let (refused, _, why) = steamship(
+        &["achievements", "1000050", "--check", &drifted],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert!(
+        why.contains(
+            "CRAFTED_ALONE: the description is \"Bag a sack of flour by hand.\" on Steam and \"Lay a \
+             floor yourself.\" in the file"
+        ) && why.contains("1 of 2 achievements match: 1 differs\n"),
+        "{why}"
+    );
+}
+
 #[test]
 fn an_achievements_file_that_is_not_one_or_names_another_app_is_refused_before_steam() {
     let home = tempfile::tempdir().unwrap();

@@ -19,36 +19,47 @@ pub struct Wanted {
     pub hidden: bool,
 }
 
-/// A stat as the file wants it.
+/// A stat as the file wants it, its name and default checked only when the file gives them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WantedStat {
     pub api_name: String,
-    pub name: String,
-    pub default: f64,
+    pub name: Option<String>,
+    pub default: Option<f64>,
 }
 
-/// What the file holds: the app it is for, if it says, the achievements in its order, and the
-/// stats when it lists them, which are checked only then.
+/// What the file holds, and what in it goes unchecked.
+///
+/// That is the app it is for, if it says, the achievements in its order, the stats when it lists
+/// them, which are checked only then, and what it sets that Steam's Web API does not answer.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Listed {
     pub app: Option<u64>,
     pub achievements: Vec<Wanted>,
     pub stats: Option<Vec<WantedStat>>,
+    pub unchecked: Vec<&'static str>,
 }
 
 /// Reads the file's `text`: an object with an `achievements` list, and a `stats` list if the
-/// app's stats are to be checked too.
+/// app's stats are to be checked too; or a list of games-kit's records.
 ///
-/// Each achievement has its `api_name` and `name`, and its `description` and `hidden` when they
-/// are set; each stat its `api_name`, and its `name` and `default` when they are set. Other keys,
-/// such as what a game's own tools keep beside them, are left alone.
+/// In the object, each achievement has its `api_name` and `name`, and its `description` and
+/// `hidden` when they are set; each stat its `api_name`, and its `name` and `default`, none and 0
+/// when left out. Other keys, such as what a game's own tools keep beside them, are left alone.
+///
+/// In the list, the records typed `achievement` and `stat` are read the same way with the API
+/// name in `steam`, and those of other types are left alone. The list holds all of a game's
+/// stats, so they are always checked, but a stat's name and default only when its record sets
+/// them, since a record need not.
 ///
 /// # Errors
 ///
-/// When the text is not such an object, an entry lacks its API name or name, a value has the
-/// wrong type, or an API name is there twice.
+/// When the text is neither, an entry lacks its API name, name or type, a value has the wrong
+/// type, or an API name is there twice.
 pub fn read(text: &str) -> Result<Listed, String> {
     let file: Value = serde_json::from_str(text).map_err(|error| format!("not JSON: {error}"))?;
+    if let Value::Array(records) = &file {
+        return read_records(records);
+    }
     let app = match file.get("app") {
         None => None,
         Some(app) => Some(app.as_u64().ok_or("\"app\" is not an app ID")?),
@@ -57,78 +68,139 @@ pub fn read(text: &str) -> Result<Listed, String> {
         .get("achievements")
         .and_then(Value::as_array)
         .ok_or("there is no \"achievements\" list")?;
-    let mut seen = BTreeSet::new();
     let mut achievements = Vec::with_capacity(entries.len());
     for (index, entry) in entries.iter().enumerate() {
         let place = index.saturating_add(1);
-        let words = |key: &str, needed: bool| -> Result<String, String> {
-            match entry.get(key) {
-                Some(Value::String(value)) if !(needed && value.is_empty()) => Ok(value.clone()),
-                None if !needed => Ok(String::new()),
-                _ => Err(format!("achievement {place} has no \"{key}\" text")),
-            }
-        };
-        let api_name = words("api_name", true)?;
-        let hidden = match entry.get("hidden") {
-            None => false,
-            Some(Value::Bool(hidden)) => *hidden,
-            Some(_) => return Err(format!("{api_name}: \"hidden\" is not true or false")),
-        };
-        if !seen.insert(api_name.clone()) {
-            return Err(format!("{api_name} is in the file twice"));
-        }
-        achievements.push(Wanted {
-            name: words("name", true)?,
-            description: words("description", false)?,
-            hidden,
-            api_name,
-        });
+        achievements.push(achievement(
+            entry,
+            &format!("achievement {place}"),
+            "api_name",
+        )?);
     }
+    once(achievements.iter().map(|wanted| &wanted.api_name), "")?;
     let stats = match file.get("stats") {
         None => None,
-        Some(Value::Array(listed)) => Some(stats(listed)?),
+        Some(Value::Array(listed)) => {
+            let mut stats = Vec::with_capacity(listed.len());
+            for (index, entry) in listed.iter().enumerate() {
+                let place = index.saturating_add(1);
+                let wanted = stat(entry, &format!("stat {place}"), "api_name")?;
+                stats.push(WantedStat {
+                    api_name: wanted.api_name,
+                    name: Some(wanted.name.unwrap_or_default()),
+                    default: Some(wanted.default.unwrap_or(0.0_f64)),
+                });
+            }
+            once(stats.iter().map(|wanted| &wanted.api_name), "stat ")?;
+            Some(stats)
+        }
         Some(_) => return Err("\"stats\" is not a list".to_owned()),
     };
     Ok(Listed {
         app,
         achievements,
         stats,
+        unchecked: Vec::new(),
     })
 }
 
-/// The file's `stats` list.
-fn stats(entries: &[Value]) -> Result<Vec<WantedStat>, String> {
-    let mut seen = BTreeSet::new();
-    let mut stats = Vec::with_capacity(entries.len());
-    for (index, entry) in entries.iter().enumerate() {
-        let api_name = match entry.get("api_name") {
-            Some(Value::String(api_name)) if !api_name.is_empty() => api_name.clone(),
-            _ => {
-                let place = index.saturating_add(1);
-                return Err(format!("stat {place} has no \"api_name\" text"));
+/// games-kit's `records`, as `read` takes them.
+fn read_records(records: &[Value]) -> Result<Listed, String> {
+    let mut achievements = Vec::new();
+    let mut stats = Vec::new();
+    let mut unchecked = Vec::new();
+    for (index, record) in records.iter().enumerate() {
+        let label = format!("record {}", index.saturating_add(1));
+        let Some(Value::String(kind)) = record.get("type") else {
+            return Err(format!("{label} has no \"type\" text"));
+        };
+        let (keys, what): (&[&str], _) = match kind.as_str() {
+            "achievement" => {
+                achievements.push(achievement(record, &label, "steam")?);
+                (&["stat", "at"], "the achievements' progress")
             }
+            "stat" => {
+                stats.push(stat(record, &label, "steam")?);
+                (&["kind"], "the stats' types")
+            }
+            _ => continue,
         };
-        let name = match entry.get("name") {
-            None => String::new(),
-            Some(Value::String(name)) => name.clone(),
-            Some(_) => return Err(format!("stat {api_name}: \"name\" is not text")),
-        };
-        let default = match entry.get("default") {
-            None => 0.0_f64,
-            Some(value) => value
-                .as_f64()
-                .ok_or_else(|| format!("stat {api_name}: \"default\" is not a number"))?,
-        };
-        if !seen.insert(api_name.clone()) {
-            return Err(format!("stat {api_name} is in the file twice"));
+        if keys.iter().any(|key| record.get(key).is_some()) && !unchecked.contains(&what) {
+            unchecked.push(what);
         }
-        stats.push(WantedStat {
-            api_name,
-            name,
-            default,
-        });
     }
-    Ok(stats)
+    once(achievements.iter().map(|wanted| &wanted.api_name), "")?;
+    once(stats.iter().map(|wanted| &wanted.api_name), "stat ")?;
+    Ok(Listed {
+        app: None,
+        achievements,
+        stats: Some(stats),
+        unchecked,
+    })
+}
+
+/// The achievement `entry`, its API name under `named_by`, called `label` in what is wrong with
+/// it until that name is known.
+fn achievement(entry: &Value, label: &str, named_by: &str) -> Result<Wanted, String> {
+    let words = |key: &str, needed: bool| -> Result<String, String> {
+        match entry.get(key) {
+            Some(Value::String(value)) if !(needed && value.is_empty()) => Ok(value.clone()),
+            None if !needed => Ok(String::new()),
+            _ => Err(format!("{label} has no \"{key}\" text")),
+        }
+    };
+    let api_name = words(named_by, true)?;
+    let hidden = match entry.get("hidden") {
+        None => false,
+        Some(Value::Bool(hidden)) => *hidden,
+        Some(_) => return Err(format!("{api_name}: \"hidden\" is not true or false")),
+    };
+    Ok(Wanted {
+        name: words("name", true)?,
+        description: words("description", false)?,
+        hidden,
+        api_name,
+    })
+}
+
+/// The stat `entry`, as `achievement` reads one.
+fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String> {
+    let api_name = match entry.get(named_by) {
+        Some(Value::String(api_name)) if !api_name.is_empty() => api_name.clone(),
+        _ => return Err(format!("{label} has no \"{named_by}\" text")),
+    };
+    let name = match entry.get("name") {
+        None => None,
+        Some(Value::String(name)) => Some(name.clone()),
+        Some(_) => return Err(format!("stat {api_name}: \"name\" is not text")),
+    };
+    let default = entry
+        .get("default")
+        .map(|value| {
+            value
+                .as_f64()
+                .ok_or_else(|| format!("stat {api_name}: \"default\" is not a number"))
+        })
+        .transpose()?;
+    Ok(WantedStat {
+        api_name,
+        name,
+        default,
+    })
+}
+
+/// Refuses the first of `api_names` that is there twice, said with `kind` before it.
+fn once<'name>(
+    api_names: impl IntoIterator<Item = &'name String>,
+    kind: &str,
+) -> Result<(), String> {
+    let mut seen = BTreeSet::new();
+    for api_name in api_names {
+        if !seen.insert(api_name) {
+            return Err(format!("{kind}{api_name} is in the file twice"));
+        }
+    }
+    Ok(())
 }
 
 /// A way Steam's achievements and the file's differ.
@@ -219,12 +291,12 @@ pub fn compare_stats(wants: &[WantedStat], held: &[Stat]) -> Vec<Drift> {
             drift.push(Drift::NotOnSteam(label(&wanted.api_name)));
             continue;
         };
-        if steam.name != wanted.name {
+        if let Some(name) = wanted.name.as_ref().filter(|name| **name != steam.name) {
             drift.push(Drift::Differs {
                 api_name: label(&wanted.api_name),
                 field: "the display name",
                 steam: steam.name.clone(),
-                file: wanted.name.clone(),
+                file: name.clone(),
             });
         }
         // Steam and the file both write a whole number with no fraction, or the same fraction,
@@ -233,12 +305,12 @@ pub fn compare_stats(wants: &[WantedStat], held: &[Stat]) -> Vec<Drift> {
             clippy::float_cmp,
             reason = "both are the value as written, not computed"
         )]
-        if steam.default != wanted.default {
+        if let Some(default) = wanted.default.filter(|default| *default != steam.default) {
             drift.push(Drift::Differs {
                 api_name: label(&wanted.api_name),
                 field: "the default",
                 steam: steam.default.to_string(),
-                file: wanted.default.to_string(),
+                file: default.to_string(),
             });
         }
     }
@@ -419,8 +491,8 @@ mod tests {
         .unwrap();
         let stat = |api_name: &str, name: &str, default: f64| WantedStat {
             api_name: api_name.to_owned(),
-            name: name.to_owned(),
-            default,
+            name: Some(name.to_owned()),
+            default: Some(default),
         };
         assert_eq!(
             listed.stats,
@@ -489,6 +561,104 @@ mod tests {
             (
                 r#"{"achievements": [], "stats": [{"api_name": "n"}, {"api_name": "n"}]}"#,
                 "stat n is in the file twice",
+            ),
+        ] {
+            let error = read(text).unwrap_err();
+            assert!(error.starts_with(why), "{text}: {error}");
+        }
+    }
+
+    #[test]
+    fn games_kits_records_are_read_by_their_steam_name_with_what_steam_cannot_say_noted() {
+        // Shaped as Tidal Mill Inn's mods/base/data/achievements.json.
+        let listed = read(
+            r#"[
+                {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
+                {"type": "building", "id": "base:taproom"},
+                {"type": "achievement", "id": "base:long_journey", "steam": "LONG_JOURNEY",
+                 "name": "Rising Water", "description": "Bring the millpond up to its brim.",
+                 "stat": "base:floors", "at": 2},
+                {"type": "achievement", "id": "base:secret", "steam": "SECRET",
+                 "name": "Hush", "hidden": true, "icon": "res://icons/secret.png"},
+                {"type": "stat", "id": "base:gold", "steam": "gold", "name": "Gold earned",
+                 "default": 5}
+            ]"#,
+        )
+        .unwrap();
+        assert_eq!(listed.app, None);
+        assert_eq!(
+            listed.achievements,
+            [
+                Wanted {
+                    api_name: "LONG_JOURNEY".to_owned(),
+                    name: "Rising Water".to_owned(),
+                    description: "Bring the millpond up to its brim.".to_owned(),
+                    hidden: false,
+                },
+                Wanted {
+                    api_name: "SECRET".to_owned(),
+                    name: "Hush".to_owned(),
+                    description: String::new(),
+                    hidden: true,
+                },
+            ]
+        );
+        assert_eq!(
+            listed.stats,
+            Some(vec![
+                WantedStat {
+                    api_name: "floors".to_owned(),
+                    name: None,
+                    default: None,
+                },
+                WantedStat {
+                    api_name: "gold".to_owned(),
+                    name: Some("Gold earned".to_owned()),
+                    default: Some(5.0_f64),
+                },
+            ])
+        );
+        assert_eq!(
+            listed.unchecked,
+            ["the stats' types", "the achievements' progress"]
+        );
+
+        let bare = read(r#"[{"type": "achievement", "steam": "A", "name": "A"}]"#).unwrap();
+        assert_eq!(
+            (bare.stats, bare.unchecked),
+            (Some(Vec::new()), Vec::new()),
+            "the records are all the stats there are, and none sets what Steam cannot say"
+        );
+    }
+
+    #[test]
+    fn records_that_are_not_ones_say_why() {
+        for (text, why) in [
+            (r#"[{"steam": "A"}]"#, "record 1 has no \"type\" text"),
+            (
+                r#"[{"type": "stat", "steam": "s"}, {"type": "achievement", "name": "A"}]"#,
+                "record 2 has no \"steam\" text",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A"}]"#,
+                "record 1 has no \"name\" text",
+            ),
+            (
+                r#"[{"type": "stat", "steam": ""}]"#,
+                "record 1 has no \"steam\" text",
+            ),
+            (
+                r#"[{"type": "stat", "steam": "s", "default": "0"}]"#,
+                "stat s: \"default\" is not a number",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A"},
+                    {"type": "achievement", "steam": "A", "name": "B"}]"#,
+                "A is in the file twice",
+            ),
+            (
+                r#"[{"type": "stat", "steam": "s"}, {"type": "stat", "steam": "s"}]"#,
+                "stat s is in the file twice",
             ),
         ] {
             let error = read(text).unwrap_err();
@@ -619,8 +789,8 @@ mod tests {
     fn every_stat_difference_is_named_as_a_stat_the_files_first_then_steams() {
         let wanted = |api_name: &str, name: &str, default: f64| WantedStat {
             api_name: api_name.to_owned(),
-            name: name.to_owned(),
-            default,
+            name: Some(name.to_owned()),
+            default: Some(default),
         };
         let held = |api_name: &str, name: &str, default: f64| Stat {
             api_name: api_name.to_owned(),
@@ -654,6 +824,16 @@ mod tests {
                 "stat Missing: in the file, not on Steam",
                 "stat Extra: on Steam, not in the file",
             ]
+        );
+        let unset = WantedStat {
+            api_name: "NumGames".to_owned(),
+            name: None,
+            default: None,
+        };
+        assert_eq!(
+            compare_stats(&[unset], &[held("NumGames", "Games", 1.5_f64)]),
+            [],
+            "a name and default the file does not set are Steamworks' own"
         );
     }
 }

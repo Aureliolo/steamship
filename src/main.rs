@@ -1497,6 +1497,15 @@ fn achievements_file(path: &Path, app: u32) -> Result<achievements::Listed, Exit
         holds = format!("{holds} and {}", show::counted(stats.len(), "stat"));
     }
     show::field("file", &format!("{}, {holds}", path.display()));
+    if !listed.unchecked.is_empty() {
+        show::field(
+            "unchecked",
+            &format!(
+                "{}, which Steam's Web API does not give",
+                listed.unchecked.join(" and ")
+            ),
+        );
+    }
     Ok(listed)
 }
 
