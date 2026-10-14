@@ -4919,6 +4919,11 @@ fn artwork_is_checked_against_valves_sizes_with_nothing_sent() {
         png_header(920, 430),
     )
     .unwrap();
+    fs::write(
+        folder.path().join("small_capsule.png"),
+        png_header(462, 174),
+    )
+    .unwrap();
     fs::write(folder.path().join("notes.txt"), "left alone").unwrap();
     let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
     let path = folder.path().to_string_lossy().into_owned();
@@ -4926,9 +4931,10 @@ fn artwork_is_checked_against_valves_sizes_with_nothing_sent() {
     let (code, stdout, stderr) = steamship(&["assets", &path], None, &quiet);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     assert!(
-        stdout.contains("header_capsule.png header capsule, 920x430 PNG\n")
+        stdout.contains("  header_capsule.png header capsule, 920x430 PNG\n")
+            && stdout.contains("  small_capsule.png  small capsule, 462x174 PNG\n")
             && stdout.contains("the artwork is as Steamworks takes it"),
-        "{stdout}"
+        "lined up however long the names run: {stdout}"
     );
 
     fs::write(
