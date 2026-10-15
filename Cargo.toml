@@ -25,12 +25,12 @@ include = [
 anstream = "1.0.0"
 anstyle = "1.0.14"
 clap = { version = "4.6.7", features = ["derive", "env"] }
-sha2 = "0.11.0"
+sha2 = "0.11.1"
 # Reads the partner Web API's answers, which are JSON.
 serde_json = "1.0.154"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 # Valve's packages use only stored and deflated entries, so one pure-Rust decoder is all it needs.
-zip = { version = "9.0.2", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # Wipes the typed password from memory once it has been passed to steamcmd.
 zeroize = "1.9.1"
 clap_complete = "4.6.11"
