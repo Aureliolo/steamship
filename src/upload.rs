@@ -11,6 +11,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{self, Path, PathBuf};
+use std::time::Duration;
 
 use crate::conversation;
 use crate::run;
@@ -228,12 +229,22 @@ pub fn prepare(
         output,
         set_live: app.text("SetLive").map(str::to_owned),
     };
+    clear_log(&prepared)?;
+    Ok(prepared)
+}
+
+/// Clears the last run's app log, so that only the next run's is read.
+///
+/// # Errors
+///
+/// When the log is there and cannot be removed.
+pub fn clear_log(prepared: &Prepared) -> Result<(), Error> {
     match fs::remove_file(prepared.log()) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => Err(Error::Io {
             path: prepared.log(),
             error,
         }),
-        _ => Ok(prepared),
+        _ => Ok(()),
     }
 }
 
@@ -419,6 +430,87 @@ pub fn uploaded_as(builds: &[webapi::Build], description: &str) -> Option<u64> {
         .map(|build| build.build_id)
 }
 
+/// How long an upload waits in all for Steam's CDN to serve a manifest steamcmd builds against.
+///
+/// The CDN was seen to answer 404 for a branch's last manifest 16 minutes after its build, and to
+/// serve it a minute later.
+pub const CDN_PATIENCE: Duration = Duration::from_mins(30);
+
+/// The most times steamcmd runs for one upload that waits on the CDN. Each run logs in again, so
+/// a request code that keeps expiring does not have steamcmd log in without end.
+pub const RUNS: u32 = 4;
+
+/// A depot's manifest that steamcmd could not download, because Steam's CDN does not serve it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unserved {
+    pub depot: u32,
+    /// Where to ask for it, request code included.
+    pub url: String,
+}
+
+/// The manifest steamcmd's build failed for want of, if that is why, from `console` and `log`.
+///
+/// steamcmd builds each depot against the manifest of the build last on the branch, and Steam's
+/// CDN serves that only some minutes after the build: until then it answers 404.
+#[must_use]
+pub fn unserved(console: &str, log: Option<&str>) -> Option<Unserved> {
+    log.into_iter()
+        .flat_map(str::lines)
+        .chain(console.lines())
+        .find_map(|line| {
+            let (_, quoted) = line.split_once("ERROR! Failed to download manifest \"")?;
+            let (printed, after) = quoted.split_once('"')?;
+            if after.trim() == "(HTTP 404)" {
+                manifest_at(printed)
+            } else {
+                None
+            }
+        })
+}
+
+/// The manifest at `printed`, which steamcmd gives as a host and a path with no scheme. Asked
+/// over HTTPS; a debug build, as the tests run, asks a stand-in on this machine over HTTP.
+fn manifest_at(printed: &str) -> Option<Unserved> {
+    let mut parts = printed.split('/');
+    let host = parts.next()?;
+    let path: Vec<&str> = parts.collect();
+    let ["depot", depot, "manifest", numbers @ ..] = path.as_slice() else {
+        return None;
+    };
+    let numeric = |part: &&str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    if numbers.len() != 3 || !numbers.iter().all(numeric) {
+        return None;
+    }
+    let loopback = host
+        .strip_prefix("127.0.0.1:")
+        .is_some_and(|port| numeric(&port));
+    let named = host.contains('.')
+        && host
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-');
+    let scheme = if cfg!(debug_assertions) && loopback {
+        "http"
+    } else if named {
+        "https"
+    } else {
+        return None;
+    };
+    Some(Unserved {
+        depot: depot.parse().ok()?,
+        url: format!("{scheme}://{printed}"),
+    })
+}
+
+/// Adds to a failed `outcome` that the CDN never served the manifest of `depot`, and what to do.
+pub fn still_unserved(outcome: &mut Outcome, depot: u32) {
+    if let Outcome::Failed(reasons) = outcome {
+        reasons.push(format!(
+            "Steam's CDN still does not serve depot {depot}'s last manifest, which steamcmd \
+             builds the upload against; upload again later"
+        ));
+    }
+}
+
 /// What steamcmd says in place of a login when it never reached Steam, which refused nothing.
 const NO_CONNECTION: &str = "No Connection";
 
@@ -600,6 +692,75 @@ mod tests {
                 "{app} {code:?} {preview}"
             );
         }
+    }
+
+    /// The console of a run steamcmd 1791918946 made for Tall Tales Inn 16 minutes after the
+    /// testing branch's last build, before the CDN served that build's manifest.
+    const UNSERVED: &str = "[2026-10-15 18:05:09]: Building depot 5440762...\r\n\
+         \r\n\
+         Building file mapping...\r\n\
+         [2026-10-15 18:06:11]: ERROR! Failed to download manifest \"steampipe-partner.akamaized.net/depot/5440762/manifest/6076939079705630407/5/7060534466868254360\" (HTTP 404)\r\n\
+         \r\n\
+         [2026-10-15 18:06:11]: ERROR! Build for depot 5440762 failed : Failure\r\n";
+
+    #[test]
+    fn a_build_that_failed_for_a_manifest_the_cdn_does_not_serve_yet_says_where_it_is() {
+        let expected = Some(Unserved {
+            depot: 5_440_762,
+            url: "https://steampipe-partner.akamaized.net/depot/5440762/manifest/\
+                  6076939079705630407/5/7060534466868254360"
+                .to_owned(),
+        });
+        assert_eq!(unserved(UNSERVED, None), expected);
+        assert_eq!(unserved("", Some(UNSERVED)), expected);
+        assert_eq!(
+            unserved(&UNSERVED.replace("(HTTP 404)", "(HTTP 401)"), None),
+            None
+        );
+        assert_eq!(unserved(LOGGED_IN, Some(LOG)), None);
+    }
+
+    #[test]
+    fn only_a_manifest_address_of_steams_shape_is_asked_for() {
+        let at = |printed: &str| manifest_at(printed).map(|found| found.url);
+        assert_eq!(
+            at("cdn.example/depot/7/manifest/1/5/2").as_deref(),
+            Some("https://cdn.example/depot/7/manifest/1/5/2")
+        );
+        assert_eq!(
+            at("127.0.0.1:4321/depot/7/manifest/1/5/2").as_deref(),
+            Some("http://127.0.0.1:4321/depot/7/manifest/1/5/2")
+        );
+        for printed in [
+            "localhost/depot/7/manifest/1/5/2",
+            "cdn.example:443/depot/7/manifest/1/5/2",
+            "user@cdn.example/depot/7/manifest/1/5/2",
+            "127.0.0.1:/depot/7/manifest/1/5/2",
+            "cdn.example/depot/7/manifest/1/5",
+            "cdn.example/depot/7/manifest/1/5/2/3",
+            "cdn.example/depot/7/manifest/1/x/2",
+            "cdn.example/depot/7/manifest/1//2",
+            "cdn.example/depot/x/manifest/1/5/2",
+            "cdn.example/depots/7/manifest/1/5/2",
+            "cdn.example/depot/7/chunk/1/5/2",
+        ] {
+            assert_eq!(at(printed), None, "{printed}");
+        }
+    }
+
+    #[test]
+    fn an_upload_that_never_got_the_manifest_says_to_upload_later() {
+        let mut outcome = Outcome::Failed(vec!["Build for depot 5 failed : Failure".to_owned()]);
+        still_unserved(&mut outcome, 5);
+        assert_eq!(
+            outcome,
+            Outcome::Failed(vec![
+                "Build for depot 5 failed : Failure".to_owned(),
+                "Steam's CDN still does not serve depot 5's last manifest, which steamcmd builds \
+                 the upload against; upload again later"
+                    .to_owned()
+            ])
+        );
     }
 
     #[test]

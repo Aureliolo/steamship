@@ -25,8 +25,8 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    achievements, assets, check, ci, conversation, drm, dump, init, keychain, leaderboards, magic,
-    presence, run, scripts, settings, steamcmd, upload, vdf, webapi, workshop,
+    achievements, assets, check, ci, conversation, download, drm, dump, init, keychain,
+    leaderboards, magic, presence, run, scripts, settings, steamcmd, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -912,48 +912,32 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
     restore(packed.as_ref(), &home)?;
     let prepared = upload::prepare(&home, request.script, &description, request.preview)
         .map_err(|error| fail(&error, FAILED))?;
-    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
-    let doing = if request.preview {
-        "computing the build"
+    let saved = prepared.output.join("steamcmd.log");
+    let steam = Steam {
+        program: &program,
+        account: &account,
+        prepared: &prepared,
+        home: &home,
+        root: &root,
+        saved: &saved,
+        preview: request.preview,
+    };
+    let (doing, again) = if request.preview {
+        ("computing the build", "computing the build again")
     } else {
-        "uploading"
+        ("uploading", "uploading again")
     };
     let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
     let marks = dump::Marks::take(&steamcmd_logs);
-    let spinner = Spinner::start("steam", doing, true);
-    let finished = run::run(
-        &program,
-        &steamcmd::upload(&account, &prepared.script),
-        &steamcmd::environment(&home, Platform::THIS),
-        &root,
-        steamcmd::UPLOAD_LIMIT,
-        steamcmd::HOPELESS,
-    );
-    let took = show::took(spinner.elapsed());
-    let finished = match finished {
-        Ok(finished) => finished,
-        Err(error) => {
-            spinner.failed(&format!("could not start after {took}"));
-            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
-        }
-    };
-    let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
-    let console = redactor.redact(&finished.output);
-    let saved = prepared.output.join("steamcmd.log");
-    fs::write(&saved, &console)
-        .map_err(|error| fail(&format!("{}: {error}", saved.display()), FAILED))?;
-    let log = fs::read(prepared.log())
-        .ok()
-        .map(|log| redactor.redact(&log));
-    let outcome = upload::judge(
-        prepared.app_id,
-        finished.code,
-        &String::from_utf8_lossy(&console),
-        log.as_deref().map(String::from_utf8_lossy).as_deref(),
-        request.preview,
-    );
+    let Ran {
+        outcome,
+        spinner,
+        took,
+        redactor,
+        ..
+    } = build_waiting_on_cdn(&steam, doing, again)?;
     let outcome = found_on_steam(outcome, &prepared, &description);
     let (code, live) = report(&outcome, spinner, &took, &prepared, &saved, packed.as_ref());
     if request.json {
@@ -975,6 +959,126 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
     }
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(code)
+}
+
+/// What every run of steamcmd for one upload is given.
+struct Steam<'upload> {
+    program: &'upload Path,
+    account: &'upload Account,
+    prepared: &'upload upload::Prepared,
+    home: &'upload Path,
+    root: &'upload Path,
+    /// Where steamcmd's console is written, redacted.
+    saved: &'upload Path,
+    preview: bool,
+}
+
+/// What one run of steamcmd for an upload came to, its spinner still turning.
+struct Ran {
+    outcome: upload::Outcome,
+    /// The manifest the build failed for want of, if that is why.
+    unserved: Option<upload::Unserved>,
+    spinner: Spinner,
+    took: String,
+    redactor: Redactor,
+}
+
+/// Runs steamcmd's build, saying it is `doing` so, and runs it `again` each time it fails for a
+/// manifest Steam's CDN does not serve yet, once the CDN serves it.
+fn build_waiting_on_cdn(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, ExitCode> {
+    let mut ran = build(steam, doing)?;
+    let mut runs = 1_u32;
+    let mut patience = upload::CDN_PATIENCE;
+    while let Some(unserved) = ran.unserved.take() {
+        let depot = unserved.depot;
+        if runs == upload::RUNS {
+            upload::still_unserved(&mut ran.outcome, depot);
+            break;
+        }
+        ran.spinner.failed(&format!(
+            "Steam's CDN does not serve depot {depot}'s last manifest yet"
+        ));
+        let waiting = Spinner::start(
+            "cdn",
+            &format!("waiting for depot {depot}'s last manifest"),
+            true,
+        );
+        let served = download::served(&unserved.url, patience);
+        patience = patience.saturating_sub(waiting.elapsed());
+        let waited = show::took(waiting.elapsed());
+        match served {
+            download::Served::Yes => waiting.done(&format!("served after {waited}")),
+            // The CDN answers 401 for a request code it does not take, as one that has expired,
+            // and steamcmd's next run is given a new one.
+            download::Served::Otherwise(status) => {
+                waiting.done(&format!("answered {status} after {waited}; asking again"));
+            }
+            download::Served::No => {
+                ran.spinner = waiting;
+                ran.took = waited;
+                upload::still_unserved(&mut ran.outcome, depot);
+                break;
+            }
+        }
+        runs = runs.saturating_add(1);
+        ran = build(steam, again)?;
+    }
+    Ok(ran)
+}
+
+/// Runs steamcmd's build once, saying it is `doing` so, and reads what it came to.
+fn build(steam: &Steam<'_>, doing: &str) -> Result<Ran, ExitCode> {
+    upload::clear_log(steam.prepared).map_err(|error| fail(&error, FAILED))?;
+    let before = Redactor::for_home(steam.home).map_err(|error| fail(&error, FAILED))?;
+    let spinner = Spinner::start("steam", doing, true);
+    let finished = run::run(
+        steam.program,
+        &steamcmd::upload(steam.account, &steam.prepared.script),
+        &steamcmd::environment(steam.home, Platform::THIS),
+        steam.root,
+        steamcmd::UPLOAD_LIMIT,
+        steamcmd::HOPELESS,
+    );
+    let took = show::took(spinner.elapsed());
+    let finished = match finished {
+        Ok(finished) => finished,
+        Err(error) => {
+            spinner.failed(&format!("could not start after {took}"));
+            return Err(fail(
+                &format!("{}: {error}", steam.program.display()),
+                FAILED,
+            ));
+        }
+    };
+    let redactor =
+        before.and(Redactor::for_home(steam.home).map_err(|error| fail(&error, FAILED))?);
+    let console = redactor.redact(&finished.output);
+    fs::write(steam.saved, &console)
+        .map_err(|error| fail(&format!("{}: {error}", steam.saved.display()), FAILED))?;
+    let log = fs::read(steam.prepared.log())
+        .ok()
+        .map(|log| redactor.redact(&log));
+    let console = String::from_utf8_lossy(&console);
+    let log = log.as_deref().map(String::from_utf8_lossy);
+    let outcome = upload::judge(
+        steam.prepared.app_id,
+        finished.code,
+        &console,
+        log.as_deref(),
+        steam.preview,
+    );
+    let unserved = if matches!(outcome, upload::Outcome::Failed(_)) {
+        upload::unserved(&console, log.as_deref())
+    } else {
+        None
+    };
+    Ok(Ran {
+        outcome,
+        unserved,
+        spinner,
+        took,
+        redactor,
+    })
 }
 
 /// Asks Steam, when a key is at hand, whether `build_id` is what is live on `branch` now; false
