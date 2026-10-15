@@ -14,7 +14,7 @@ use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _, symlink as mak
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::panic;
 use std::path::Path;
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Once};
 use std::thread::{self, JoinHandle};
@@ -100,7 +100,7 @@ pub fn run(
     hopeless: &'static [&'static str],
 ) -> io::Result<Finished> {
     let (reader, writer) = io::pipe()?;
-    let mut child = Command::new(program)
+    let mut child = run::command(program)
         .args(args)
         .envs(environment.iter().map(|(name, value)| (name, value)))
         .current_dir(directory)
@@ -212,7 +212,7 @@ impl Terminal {
         // What is typed must never come back in the output, where it would be read, so the
         // terminal does not echo it, whatever the program itself asks for.
         quiet(replica.as_raw_fd())?;
-        let mut child = Command::new(program)
+        let mut child = run::command(program)
             .args(args)
             .envs(environment.iter().map(|(name, value)| (name, value)))
             .current_dir(directory)

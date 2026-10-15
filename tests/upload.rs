@@ -6,8 +6,8 @@
 
 use std::fs;
 use std::path::{self, Path, PathBuf};
-use std::process::Command;
 
+use steamship::run;
 use steamship::upload::{self, Error};
 use steamship::vdf::{self, Block};
 
@@ -199,7 +199,7 @@ fn a_script_that_is_not_there_is_an_error() {
 }
 
 fn git(folder: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = run::command("git")
         .args([
             "-c",
             "user.name=steamship",
@@ -221,7 +221,7 @@ fn the_commit_is_the_one_the_scripts_are_in() {
     git(&project.root, &["init", "--quiet"]);
     git(&project.root, &["add", "."]);
     git(&project.root, &["commit", "--quiet", "-m", "scripts"]);
-    let output = Command::new("git")
+    let output = run::command("git")
         .args(["rev-parse", "--short=12", "HEAD"])
         .current_dir(&project.root)
         .output()
