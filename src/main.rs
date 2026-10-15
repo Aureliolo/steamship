@@ -2403,7 +2403,7 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
 
 /// The top of the Git repository `folder` is in, if it is in one.
 fn repository_root(folder: &Path) -> Option<PathBuf> {
-    let output = process::Command::new("git")
+    let output = run::command("git")
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(folder)
         .stderr(process::Stdio::null())
@@ -2491,7 +2491,7 @@ fn ci_repository(named: Option<&str>, script: &Path) -> Result<String, ExitCode>
         .parent()
         .filter(|folder| !folder.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let origin = process::Command::new("git")
+    let origin = run::command("git")
         .args(["remote", "get-url", "origin"])
         .current_dir(folder)
         .stderr(process::Stdio::null())
@@ -2542,7 +2542,7 @@ fn set_secret(repository: &str, secret: &str, packed: &str) -> Result<(), ExitCo
         &format!("setting {secret} on {repository}"),
         false,
     );
-    let started = process::Command::new("gh")
+    let started = run::command("gh")
         .args(["secret", "set", secret, "--repo", repository])
         .stdin(process::Stdio::piped())
         .stdout(process::Stdio::null())
@@ -2596,7 +2596,7 @@ fn set_secret(repository: &str, secret: &str, packed: &str) -> Result<(), ExitCo
 /// commit; the release's tag alone when GitHub cannot be asked.
 fn pinned_action() -> (String, String) {
     let release = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let commit = process::Command::new("gh")
+    let commit = run::command("gh")
         .args([
             "api",
             &format!("repos/Aureliolo/steamship/commits/{release}"),

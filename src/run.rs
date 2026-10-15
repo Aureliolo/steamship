@@ -4,17 +4,46 @@
 //! On Windows a hidden window is not enough: it still takes the keyboard. So the program runs on
 //! a desktop of its own, which Windows keeps focus from leaving, inside a job that ends every
 //! process it starts. Elsewhere it runs in a process group of its own, for the same ending.
+//!
+//! Every program steamship starts with the standard library, steamcmd outside Windows and Git and
+//! the GitHub command line everywhere, is made by [`command`].
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, BufReader, Read};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt as _;
 use std::path::Path;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
 #[cfg(unix)]
 use crate::unix as native;
 #[cfg(windows)]
 use crate::windows as native;
+
+/// `program`, to be started without a console window of its own.
+///
+/// A console program started by one that has no console, as steamship has when a scheduled task
+/// or a detached script starts it, gets a window on the screen; one started this way never does,
+/// and what it writes still reaches steamship through the streams it is given.
+#[must_use]
+pub fn command<Program>(program: Program) -> Command
+where
+    Program: AsRef<OsStr>,
+{
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one place a command is made, so that every one is made out of sight"
+    )]
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    let _: &mut Command = command.creation_flags(CREATE_NO_WINDOW);
+    command
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finished {
@@ -76,6 +105,8 @@ mod tests {
     use std::sync::mpsc;
     use std::thread;
     use std::time::Instant;
+    #[cfg(windows)]
+    use windows_sys::Win32::System::Threading::DETACHED_PROCESS;
 
     /// A shell, what makes it run the one line that follows, a line that starts a grandchild
     /// holding the output open for a minute and then waits a minute itself, and one that starts
@@ -178,6 +209,51 @@ mod tests {
         let unseen = AtomicBool::new(false);
         drop(watch(Trickle(written), &["never said"], &unseen).unwrap());
         assert!(!unseen.load(Ordering::Relaxed));
+    }
+
+    /// Prints the window of the console a program started by [`command`] is on, as Windows
+    /// gives it: 0 when there is none.
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "a part of the test below, which runs it from a process with no console"]
+    fn console_window_of_a_program_started_by_command() {
+        let output = command("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "Add-Type -Name Console -Namespace Shown -MemberDefinition \
+                 '[DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow();'; \
+                 [Shown.Console]::GetConsoleWindow()",
+            ])
+            .output()
+            .unwrap();
+        println!(
+            "console window: {}\n{}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// A process with no console, as steamship is when a scheduled task or a detached script
+    /// starts it, gives each console program it starts a window of its own unless told not to.
+    /// Whether this test's own process has a console depends on what ran it, so the program is
+    /// started from one that has none.
+    #[cfg(windows)]
+    #[test]
+    fn a_program_started_without_a_console_opens_no_window() {
+        let output = command(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "run::tests::console_window_of_a_program_started_by_command",
+                "--ignored",
+                "--nocapture",
+            ])
+            .creation_flags(DETACHED_PROCESS)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stdout);
+        assert!(said.contains("console window: 0\n"), "{said}");
     }
 
     #[test]
