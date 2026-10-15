@@ -39,6 +39,10 @@ where
         clippy::disallowed_methods,
         reason = "the one place a command is made, so that every one is made out of sight"
     )]
+    #[cfg_attr(
+        not(windows),
+        expect(unused_mut, reason = "only Windows has a window to keep it from")
+    )]
     let mut command = Command::new(program);
     #[cfg(windows)]
     let _: &mut Command = command.creation_flags(CREATE_NO_WINDOW);
