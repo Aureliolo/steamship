@@ -6,3 +6,8 @@ allow-print-in-tests = true
 # min_ident_chars refuses `f`, the name the standard library gives Display's and Debug's
 # formatter, so the one way to satisfy both lints is to rename it there.
 allow-renamed-params-for = ["..", "core::fmt::Display", "core::fmt::Debug"]
+# A console program started by a steamship without a console opens a window on the screen
+# unless it is told not to, which steamship::run::command does.
+disallowed-methods = [
+  { path = "std::process::Command::new", reason = "start programs with steamship::run::command, which opens no console window" },
+]

@@ -19,7 +19,7 @@ use std::fs::{File, OpenOptions};
 #[cfg(target_os = "linux")]
 use std::io::{BufRead as _, BufReader};
 #[cfg(target_os = "linux")]
-use std::process::{ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Stdio};
 #[cfg(target_os = "linux")]
 use std::sync::OnceLock;
 #[cfg(target_os = "linux")]
@@ -31,6 +31,8 @@ use std::time::{Duration, Instant};
 use steamship::dbus::Value;
 #[cfg(target_os = "linux")]
 use steamship::dbus::session::Connection;
+#[cfg(target_os = "linux")]
+use steamship::run;
 
 /// Starts the bus, prints its address once it listens, then gnome-keyring on it, and ends both
 /// when its input ends. The bus starts nothing itself: a session bus would start a gnome-keyring
@@ -121,7 +123,7 @@ pub fn secret_service() -> &'static str {
     &HELD
         .get_or_init(|| {
             let folder = tempfile::tempdir().unwrap().keep();
-            let mut child = Command::new("sh")
+            let mut child = run::command("sh")
                 .args(["-c", SCRIPT, "sh"])
                 .arg(&folder)
                 .stdin(Stdio::piped())
