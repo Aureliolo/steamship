@@ -1746,7 +1746,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let account = home.path().display().to_string();
         keep_secret(&account, b"0123456789abcdef0123456789abcdef").unwrap();
-        let listed = process::Command::new("cmdkey")
+        let listed = run::command("cmdkey")
             .arg(format!("/list:steamship:web-api-key:{account}"))
             .output()
             .unwrap();

@@ -11,9 +11,9 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{self, Path, PathBuf};
-use std::process::Command;
 
 use crate::conversation;
+use crate::run;
 use crate::scripts;
 use crate::steamcmd;
 use crate::vdf::{self, Block, Pair, Value};
@@ -99,7 +99,7 @@ pub fn commit(path: &Path) -> Result<String, Error> {
     // Looked at first: a folder that is not there and a Git that is not installed fail to start
     // with the same error, and only one of them is about the folder.
     let _: fs::Metadata = fs::metadata(&folder).map_err(at(&folder))?;
-    let output = Command::new("git")
+    let output = run::command("git")
         .args(["rev-parse", "--short=12", "HEAD"])
         .current_dir(&folder)
         .output()

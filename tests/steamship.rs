@@ -31,6 +31,7 @@ use steamship::install;
 use steamship::keychain;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
+use steamship::run;
 use steamship::terminal::{Event, Reader};
 #[cfg(unix)]
 use steamship::unix::Terminal;
@@ -43,7 +44,7 @@ use steamship::{ci, steamcmd};
 /// The `steamship` built for these tests, which on Linux finds this process's own Secret Service
 /// and never the session's.
 fn steamship_command() -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_steamship"));
+    let mut command = run::command(env!("CARGO_BIN_EXE_steamship"));
     let _: &mut Command = command.envs(common::store::environment());
     command
 }
@@ -339,7 +340,7 @@ fn the_windows_program_carries_its_icon_and_version_details() {
         $v.CompanyName, $v.FileDescription, $v.ProductName, $v.ProductVersion,
           $v.FileVersionRaw.ToString(), $v.LegalCopyright, $v.OriginalFilename,
           [Shell.Icons]::ExtractIconExW($env:PROGRAM, -1, $null, $null, 0)";
-    let output = Command::new("powershell.exe")
+    let output = run::command("powershell.exe")
         .args(["-NoProfile", "-NonInteractive", "-Command", script])
         .env("PROGRAM", env!("CARGO_BIN_EXE_steamship"))
         .output()
@@ -1222,7 +1223,7 @@ fn ci_without_gh_says_where_to_get_it_and_exits_1() {
     );
     let (_project, root) = github_project();
     let bin = tempfile::tempdir().unwrap();
-    let git = Command::new("sh")
+    let git = run::command("sh")
         .args(["-c", "command -v git"])
         .output()
         .unwrap();
@@ -1259,7 +1260,7 @@ fn ci_with_a_gh_that_cannot_start_says_so_and_exits_1() {
     );
     let (_project, root) = github_project();
     let bin = tempfile::tempdir().unwrap();
-    let git = Command::new("sh")
+    let git = run::command("sh")
         .args(["-c", "command -v git"])
         .output()
         .unwrap();
@@ -1559,7 +1560,7 @@ fn faked_with(script: &str) -> tempfile::TempDir {
 /// every handle until it runs; running `program` in those moments fails with "Text file busy".
 #[cfg(unix)]
 fn write_program(program: &Path, script: &str) {
-    let mut writer = Command::new("sh")
+    let mut writer = run::command("sh")
         .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
         .arg(program)
         .stdin(Stdio::piped())
@@ -2180,7 +2181,7 @@ fn login_with_nowhere_to_look_for_an_account_exits_1() {
 }
 
 fn git(folder: &Path, args: &[&str]) {
-    let status = Command::new("git")
+    let status = run::command("git")
         .args([
             "-c",
             "user.name=steamship",
@@ -4458,7 +4459,7 @@ where
 /// Sends `which` signal to the process `pid`, and says whether it was there to receive it.
 #[cfg(unix)]
 fn signal(which: &str, pid: &str) -> bool {
-    Command::new("kill")
+    run::command("kill")
         .args([which, pid])
         .stderr(Stdio::null())
         .status()
@@ -4503,7 +4504,7 @@ fn uploading(launcher: Option<&str>) -> (Child, String, tempfile::TempDir, tempf
     let home = faked_with("#!/bin/sh\necho $$ > \"$HOME/steamcmd.pid\"\nexec sleep 60\n");
     let (project, script) = project(true);
     let steamship = env!("CARGO_BIN_EXE_steamship");
-    let started = Command::new(launcher.unwrap_or(steamship))
+    let started = run::command(launcher.unwrap_or(steamship))
         .args(launcher.map(|_| steamship))
         .envs(common::store::environment())
         .args(["upload", script.to_str().unwrap(), "--version", "1.4.0"])

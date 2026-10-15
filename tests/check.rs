@@ -7,9 +7,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use steamship::check::{Report, check, scripts_only};
+use steamship::run;
 use steamship::scripts::Problem;
 
 pub mod common;
@@ -506,7 +506,7 @@ fn run(script: &Path) -> (Option<i32>, String, String) {
 /// [`run`], with `extra` arguments after the script.
 fn run_with(script: &Path, extra: &[&str]) -> (Option<i32>, String, String) {
     let home = tempfile::tempdir().unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_steamship"))
+    let output = run::command(env!("CARGO_BIN_EXE_steamship"))
         .arg("check")
         .arg(script)
         .args(extra)
