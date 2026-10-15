@@ -724,13 +724,13 @@ fn an_upload_runs_steamcmd_once_more_when_it_did_not_reach_steams_build_server()
         assert!(stdout.contains(line), "{line:?} in {stdout}");
     }
 
-    let home = faked_with(&unconnected_then_built(99));
-    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
-    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
-    assert_eq!(runs(home.path()), 2, "only once more");
+    let unreached = faked_with(&unconnected_then_built(99));
+    let (failed, said, why) = upload(&script, unreached.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(failed, Some(1_i32), "{said}{why}");
+    assert_eq!(runs(unreached.path()), 2, "only once more");
     assert!(
-        stderr.contains("Failed to initialize build on server (No Connection)"),
-        "{stderr}"
+        why.contains("Failed to initialize build on server (No Connection)"),
+        "{why}"
     );
 }
 
