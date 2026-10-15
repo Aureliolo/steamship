@@ -104,6 +104,12 @@ app does not have, steamcmd reports only "Failed to commit build" and no BuildID
 the build is on Steam but not live, and why that happens. With a Web API key at hand it finds the
 build by its description and gives its BuildID and the `promote` command, as above.
 
+steamcmd builds each depot against the manifest of the branch's last build, which Steam's CDN
+serves only some minutes after that build is made. An upload soon after the last one can fail
+on it, with `Failed to download manifest` and `(HTTP 404)`. steamship then asks the CDN for that
+manifest every 30 seconds and runs steamcmd again once it is served, for up to half an hour and
+four runs in all, so a second upload straight after the first one waits rather than fails.
+
 `--preview` is Valve's dry run: the whole build is computed and logged, nothing is uploaded and
 nothing is set live.
 

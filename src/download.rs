@@ -163,6 +163,52 @@ where
     Ok(())
 }
 
+/// How long apart a file the CDN does not serve yet is asked for.
+const APART: Duration = Duration::from_secs(30);
+
+/// What asking until the CDN serves a file came to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Served {
+    /// The CDN serves it.
+    Yes,
+    /// The CDN refused in some other way than "not found", as it does once the request code in
+    /// the address has expired; what it answered.
+    Otherwise(u16),
+    /// Still not found when patience ran out.
+    No,
+}
+
+/// Asks for `url` until the CDN serves it or refuses it for some other reason than not having it.
+///
+/// It is asked at once, then every 30 seconds while `patience` lasts. What may pass next time, a
+/// 5xx or a broken connection, is waited through like a 404.
+#[must_use]
+pub fn served(url: &str, patience: Duration) -> Served {
+    served_waiting(url, patience, thread::sleep)
+}
+
+fn served_waiting<Sleep>(url: &str, patience: Duration, sleep: Sleep) -> Served
+where
+    Sleep: Fn(Duration),
+{
+    let agent = agent();
+    let mut left = patience;
+    loop {
+        match agent.get(url).call().map_err(|error| classify(url, &error)) {
+            Ok(_) => return Served::Yes,
+            Err(Failure::Stop(Error::Gone { status, .. })) if status != 404 => {
+                return Served::Otherwise(status);
+            }
+            Err(_) => {}
+        }
+        let Some(rest) = left.checked_sub(APART) else {
+            return Served::No;
+        };
+        sleep(APART);
+        left = rest;
+    }
+}
+
 /// A 5xx, a 429 or a broken connection may pass next time; any other answer will not.
 fn classify(url: &str, error: &ureq::Error) -> Failure {
     if let &ureq::Error::StatusCode(status) = error {
@@ -210,7 +256,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::cell::RefCell;
+    use std::cell::{Cell, RefCell};
     use std::iter;
     use std::net::TcpListener;
 
@@ -432,6 +478,45 @@ mod tests {
         let package = serve(vec![response("200 OK", BODY)]);
         assert!(matches!(file(&package, &into, size, &sha256), Ok(())));
         assert_eq!(fs::read(&into).unwrap(), BODY);
+    }
+
+    #[test]
+    fn a_file_not_served_yet_is_asked_for_every_30_seconds_until_it_is() {
+        let waits = RefCell::new(Vec::new());
+        let url = serve(vec![
+            response("404 Not Found", b""),
+            response("503 Service Unavailable", b""),
+            response("200 OK", b"manifest"),
+        ]);
+        let served = served_waiting(&url, Duration::from_mins(30), |wait| {
+            waits.borrow_mut().push(wait.as_secs());
+        });
+        assert_eq!(served, Served::Yes);
+        assert_eq!(*waits.borrow(), [30, 30]);
+    }
+
+    #[test]
+    fn asking_stops_when_patience_runs_out() {
+        for (patience, asked) in [(0, 1), (59, 2), (60, 3)] {
+            let waits = Cell::new(0_u32);
+            let url = serve(vec![response("404 Not Found", b""); 3]);
+            let served = served_waiting(&url, Duration::from_secs(patience), |_| {
+                waits.set(waits.get().saturating_add(1));
+            });
+            assert_eq!(served, Served::No, "{patience}");
+            assert_eq!(waits.get().saturating_add(1), asked, "{patience}");
+        }
+    }
+
+    #[test]
+    fn a_refusal_other_than_not_found_ends_the_wait_at_once() {
+        let url = serve(vec![response("401 Refused", b"")]);
+        assert_eq!(
+            served_waiting(&url, Duration::from_mins(30), |_| panic!("waited")),
+            Served::Otherwise(401)
+        );
+        let served = serve(vec![response("200 OK", b"")]);
+        assert_eq!(super::served(&served, Duration::ZERO), Served::Yes);
     }
 
     #[test]

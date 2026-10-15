@@ -605,6 +605,86 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
     }
 }
 
+/// A steamcmd whose first `failing` runs fail as steamcmd 1791918946 did for Tidal Mill Inn 16
+/// minutes after the branch's last build, the CDN not serving that build's manifest yet, named
+/// here at `cdn`; any run after has Valve build the upload as `BuildID` 4242. Each run adds a line
+/// to `runs` in the home.
+#[cfg(unix)]
+fn unserved_then_built(cdn: &str, failing: u32) -> String {
+    let manifest = format!(
+        "{}/depot/1001/manifest/6076939079705630407/5/7060534466868254360",
+        cdn.strip_prefix("http://").unwrap()
+    );
+    format!(
+        "#!/bin/sh\n\
+         output=\"$HOME/apps/1000/output\"\n\
+         mkdir -p \"$output\"\n\
+         echo run >> \"$HOME/runs\"\n\
+         echo 'Logging in user build_bot to Steam Public...OK'\n\
+         runs=$(wc -l < \"$HOME/runs\")\n\
+         if [ $runs -le {failing} ]; then\n\
+         echo '[2026-10-15 18:05:09]: Building depot 1001...'\n\
+         echo '[2026-10-15 18:06:11]: ERROR! Failed to download manifest \"{manifest}\" (HTTP 404)'\n\
+         echo '[2026-10-15 18:06:11]: ERROR! Build for depot 1001 failed : Failure' > \"$output/app_build_1000.log\"\n\
+         exit 6\n\
+         fi\n\
+         echo 'Successfully finished AppID 1000 build (BuildID 4242).' > \"$output/app_build_1000.log\"\n"
+    )
+}
+
+/// How many times the steamcmd of `unserved_then_built` ran in `home`.
+#[cfg(unix)]
+fn runs(home: &Path) -> usize {
+    fs::read_to_string(home.join("runs"))
+        .unwrap()
+        .lines()
+        .count()
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_waits_for_the_cdn_to_serve_the_last_manifest_then_uploads_again() {
+    let (cdn, requests) = web_api(vec![("200 OK", "manifest")]);
+    let home = faked_with(&unserved_then_built(&cdn, 1));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(runs(home.path()), 2);
+    assert!(
+        requests.recv().unwrap().starts_with(
+            "GET /depot/1001/manifest/6076939079705630407/5/7060534466868254360 HTTP/1.1\r\n"
+        ),
+        "the manifest steamcmd could not download is asked for"
+    );
+    for line in [
+        "\u{2717} Steam's CDN does not serve depot 1001's last manifest yet\n",
+        "  cdn       \u{2713} served after ",
+        "  steam     \u{2713} uploaded in ",
+        "app 1000: BuildID 4242, set live on testing",
+    ] {
+        assert!(stdout.contains(line), "{line:?} in {stdout}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_stops_asking_steamcmd_after_four_runs_the_cdn_never_served() {
+    let (cdn, _requests) = web_api(vec![("401 Refused", ""); 3]);
+    let home = faked_with(&unserved_then_built(&cdn, 99));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(runs(home.path()), 4);
+    assert_eq!(stdout.matches("answered 401 after ").count(), 3, "{stdout}");
+    for reason in [
+        "Build for depot 1001 failed : Failure",
+        "Steam's CDN still does not serve depot 1001's last manifest, which steamcmd builds the \
+         upload against; upload again later",
+    ] {
+        assert!(stderr.contains(reason), "{reason:?} in {stderr}");
+    }
+}
+
 /// The one line of JSON a `--json` command printed on standard output, which must be all there
 /// is.
 fn summary_of(stdout: &str) -> serde_json::Value {
