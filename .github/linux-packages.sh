@@ -42,7 +42,8 @@ fi
 gzip -9n "${folder}"/man/*.1
 
 # One entry, pointing at the release's notes, which nFPM writes as Debian's changelog and as the
-# RPM's.
+# RPM's. Lintian refuses a changelog line over 80 characters and the link spends 53 of them before
+# the version, so the version is said once, in the link, which leaves room for any up to 16 long.
 changed="$(date -u -d "@${SOURCE_DATE_EPOCH}" +%Y-%m-%dT%H:%M:%SZ)"
 cat > "${folder}/changelog.yml" << CHANGELOG
 - semver: ${version}-1
@@ -53,7 +54,7 @@ cat > "${folder}/changelog.yml" << CHANGELOG
     distributions:
       - unstable
   changes:
-    - note: "steamship ${version}: ${repository}/releases/tag/v${version}"
+    - note: "Notes: ${repository}/releases/tag/v${version}"
 CHANGELOG
 
 # Debian's machine-readable form. Apache-2.0 is among the licences every Debian system carries;
