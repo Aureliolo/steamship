@@ -937,7 +937,7 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         took,
         redactor,
         ..
-    } = build_waiting_on_cdn(&steam, doing, again)?;
+    } = build_retrying(&steam, doing, again)?;
     let outcome = found_on_steam(outcome, &prepared, &description);
     let (code, live) = report(&outcome, spinner, &took, &prepared, &saved, packed.as_ref());
     if request.json {
@@ -976,48 +976,64 @@ struct Steam<'upload> {
 /// What one run of steamcmd for an upload came to, its spinner still turning.
 struct Ran {
     outcome: upload::Outcome,
-    /// The manifest the build failed for want of, if that is why.
-    unserved: Option<upload::Unserved>,
+    /// Why the build failed, if running steamcmd again may pass.
+    retry: Option<upload::Retry>,
     spinner: Spinner,
     took: String,
     redactor: Redactor,
 }
 
-/// Runs steamcmd's build, saying it is `doing` so, and runs it `again` each time it fails for a
-/// manifest Steam's CDN does not serve yet, once the CDN serves it.
-fn build_waiting_on_cdn(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, ExitCode> {
+/// Runs steamcmd's build, saying it is `doing` so, and runs it `again` while it fails in a way
+/// that may pass: once Steam's CDN serves a manifest it did not, and once more for no connection
+/// to Steam's build server.
+fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, ExitCode> {
     let mut ran = build(steam, doing)?;
     let mut runs = 1_u32;
     let mut patience = upload::CDN_PATIENCE;
-    while let Some(unserved) = ran.unserved.take() {
-        let depot = unserved.depot;
-        if runs == upload::RUNS {
-            upload::still_unserved(&mut ran.outcome, depot);
-            break;
-        }
-        ran.spinner.failed(&format!(
-            "Steam's CDN does not serve depot {depot}'s last manifest yet"
-        ));
-        let waiting = Spinner::start(
-            "cdn",
-            &format!("waiting for depot {depot}'s last manifest"),
-            true,
-        );
-        let served = download::served(&unserved.url, patience);
-        patience = patience.saturating_sub(waiting.elapsed());
-        let waited = show::took(waiting.elapsed());
-        match served {
-            download::Served::Yes => waiting.done(&format!("served after {waited}")),
-            // The CDN answers 401 for a request code it does not take, as one that has expired,
-            // and steamcmd's next run is given a new one.
-            download::Served::Otherwise(status) => {
-                waiting.done(&format!("answered {status} after {waited}; asking again"));
+    let mut reconnected = false;
+    while let Some(retry) = ran.retry.take() {
+        match retry {
+            upload::Retry::Unserved(unserved) => {
+                let depot = unserved.depot;
+                if runs == upload::RUNS {
+                    upload::still_unserved(&mut ran.outcome, depot);
+                    break;
+                }
+                ran.spinner.failed(&format!(
+                    "Steam's CDN does not serve depot {depot}'s last manifest yet"
+                ));
+                let waiting = Spinner::start(
+                    "cdn",
+                    &format!("waiting for depot {depot}'s last manifest"),
+                    true,
+                );
+                let served = download::served(&unserved.url, patience);
+                patience = patience.saturating_sub(waiting.elapsed());
+                let waited = show::took(waiting.elapsed());
+                match served {
+                    download::Served::Yes => waiting.done(&format!("served after {waited}")),
+                    // The CDN answers 401 for a request code it does not take, as one that has
+                    // expired, and steamcmd's next run is given a new one.
+                    download::Served::Otherwise(status) => {
+                        waiting.done(&format!("answered {status} after {waited}; asking again"));
+                    }
+                    download::Served::No => {
+                        ran.spinner = waiting;
+                        ran.took = waited;
+                        upload::still_unserved(&mut ran.outcome, depot);
+                        break;
+                    }
+                }
             }
-            download::Served::No => {
-                ran.spinner = waiting;
-                ran.took = waited;
-                upload::still_unserved(&mut ran.outcome, depot);
-                break;
+            upload::Retry::NoConnection => {
+                if reconnected || runs == upload::RUNS {
+                    break;
+                }
+                reconnected = true;
+                ran.spinner.failed(&format!(
+                    "no connection to Steam's build server after {}",
+                    ran.took
+                ));
             }
         }
         runs = runs.saturating_add(1);
@@ -1067,14 +1083,14 @@ fn build(steam: &Steam<'_>, doing: &str) -> Result<Ran, ExitCode> {
         log.as_deref(),
         steam.preview,
     );
-    let unserved = if matches!(outcome, upload::Outcome::Failed(_)) {
-        upload::unserved(&console, log.as_deref())
+    let retry = if matches!(outcome, upload::Outcome::Failed(_)) {
+        upload::retry(&console, log.as_deref())
     } else {
         None
     };
     Ok(Ran {
         outcome,
-        unserved,
+        retry,
         spinner,
         took,
         redactor,

@@ -109,6 +109,8 @@ serves only some minutes after that build is made. An upload soon after the last
 on it, with `Failed to download manifest` and `(HTTP 404)`. steamship then asks the CDN for that
 manifest every 30 seconds and runs steamcmd again once it is served, for up to half an hour and
 four runs in all, so a second upload straight after the first one waits rather than fails.
+When steamcmd reaches Steam but not its build server, `Failed to initialize build on server (No
+Connection)`, steamship runs it once more.
 
 `--preview` is Valve's dry run: the whole build is computed and logged, nothing is uploaded and
 nothing is set live.

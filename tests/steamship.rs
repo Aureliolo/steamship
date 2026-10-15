@@ -605,16 +605,11 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
     }
 }
 
-/// A steamcmd whose first `failing` runs fail as steamcmd 1791918946 did for Tidal Mill Inn 16
-/// minutes after the branch's last build, the CDN not serving that build's manifest yet, named
-/// here at `cdn`; any run after has Valve build the upload as `BuildID` 4242. Each run adds a line
-/// to `runs` in the home.
+/// A steamcmd whose first `failing` runs run the shell commands `fail`, which fail the build, and
+/// exit 6; any run after has Valve build the upload as `BuildID` 4242. Each run adds a line to
+/// `runs` in the home.
 #[cfg(unix)]
-fn unserved_then_built(cdn: &str, failing: u32) -> String {
-    let manifest = format!(
-        "{}/depot/1001/manifest/6076939079705630407/5/7060534466868254360",
-        cdn.strip_prefix("http://").unwrap()
-    );
+fn failing_then_built(fail: &str, failing: u32) -> String {
     format!(
         "#!/bin/sh\n\
          output=\"$HOME/apps/1000/output\"\n\
@@ -623,16 +618,45 @@ fn unserved_then_built(cdn: &str, failing: u32) -> String {
          echo 'Logging in user build_bot to Steam Public...OK'\n\
          runs=$(wc -l < \"$HOME/runs\")\n\
          if [ $runs -le {failing} ]; then\n\
-         echo '[2026-10-15 18:05:09]: Building depot 1001...'\n\
-         echo '[2026-10-15 18:06:11]: ERROR! Failed to download manifest \"{manifest}\" (HTTP 404)'\n\
-         echo '[2026-10-15 18:06:11]: ERROR! Build for depot 1001 failed : Failure' > \"$output/app_build_1000.log\"\n\
+         {fail}\
          exit 6\n\
          fi\n\
          echo 'Successfully finished AppID 1000 build (BuildID 4242).' > \"$output/app_build_1000.log\"\n"
     )
 }
 
-/// How many times the steamcmd of `unserved_then_built` ran in `home`.
+/// A steamcmd whose first `failing` runs fail as steamcmd 1791918946 did for Tidal Mill Inn 16
+/// minutes after the branch's last build, the CDN not serving that build's manifest yet, named
+/// here at `cdn`.
+#[cfg(unix)]
+fn unserved_then_built(cdn: &str, failing: u32) -> String {
+    let manifest = format!(
+        "{}/depot/1001/manifest/6076939079705630407/5/7060534466868254360",
+        cdn.strip_prefix("http://").unwrap()
+    );
+    failing_then_built(
+        &format!(
+            "echo '[2026-10-15 18:05:09]: Building depot 1001...'\n\
+             echo '[2026-10-15 18:06:11]: ERROR! Failed to download manifest \"{manifest}\" (HTTP 404)'\n\
+             echo '[2026-10-15 18:06:11]: ERROR! Build for depot 1001 failed : Failure' > \"$output/app_build_1000.log\"\n"
+        ),
+        failing,
+    )
+}
+
+/// A steamcmd whose first `failing` runs fail as steamcmd 1788292693 did once in CI, having
+/// reached Steam but not its build server.
+#[cfg(unix)]
+fn unconnected_then_built(failing: u32) -> String {
+    failing_then_built(
+        "echo '[2026-10-12 15:35:56]: Building depot 1001...'\n\
+         echo '[2026-10-12 15:35:56]: ERROR! Failed to initialize build on server (No Connection) '\n\
+         echo '[2026-10-12 15:35:56]: ERROR! Build for depot 1001 failed : Failure' > \"$output/app_build_1000.log\"\n",
+        failing,
+    )
+}
+
+/// How many times the steamcmd of `failing_then_built` ran in `home`.
 #[cfg(unix)]
 fn runs(home: &Path) -> usize {
     fs::read_to_string(home.join("runs"))
@@ -683,6 +707,31 @@ fn an_upload_stops_asking_steamcmd_after_four_runs_the_cdn_never_served() {
     ] {
         assert!(stderr.contains(reason), "{reason:?} in {stderr}");
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_runs_steamcmd_once_more_when_it_did_not_reach_steams_build_server() {
+    let home = faked_with(&unconnected_then_built(1));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(runs(home.path()), 2);
+    for line in [
+        "  steam     \u{2717} no connection to Steam's build server after ",
+        "  steam     \u{2713} uploaded in ",
+    ] {
+        assert!(stdout.contains(line), "{line:?} in {stdout}");
+    }
+
+    let unreached = faked_with(&unconnected_then_built(99));
+    let (failed, said, why) = upload(&script, unreached.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(failed, Some(1_i32), "{said}{why}");
+    assert_eq!(runs(unreached.path()), 2, "only once more");
+    assert!(
+        why.contains("Failed to initialize build on server (No Connection)"),
+        "{why}"
+    );
 }
 
 /// The one line of JSON a `--json` command printed on standard output, which must be all there

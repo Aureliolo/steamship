@@ -436,9 +436,33 @@ pub fn uploaded_as(builds: &[webapi::Build], description: &str) -> Option<u64> {
 /// serve it a minute later.
 pub const CDN_PATIENCE: Duration = Duration::from_mins(30);
 
-/// The most times steamcmd runs for one upload that waits on the CDN. Each run logs in again, so
-/// a request code that keeps expiring does not have steamcmd log in without end.
+/// The most times steamcmd runs for one upload. Each run logs in again, so a request code that
+/// keeps expiring does not have steamcmd log in without end.
 pub const RUNS: u32 = 4;
+
+/// What steamcmd says when Steam's build server is not reached as a build begins, after a login
+/// that was. Seen once in CI, on a run between two that built minutes before and after.
+const NO_CONNECTION_AT_BUILD: &str = "ERROR! Failed to initialize build on server (No Connection)";
+
+/// Why a build failed that may pass when steamcmd runs again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Retry {
+    /// For a manifest the CDN does not serve yet; it passes once the CDN does.
+    Unserved(Unserved),
+    /// For no connection to Steam's build server; it is tried once more.
+    NoConnection,
+}
+
+/// Why steamcmd's build failed, from `console` and `log`, if running it again may pass.
+#[must_use]
+pub fn retry(console: &str, log: Option<&str>) -> Option<Retry> {
+    unserved(console, log).map(Retry::Unserved).or_else(|| {
+        log.into_iter()
+            .chain([console])
+            .any(|text| text.contains(NO_CONNECTION_AT_BUILD))
+            .then_some(Retry::NoConnection)
+    })
+}
 
 /// A depot's manifest that steamcmd could not download, because Steam's CDN does not serve it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -452,8 +476,7 @@ pub struct Unserved {
 ///
 /// steamcmd builds each depot against the manifest of the build last on the branch, and Steam's
 /// CDN serves that only some minutes after the build: until then it answers 404.
-#[must_use]
-pub fn unserved(console: &str, log: Option<&str>) -> Option<Unserved> {
+fn unserved(console: &str, log: Option<&str>) -> Option<Unserved> {
     log.into_iter()
         .flat_map(str::lines)
         .chain(console.lines())
@@ -718,6 +741,50 @@ mod tests {
             None
         );
         assert_eq!(unserved(LOGGED_IN, Some(LOG)), None);
+    }
+
+    /// The console of CI's preview of app 480 that steamcmd 1788292693 could not begin on Steam's
+    /// build server, between runs minutes before and after that could.
+    const NO_CONNECTION_AT_BUILD_CONSOLE: &str = "Connecting anonymously to Steam Public...OK\n\
+         Waiting for client config...OK\n\
+         Waiting for user info...OK\n\
+         [2026-10-12 15:35:56]: Starting AppID 480 build (flags 0x2).\n\
+         [2026-10-12 15:35:56]: Building depot 481...\n\
+         \n\
+         Building file mapping...\n\
+         Scanning content\n\
+         [2026-10-12 15:35:56]: ERROR! Failed to initialize build on server (No Connection) \n\
+         \n\
+         [2026-10-12 15:35:56]: ERROR! Build for depot 481 failed : Failure\n";
+
+    #[test]
+    fn a_build_that_may_pass_when_steamcmd_runs_again_says_why() {
+        let no_connection = Some(Retry::NoConnection);
+        assert_eq!(retry(NO_CONNECTION_AT_BUILD_CONSOLE, None), no_connection);
+        assert_eq!(
+            retry("", Some(NO_CONNECTION_AT_BUILD_CONSOLE)),
+            no_connection
+        );
+        assert!(matches!(
+            retry(UNSERVED, Some(NO_CONNECTION_AT_BUILD_CONSOLE)),
+            Some(Retry::Unserved(Unserved {
+                depot: 1_000_052,
+                ..
+            }))
+        ));
+        for (console, log) in [
+            (LOGGED_IN, Some(LOG)),
+            (
+                "Logging in user 'build_bot' to Steam Public...FAILED (No Connection)\r\n",
+                None,
+            ),
+            (
+                "",
+                Some("[..]: ERROR! Failed to initialize build on server (Access Denied)\n"),
+            ),
+        ] {
+            assert_eq!(retry(console, log), None, "{console}");
+        }
     }
 
     #[test]
