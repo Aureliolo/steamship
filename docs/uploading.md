@@ -368,6 +368,31 @@ achievement or stat in two of them is refused, naming both. Steam's Web API does
 give a stat's type or an achievement's progress stat and maximum, so `kind`, `stat` and `at` go
 unchecked, and the check says so.
 
+### Every language
+
+```sh
+steamship achievements 480 --check steam/achievements.json steam/achievements/localisation.csv
+```
+
+A `.csv` file among them is a localisation in the columns Steamworks' achievement editor
+exports under Bulk Import/Export: the API name, then `name` or `description`, then a column for
+each language headed with Steam's name for it, such as `german` or `schinese`. The editor's
+heads for the first two columns say more, but begin with `api_name` and `field`, which is all
+steamship needs of them.
+
+```text
+api_name,field,english,german
+FIRST_ANCHOR,name,Down in the Cellar,Unten im Keller
+FIRST_ANCHOR,description,Dig an inn's first cellar.,Grabe den ersten Keller einer Herberge.
+```
+
+`--check` then asks Steam for the achievements in each of its languages too, and names each
+name or description that differs, with its language. Steam answers a text it has no
+translation of in English, so one the localisation has and Steam lacks is said to be missing,
+and a language Steam holds nothing in is said once. The editor's import can apply only part of
+a localisation the first time, which this catches. Every achievement the other files list must
+be in the localisation, and nothing else may be.
+
 ## Leaderboards
 
 ```sh

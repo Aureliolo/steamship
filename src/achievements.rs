@@ -8,6 +8,8 @@ use std::fmt;
 
 use serde_json::Value;
 
+use crate::presence;
+use crate::show::counted;
 use crate::webapi::{Achievement, Stat};
 
 /// An achievement as the file wants it.
@@ -27,16 +29,49 @@ pub struct WantedStat {
     pub default: Option<f64>,
 }
 
+/// An achievement's name and description in one language.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Translation {
+    /// Steam's name for the language, such as `german` or `schinese`.
+    pub language: String,
+    pub name: String,
+    pub description: String,
+}
+
+/// An achievement's name and description in each language a localisation file gives them, in
+/// its column order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Translated {
+    pub api_name: String,
+    pub texts: Vec<Translation>,
+}
+
 /// What the file holds, and what in it goes unchecked.
 ///
 /// That is the app it is for, if it says, the achievements in its order, the stats when it lists
-/// them, which are checked only then, and what it sets that Steam's Web API does not answer.
+/// them, which are checked only then, what it sets that Steam's Web API does not answer, and the
+/// achievements' translations when it is a localisation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Listed {
     pub app: Option<u64>,
     pub achievements: Vec<Wanted>,
     pub stats: Option<Vec<WantedStat>>,
     pub unchecked: Vec<&'static str>,
+    pub translations: Vec<Translated>,
+}
+
+impl Listed {
+    /// Every language the translations are in, in the order the files first give them.
+    #[must_use]
+    pub fn languages(&self) -> Vec<&str> {
+        let mut languages: Vec<&str> = Vec::new();
+        for translation in self.translations.iter().flat_map(|each| &each.texts) {
+            if !languages.contains(&translation.language.as_str()) {
+                languages.push(&translation.language);
+            }
+        }
+        languages
+    }
 }
 
 /// Reads the file's `text`: an object with an `achievements` list, and a `stats` list if the
@@ -101,6 +136,102 @@ pub fn read(text: &str) -> Result<Listed, String> {
         achievements,
         stats,
         unchecked: Vec::new(),
+        translations: Vec::new(),
+    })
+}
+
+/// Reads the localisation Steamworks' achievement editor exports under Bulk Import/Export, as
+/// `text`.
+///
+/// That is CSV with a row for each achievement's name and another for its description: the API
+/// name in the first column, `name` or `description` in the second, and the text in each
+/// language in a column headed with Steam's name for it, such as `german`.
+///
+/// # Errors
+///
+/// When the text is not such a file, heads a column with something that is not a language or
+/// with a language twice, or gives an achievement's name or description twice, or one without
+/// the other.
+pub fn read_localisation(text: &str) -> Result<Listed, String> {
+    let mut reader = csv::Reader::from_reader(text.as_bytes());
+    let heads = reader.headers().map_err(|error| error.to_string())?.clone();
+    let mut columns = heads.iter();
+    if !columns
+        .next()
+        .is_some_and(|head| head.starts_with("api_name"))
+        || !columns.next().is_some_and(|head| head.starts_with("field"))
+    {
+        return Err(
+            "is not the localisation Steamworks' achievement editor exports: its first two \
+             columns are not api_name and field"
+                .to_owned(),
+        );
+    }
+    let languages: Vec<String> = columns.map(str::to_owned).collect();
+    if languages.is_empty() {
+        return Err("has a column for no language".to_owned());
+    }
+    for (index, language) in languages.iter().enumerate() {
+        if !presence::is_language(language) {
+            return Err(presence::not_language(language));
+        }
+        if languages.iter().take(index).any(|other| other == language) {
+            return Err(format!("has two columns for {language}"));
+        }
+    }
+    let mut names: Vec<(String, Vec<String>)> = Vec::new();
+    let mut descriptions: Vec<(String, Vec<String>)> = Vec::new();
+    for row in reader.records() {
+        let row = row.map_err(|error| error.to_string())?;
+        let api_name = row.get(0).unwrap_or_default().to_owned();
+        if api_name.is_empty() {
+            let line = row.position().map_or(0, csv::Position::line);
+            return Err(format!("line {line} has no API name"));
+        }
+        let field = row.get(1).unwrap_or_default();
+        let kept = match field {
+            "name" => &mut names,
+            "description" => &mut descriptions,
+            _ => {
+                return Err(format!(
+                    "{api_name}: \"{field}\" is not name or description"
+                ));
+            }
+        };
+        if kept.iter().any(|(kept, _)| *kept == api_name) {
+            return Err(format!("{api_name}'s {field} is in the file twice"));
+        }
+        kept.push((api_name, row.iter().skip(2).map(str::to_owned).collect()));
+    }
+    let mut translations = Vec::with_capacity(names.len());
+    for (api_name, named) in names {
+        let Some(at) = descriptions
+            .iter()
+            .position(|(other, _)| *other == api_name)
+        else {
+            return Err(format!("{api_name} has a name and no description"));
+        };
+        let (_, described) = descriptions.remove(at);
+        let texts = languages
+            .iter()
+            .zip(named.into_iter().zip(described))
+            .map(|(language, (name, description))| Translation {
+                language: language.clone(),
+                name,
+                description,
+            })
+            .collect();
+        translations.push(Translated { api_name, texts });
+    }
+    if let Some((api_name, _)) = descriptions.first() {
+        return Err(format!("{api_name} has a description and no name"));
+    }
+    Ok(Listed {
+        app: None,
+        achievements: Vec::new(),
+        stats: None,
+        unchecked: Vec::new(),
+        translations,
     })
 }
 
@@ -136,6 +267,7 @@ fn read_records(records: &[Value]) -> Result<Listed, String> {
         achievements,
         stats: Some(stats),
         unchecked,
+        translations: Vec::new(),
     })
 }
 
@@ -189,23 +321,36 @@ fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String
     })
 }
 
-/// The `files`, each read and named, as one: the app the first that says names, the achievements
-/// and stats of each in turn, the stats checked when any file lists them, and all that any leaves
-/// unchecked.
+/// The `files`, each read and named, as one.
+///
+/// That is the app the first that says names, the achievements and stats of each in turn, the
+/// stats checked when any file lists them, all that any leaves unchecked, and the translations.
 ///
 /// # Errors
 ///
-/// When an achievement or a stat is in two of the files, naming both.
+/// When an achievement or a stat is in two of the files, or is translated in two, naming both;
+/// and when there are translations, but not of every achievement, or of one no file lists.
 pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
     let mut whole = Listed {
         app: None,
         achievements: Vec::new(),
         stats: None,
         unchecked: Vec::new(),
+        translations: Vec::new(),
     };
     let mut achievements_from: BTreeMap<String, String> = BTreeMap::new();
     let mut stats_from: BTreeMap<String, String> = BTreeMap::new();
+    let mut translated_in: BTreeMap<String, String> = BTreeMap::new();
     for (file, listed) in files {
+        for translated in listed.translations {
+            if let Some(first) = translated_in.insert(translated.api_name.clone(), file.clone()) {
+                return Err(format!(
+                    "{} is translated in both {first} and {file}",
+                    translated.api_name
+                ));
+            }
+            whole.translations.push(translated);
+        }
         whole.app = whole.app.or(listed.app);
         for wanted in listed.achievements {
             if let Some(first) = achievements_from.insert(wanted.api_name.clone(), file.clone()) {
@@ -230,6 +375,25 @@ pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
                 whole.unchecked.push(what);
             }
         }
+    }
+    if let Some((api_name, file)) = translated_in
+        .iter()
+        .find(|(api_name, _)| !achievements_from.contains_key(*api_name))
+    {
+        return Err(format!(
+            "{api_name} is translated in {file} but is in no file of achievements"
+        ));
+    }
+    if !translated_in.is_empty()
+        && let Some(untranslated) = whole
+            .achievements
+            .iter()
+            .find(|wanted| !translated_in.contains_key(&wanted.api_name))
+    {
+        return Err(format!(
+            "{} is in no localisation, which every achievement needs once one is checked",
+            untranslated.api_name
+        ));
     }
     Ok(whole)
 }
@@ -269,6 +433,28 @@ pub enum Drift {
         api_name: String,
         which: &'static str,
     },
+    /// A name or description in one language that is one thing on Steam and another in the
+    /// localisation.
+    Translation {
+        api_name: String,
+        language: String,
+        field: &'static str,
+        steam: String,
+        file: String,
+    },
+    /// A name or description the localisation has in a language and Steam does not, which Steam
+    /// answers with the English one instead.
+    Untranslated {
+        api_name: String,
+        language: String,
+        field: &'static str,
+        file: String,
+    },
+    /// A language Steam holds no text in at all, answering each of these achievements in English.
+    NoLanguage {
+        language: String,
+        api_names: Vec<String>,
+    },
 }
 
 impl fmt::Display for Drift {
@@ -290,6 +476,36 @@ impl fmt::Display for Drift {
             Self::NoIcon { api_name, which } => {
                 write!(formatter, "{api_name}: Steam has no {which}")
             }
+            Self::Translation {
+                api_name,
+                language,
+                field,
+                steam,
+                file,
+            } => write!(
+                formatter,
+                "{api_name}: the {field} in {language} is \"{steam}\" on Steam and \"{file}\" in \
+                 the localisation"
+            ),
+            Self::Untranslated {
+                api_name,
+                language,
+                field,
+                file,
+            } => write!(
+                formatter,
+                "{api_name}: Steam has no {field} in {language} and shows the English one, where \
+                 the localisation has \"{file}\""
+            ),
+            Self::NoLanguage {
+                language,
+                api_names,
+            } => write!(
+                formatter,
+                "Steam holds nothing in {language}, so shows {} in English: import the \
+                 localisation in Steamworks, under Stats & Achievements, and publish",
+                counted(api_names.len(), "achievement")
+            ),
             Self::NoneOnSteam(count) => write!(
                 formatter,
                 "Steam holds none of the file's {count} achievements: they count once entered and \
@@ -419,6 +635,103 @@ pub fn compare(wants: &[Wanted], held: &[Achievement]) -> Vec<Drift> {
     drift
 }
 
+/// Every way `held`, Steam's achievements in `language`, differ from the `translations` in it.
+///
+/// That is each name and description, in the localisation's order. An achievement Steam does not
+/// hold is left to [`compare`] to name.
+///
+/// Steam answers a text it has no translation of with the English one, from `english`, so one
+/// that is English there and not in the localisation is said to be missing, and a language
+/// Steam answers wholly in English is said once.
+#[must_use]
+pub fn compare_translations(
+    translations: &[Translated],
+    language: &str,
+    held: &[Achievement],
+    english: &[Achievement],
+) -> Vec<Drift> {
+    let in_english = |steam: &Achievement| {
+        english
+            .iter()
+            .find(|achievement| achievement.api_name == steam.api_name)
+            .map(|achievement| (&achievement.name, &achievement.description))
+    };
+    let mut drift = Vec::new();
+    for translated in translations {
+        let Some(steam) = held
+            .iter()
+            .find(|achievement| achievement.api_name == translated.api_name)
+        else {
+            continue;
+        };
+        let fallback = in_english(steam);
+        for text in translated
+            .texts
+            .iter()
+            .filter(|text| text.language == language)
+        {
+            for (field, on_steam, in_file, english_text) in [
+                (
+                    "name",
+                    &steam.name,
+                    &text.name,
+                    fallback.map(|(name, _)| name),
+                ),
+                (
+                    "description",
+                    &steam.description,
+                    &text.description,
+                    fallback.map(|(_, description)| description),
+                ),
+            ] {
+                if on_steam == in_file {
+                    continue;
+                }
+                drift.push(if language != "english" && Some(on_steam) == english_text {
+                    Drift::Untranslated {
+                        api_name: translated.api_name.clone(),
+                        language: language.to_owned(),
+                        field,
+                        file: in_file.clone(),
+                    }
+                } else {
+                    Drift::Translation {
+                        api_name: translated.api_name.clone(),
+                        language: language.to_owned(),
+                        field,
+                        steam: on_steam.clone(),
+                        file: in_file.clone(),
+                    }
+                });
+            }
+        }
+    }
+    let wholly_english = held
+        .iter()
+        .all(|steam| in_english(steam) == Some((&steam.name, &steam.description)));
+    if wholly_english
+        && drift
+            .iter()
+            .all(|each| matches!(each, Drift::Untranslated { .. }))
+    {
+        let mut api_names: Vec<String> = Vec::new();
+        for each in &drift {
+            if let Drift::Untranslated { api_name, .. } = each
+                && !api_names.contains(api_name)
+            {
+                api_names.push(api_name.clone());
+            }
+        }
+        if !api_names.is_empty() {
+            return vec![Drift::NoLanguage {
+                language: language.to_owned(),
+                api_names,
+            }];
+        }
+    }
+    drift
+}
+
 /// How many of the `wanted` `kind` the file lists match Steam's.
 ///
 /// When not all do, it goes on to how many differ, how many are not on Steam and how many only
@@ -434,9 +747,19 @@ pub fn tally(drift: &[Drift], wanted: usize, kind: &str) -> String {
             Drift::NoneOnSteam(count) => not_on_steam = not_on_steam.saturating_add(*count),
             Drift::NotOnSteam(_) => not_on_steam = not_on_steam.saturating_add(1),
             Drift::NotInFile(_) => only_on_steam = only_on_steam.saturating_add(1),
-            Drift::Differs { api_name, .. } | Drift::NoIcon { api_name, .. } => {
+            Drift::Differs { api_name, .. }
+            | Drift::NoIcon { api_name, .. }
+            | Drift::Translation { api_name, .. }
+            | Drift::Untranslated { api_name, .. } => {
                 if !differing.contains(&api_name.as_str()) {
                     differing.push(api_name);
+                }
+            }
+            Drift::NoLanguage { api_names, .. } => {
+                for api_name in api_names {
+                    if !differing.contains(&api_name.as_str()) {
+                        differing.push(api_name);
+                    }
                 }
             }
         }
@@ -934,6 +1257,331 @@ mod tests {
             compare_stats(&[unset], &[held("NumGames", "Games", 1.5_f64)]),
             [],
             "a name and default the file does not set are Steamworks' own"
+        );
+    }
+
+    /// The column heads Steamworks' achievement editor exports its localisation under.
+    const HEADS: &str = "api_name (required; must match an api_name from the definitions CSV),\
+                         field (name or description)";
+
+    fn localisation(languages: &str, rows: &str) -> String {
+        format!("{HEADS},{languages}\n{rows}")
+    }
+
+    fn translated(api_name: &str, texts: &[(&str, &str, &str)]) -> Translated {
+        Translated {
+            api_name: api_name.to_owned(),
+            texts: texts
+                .iter()
+                .map(|(language, name, description)| Translation {
+                    language: (*language).to_owned(),
+                    name: (*name).to_owned(),
+                    description: (*description).to_owned(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_localisation_is_read_as_each_achievements_name_and_description_in_each_language() {
+        let text = localisation(
+            "english,german",
+            "LONG_JOURNEY,name,Room to Grow,Platz zum Wachsen\n\
+             LONG_JOURNEY,description,\"Build a second floor, of guest rooms.\",\"Sag \"\"Hallo\"\"\"\n\
+             FIVE_LEVELS,description,Up.,Hoch.\n\
+             FIVE_LEVELS,name,Five Floors Up,\n",
+        );
+        let listed = read_localisation(&text).unwrap();
+        assert_eq!(
+            listed.translations,
+            [
+                translated(
+                    "LONG_JOURNEY",
+                    &[
+                        (
+                            "english",
+                            "Room to Grow",
+                            "Build a second floor, of guest rooms."
+                        ),
+                        ("german", "Platz zum Wachsen", "Sag \"Hallo\""),
+                    ]
+                ),
+                translated(
+                    "FIVE_LEVELS",
+                    &[
+                        ("english", "Five Floors Up", "Up."),
+                        ("german", "", "Hoch.")
+                    ]
+                ),
+            ]
+        );
+        assert_eq!(listed.languages(), ["english", "german"]);
+        assert!(listed.achievements.is_empty() && listed.stats.is_none());
+        assert_eq!(
+            read_localisation(&format!("\u{feff}{text}")).unwrap(),
+            listed,
+            "a byte order mark before the heads is not part of them"
+        );
+    }
+
+    #[test]
+    fn a_localisation_that_is_not_one_says_why() {
+        for (text, why) in [
+            (
+                "api_name,name,german\n".to_owned(),
+                "is not the localisation Steamworks' achievement editor exports: its first two \
+                 columns are not api_name and field",
+            ),
+            (
+                "api_name\n".to_owned(),
+                "is not the localisation Steamworks' achievement editor exports: its first two \
+                 columns are not api_name and field",
+            ),
+            (
+                "field,api_name,german\n".to_owned(),
+                "is not the localisation Steamworks' achievement editor exports: its first two \
+                 columns are not api_name and field",
+            ),
+            (format!("{HEADS}\n"), "has a column for no language"),
+            (
+                localisation("German", ""),
+                "\"German\" is not a language as Steam names them, such as english or schinese",
+            ),
+            (
+                localisation("german,english,german", ""),
+                "has two columns for german",
+            ),
+            (
+                localisation("german", ",name,Hallo\n"),
+                "line 2 has no API name",
+            ),
+            (
+                localisation("german", "A,title,Hallo\n"),
+                "A: \"title\" is not name or description",
+            ),
+            (
+                localisation("german", "A,name,Hallo\nA,name,Hallo\n"),
+                "A's name is in the file twice",
+            ),
+            (
+                localisation("german", "A,name,Hallo\n"),
+                "A has a name and no description",
+            ),
+            (
+                localisation("german", "A,description,Hallo\n"),
+                "A has a description and no name",
+            ),
+        ] {
+            assert_eq!(read_localisation(&text), Err(why.to_owned()), "{text}");
+        }
+        let ragged = read_localisation(&localisation("german", "A,name\n")).unwrap_err();
+        assert!(ragged.contains("found record with 2 fields"), "{ragged}");
+    }
+
+    #[test]
+    fn a_localisation_checks_every_achievement_the_files_list_and_no_other() {
+        let records = read(r#"{"achievements": [{"api_name": "A", "name": "A"}]}"#).unwrap();
+        let both = read(
+            r#"{"achievements": [{"api_name": "A", "name": "A"}, {"api_name": "B", "name": "B"}]}"#,
+        )
+        .unwrap();
+        let of = |api_names: &[&str]| {
+            let rows: Vec<String> = api_names
+                .iter()
+                .map(|api_name| format!("{api_name},name,N\n{api_name},description,D\n"))
+                .collect();
+            read_localisation(&localisation("german", &rows.concat())).unwrap()
+        };
+        let whole = together(vec![
+            ("achievements.json".to_owned(), records.clone()),
+            ("localisation.csv".to_owned(), of(&["A"])),
+        ])
+        .unwrap();
+        assert_eq!(
+            whole.translations,
+            [translated("A", &[("german", "N", "D")])]
+        );
+        assert_eq!(whole.achievements.len(), 1);
+        for (files, why) in [
+            (
+                vec![
+                    ("achievements.json", both.clone()),
+                    ("one.csv", of(&["A"])),
+                    ("two.csv", of(&["B", "A"])),
+                ],
+                "A is translated in both one.csv and two.csv",
+            ),
+            (
+                vec![
+                    ("achievements.json", records),
+                    ("localisation.csv", of(&["A", "B"])),
+                ],
+                "B is translated in localisation.csv but is in no file of achievements",
+            ),
+            (
+                vec![("localisation.csv", of(&["A"]))],
+                "A is translated in localisation.csv but is in no file of achievements",
+            ),
+            (
+                vec![
+                    ("achievements.json", both),
+                    ("localisation.csv", of(&["A"])),
+                ],
+                "B is in no localisation, which every achievement needs once one is checked",
+            ),
+        ] {
+            let files = files
+                .into_iter()
+                .map(|(file, listed)| (file.to_owned(), listed))
+                .collect();
+            assert_eq!(together(files), Err(why.to_owned()));
+        }
+    }
+
+    #[test]
+    fn each_translation_steam_holds_otherwise_is_named_with_its_language() {
+        let english = [held("A", "Winner"), held("B", "Orbiter")];
+        let translations = [
+            translated(
+                "A",
+                &[
+                    ("english", "Winner", "Winner, described"),
+                    ("german", "Sieger", "Gewinne."),
+                ],
+            ),
+            translated(
+                "B",
+                &[
+                    ("english", "Orbit", "Orbiter, described"),
+                    ("german", "Umkreiser", "Fliege weit."),
+                ],
+            ),
+            translated("Gone", &[("german", "Fort", "Weg.")]),
+        ];
+        let said =
+            |drift: Vec<Drift>| -> Vec<String> { drift.iter().map(ToString::to_string).collect() };
+        assert_eq!(
+            said(compare_translations(
+                &translations,
+                "english",
+                &english,
+                &english
+            )),
+            ["B: the name in english is \"Orbiter\" on Steam and \"Orbit\" in the localisation"],
+            "English is Steam's own text, never one missing"
+        );
+        let german = [
+            Achievement {
+                description: "Gewinne.".to_owned(),
+                ..held("A", "Sieger")
+            },
+            Achievement {
+                description: "Fliege nah.".to_owned(),
+                ..held("B", "Orbiter")
+            },
+        ];
+        assert_eq!(
+            said(compare_translations(
+                &translations,
+                "german",
+                &german,
+                &english
+            )),
+            [
+                "B: Steam has no name in german and shows the English one, where the \
+                 localisation has \"Umkreiser\"",
+                "B: the description in german is \"Fliege nah.\" on Steam and \"Fliege weit.\" in \
+                 the localisation",
+            ]
+        );
+        assert_eq!(
+            said(compare_translations(
+                &translations,
+                "german",
+                &english,
+                &english
+            )),
+            [
+                "Steam holds nothing in german, so shows 2 achievements in English: import the \
+                 localisation in Steamworks, under Stats & Achievements, and publish"
+            ]
+        );
+        let as_english = [translated(
+            "A",
+            &[("german", "Winner", "Winner, described")],
+        )];
+        assert_eq!(
+            compare_translations(&as_english, "german", &english, &english),
+            [],
+            "a translation that is the English text matches Steam's falling back to it"
+        );
+        let half = [held("A", "Winner")];
+        assert_eq!(
+            compare_translations(&translations[..1], "german", &half, &english),
+            [Drift::NoLanguage {
+                language: "german".to_owned(),
+                api_names: vec!["A".to_owned()],
+            }],
+            "an achievement is counted once however many of its texts are missing"
+        );
+        assert_eq!(
+            compare_translations(&translations, "french", &english, &english),
+            [],
+            "a language the localisation does not have is not checked"
+        );
+    }
+
+    #[test]
+    fn a_language_steam_holds_in_part_is_named_text_by_text() {
+        let english = [held("A", "Winner"), held("B", "Orbiter")];
+        let translations = [
+            translated("A", &[("german", "Sieger", "Gewinne.")]),
+            translated("B", &[("german", "Umkreiser", "Orbiter, described")]),
+        ];
+        let partly = [
+            Achievement {
+                description: "Gewinne.".to_owned(),
+                ..held("A", "Sieger")
+            },
+            held("B", "Orbiter"),
+        ];
+        assert_eq!(
+            compare_translations(&translations, "german", &partly, &english),
+            [Drift::Untranslated {
+                api_name: "B".to_owned(),
+                language: "german".to_owned(),
+                field: "name",
+                file: "Umkreiser".to_owned(),
+            }]
+        );
+    }
+
+    #[test]
+    fn a_tally_counts_an_achievement_once_whatever_its_languages_lack() {
+        let missing = |api_name: &str, language: &str| Drift::Untranslated {
+            api_name: api_name.to_owned(),
+            language: language.to_owned(),
+            field: "name",
+            file: "N".to_owned(),
+        };
+        let drift = [
+            missing("A", "german"),
+            missing("A", "french"),
+            Drift::Translation {
+                api_name: "B".to_owned(),
+                language: "german".to_owned(),
+                field: "name",
+                steam: "S".to_owned(),
+                file: "N".to_owned(),
+            },
+            Drift::NoLanguage {
+                language: "polish".to_owned(),
+                api_names: vec!["A".to_owned(), "C".to_owned()],
+            },
+        ];
+        assert_eq!(
+            tally(&drift, 4, "achievements"),
+            "1 of 4 achievements match: 3 differ"
         );
     }
 }
