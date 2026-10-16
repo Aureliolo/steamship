@@ -3917,6 +3917,18 @@ fn the_achievement_editors_files_are_refused_as_the_editor_would_refuse_them() {
         !out.exists(),
         "nothing is written while the files are refused"
     );
+
+    fs::write(&records, INN_RECORDS).unwrap();
+    fs::write(&out, "notes\n").unwrap();
+    let filed = write(&[&records]);
+    assert!(
+        filed.contains(&format!(
+            "{}: is a file, where --out names the folder the files are written into\n",
+            out.display()
+        )),
+        "{filed}"
+    );
+    assert_eq!(fs::read_to_string(&out).unwrap(), "notes\n");
 }
 
 #[test]

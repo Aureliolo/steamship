@@ -1569,6 +1569,10 @@ mod tests {
                 "sets": [{"setid": "7", "name": "Seven"}, {"setid": 8, "name": "Eight"}]}"#,
         )
         .unwrap();
+        assert_eq!(
+            object.unchecked,
+            ["the achievements' sets", "who may unlock the achievements"]
+        );
         let grouped = together(vec![("a.json".to_owned(), object)]).unwrap();
         let defined: Vec<(Option<&str>, Option<&str>)> = grouped
             .achievements
@@ -1628,7 +1632,15 @@ mod tests {
                 "A: \"set\" is not a set's ID",
             ),
             (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "icon": ""}]"#,
+                "A: \"icon\" is not text",
+            ),
+            (
                 r#"[{"type": "achievement_set", "steam": 1}]"#,
+                "set 1 has no \"name\" in English",
+            ),
+            (
+                r#"[{"type": "achievement_set", "steam": 1, "name": ""}]"#,
                 "set 1 has no \"name\" in English",
             ),
             (
@@ -1655,6 +1667,43 @@ mod tests {
         ] {
             assert_eq!(read(text).unwrap_err(), why, "{text}");
         }
+    }
+
+    #[test]
+    fn a_record_with_an_empty_id_is_known_by_its_name_on_steam() {
+        let records = read(
+            r#"[{"type": "stat", "id": "", "steam": "floors", "kind": "int"},
+                {"type": "achievement_set", "id": "", "steam": 1, "name": "One"},
+                {"type": "achievement", "steam": "A", "name": "A", "stat": "floors", "at": 2,
+                 "set": 1}]"#,
+        )
+        .unwrap();
+        let stats = records.stats.as_deref().unwrap_or_default();
+        assert_eq!(
+            stats
+                .iter()
+                .map(|stat| stat.id.as_deref())
+                .collect::<Vec<_>>(),
+            [None]
+        );
+        assert_eq!(
+            records
+                .sets
+                .iter()
+                .map(|set| set.id.as_str())
+                .collect::<Vec<_>>(),
+            ["1"]
+        );
+        let whole = together(vec![("a.json".to_owned(), records)]).unwrap();
+        let counted = whole
+            .achievements
+            .first()
+            .and_then(|wanted| wanted.defined.progress.as_ref());
+        assert_eq!(
+            counted.map(|progress| progress.stat.as_str()),
+            Some("floors"),
+            "counted by the stat's API name, which no ID names"
+        );
     }
 
     #[test]

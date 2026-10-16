@@ -1965,11 +1965,21 @@ fn achievement_icons(listed: &achievements::Listed) -> Result<Vec<(String, Vec<u
 /// The names of the files in `out` of the kinds written for `app`, in order; none when there is
 /// no such folder yet.
 fn written_before(out: &Path, app: u32) -> Result<Vec<String>, ExitCode> {
-    let entries = match fs::read_dir(out) {
-        Ok(entries) => entries,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(fail(&format!("{}: {error}", out.display()), FAILED)),
+    // A folder that cannot be looked at is taken as none yet: making it says why it cannot be.
+    let Ok(found) = fs::metadata(out) else {
+        return Ok(Vec::new());
     };
+    if !found.is_dir() {
+        return Err(fail(
+            &format!(
+                "{}: is a file, where --out names the folder the files are written into",
+                out.display()
+            ),
+            REFUSED,
+        ));
+    }
+    let entries =
+        fs::read_dir(out).map_err(|error| fail(&format!("{}: {error}", out.display()), FAILED))?;
     let mut names = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|error| fail(&format!("{}: {error}", out.display()), FAILED))?;

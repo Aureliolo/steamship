@@ -331,6 +331,14 @@ mod tests {
                 "line 2: msgstr is not followed by a quoted string",
             ),
             (
+                "msgid \"a\"\nmsgstr[0 \"b\"\n",
+                "line 2: \"msgstr[0\" is not a gettext keyword",
+            ),
+            (
+                "msgid \"a\"\nplural[0] \"b\"\n",
+                "line 2: \"plural[0]\" is not a gettext keyword",
+            ),
+            (
                 "msgid \"a\"\nmsgstr \"b\\q\"\n",
                 "line 2: msgstr has \\q, which gettext does not escape",
             ),
