@@ -1,7 +1,8 @@
 name: Dependency review
 
 # Refuses a pull request that brings in a dependency with a known advisory of any severity,
-# checked against GitHub's advisory database, beside cargo-deny's RustSec one.
+# checked against GitHub's advisory database, beside cargo-deny's RustSec one, or under a licence
+# outside the permissive ones the games' lane allows.
 on:
   # Every pull request, whatever it targets, so that one stacked on another is checked too.
   pull_request:
@@ -25,3 +26,10 @@ jobs:
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: low
+          allow-licenses: >-
+            MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, ISC,
+            Zlib, 0BSD, Unlicense, CC0-1.0, BSL-1.0, Python-2.0, MPL-2.0, Unicode-3.0,
+            CDLA-Permissive-2.0
+          # libFuzzer is LLVM's, under the NCSA licence, and reaches only the fuzz harness, which
+          # is never published or shipped.
+          allow-dependencies-licenses: pkg:cargo/libfuzzer-sys
