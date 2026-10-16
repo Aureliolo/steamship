@@ -1506,29 +1506,6 @@ mod tests {
                  localisation in Steamworks, under Stats & Achievements, and publish"
             ]
         );
-        let partly = [
-            Achievement {
-                description: "Gewinne.".to_owned(),
-                ..held("A", "Sieger")
-            },
-            Achievement {
-                description: "Fliege weit.".to_owned(),
-                ..held("B", "Orbiter")
-            },
-        ];
-        assert_eq!(
-            said(compare_translations(
-                &translations,
-                "german",
-                &partly,
-                &english
-            )),
-            [
-                "B: Steam has no name in german and shows the English one, where the \
-                 localisation has \"Umkreiser\""
-            ],
-            "a language Steam holds in part is named text by text"
-        );
         let as_english = [translated(
             "A",
             &[("german", "Winner", "Winner, described")],
@@ -1551,6 +1528,31 @@ mod tests {
             compare_translations(&translations, "french", &english, &english),
             [],
             "a language the localisation does not have is not checked"
+        );
+    }
+
+    #[test]
+    fn a_language_steam_holds_in_part_is_named_text_by_text() {
+        let english = [held("A", "Winner"), held("B", "Orbiter")];
+        let translations = [
+            translated("A", &[("german", "Sieger", "Gewinne.")]),
+            translated("B", &[("german", "Umkreiser", "Orbiter, described")]),
+        ];
+        let partly = [
+            Achievement {
+                description: "Gewinne.".to_owned(),
+                ..held("A", "Sieger")
+            },
+            held("B", "Orbiter"),
+        ];
+        assert_eq!(
+            compare_translations(&translations, "german", &partly, &english),
+            [Drift::Untranslated {
+                api_name: "B".to_owned(),
+                language: "german".to_owned(),
+                field: "name",
+                file: "Umkreiser".to_owned(),
+            }]
         );
     }
 
