@@ -4143,9 +4143,12 @@ fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
     let (host, _requests) = web_api(vec![
         ("200 OK", WITH_STATS),
         ("403 Forbidden", "{}"),
+        // A stat steamship never asked for, as Steam named one for Spacewar: asking again
+        // without it would get the same answer, so totals are given up rather than asked for
+        // without end.
         (
             "200 OK",
-            r#"{"response":{"result":24,"error":"Insufficient Privilege"}}"#,
+            r#"{"response":{"result":8,"error":"Stat 'NumWins' is not an aggregated stat"}}"#,
         ),
         ("200 OK", WITH_STATS),
         ("200 OK", WITH_STATS),
