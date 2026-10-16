@@ -1,0 +1,30 @@
+# Tidal Mill Inn's German, as games-kit keys its records.
+msgid ""
+msgstr ""
+"Project-Id-Version: Tidal Mill Inn\n"
+"Language: de\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+#. The achievement's name.
+msgctxt "achievement.name"
+msgid "base:first_anchor"
+msgstr "Hinab zum Rad"
+
+#, fuzzy
+msgctxt "achievement.description"
+msgid "base:first_anchor"
+msgstr ""
+"Gib die \"erste\" Schleuse\n"
+"eines Mahlwerks frei."
+
+msgctxt "achievement_set.name"
+msgid "base:cellar"
+msgstr "Die Schleuse"
+
+msgid "guest"
+msgid_plural "guests"
+msgstr[0] "Gast"
+msgstr[1] "Gäste"
+
+#~ msgid "gone"
+#~ msgstr "weg"

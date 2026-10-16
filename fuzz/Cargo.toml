@@ -70,3 +70,10 @@ path = "fuzz_targets/picture.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "po"
+path = "fuzz_targets/po.rs"
+test = false
+doc = false
+bench = false

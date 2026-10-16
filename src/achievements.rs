@@ -1,24 +1,70 @@
 //! An app's achievements as a file in its repository says they should be, against Steam's.
 //!
 //! This is what `steamship achievements --check` reports, so that a release can refuse to go out
-//! while the two have drifted apart.
+//! while the two have drifted apart, and what `--write` turns into the files Steamworks'
+//! achievement editor imports.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crate::po::Catalogue;
 use crate::presence;
 use crate::show::counted;
 use crate::webapi::{Achievement, Stat};
 
+/// The most achievements Steam takes for an app, archived ones included.
+pub const MOST_ACHIEVEMENTS: usize = 5_000;
+/// The most it takes before Valve has vetted the app.
+pub const MOST_UNVETTED: usize = 100;
+/// The most sets it takes, the base set included.
+pub const MOST_SETS: usize = 40;
+
+/// Who may unlock an achievement, as the achievement editor words it and as games-kit's records
+/// do.
+const PERMISSIONS: [(&str, &str); 3] = [
+    ("Client", "client"),
+    ("GameServer", "game_server"),
+    ("OfficialGameServer", "official_game_server"),
+];
+
 /// An achievement as the file wants it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Wanted {
     pub api_name: String,
     pub name: String,
     pub description: String,
     pub hidden: bool,
+    /// What its translations are kept under: the record's `id`, or else its API name.
+    pub id: String,
+    pub defined: Definition,
+}
+
+/// What the achievement editor defines of an achievement beside its texts and whether it is
+/// hidden, none of which Steam's Web API answers.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Definition {
+    /// The set it is in, none for the base set: as the file names it, until [`together`] makes it
+    /// the set's ID on Steam.
+    pub set: Option<String>,
+    /// It can no longer be earned.
+    pub archived: bool,
+    /// Who may unlock it, none for `Client`.
+    pub permission: Option<String>,
+    pub progress: Option<Progress>,
+    /// Its icon and the one shown while it is locked, where the file gives them.
+    pub icon: Option<PathBuf>,
+    pub icon_locked: Option<PathBuf>,
+}
+
+/// The stat an achievement's progress bar counts, from 0, and the value of it that unlocks it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Progress {
+    /// As the file names it, until [`together`] makes it the stat's API name.
+    pub stat: String,
+    pub at: f64,
 }
 
 /// A stat as the file wants it, its name and default checked only when the file gives them.
@@ -27,6 +73,38 @@ pub struct WantedStat {
     pub api_name: String,
     pub name: Option<String>,
     pub default: Option<f64>,
+    /// The record's `id`, which an achievement may name it by.
+    pub id: Option<String>,
+    /// Whether it counts in whole steps, when the file says.
+    pub whole: Option<bool>,
+}
+
+/// A set of achievements as the file wants it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WantedSet {
+    /// Its ID on Steam, which it is given when it is made in the achievement editor.
+    pub setid: String,
+    /// Its name in English.
+    pub name: String,
+    /// What achievements name it by and its translations are kept under: the record's `id`, or
+    /// else its set ID.
+    pub id: String,
+}
+
+/// A set's name in each language, in the order of its localisation's columns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetTranslated {
+    pub setid: String,
+    /// Each language by Steam's name for it, with the set's name in it.
+    pub names: Vec<(String, String)>,
+}
+
+/// A gettext catalogue, from the file it was read from, in the Steam language it is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Catalogued {
+    pub file: String,
+    pub language: &'static str,
+    pub catalogue: Catalogue,
 }
 
 /// An achievement's name and description in one language.
@@ -49,15 +127,18 @@ pub struct Translated {
 /// What the file holds, and what in it goes unchecked.
 ///
 /// That is the app it is for, if it says, the achievements in its order, the stats when it lists
-/// them, which are checked only then, what it sets that Steam's Web API does not answer, and the
-/// achievements' translations when it is a localisation.
-#[derive(Debug, Clone, PartialEq)]
+/// them, which are checked only then, the sets, what it sets that Steam's Web API does not
+/// answer, and the achievements' translations when it is a localisation; and, once
+/// [`translate`] has read them from catalogues, the sets' too.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Listed {
     pub app: Option<u64>,
     pub achievements: Vec<Wanted>,
     pub stats: Option<Vec<WantedStat>>,
+    pub sets: Vec<WantedSet>,
     pub unchecked: Vec<&'static str>,
     pub translations: Vec<Translated>,
+    pub set_names: Vec<SetTranslated>,
 }
 
 impl Listed {
@@ -74,22 +155,27 @@ impl Listed {
     }
 }
 
-/// Reads the file's `text`: an object with an `achievements` list, and a `stats` list if the
-/// app's stats are to be checked too; or a list of games-kit's records.
+/// Reads the file's `text`: an object with an `achievements` list, a `stats` list if the app's
+/// stats are to be checked too, and a `sets` list if its achievements are grouped; or a list of
+/// games-kit's records.
 ///
 /// In the object, each achievement has its `api_name` and `name`, and its `description` and
 /// `hidden` when they are set; each stat its `api_name`, and its `name` and `default`, none and 0
-/// when left out. Other keys, such as what a game's own tools keep beside them, are left alone.
+/// when left out; each set its `setid` and its `name` in English. An achievement may also give
+/// its `set`, whether it is `archived`, who has `permission` to unlock it, the `stat` its
+/// progress bar counts with the value it unlocks `at`, and its `icon` and `icon_locked`. Other
+/// keys, such as what a game's own tools keep beside them, are left alone.
 ///
-/// In the list, the records typed `achievement` and `stat` are read the same way with the API
-/// name in `steam`, and those of other types are left alone. The list holds all of a game's
-/// stats, so they are always checked, but a stat's name and default only when its record sets
-/// them, since a record need not.
+/// In the list, the records typed `achievement`, `stat` and `achievement_set` are read the same
+/// way with the API name or set ID in `steam`, and those of other types are left alone. The list
+/// holds all of a game's stats, so they are always checked, but a stat's name and default only
+/// when its record sets them, since a record need not.
 ///
 /// # Errors
 ///
 /// When the text is neither, an entry lacks its API name, name or type, a value has the wrong
-/// type, or an API name is there twice.
+/// type, an achievement counts a stat it unlocks at no value of or the other way round, or an
+/// API name or set ID is there twice.
 pub fn read(text: &str) -> Result<Listed, String> {
     let file: Value = serde_json::from_str(text).map_err(|error| format!("not JSON: {error}"))?;
     if let Value::Array(records) = &file {
@@ -104,6 +190,7 @@ pub fn read(text: &str) -> Result<Listed, String> {
         .and_then(Value::as_array)
         .ok_or("there is no \"achievements\" list")?;
     let mut achievements = Vec::with_capacity(entries.len());
+    let mut unchecked = Vec::new();
     for (index, entry) in entries.iter().enumerate() {
         let place = index.saturating_add(1);
         achievements.push(achievement(
@@ -111,8 +198,22 @@ pub fn read(text: &str) -> Result<Listed, String> {
             &format!("achievement {place}"),
             "api_name",
         )?);
+        note_unchecked(entry, &ACHIEVEMENTS_UNCHECKED, &mut unchecked);
     }
     once(achievements.iter().map(|wanted| &wanted.api_name), "")?;
+    let sets = match file.get("sets") {
+        None => Vec::new(),
+        Some(Value::Array(listed)) => {
+            let mut sets = Vec::with_capacity(listed.len());
+            for (index, entry) in listed.iter().enumerate() {
+                let place = index.saturating_add(1);
+                sets.push(set(entry, &format!("set {place}"), "setid")?);
+            }
+            sets
+        }
+        Some(_) => return Err("\"sets\" is not a list".to_owned()),
+    };
+    once(sets.iter().map(|wanted| &wanted.setid), "set ")?;
     let stats = match file.get("stats") {
         None => None,
         Some(Value::Array(listed)) => {
@@ -120,10 +221,11 @@ pub fn read(text: &str) -> Result<Listed, String> {
             for (index, entry) in listed.iter().enumerate() {
                 let place = index.saturating_add(1);
                 let wanted = stat(entry, &format!("stat {place}"), "api_name")?;
+                note_unchecked(entry, &STATS_UNCHECKED, &mut unchecked);
                 stats.push(WantedStat {
-                    api_name: wanted.api_name,
                     name: Some(wanted.name.unwrap_or_default()),
                     default: Some(wanted.default.unwrap_or(0.0_f64)),
+                    ..wanted
                 });
             }
             once(stats.iter().map(|wanted| &wanted.api_name), "stat ")?;
@@ -135,9 +237,34 @@ pub fn read(text: &str) -> Result<Listed, String> {
         app,
         achievements,
         stats,
-        unchecked: Vec::new(),
-        translations: Vec::new(),
+        sets,
+        unchecked,
+        ..Listed::default()
     })
+}
+
+/// The keys of an achievement that set what Steam's Web API does not answer, with what that is.
+const ACHIEVEMENTS_UNCHECKED: [(&[&str], &str); 4] = [
+    (&["stat", "at"], "the achievements' progress"),
+    (&["set"], "the achievements' sets"),
+    (&["archived"], "which achievements are archived"),
+    (&["permission"], "who may unlock the achievements"),
+];
+
+/// The same of a stat.
+const STATS_UNCHECKED: [(&[&str], &str); 1] = [(&["kind"], "the stats' types")];
+
+/// Adds to `unchecked` what of `keys` the `entry` sets, once each.
+fn note_unchecked(
+    entry: &Value,
+    keys: &[(&[&str], &'static str)],
+    unchecked: &mut Vec<&'static str>,
+) {
+    for (named, what) in keys {
+        if named.iter().any(|key| entry.get(key).is_some()) && !unchecked.contains(what) {
+            unchecked.push(what);
+        }
+    }
 }
 
 /// Reads the localisation Steamworks' achievement editor exports under Bulk Import/Export, as
@@ -227,11 +354,8 @@ pub fn read_localisation(text: &str) -> Result<Listed, String> {
         return Err(format!("{api_name} has a description and no name"));
     }
     Ok(Listed {
-        app: None,
-        achievements: Vec::new(),
-        stats: None,
-        unchecked: Vec::new(),
         translations,
+        ..Listed::default()
     })
 }
 
@@ -239,35 +363,35 @@ pub fn read_localisation(text: &str) -> Result<Listed, String> {
 fn read_records(records: &[Value]) -> Result<Listed, String> {
     let mut achievements = Vec::new();
     let mut stats = Vec::new();
+    let mut sets = Vec::new();
     let mut unchecked = Vec::new();
     for (index, record) in records.iter().enumerate() {
         let label = format!("record {}", index.saturating_add(1));
         let Some(Value::String(kind)) = record.get("type") else {
             return Err(format!("{label} has no \"type\" text"));
         };
-        let (keys, what): (&[&str], _) = match kind.as_str() {
+        match kind.as_str() {
             "achievement" => {
                 achievements.push(achievement(record, &label, "steam")?);
-                (&["stat", "at"], "the achievements' progress")
+                note_unchecked(record, &ACHIEVEMENTS_UNCHECKED, &mut unchecked);
             }
             "stat" => {
                 stats.push(stat(record, &label, "steam")?);
-                (&["kind"], "the stats' types")
+                note_unchecked(record, &STATS_UNCHECKED, &mut unchecked);
             }
-            _ => continue,
-        };
-        if keys.iter().any(|key| record.get(key).is_some()) && !unchecked.contains(&what) {
-            unchecked.push(what);
+            "achievement_set" => sets.push(set(record, &label, "steam")?),
+            _ => {}
         }
     }
     once(achievements.iter().map(|wanted| &wanted.api_name), "")?;
     once(stats.iter().map(|wanted| &wanted.api_name), "stat ")?;
+    once(sets.iter().map(|wanted| &wanted.setid), "set ")?;
     Ok(Listed {
-        app: None,
         achievements,
         stats: Some(stats),
+        sets,
         unchecked,
-        translations: Vec::new(),
+        ..Listed::default()
     })
 }
 
@@ -282,16 +406,114 @@ fn achievement(entry: &Value, label: &str, named_by: &str) -> Result<Wanted, Str
         }
     };
     let api_name = words(named_by, true)?;
-    let hidden = match entry.get("hidden") {
-        None => false,
-        Some(Value::Bool(hidden)) => *hidden,
-        Some(_) => return Err(format!("{api_name}: \"hidden\" is not true or false")),
+    let flag = |key: &str| match entry.get(key) {
+        None => Ok(false),
+        Some(Value::Bool(set)) => Ok(*set),
+        Some(_) => Err(format!("{api_name}: \"{key}\" is not true or false")),
+    };
+    let text = |key: &str| match entry.get(key) {
+        None => Ok(None),
+        Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
+        Some(_) => Err(format!("{api_name}: \"{key}\" is not text")),
+    };
+    // A record is games-kit's, which words the permission its own way; a file's matches the CSV.
+    let worded = |(editor, kit): &(&'static str, &'static str)| {
+        if named_by == "steam" { *kit } else { *editor }
+    };
+    let permission = text("permission")?
+        .map(|given| {
+            PERMISSIONS
+                .iter()
+                .find(|each| worded(each) == given)
+                .map(|(editor, _)| (*editor).to_owned())
+                .ok_or_else(|| {
+                    let known: Vec<&str> = PERMISSIONS.iter().map(worded).collect();
+                    format!(
+                        "{api_name}: \"permission\" is {given}, not {}",
+                        known.join(", ")
+                    )
+                })
+        })
+        .transpose()?;
+    let at = entry
+        .get("at")
+        .map(|at| {
+            at.as_f64()
+                .ok_or_else(|| format!("{api_name}: \"at\" is not a number"))
+        })
+        .transpose()?;
+    let progress = match (text("stat")?, at) {
+        (None, None) => None,
+        (Some(stat), Some(at)) if at > 0.0_f64 => Some(Progress { stat, at }),
+        (Some(stat), Some(at)) => {
+            return Err(format!(
+                "{api_name} unlocks at {at} of {stat}, where a progress bar runs from 0 to a \
+                 value above it"
+            ));
+        }
+        (Some(stat), None) => {
+            return Err(format!(
+                "{api_name} counts {stat} but gives no \"at\", the value of it that unlocks it"
+            ));
+        }
+        (None, Some(at)) => {
+            return Err(format!(
+                "{api_name} unlocks at {at} but gives no \"stat\" for its progress bar to count"
+            ));
+        }
+    };
+    let defined = Definition {
+        set: match entry.get("set") {
+            None => None,
+            Some(set) => {
+                Some(set_id(set).ok_or_else(|| format!("{api_name}: \"set\" is not a set's ID"))?)
+            }
+        },
+        archived: flag("archived")?,
+        permission,
+        progress,
+        icon: text("icon")?.map(PathBuf::from),
+        icon_locked: text("icon_locked")?.map(PathBuf::from),
     };
     Ok(Wanted {
         name: words("name", true)?,
         description: words("description", false)?,
-        hidden,
+        hidden: flag("hidden")?,
+        id: text("id")?.unwrap_or_else(|| api_name.clone()),
+        defined,
         api_name,
+    })
+}
+
+/// A set's ID as `value` gives it: text, or a whole number from 1, as games-kit keeps the one the
+/// achievement editor gave the set. Valve does not say which its IDs are, so either is taken.
+fn set_id(value: &Value) -> Option<String> {
+    match value {
+        Value::String(id) if !id.is_empty() => Some(id.clone()),
+        Value::Number(id) => id.as_u64().filter(|id| *id > 0).map(|id| id.to_string()),
+        Value::Null | Value::Bool(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => {
+            None
+        }
+    }
+}
+
+/// The set `entry`, as `achievement` reads one.
+fn set(entry: &Value, label: &str, named_by: &str) -> Result<WantedSet, String> {
+    let setid = entry
+        .get(named_by)
+        .and_then(set_id)
+        .ok_or_else(|| format!("{label} has no \"{named_by}\", the set's ID"))?;
+    let name = match entry.get("name") {
+        Some(Value::String(name)) if !name.is_empty() => name.clone(),
+        _ => return Err(format!("set {setid} has no \"name\" in English")),
+    };
+    Ok(WantedSet {
+        id: match entry.get("id") {
+            Some(Value::String(id)) if !id.is_empty() => id.clone(),
+            _ => setid.clone(),
+        },
+        setid,
+        name,
     })
 }
 
@@ -314,10 +536,21 @@ fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String
                 .ok_or_else(|| format!("stat {api_name}: \"default\" is not a number"))
         })
         .transpose()?;
+    let whole = match entry.get("kind").map(|kind| kind.as_str()) {
+        None => None,
+        Some(Some("int")) => Some(true),
+        Some(Some("float")) => Some(false),
+        Some(_) => return Err(format!("stat {api_name}: \"kind\" is not int or float")),
+    };
     Ok(WantedStat {
         api_name,
         name,
         default,
+        id: match entry.get("id") {
+            Some(Value::String(id)) if !id.is_empty() => Some(id.clone()),
+            _ => None,
+        },
+        whole,
     })
 }
 
@@ -328,20 +561,25 @@ fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String
 ///
 /// # Errors
 ///
-/// When an achievement or a stat is in two of the files, or is translated in two, naming both;
-/// and when there are translations, but not of every achievement, or of one no file lists.
+/// When an achievement, a stat or a set is in two of the files, or is translated in two, naming
+/// both; when there are translations, but not of every achievement, or of one no file lists;
+/// and when [`resolve`] refuses them.
 pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
-    let mut whole = Listed {
-        app: None,
-        achievements: Vec::new(),
-        stats: None,
-        unchecked: Vec::new(),
-        translations: Vec::new(),
-    };
+    let mut whole = Listed::default();
     let mut achievements_from: BTreeMap<String, String> = BTreeMap::new();
     let mut stats_from: BTreeMap<String, String> = BTreeMap::new();
+    let mut sets_from: BTreeMap<String, String> = BTreeMap::new();
     let mut translated_in: BTreeMap<String, String> = BTreeMap::new();
     for (file, listed) in files {
+        for wanted in listed.sets {
+            if let Some(first) = sets_from.insert(wanted.setid.clone(), file.clone()) {
+                return Err(format!(
+                    "set {} is in both {first} and {file}",
+                    wanted.setid
+                ));
+            }
+            whole.sets.push(wanted);
+        }
         for translated in listed.translations {
             if let Some(first) = translated_in.insert(translated.api_name.clone(), file.clone()) {
                 return Err(format!(
@@ -395,7 +633,174 @@ pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
             untranslated.api_name
         ));
     }
+    resolve(&mut whole)?;
     Ok(whole)
+}
+
+/// Whether a record's `id` is what `named` names: itself, or the base mod's record when `named`
+/// is bare, as games-kit reads a reference.
+fn names(id: &str, named: &str) -> bool {
+    id == named || id.strip_prefix("base:") == Some(named)
+}
+
+/// Makes each achievement's set and progress stat in `whole` their IDs on Steam, refusing what
+/// the achievement editor would.
+///
+/// # Errors
+///
+/// When an achievement is in a set the files do not list, counts a stat they list none of, or
+/// unlocks at a fraction of a stat that counts in whole steps; and when there are more sets or
+/// achievements than Steam takes.
+fn resolve(whole: &mut Listed) -> Result<(), String> {
+    for wanted in &mut whole.achievements {
+        if let Some(progress) = &mut wanted.defined.progress
+            && let Some(stats) = &whole.stats
+        {
+            let Some(stat) = stats.iter().find(|stat| {
+                stat.api_name == progress.stat
+                    || stat
+                        .id
+                        .as_deref()
+                        .is_some_and(|id| names(id, &progress.stat))
+            }) else {
+                return Err(format!(
+                    "{} counts {}, which no file lists as a stat",
+                    wanted.api_name, progress.stat
+                ));
+            };
+            if stat.whole == Some(true) && progress.at.fract() > 0.0_f64 {
+                return Err(format!(
+                    "{} unlocks at {} of {}, which counts in whole steps",
+                    wanted.api_name, progress.at, stat.api_name
+                ));
+            }
+            progress.stat.clone_from(&stat.api_name);
+        }
+        if let Some(set) = &mut wanted.defined.set {
+            let Some(found) = whole
+                .sets
+                .iter()
+                .find(|each| each.setid == *set || names(&each.id, set))
+            else {
+                return Err(format!(
+                    "{} is in the set {set}, which no file lists",
+                    wanted.api_name
+                ));
+            };
+            set.clone_from(&found.setid);
+        }
+    }
+    if whole.sets.len() >= MOST_SETS {
+        return Err(format!(
+            "the files list {} beside the base set, and Steam takes {MOST_SETS} with it",
+            counted(whole.sets.len(), "set")
+        ));
+    }
+    if whole.achievements.len() > MOST_ACHIEVEMENTS {
+        return Err(format!(
+            "the files list {} achievements, and Steam takes 5,000 at most, archived ones included",
+            whole.achievements.len()
+        ));
+    }
+    Ok(())
+}
+
+/// Puts each achievement's and set's texts in English, from the files, and in the language of
+/// each of the `catalogues` into `listed`, the languages in alphabetical order; or nothing, with
+/// no catalogues.
+///
+/// An achievement's translations are kept under the contexts `achievement.name` and
+/// `achievement.description`, and a set's under `achievement_set.name`, each by its `id`, as
+/// games-kit reads a record's.
+///
+/// # Errors
+///
+/// When the achievements are translated by a localisation as well, or a catalogue lacks a text,
+/// leaves it empty or marks it fuzzy, naming the catalogue and the text.
+pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), String> {
+    if catalogues.is_empty() {
+        return Ok(());
+    }
+    if !listed.translations.is_empty() {
+        return Err(
+            "the achievements are translated both in a localisation and in gettext catalogues: \
+             give one or the other"
+                .to_owned(),
+        );
+    }
+    // None stands for English, which the files themselves give.
+    let mut columns: Vec<Option<&Catalogued>> = catalogues.iter().map(Some).collect();
+    columns.push(None);
+    columns.sort_by_key(|column| column.map_or("english", |from| from.language));
+    let text = |from: &Catalogued, field: &str, kind: &str, id: &str, of: &str| {
+        let context = format!("{kind}.{field}");
+        match from.catalogue.find(&context, id) {
+            Some(entry) if entry.fuzzy => Err(format!(
+                "{}: the {field} of {of} is marked fuzzy, under msgctxt \"{context}\" and msgid \
+                 \"{id}\"",
+                from.file
+            )),
+            Some(entry) if !entry.text.is_empty() => Ok(entry.text.clone()),
+            _ => Err(format!(
+                "{} has no {field} of {of}, under msgctxt \"{context}\" and msgid \"{id}\"",
+                from.file
+            )),
+        }
+    };
+    for wanted in &listed.achievements {
+        let mut texts = Vec::with_capacity(columns.len());
+        for column in &columns {
+            texts.push(match column {
+                None => Translation {
+                    language: "english".to_owned(),
+                    name: wanted.name.clone(),
+                    description: wanted.description.clone(),
+                },
+                Some(from) => Translation {
+                    language: from.language.to_owned(),
+                    name: text(from, "name", "achievement", &wanted.id, &wanted.api_name)?,
+                    description: if wanted.description.is_empty() {
+                        String::new()
+                    } else {
+                        text(
+                            from,
+                            "description",
+                            "achievement",
+                            &wanted.id,
+                            &wanted.api_name,
+                        )?
+                    },
+                },
+            });
+        }
+        listed.translations.push(Translated {
+            api_name: wanted.api_name.clone(),
+            texts,
+        });
+    }
+    for wanted in &listed.sets {
+        let mut names = Vec::with_capacity(columns.len());
+        for column in &columns {
+            names.push(match column {
+                None => ("english".to_owned(), wanted.name.clone()),
+                Some(from) => (
+                    from.language.to_owned(),
+                    text(
+                        from,
+                        "name",
+                        "achievement_set",
+                        &wanted.id,
+                        &format!("set {}", wanted.setid),
+                    )?,
+                ),
+            });
+        }
+        listed.set_names.push(SetTranslated {
+            setid: wanted.setid.clone(),
+            names,
+        });
+    }
+    Ok(())
 }
 
 /// Refuses the first of `api_names` that is there twice, said with `kind` before it.
@@ -792,6 +1197,7 @@ pub fn tally(drift: &[Drift], wanted: usize, kind: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::po;
 
     fn wanted(api_name: &str, name: &str) -> Wanted {
         Wanted {
@@ -799,6 +1205,8 @@ mod tests {
             name: name.to_owned(),
             description: format!("{name}, described"),
             hidden: false,
+            id: api_name.to_owned(),
+            defined: Definition::default(),
         }
     }
 
@@ -830,20 +1238,18 @@ mod tests {
             listed.achievements,
             [
                 Wanted {
-                    api_name: "early_win".to_owned(),
-                    name: "Opening day".to_owned(),
                     description: "A guild's first job came home done.".to_owned(),
-                    hidden: false,
+                    ..wanted("early_win", "Opening day")
                 },
                 Wanted {
-                    api_name: "secret".to_owned(),
-                    name: "Hush".to_owned(),
                     description: String::new(),
                     hidden: true,
+                    ..wanted("secret", "Hush")
                 },
             ]
         );
         assert_eq!(listed.stats, None, "no list, so the stats are not checked");
+        assert_eq!(listed.unchecked, Vec::<&str>::new());
         assert_eq!(read(r#"{"achievements": []}"#).unwrap().app, None);
     }
 
@@ -861,6 +1267,8 @@ mod tests {
             api_name: api_name.to_owned(),
             name: Some(name.to_owned()),
             default: Some(default),
+            id: None,
+            whole: None,
         };
         assert_eq!(
             listed.stats,
@@ -958,16 +1366,26 @@ mod tests {
             listed.achievements,
             [
                 Wanted {
-                    api_name: "LONG_JOURNEY".to_owned(),
-                    name: "Rising Water".to_owned(),
                     description: "Bring the millpond up to its brim.".to_owned(),
-                    hidden: false,
+                    id: "base:long_journey".to_owned(),
+                    defined: Definition {
+                        progress: Some(Progress {
+                            stat: "base:floors".to_owned(),
+                            at: 2.0_f64,
+                        }),
+                        ..Definition::default()
+                    },
+                    ..wanted("LONG_JOURNEY", "Rising Water")
                 },
                 Wanted {
-                    api_name: "SECRET".to_owned(),
-                    name: "Hush".to_owned(),
                     description: String::new(),
                     hidden: true,
+                    id: "base:secret".to_owned(),
+                    defined: Definition {
+                        icon: Some(PathBuf::from("res://icons/secret.png")),
+                        ..Definition::default()
+                    },
+                    ..wanted("SECRET", "Hush")
                 },
             ]
         );
@@ -978,11 +1396,15 @@ mod tests {
                     api_name: "floors".to_owned(),
                     name: None,
                     default: None,
+                    id: Some("base:floors".to_owned()),
+                    whole: Some(true),
                 },
                 WantedStat {
                     api_name: "gold".to_owned(),
                     name: Some("Gold earned".to_owned()),
                     default: Some(5.0_f64),
+                    id: Some("base:gold".to_owned()),
+                    whole: None,
                 },
             ])
         );
@@ -1040,7 +1462,7 @@ mod tests {
         let feats = file(
             r#"[{"type": "achievement", "steam": "A", "name": "A", "stat": "base:s", "at": 1}]"#,
         );
-        let counters = file(r#"[{"type": "stat", "steam": "s"}]"#);
+        let counters = file(r#"[{"type": "stat", "id": "base:s", "steam": "s"}]"#);
         let older = file(r#"{"app": 480, "achievements": [{"api_name": "B", "name": "B"}]}"#);
         let whole = together(vec![
             ("feats.json".to_owned(), feats.clone()),
@@ -1049,6 +1471,14 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(whole.app, Some(480));
+        assert_eq!(
+            whole.achievements.first().unwrap().defined.progress,
+            Some(Progress {
+                stat: "s".to_owned(),
+                at: 1.0_f64
+            }),
+            "the stat a record counts is named by its API name once found"
+        );
         assert_eq!(
             whole
                 .achievements
@@ -1086,6 +1516,410 @@ mod tests {
             ])
             .unwrap_err(),
             "stat s is in both counters.json and again.json"
+        );
+    }
+
+    /// Tidal Mill Inn's records, as `read` takes them, with the cellar's achievements in a set.
+    const INN: &str = r#"[
+        {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
+        {"type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar"},
+        {"type": "achievement", "id": "base:long_journey", "steam": "LONG_JOURNEY",
+         "name": "Rising Water", "description": "Bring the millpond up to its brim.",
+         "stat": "floors", "at": 2, "icon": "icons/long_journey.png"},
+        {"type": "achievement", "id": "base:first_anchor", "steam": "FIRST_ANCHOR",
+         "name": "Down by the Wheel", "description": "Drain a mill's first sluice.",
+         "set": "cellar", "archived": true, "permission": "game_server", "hidden": true}
+    ]"#;
+
+    #[test]
+    fn sets_archiving_and_permissions_are_read_and_each_achievement_names_its_set_by_its_id() {
+        let whole = together(vec![("inn.json".to_owned(), read(INN).unwrap())]).unwrap();
+        assert_eq!(
+            whole.sets,
+            [WantedSet {
+                setid: "1".to_owned(),
+                name: "The Cellar".to_owned(),
+                id: "base:cellar".to_owned(),
+            }]
+        );
+        let cellar = whole.achievements.last().unwrap();
+        assert_eq!(
+            cellar.defined,
+            Definition {
+                set: Some("1".to_owned()),
+                archived: true,
+                permission: Some("GameServer".to_owned()),
+                ..Definition::default()
+            }
+        );
+        assert_eq!(
+            whole.unchecked,
+            [
+                "the stats' types",
+                "the achievements' progress",
+                "the achievements' sets",
+                "which achievements are archived",
+                "who may unlock the achievements",
+            ]
+        );
+        let object = read(
+            r#"{"achievements": [
+                    {"api_name": "A", "name": "A", "set": "7", "permission": "OfficialGameServer"},
+                    {"api_name": "B", "name": "B", "set": 8}],
+                "sets": [{"setid": "7", "name": "Seven"}, {"setid": 8, "name": "Eight"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            object.unchecked,
+            ["the achievements' sets", "who may unlock the achievements"]
+        );
+        let grouped = together(vec![("a.json".to_owned(), object)]).unwrap();
+        let defined: Vec<(Option<&str>, Option<&str>)> = grouped
+            .achievements
+            .iter()
+            .map(|wanted| {
+                (
+                    wanted.defined.set.as_deref(),
+                    wanted.defined.permission.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            defined,
+            [(Some("7"), Some("OfficialGameServer")), (Some("8"), None)]
+        );
+        let ids: Vec<&str> = grouped.sets.iter().map(|set| set.id.as_str()).collect();
+        assert_eq!(ids, ["7", "8"]);
+    }
+
+    #[test]
+    fn what_the_achievement_editor_would_refuse_in_one_file_is_refused_as_it_is_read() {
+        for (text, why) in [
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "stat": "s"}]"#,
+                "A counts s but gives no \"at\", the value of it that unlocks it",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "at": 3}]"#,
+                "A unlocks at 3 but gives no \"stat\" for its progress bar to count",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "stat": "s", "at": 0}]"#,
+                "A unlocks at 0 of s, where a progress bar runs from 0 to a value above it",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "stat": "s", "at": "3"}]"#,
+                "A: \"at\" is not a number",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "permission": "GameServer"}]"#,
+                "A: \"permission\" is GameServer, not client, game_server, official_game_server",
+            ),
+            (
+                r#"{"achievements": [{"api_name": "A", "name": "A", "permission": "client"}]}"#,
+                "A: \"permission\" is client, not Client, GameServer, OfficialGameServer",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "archived": "no"}]"#,
+                "A: \"archived\" is not true or false",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "set": 0}]"#,
+                "A: \"set\" is not a set's ID",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "set": ""}]"#,
+                "A: \"set\" is not a set's ID",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "icon": ""}]"#,
+                "A: \"icon\" is not text",
+            ),
+            (
+                r#"[{"type": "achievement_set", "steam": 1}]"#,
+                "set 1 has no \"name\" in English",
+            ),
+            (
+                r#"[{"type": "achievement_set", "steam": 1, "name": ""}]"#,
+                "set 1 has no \"name\" in English",
+            ),
+            (
+                r#"[{"type": "achievement_set", "name": "One"}]"#,
+                "record 1 has no \"steam\", the set's ID",
+            ),
+            (
+                r#"[{"type": "achievement_set", "steam": 1.5, "name": "One"}]"#,
+                "record 1 has no \"steam\", the set's ID",
+            ),
+            (
+                r#"[{"type": "stat", "steam": "s", "kind": "big"}]"#,
+                "stat s: \"kind\" is not int or float",
+            ),
+            (
+                r#"[{"type": "achievement_set", "steam": 1, "name": "One"},
+                    {"type": "achievement_set", "steam": "1", "name": "Two"}]"#,
+                "set 1 is in the file twice",
+            ),
+            (
+                r#"{"achievements": [], "sets": {}}"#,
+                "\"sets\" is not a list",
+            ),
+        ] {
+            assert_eq!(read(text).unwrap_err(), why, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_record_with_an_empty_id_is_known_by_its_name_on_steam() {
+        let records = read(
+            r#"[{"type": "stat", "id": "", "steam": "floors", "kind": "int"},
+                {"type": "achievement_set", "id": "", "steam": 1, "name": "One"},
+                {"type": "achievement", "steam": "A", "name": "A", "stat": "floors", "at": 2,
+                 "set": 1}]"#,
+        )
+        .unwrap();
+        let stats = records.stats.as_deref().unwrap_or_default();
+        assert_eq!(
+            stats
+                .iter()
+                .map(|stat| stat.id.as_deref())
+                .collect::<Vec<_>>(),
+            [None]
+        );
+        assert_eq!(
+            records
+                .sets
+                .iter()
+                .map(|set| set.id.as_str())
+                .collect::<Vec<_>>(),
+            ["1"]
+        );
+        let whole = together(vec![("a.json".to_owned(), records)]).unwrap();
+        let counted = whole
+            .achievements
+            .first()
+            .and_then(|wanted| wanted.defined.progress.as_ref());
+        assert_eq!(
+            counted.map(|progress| progress.stat.as_str()),
+            Some("floors"),
+            "counted by the stat's API name, which no ID names"
+        );
+    }
+
+    #[test]
+    fn what_the_achievement_editor_would_refuse_across_files_is_refused_once_they_are_read() {
+        for (text, why) in [
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "stat": "s", "at": 1}]"#,
+                "A counts s, which no file lists as a stat",
+            ),
+            (
+                r#"[{"type": "stat", "id": "base:s", "steam": "s", "kind": "int"},
+                    {"type": "achievement", "steam": "A", "name": "A", "stat": "s", "at": 1.5}]"#,
+                "A unlocks at 1.5 of s, which counts in whole steps",
+            ),
+            (
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "set": "cellar"}]"#,
+                "A is in the set cellar, which no file lists",
+            ),
+        ] {
+            assert_eq!(
+                together(vec![("a.json".to_owned(), read(text).unwrap())]).unwrap_err(),
+                why,
+                "{text}"
+            );
+        }
+        let floats = r#"[{"type": "stat", "id": "base:s", "steam": "s", "kind": "float"},
+            {"type": "achievement", "steam": "A", "name": "A", "stat": "base:s", "at": 1.5}]"#;
+        let progress = |text: &str| {
+            together(vec![("a.json".to_owned(), read(text).unwrap())])
+                .unwrap()
+                .achievements
+                .first()
+                .unwrap()
+                .defined
+                .progress
+                .clone()
+                .unwrap()
+        };
+        assert_eq!(
+            progress(floats),
+            Progress {
+                stat: "s".to_owned(),
+                at: 1.5_f64
+            }
+        );
+        let unlisted =
+            r#"{"achievements": [{"api_name": "A", "name": "A", "stat": "s", "at": 1}]}"#;
+        assert_eq!(
+            progress(unlisted).stat,
+            "s",
+            "a file that lists no stats leaves the stat to Steamworks"
+        );
+        let sets = |count: usize| {
+            let listed = Listed {
+                sets: (0..count)
+                    .map(|each| WantedSet {
+                        setid: each.to_string(),
+                        name: each.to_string(),
+                        id: each.to_string(),
+                    })
+                    .collect(),
+                ..Listed::default()
+            };
+            together(vec![("sets.json".to_owned(), listed)])
+        };
+        assert_eq!(sets(39).unwrap().sets.len(), 39);
+        assert_eq!(
+            sets(40).unwrap_err(),
+            "the files list 40 sets beside the base set, and Steam takes 40 with it"
+        );
+        let achievements = |count: usize| {
+            let listed = Listed {
+                achievements: (0..count)
+                    .map(|each| wanted(&each.to_string(), "A"))
+                    .collect(),
+                ..Listed::default()
+            };
+            together(vec![("many.json".to_owned(), listed)])
+        };
+        assert_eq!(achievements(5_000).unwrap().achievements.len(), 5_000);
+        assert_eq!(
+            achievements(5_001).unwrap_err(),
+            "the files list 5001 achievements, and Steam takes 5,000 at most, archived ones \
+             included"
+        );
+    }
+
+    fn catalogued(file: &str, language: &'static str, text: &str) -> Catalogued {
+        Catalogued {
+            file: file.to_owned(),
+            language,
+            catalogue: po::read(text).unwrap(),
+        }
+    }
+
+    const GERMAN: &str = "msgctxt \"achievement.name\"\nmsgid \"base:long_journey\"\n\
+        msgstr \"Pegelstand\"\n\
+        msgctxt \"achievement.description\"\nmsgid \"base:long_journey\"\n\
+        msgstr \"Baue einen zweiten Stock mit G\u{e4}stezimmern.\"\n\
+        msgctxt \"achievement.name\"\nmsgid \"base:first_anchor\"\nmsgstr \"Hinab zum Rad\"\n\
+        msgctxt \"achievement.description\"\nmsgid \"base:first_anchor\"\n\
+        msgstr \"Gib die erste Schleuse eines Mahlwerks frei.\"\n\
+        msgctxt \"achievement_set.name\"\nmsgid \"base:cellar\"\nmsgstr \"Der Keller\"\n";
+
+    #[test]
+    fn catalogues_translate_each_achievement_and_set_by_its_id_in_alphabetical_order() {
+        let mut whole = together(vec![("inn.json".to_owned(), read(INN).unwrap())]).unwrap();
+        let french = GERMAN
+            .replace("Pegelstand", "Des eaux qui montent")
+            .replace("Der Keller", "La cave");
+        translate(
+            &mut whole,
+            &[
+                catalogued("de.po", "german", GERMAN),
+                catalogued("fr.po", "french", &french),
+            ],
+        )
+        .unwrap();
+        assert_eq!(whole.languages(), ["english", "french", "german"]);
+        let room = whole.translations.first().unwrap();
+        assert_eq!(room.api_name, "LONG_JOURNEY");
+        assert_eq!(
+            room.texts.last().unwrap(),
+            &Translation {
+                language: "german".to_owned(),
+                name: "Pegelstand".to_owned(),
+                description: "Baue einen zweiten Stock mit G\u{e4}stezimmern.".to_owned(),
+            }
+        );
+        assert_eq!(
+            room.texts
+                .iter()
+                .map(|text| text.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Rising Water",
+                "Des eaux qui montent",
+                "Pegelstand"
+            ]
+        );
+        assert_eq!(
+            whole.set_names,
+            [SetTranslated {
+                setid: "1".to_owned(),
+                names: vec![
+                    ("english".to_owned(), "The Cellar".to_owned()),
+                    ("french".to_owned(), "La cave".to_owned()),
+                    ("german".to_owned(), "Der Keller".to_owned()),
+                ],
+            }]
+        );
+
+        let mut untouched = together(vec![("inn.json".to_owned(), read(INN).unwrap())]).unwrap();
+        translate(&mut untouched, &[]).unwrap();
+        assert_eq!(untouched.translations, []);
+    }
+
+    #[test]
+    fn a_text_a_catalogue_lacks_or_leaves_to_confirm_is_named_with_where_it_goes() {
+        let whole = together(vec![("inn.json".to_owned(), read(INN).unwrap())]).unwrap();
+        for (text, why) in [
+            (
+                GERMAN.replace("\"Hinab zum Rad\"", "\"\""),
+                "de.po has no name of FIRST_ANCHOR, under msgctxt \"achievement.name\" and msgid \
+                 \"base:first_anchor\"",
+            ),
+            (
+                GERMAN.replace(
+                    "msgctxt \"achievement.description\"\nmsgid \"base:long_journey\"",
+                    "#, fuzzy\nmsgctxt \"achievement.description\"\nmsgid \"base:long_journey\"",
+                ),
+                "de.po: the description of LONG_JOURNEY is marked fuzzy, under msgctxt \
+                 \"achievement.description\" and msgid \"base:long_journey\"",
+            ),
+            (
+                GERMAN.replace("achievement_set.name", "achievement_set.title"),
+                "de.po has no name of set 1, under msgctxt \"achievement_set.name\" and msgid \
+                 \"base:cellar\"",
+            ),
+        ] {
+            let mut listed = whole.clone();
+            assert_eq!(
+                translate(&mut listed, &[catalogued("de.po", "german", &text)]).unwrap_err(),
+                why
+            );
+        }
+        let mut both = whole;
+        both.translations.push(Translated {
+            api_name: "LONG_JOURNEY".to_owned(),
+            texts: Vec::new(),
+        });
+        assert_eq!(
+            translate(&mut both, &[catalogued("de.po", "german", GERMAN)]).unwrap_err(),
+            "the achievements are translated both in a localisation and in gettext catalogues: \
+             give one or the other"
+        );
+    }
+
+    #[test]
+    fn an_achievement_with_no_description_needs_none_translated() {
+        let mut whole =
+            together(vec![(
+            "a.json".to_owned(),
+            read(r#"[{"type": "achievement", "id": "base:hush", "steam": "HUSH", "name": "Hush"}]"#)
+                .unwrap(),
+        )])
+            .unwrap();
+        let german = "msgctxt \"achievement.name\"\nmsgid \"base:hush\"\nmsgstr \"Pst\"\n";
+        translate(&mut whole, &[catalogued("de.po", "german", german)]).unwrap();
+        assert_eq!(
+            whole.translations.first().unwrap().texts.last().unwrap(),
+            &Translation {
+                language: "german".to_owned(),
+                name: "Pst".to_owned(),
+                description: String::new(),
+            }
         );
     }
 
@@ -1214,6 +2048,8 @@ mod tests {
             api_name: api_name.to_owned(),
             name: Some(name.to_owned()),
             default: Some(default),
+            id: None,
+            whole: None,
         };
         let held = |api_name: &str, name: &str, default: f64| Stat {
             api_name: api_name.to_owned(),
@@ -1252,6 +2088,8 @@ mod tests {
             api_name: "NumGames".to_owned(),
             name: None,
             default: None,
+            id: None,
+            whole: None,
         };
         assert_eq!(
             compare_stats(&[unset], &[held("NumGames", "Games", 1.5_f64)]),
