@@ -1506,6 +1506,29 @@ mod tests {
                  localisation in Steamworks, under Stats & Achievements, and publish"
             ]
         );
+        let partly = [
+            Achievement {
+                description: "Gewinne.".to_owned(),
+                ..held("A", "Sieger")
+            },
+            Achievement {
+                description: "Fliege weit.".to_owned(),
+                ..held("B", "Orbiter")
+            },
+        ];
+        assert_eq!(
+            said(compare_translations(
+                &translations,
+                "german",
+                &partly,
+                &english
+            )),
+            [
+                "B: Steam has no name in german and shows the English one, where the \
+                 localisation has \"Umkreiser\""
+            ],
+            "a language Steam holds in part is named text by text"
+        );
         let as_english = [translated(
             "A",
             &[("german", "Winner", "Winner, described")],
