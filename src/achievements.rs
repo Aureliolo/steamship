@@ -920,13 +920,18 @@ impl fmt::Display for Drift {
     }
 }
 
-/// `achievement` as `steamship achievements` lists it: its name, whether it is hidden, and its
-/// description when it has one.
+/// `achievement` as `steamship achievements` lists it: its name, whether it is hidden, the
+/// `share` of players who have it when Steam gives one, and its description when it has one.
 #[must_use]
-pub fn line(achievement: &Achievement) -> String {
+pub fn line(achievement: &Achievement, share: Option<f64>) -> String {
     let mut line = achievement.name.clone();
     if achievement.hidden {
         line.push_str(", hidden");
+    }
+    if let Some(share) = share {
+        line.push_str(", ");
+        line.push_str(&share.to_string());
+        line.push_str(" % of players");
     }
     if !achievement.description.is_empty() {
         line.push_str(": ");
@@ -935,15 +940,21 @@ pub fn line(achievement: &Achievement) -> String {
     line
 }
 
-/// `stat` as `steamship achievements` lists it: its name when it has one, and the value it starts
-/// at.
+/// `stat` as `steamship achievements` lists it: its name when it has one, the value it starts
+/// at, and its `total` over all players when Steam adds it up.
 #[must_use]
-pub fn stat_line(stat: &Stat) -> String {
-    if stat.name.is_empty() {
+pub fn stat_line(stat: &Stat, total: Option<&str>) -> String {
+    let mut line = if stat.name.is_empty() {
         format!("starts at {}", stat.default)
     } else {
         format!("{}, starts at {}", stat.name, stat.default)
+    };
+    if let Some(total) = total {
+        line.push_str(", ");
+        line.push_str(total);
+        line.push_str(" over all players");
     }
+    line
 }
 
 /// Every way `held`, Steam's stats, differ from those the file `wants`, each named as a stat:
@@ -1924,12 +1935,16 @@ mod tests {
     }
 
     #[test]
-    fn an_achievement_is_listed_by_name_hidden_flag_and_description() {
+    fn an_achievement_is_listed_by_name_hidden_flag_share_and_description() {
         let mut orbiter = held("ACH_TRAVEL_FAR_SINGLE", "Orbiter");
-        assert_eq!(line(&orbiter), "Orbiter: Orbiter, described");
+        assert_eq!(line(&orbiter, None), "Orbiter: Orbiter, described");
+        assert_eq!(
+            line(&orbiter, Some(49.6_f64)),
+            "Orbiter, 49.6 % of players: Orbiter, described"
+        );
         orbiter.hidden = true;
         orbiter.description = String::new();
-        assert_eq!(line(&orbiter), "Orbiter, hidden");
+        assert_eq!(line(&orbiter, None), "Orbiter, hidden");
     }
 
     #[test]
@@ -2029,17 +2044,21 @@ mod tests {
     }
 
     #[test]
-    fn a_stat_is_listed_by_its_name_and_default() {
+    fn a_stat_is_listed_by_its_name_default_and_total() {
         let stat = |name: &str, default: f64| Stat {
             api_name: "NumGames".to_owned(),
             name: name.to_owned(),
             default,
         };
         assert_eq!(
-            stat_line(&stat("Games played", 0.0_f64)),
+            stat_line(&stat("Games played", 0.0_f64), None),
             "Games played, starts at 0"
         );
-        assert_eq!(stat_line(&stat("", 1.5_f64)), "starts at 1.5");
+        assert_eq!(stat_line(&stat("", 1.5_f64), None), "starts at 1.5");
+        assert_eq!(
+            stat_line(&stat("Games played", 0.0_f64), Some("211140488449")),
+            "Games played, starts at 0, 211140488449 over all players"
+        );
     }
 
     #[test]
