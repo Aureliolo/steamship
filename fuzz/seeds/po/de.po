@@ -1,0 +1,30 @@
+# Tidal Mill Inn's German, as games-kit keys its records.
+msgid ""
+msgstr ""
+"Project-Id-Version: Tidal Mill Inn\n"
+"Language: de\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+
+#. The achievement's name.
+msgctxt "achievement.name"
+msgid "base:first_anchor"
+msgstr "Unten im Keller"
+
+#, fuzzy
+msgctxt "achievement.description"
+msgid "base:first_anchor"
+msgstr ""
+"Grabe den \"ersten\" Keller\n"
+"einer Herberge."
+
+msgctxt "achievement_set.name"
+msgid "base:cellar"
+msgstr "Der Keller"
+
+msgid "guest"
+msgid_plural "guests"
+msgstr[0] "Gast"
+msgstr[1] "Gäste"
+
+#~ msgid "gone"
+#~ msgstr "weg"
