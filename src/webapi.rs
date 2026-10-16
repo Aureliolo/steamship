@@ -750,16 +750,17 @@ impl Api {
         branches_from(&answer)
     }
 
-    /// The achievements and stats Steam holds for `app`, in English.
+    /// The achievements and stats Steam holds for `app`, in `language` as Steam names it, such as
+    /// `english` or `schinese`.
     ///
     /// # Errors
     ///
     /// As [`Api::branches`].
-    pub fn schema(&self, app: u32) -> Result<Schema, Error> {
+    pub fn schema(&self, app: u32, language: &str) -> Result<Schema, Error> {
         let answer = self.get_from(
             "ISteamUserStats",
             "GetSchemaForGame/v2",
-            &[("appid", app.to_string()), ("l", "english".to_owned())],
+            &[("appid", app.to_string()), ("l", language.to_owned())],
         )?;
         schema_from(&answer)
     }

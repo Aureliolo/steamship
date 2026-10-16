@@ -3482,6 +3482,125 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
     assert!(failure.contains("Steam answered HTTP 500"), "{failure}");
 }
 
+/// `GetSchemaForGame` for Tidal Mill Inn's first sluice in English, as Steam answered it, its
+/// icons trimmed.
+const CELLAR: &str = r#"{"game": {"gameName": "Tidal Mill Inn", "availableGameStats": {
+    "achievements": [{"name": "FIRST_ANCHOR", "displayName": "Down by the Wheel", "hidden": 0,
+     "description": "Drain a mill's first sluice.", "icon": "https://cdn/c.jpg",
+     "icongray": "https://cdn/c_bw.jpg"}]}}}"#;
+
+/// The same in German.
+const KELLER: &str = r#"{"game": {"gameName": "Tidal Mill Inn", "availableGameStats": {
+    "achievements": [{"name": "FIRST_ANCHOR", "displayName": "Hinab zum Rad", "hidden": 0,
+     "description": "Gib die erste Schleuse eines Mahlwerks frei.", "icon": "https://cdn/c.jpg",
+     "icongray": "https://cdn/c_bw.jpg"}]}}}"#;
+
+#[test]
+fn achievements_are_checked_in_each_language_a_localisation_has() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![
+        ("200 OK", CELLAR),
+        ("200 OK", KELLER),
+        ("200 OK", CELLAR),
+        ("200 OK", CELLAR),
+        ("200 OK", CELLAR),
+        ("500 Internal Server Error", ""),
+        ("200 OK", CELLAR),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let files = tempfile::tempdir().unwrap();
+    let records = files.path().join("achievements.json");
+    fs::write(
+        &records,
+        r#"[{"type": "achievement", "steam": "FIRST_ANCHOR", "name": "Down by the Wheel",
+            "description": "Drain a mill's first sluice."}]"#,
+    )
+    .unwrap();
+    let localisation = files.path().join("localisation.csv");
+    fs::write(
+        &localisation,
+        "api_name (required; must match an api_name from the definitions CSV),\
+         field (name or description),english,german\n\
+         FIRST_ANCHOR,name,Down by the Wheel,Hinab zum Rad\n\
+         FIRST_ANCHOR,description,Drain a mill's first sluice.,Gib die erste Schleuse eines Mahlwerks frei.\n",
+    )
+    .unwrap();
+    let args = [
+        "achievements",
+        "1000050",
+        "--check",
+        &records.to_string_lossy(),
+        &localisation.to_string_lossy(),
+    ];
+
+    let (code, said, _) = steamship(&args, Some(home.path()), &set);
+    assert_eq!(code, Some(0_i32), "{said}");
+    assert!(
+        said.contains("localisation.csv, 1 achievement in 2 languages\n"),
+        "{said}"
+    );
+    assert!(
+        said.contains("  steam     \u{2713} in 1 language as well\n"),
+        "{said}"
+    );
+    assert!(
+        said.contains("Steam's achievements and stats match the files\n"),
+        "{said}"
+    );
+    let first = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    let second = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(first.contains("l=english"), "{first}");
+    assert!(second.contains("l=german"), "{second}");
+
+    // Steam answers a language it holds nothing in with the English texts.
+    let (refused, _, why) = steamship(&args, Some(home.path()), &set);
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert!(
+        why.contains(
+            "Steam holds nothing in german, so shows 1 achievement in English: import the \
+             localisation in Steamworks, under Stats & Achievements, and publish\n"
+        ),
+        "{why}"
+    );
+    assert!(
+        why.ends_with("0 of 1 achievements match: 1 differs\n"),
+        "{why}"
+    );
+
+    // Steam failing in one of the languages is a failure, not drift.
+    let (failed, _, failure) = steamship(&args, Some(home.path()), &set);
+    assert_eq!(failed, Some(1_i32), "{failure}");
+    assert!(failure.contains("Steam answered HTTP 500"), "{failure}");
+
+    fs::write(
+        &localisation,
+        "api_name,field,english\n\
+         FIRST_ANCHOR,name,Down by the Wheel\n\
+         FIRST_ANCHOR,description,Drain a mill's first sluice.\n",
+    )
+    .unwrap();
+    let (alone, english, _) = steamship(&args, Some(home.path()), &set);
+    assert_eq!(alone, Some(0_i32), "{english}");
+    assert!(
+        !english.contains("as well"),
+        "English alone is what Steam answered first: {english}"
+    );
+
+    fs::write(&localisation, "api_name,name,german\n").unwrap();
+    let (unread, _, why_not) = steamship(&args, Some(home.path()), &set);
+    assert_eq!(unread, Some(2_i32), "{why_not}");
+    assert!(
+        why_not.contains(
+            "localisation.csv: is not the localisation Steamworks' achievement editor exports"
+        ),
+        "{why_not}"
+    );
+}
+
 #[test]
 fn achievements_json_prints_them_alone_on_standard_output_and_not_with_check() {
     let home = tempfile::tempdir().unwrap();

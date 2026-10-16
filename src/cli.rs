@@ -175,8 +175,10 @@ pub enum Command {
     /// partner Web API with the publisher key as `builds` finds it. With `--check`, compares them
     /// with the files, read together, by API name, and exits 2 naming every achievement missing
     /// on either side and every display name, description, hidden flag or icon that differs; and
-    /// the same of the stats, their display names and defaults, when a file lists them. Nothing
-    /// on Steam is changed.
+    /// the same of the stats, their display names and defaults, when a file lists them. With a
+    /// localisation among the files, it asks Steam for the achievements in each of its languages
+    /// as well, and names every name or description that differs or that Steam lacks in one.
+    /// Nothing on Steam is changed.
     Achievements {
         /// The app, by its ID or its app build script.
         app: String,
@@ -184,7 +186,9 @@ pub enum Command {
         /// `description` and `hidden`, and of its stats if they are to be checked, each with its
         /// `api_name`, `name` and `default`; or lists of games-kit's records, those typed
         /// `achievement` and `stat` read the same way by the API name in `steam`. Each
-        /// achievement and stat is in one file only.
+        /// achievement and stat is in one file only. A `.csv` file is a localisation in the
+        /// columns Steamworks' achievement editor exports, which then has to translate every
+        /// achievement.
         #[arg(long, value_name = "FILE", num_args = 1..)]
         check: Vec<PathBuf>,
         /// Print the achievements and stats on standard output as one line of JSON, or what
