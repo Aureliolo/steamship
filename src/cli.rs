@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 use crate::{ci, init, platform, show, update, webapi};
 
@@ -169,16 +169,23 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Show an app's achievements and stats, or check them against files.
+    /// Show an app's achievements and stats, check them against files, or write their import.
     ///
     /// Lists the achievements and stats Steam holds for the app, in English, through Steam's
     /// partner Web API with the publisher key as `builds` finds it. With `--check`, compares them
     /// with the files, read together, by API name, and exits 2 naming every achievement missing
     /// on either side and every display name, description, hidden flag or icon that differs; and
     /// the same of the stats, their display names and defaults, when a file lists them. With a
-    /// localisation among the files, it asks Steam for the achievements in each of its languages
-    /// as well, and names every name or description that differs or that Steam lacks in one.
-    /// Nothing on Steam is changed.
+    /// localisation or gettext catalogues among the files, it asks Steam for the achievements in
+    /// each of their languages as well, and names every name or description that differs or that
+    /// Steam lacks in one. Nothing on Steam is changed.
+    ///
+    /// With `--write`, writes the files the achievement editor takes under Bulk Import/Export into
+    /// the `--out` folder instead, from the same kind of files, with nothing asked of Steam: the
+    /// definitions, every name and description in each language, the sets' names, and each icon
+    /// named for its achievement. Either way, the files are refused first, exiting 2, when an
+    /// achievement counts a stat it unlocks at no value of, is in a set no file lists, or there
+    /// are more sets or achievements than Steam takes.
     Achievements {
         /// The app, by its ID or its app build script.
         app: String,
@@ -188,9 +195,11 @@ pub enum Command {
         /// `achievement` and `stat` read the same way by the API name in `steam`. Each
         /// achievement and stat is in one file only. A `.csv` file is a localisation in the
         /// columns Steamworks' achievement editor exports, which then has to translate every
-        /// achievement.
+        /// achievement; `.po` files are gettext catalogues, which have to.
         #[arg(long, value_name = "FILE", num_args = 1..)]
         check: Vec<PathBuf>,
+        #[command(flatten)]
+        writing: Writing,
         /// Print the achievements and stats on standard output as one line of JSON, or what
         /// Steam failed with as an `error` holding a `code`. Everything else goes to standard
         /// error.
@@ -381,6 +390,35 @@ pub enum Command {
         /// The shell to complete in.
         shell: clap_complete::Shell,
     },
+}
+
+/// What `achievements` writes for Steamworks' achievement editor, from what, and where.
+#[derive(Debug, Args)]
+pub struct Writing {
+    /// Write the achievement editor's files from these, as `--check` reads them. An achievement
+    /// may also give its `set`, whether it is `archived`, its `permission`, the `stat` its
+    /// progress bar counts and the value it unlocks `at`, and its `icon` and `icon_locked`, PNG
+    /// files in the godot-kit mod the records are in or beside the file; a set gives its `setid` and
+    /// English `name`, or as a godot-kit record typed `achievement_set`, its set ID in `steam`.
+    /// Each catalogue's language is its header's `Language`, or else its name, such as `de.po`;
+    /// its texts are under the contexts `achievement.name`, `achievement.description` and
+    /// `achievement_set.name`, by the record's `id`, or else the API name or set ID.
+    #[arg(
+        long,
+        value_name = "FILE",
+        num_args = 1..,
+        conflicts_with_all = ["check", "json"],
+        requires = "out"
+    )]
+    pub write: Vec<PathBuf>,
+    /// The folder `--write` writes into, made if missing. Files of the kinds it writes for the app
+    /// that it no longer would are removed; others are left alone.
+    #[arg(long, value_name = "FOLDER", requires = "write")]
+    pub out: Option<PathBuf>,
+    /// Write nothing, and exit 2 naming each file in the folder that differs from what `--write`
+    /// would write there, is missing, or is left over.
+    #[arg(long, requires = "write")]
+    pub unchanged: bool,
 }
 
 #[cfg(test)]

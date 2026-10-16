@@ -11,7 +11,7 @@ use std::time::{Duration, SystemTime};
 
 use clap::{CommandFactory as _, FromArgMatches as _};
 use steamship::account::Account;
-use steamship::cli::{Cli, Command, FAILED, LOGIN, REFUSED, STEAMCMD};
+use steamship::cli::{Cli, Command, FAILED, LOGIN, REFUSED, STEAMCMD, Writing};
 use steamship::install::{self, Outcome, State};
 use steamship::login::{self, Ending, Person};
 use steamship::manifest::Manifest;
@@ -25,8 +25,9 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    achievements, assets, check, ci, conversation, download, drm, dump, init, keychain,
-    leaderboards, magic, presence, run, scripts, settings, steamcmd, upload, vdf, webapi, workshop,
+    achievements, assets, check, ci, conversation, download, drm, dump, editor, init, keychain,
+    leaderboards, magic, picture, po, presence, run, scripts, settings, steamcmd, upload, vdf,
+    webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -90,7 +91,12 @@ fn run(command: Command) -> ExitCode {
             folder,
         } => run_init(app, depots, &folder),
         Command::Builds { app, count, json } => either(try_builds(&app, count, json)),
-        Command::Achievements { app, check, json } => either(try_achievements(&app, &check, json)),
+        Command::Achievements {
+            app,
+            check,
+            writing,
+            json,
+        } => either(try_achievements(&app, &check, &writing, json)),
         Command::DrmWrap {
             app,
             executable,
@@ -1661,9 +1667,28 @@ fn achievements_file(path: &Path, app: u32) -> Result<achievements::Listed, Exit
         );
         return Ok(listed);
     }
-    let listed = achievements::read(&text).map_err(|why| refused(&why))?;
+    let mut listed = achievements::read(&text).map_err(|why| refused(&why))?;
     if let Some(other) = listed.app.filter(|named| *named != u64::from(app)) {
         return Err(refused(&format!("is for app {other}, not app {app}")));
+    }
+    let own = path.parent().unwrap_or_else(|| Path::new(""));
+    // godot-kit gives a record's icons inside the mod that sets it, wherever under the mod its
+    // records are kept; a mod's folder is the one holding its manifest.
+    let folder = if text.trim_start().starts_with('[') {
+        own.ancestors()
+            .find(|folder| folder.join("manifest.json").is_file())
+            .unwrap_or(own)
+    } else {
+        own
+    };
+    for wanted in &mut listed.achievements {
+        let defined = &mut wanted.defined;
+        for icon in [&mut defined.icon, &mut defined.icon_locked]
+            .into_iter()
+            .flatten()
+        {
+            *icon = folder.join(&*icon);
+        }
     }
     let mut holds = show::counted(listed.achievements.len(), "achievement");
     if let Some(stats) = &listed.stats {
@@ -1673,21 +1698,77 @@ fn achievements_file(path: &Path, app: u32) -> Result<achievements::Listed, Exit
     Ok(listed)
 }
 
-/// The achievements files at `paths`, each read as `achievements_file` reads one, as one; or none
-/// when there are none to check against.
+/// The gettext catalogue at `path`, read, and refused when it is not one, is in a language Steam
+/// has none of or in English, or is in the same language as one of the `others`.
+fn catalogue_file(
+    path: &Path,
+    others: &[achievements::Catalogued],
+) -> Result<achievements::Catalogued, ExitCode> {
+    let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
+    let text = fs::read_to_string(path).map_err(|error| refused(&error))?;
+    let catalogue = po::read(&text).map_err(|why| refused(&why))?;
+    let locale = catalogue
+        .language
+        .clone()
+        .or_else(|| {
+            path.file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+        })
+        .unwrap_or_default();
+    let Some(language) = po::steam_language(&locale) else {
+        return Err(refused(&format!(
+            "is in the locale {locale}, which Steam has no language for"
+        )));
+    };
+    if language == "english" {
+        return Err(refused(
+            &"is in English, which the achievements' own files give",
+        ));
+    }
+    if let Some(other) = others.iter().find(|other| other.language == language) {
+        return Err(refused(&format!("is in {language}, as {} is", other.file)));
+    }
+    show::field("file", &format!("{}, {language}", path.display()));
+    Ok(achievements::Catalogued {
+        file: path.display().to_string(),
+        language,
+        catalogue,
+    })
+}
+
+/// The achievements files at `paths`, each read as `achievements_file` reads one or as a
+/// catalogue, as one; or none when there are none to check against. When `checking` them
+/// against Steam, it says what in them goes unchecked.
 fn achievements_files(
     paths: &[PathBuf],
     app: u32,
+    checking: bool,
 ) -> Result<Option<achievements::Listed>, ExitCode> {
     if paths.is_empty() {
         return Ok(None);
     }
     let mut files = Vec::with_capacity(paths.len());
+    let mut catalogues = Vec::new();
     for path in paths {
-        files.push((path.display().to_string(), achievements_file(path, app)?));
+        let catalogue = path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("po"));
+        if catalogue {
+            let read = catalogue_file(path, &catalogues)?;
+            catalogues.push(read);
+        } else {
+            files.push((path.display().to_string(), achievements_file(path, app)?));
+        }
     }
-    let listed = achievements::together(files).map_err(|why| fail(&why, REFUSED))?;
-    if !listed.unchecked.is_empty() {
+    let mut listed = achievements::together(files).map_err(|why| fail(&why, REFUSED))?;
+    achievements::translate(&mut listed, &catalogues).map_err(|why| fail(&why, REFUSED))?;
+    if listed.achievements.len() > achievements::MOST_UNVETTED {
+        show::note(&format!(
+            "Steam takes more than {} achievements only once Valve has vetted the app",
+            achievements::MOST_UNVETTED
+        ));
+    }
+    if checking && !listed.unchecked.is_empty() {
         show::field(
             "unchecked",
             &format!(
@@ -1748,13 +1829,21 @@ fn translation_drift(
     Ok(drift)
 }
 
-fn try_achievements(app: &str, check: &[PathBuf], json: bool) -> Result<ExitCode, ExitCode> {
+fn try_achievements(
+    app: &str,
+    check: &[PathBuf],
+    writing: &Writing,
+    json: bool,
+) -> Result<ExitCode, ExitCode> {
+    if let Some(out) = &writing.out {
+        return try_achievements_write(app, &writing.write, out, writing.unchanged);
+    }
     if json {
         show::divert();
     }
     show::title("achievements");
     let app_id = app_named(app)?;
-    let listed = achievements_files(check, app_id)?;
+    let listed = achievements_files(check, app_id, true)?;
     let home = home()?;
     let (api, from) = web_api(&home)?;
     let spinner = Spinner::start("steam", "asking for the achievements", false);
@@ -1838,6 +1927,209 @@ fn try_achievements(app: &str, check: &[PathBuf], json: bool) -> Result<ExitCode
         }
     }
     Ok(ExitCode::from(REFUSED))
+}
+
+/// Each icon the `listed` achievements give, read and named as the achievement editor puts it on
+/// its achievement; refused unless it is a square PNG of 64 pixels or more.
+fn achievement_icons(listed: &achievements::Listed) -> Result<Vec<(String, Vec<u8>)>, ExitCode> {
+    let mut icons = Vec::new();
+    for wanted in &listed.achievements {
+        let defined = &wanted.defined;
+        for (path, locked) in [(&defined.icon, false), (&defined.icon_locked, true)] {
+            let Some(path) = path else {
+                continue;
+            };
+            let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
+            let bytes = fs::read(path).map_err(|error| refused(&error))?;
+            let read = picture::read(&bytes).map_err(|why| refused(&why))?;
+            if !matches!(read.format, picture::Format::Png { .. })
+                || read.width != read.height
+                || read.width < 64
+            {
+                return Err(refused(&format!(
+                    "{}'s {} is a {} of {} by {} pixels, where the achievement editor takes a \
+                     square PNG of 64 pixels or more, 256 at best",
+                    wanted.api_name,
+                    if locked { "locked icon" } else { "icon" },
+                    read.format,
+                    read.width,
+                    read.height
+                )));
+            }
+            icons.push((editor::icon_name(&wanted.api_name, locked), bytes));
+        }
+    }
+    Ok(icons)
+}
+
+/// The names of the files in `out` of the kinds written for `app`, in order; none when there is
+/// no such folder yet.
+fn written_before(out: &Path, app: u32) -> Result<Vec<String>, ExitCode> {
+    // A folder that cannot be looked at is taken as none yet: making it says why it cannot be.
+    let Ok(found) = fs::metadata(out) else {
+        return Ok(Vec::new());
+    };
+    if !found.is_dir() {
+        return Err(fail(
+            &format!(
+                "{}: is a file, where --out names the folder the files are written into",
+                out.display()
+            ),
+            REFUSED,
+        ));
+    }
+    let entries =
+        fs::read_dir(out).map_err(|error| fail(&format!("{}: {error}", out.display()), FAILED))?;
+    let mut names = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| fail(&format!("{}: {error}", out.display()), FAILED))?;
+        if let Ok(name) = entry.file_name().into_string()
+            && editor::written_for(app, &name)
+        {
+            names.push(name);
+        }
+    }
+    names.sort();
+    Ok(names)
+}
+
+fn try_achievements_write(
+    app: &str,
+    files: &[PathBuf],
+    out: &Path,
+    unchanged: bool,
+) -> Result<ExitCode, ExitCode> {
+    show::title(if unchanged {
+        "achievements, unchanged"
+    } else {
+        "achievements, write"
+    });
+    let app_id = app_named(app)?;
+    let listed = achievements_files(files, app_id, false)?.unwrap_or_default();
+    let mut package: Vec<(String, Vec<u8>)> = editor::tables(app_id, &listed)
+        .into_iter()
+        .map(|table| (table.name, table.text.into_bytes()))
+        .collect();
+    package.extend(achievement_icons(&listed)?);
+    let before = written_before(out, app_id)?;
+    let stale: Vec<&(String, Vec<u8>)> = package
+        .iter()
+        .filter(|(name, bytes)| fs::read(out.join(name)).ok().as_ref() != Some(bytes))
+        .collect();
+    let left: Vec<&String> = before
+        .iter()
+        .filter(|name| !package.iter().any(|(written, _)| written == *name))
+        .collect();
+    let folder = out.display();
+    if unchanged {
+        return Ok(unchanged_or_not(
+            out,
+            package.len(),
+            &stale.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            &left,
+            &before,
+        ));
+    }
+    let failed = |error: &io::Error| fail(&format!("{folder}: {error}"), FAILED);
+    fs::create_dir_all(out).map_err(|error| failed(&error))?;
+    for (name, bytes) in &stale {
+        fs::write(out.join(name), bytes).map_err(|error| failed(&error))?;
+        show::field("wrote", name);
+    }
+    for name in &left {
+        fs::remove_file(out.join(name)).map_err(|error| failed(&error))?;
+        show::field("removed", name);
+    }
+    show::success(
+        &format!(
+            "{folder} holds the {} the achievement editor imports",
+            show::counted(package.len(), "file")
+        ),
+        "",
+    );
+    show::field(
+        "next",
+        &format!(
+            "in Steamworks, under app {app_id}'s Stats & Achievements, Bulk Import/Export: drop \
+             every file in {folder} and Save imported data; then drop \
+             {app_id}-achievements-localization.csv again on its own, since the first import \
+             applies it only in part"
+        ),
+    );
+    import_notes(&listed);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Says whether the `count` files `--write` makes are in `out` as it would write them, naming each
+/// of them `stale` and each of those it `left` there from `before`; and the exit code for it.
+fn unchanged_or_not(
+    out: &Path,
+    count: usize,
+    stale: &[&String],
+    left: &[&String],
+    before: &[String],
+) -> ExitCode {
+    if stale.is_empty() && left.is_empty() {
+        show::success(
+            &format!(
+                "the {} in {} are as the files make them",
+                show::counted(count, "file"),
+                out.display()
+            ),
+            "",
+        );
+        return ExitCode::SUCCESS;
+    }
+    for name in stale {
+        let why = if before.contains(name) {
+            "differs from what the files make"
+        } else {
+            "is missing"
+        };
+        show::failure(&format!("{name} {why}"), "", None);
+    }
+    for name in left {
+        show::failure(&format!("{name} is left over"), "", None);
+    }
+    show::field(
+        "next",
+        "run it again without --unchanged to write them as the files make them",
+    );
+    ExitCode::from(REFUSED)
+}
+
+/// What the import of what `listed` makes needs beside the files themselves.
+fn import_notes(listed: &achievements::Listed) {
+    if !listed.sets.is_empty() {
+        show::note("each set has to be made in the achievement editor before the import");
+    }
+    let defined = listed.achievements.iter().map(|wanted| &wanted.defined);
+    if defined.clone().any(|defined| defined.progress.is_some()) {
+        show::note(
+            "each stat a progress bar counts has to be in Steamworks first, with its \
+             achievement's permission",
+        );
+    }
+    let bare = defined
+        .clone()
+        .filter(|defined| defined.icon.is_none())
+        .count();
+    if bare > 0 {
+        show::note(&format!(
+            "no icon for {}: Steam shows its own",
+            show::counted(bare, "achievement")
+        ));
+    }
+    let unlocked_only = defined
+        .filter(|defined| defined.icon.is_some() && defined.icon_locked.is_none())
+        .count();
+    if unlocked_only > 0 {
+        show::note(&format!(
+            "no locked icon for {}: tick Automatically generate unachieved icons, and Steam \
+             greys the icon",
+            show::counted(unlocked_only, "achievement")
+        ));
+    }
 }
 
 /// The rich presence files, each read and checked, refused before Steam is asked anything when

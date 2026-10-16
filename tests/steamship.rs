@@ -235,7 +235,8 @@ fn help_lists_every_command_with_one_short_line() {
         "  upload         Check, build and upload, then print the build ID\n",
         "  workshop       Upload a Workshop item, then print its ID\n",
         "  builds         Show an app's branches and last builds\n",
-        "  achievements   Show an app's achievements and stats, or check them against files\n",
+        "  achievements   Show an app's achievements and stats, check them against files, or write \
+         their import\n",
         "  assets         Check store and library artwork against Valve's sizes, before it is \
          uploaded\n",
         "  drm-wrap       Wrap a Windows executable in Steam DRM, before it is uploaded\n",
@@ -3633,6 +3634,384 @@ fn achievements_are_checked_in_each_language_a_localisation_has() {
         ),
         "{why_not}"
     );
+}
+
+/// Tall Tales Inn's achievement records, a godot-kit mod's, with the cellar's in a set and an
+/// icon for each.
+const INN_RECORDS: &str = r#"[
+    {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
+    {"type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar"},
+    {"type": "achievement", "id": "base:five_floors", "steam": "FIVE_FLOORS",
+     "name": "Five Floors Up", "description": "Stand an inn five floors above its taproom.",
+     "stat": "floors", "at": 5, "icon": "icons/five_floors.png"},
+    {"type": "achievement", "id": "base:first_cellar", "steam": "FIRST_CELLAR",
+     "name": "Down in the Cellar", "description": "Dig an inn's first cellar.",
+     "set": "cellar", "icon": "icons/first_cellar.png",
+     "icon_locked": "icons/first_cellar_locked.png"}
+]"#;
+
+/// Its German catalogue.
+const INN_GERMAN: &str = "msgid \"\"\nmsgstr \"Language: de\\n\"\n\n\
+    msgctxt \"achievement.name\"\nmsgid \"base:five_floors\"\nmsgstr \"F\u{fc}nf Stock hoch\"\n\n\
+    msgctxt \"achievement.description\"\nmsgid \"base:five_floors\"\n\
+    msgstr \"Stelle eine Herberge f\u{fc}nf Stock \u{fc}ber ihre Schankstube.\"\n\n\
+    msgctxt \"achievement.name\"\nmsgid \"base:first_cellar\"\nmsgstr \"Unten im Keller\"\n\n\
+    msgctxt \"achievement.description\"\nmsgid \"base:first_cellar\"\n\
+    msgstr \"Grabe den ersten Keller einer Herberge.\"\n\n\
+    msgctxt \"achievement_set.name\"\nmsgid \"base:cellar\"\nmsgstr \"Der Keller\"\n";
+
+/// A godot-kit mod holding [`INN_RECORDS`] under its `data` folder and their icons, with the
+/// German catalogue beside it, as the game keeps them.
+fn inn_mod() -> tempfile::TempDir {
+    let game = tempfile::tempdir().unwrap();
+    let base = game.path().join("mods").join("base");
+    fs::create_dir_all(base.join("data")).unwrap();
+    fs::create_dir_all(base.join("icons")).unwrap();
+    fs::write(base.join("manifest.json"), "{}").unwrap();
+    fs::write(base.join("data").join("achievements.json"), INN_RECORDS).unwrap();
+    for (icon, size) in [
+        ("five_floors", 256),
+        ("first_cellar", 256),
+        ("first_cellar_locked", 64),
+    ] {
+        fs::write(
+            base.join("icons").join(format!("{icon}.png")),
+            png_header(size, size),
+        )
+        .unwrap();
+    }
+    fs::create_dir_all(game.path().join("locale")).unwrap();
+    fs::write(game.path().join("locale").join("de.po"), INN_GERMAN).unwrap();
+    game
+}
+
+/// `steamship achievements --write` run on [`inn_mod`]'s records and catalogue in `game`, into
+/// its `steam/achievements`, or checking it is `unchanged`.
+fn write_inn(game: &Path, unchanged: bool) -> (Option<i32>, String, String) {
+    let named = [
+        game.join("mods/base/data/achievements.json"),
+        game.join("locale/de.po"),
+        game.join("steam").join("achievements"),
+    ]
+    .map(|path| path.to_string_lossy().into_owned());
+    let [records, german, out] = named.each_ref().map(String::as_str);
+    let mut args = vec![
+        "achievements",
+        "5440760",
+        "--write",
+        records,
+        german,
+        "--out",
+        out,
+    ];
+    if unchanged {
+        args.push("--unchanged");
+    }
+    steamship(&args, Some(game), &[("STEAMSHIP_NO_UPDATE_CHECK", "1")])
+}
+
+#[test]
+fn the_achievement_editors_files_are_written_from_records_catalogues_and_icons() {
+    let game = inn_mod();
+    let out = game.path().join("steam").join("achievements");
+    let (missing, _, why) = write_inn(game.path(), true);
+    assert_eq!(missing, Some(2_i32), "{why}");
+    assert!(
+        why.contains("5440760-achievements-definitions.csv is missing\n"),
+        "{why}"
+    );
+
+    let (code, said, noted) = write_inn(game.path(), false);
+    assert_eq!(code, Some(0_i32), "{said}{noted}");
+    assert!(said.contains("de.po, german\n"), "{said}");
+    assert!(!said.contains("unchecked"), "{said}");
+    assert!(
+        said.contains("holds the 6 files the achievement editor imports\n"),
+        "{said}"
+    );
+    assert!(
+        said.contains("then drop 5440760-achievements-localization.csv again on its own"),
+        "{said}"
+    );
+    assert!(
+        noted.contains("each set has to be made in the achievement editor before the import\n"),
+        "{noted}"
+    );
+    assert!(
+        noted.contains("no locked icon for 1 achievement: tick Automatically generate"),
+        "{noted}"
+    );
+    let read = |name: &str| fs::read_to_string(out.join(name)).unwrap();
+    assert!(read("5440760-achievements-definitions.csv").ends_with(
+        "\nFIVE_FLOORS,,Client,false,false,floors,0,5\nFIRST_CELLAR,1,Client,false,false,,0,0\n"
+    ));
+    assert!(
+        read("5440760-achievements-localization.csv")
+            .contains("\nFIRST_CELLAR,name,Down in the Cellar,Unten im Keller\n")
+    );
+    assert_eq!(
+        read("5440760-achievement-sets-localization.csv"),
+        "setid,english,german\n1,The Cellar,Der Keller\n"
+    );
+    assert_eq!(
+        fs::read(out.join("FIRST_CELLAR_UNACHIEVED.png")).unwrap(),
+        png_header(64, 64),
+        "64 pixels is the least the editor takes"
+    );
+    assert!(!noted.contains("no icon for"), "{noted}");
+    assert!(out.join("FIVE_FLOORS_ACHIEVED.png").is_file());
+
+    let (same, unchanged, _) = write_inn(game.path(), true);
+    assert_eq!(same, Some(0_i32), "{unchanged}");
+    assert!(unchanged.contains("the 6 files in "), "{unchanged}");
+}
+
+#[test]
+fn a_file_written_otherwise_or_left_over_is_named_and_rewritten_or_removed() {
+    let game = inn_mod();
+    let out = game.path().join("steam").join("achievements");
+    assert_eq!(write_inn(game.path(), false).0, Some(0_i32));
+    fs::write(out.join("OLD_ACHIEVED.png"), png_header(64, 64)).unwrap();
+    fs::write(out.join("notes.md"), "kept\n").unwrap();
+    // The cellar's set dropped, and the floors counted and drawn no more.
+    let records = INN_RECORDS
+        .replace(
+            r#"{"type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar"},"#,
+            "",
+        )
+        .replace(r#""set": "cellar", "#, "")
+        .replace(
+            r#""stat": "floors", "at": 5, "icon": "icons/five_floors.png""#,
+            r#""hidden": true"#,
+        );
+    fs::write(
+        game.path().join("mods/base/data/achievements.json"),
+        records,
+    )
+    .unwrap();
+    let (stale, _, why_stale) = write_inn(game.path(), true);
+    assert_eq!(stale, Some(2_i32), "{why_stale}");
+    for why in [
+        "5440760-achievements-definitions.csv differs from what the files make\n",
+        "5440760-achievement-sets-localization.csv is left over\n",
+        "FIVE_FLOORS_ACHIEVED.png is left over\n",
+        "OLD_ACHIEVED.png is left over\n",
+    ] {
+        assert!(why_stale.contains(why), "{why} in {why_stale}");
+    }
+    let (rewritten, again, noted) = write_inn(game.path(), false);
+    assert_eq!(rewritten, Some(0_i32), "{again}");
+    for said in [
+        "  removed   OLD_ACHIEVED.png\n",
+        "  removed   5440760-achievement-sets-localization.csv\n",
+        "  wrote     5440760-achievements-definitions.csv\n",
+    ] {
+        assert!(again.contains(said), "{said} in {again}");
+    }
+    assert!(
+        !again.contains("wrote     5440760-achievements-localization.csv"),
+        "a file already as written is left alone: {again}"
+    );
+    assert!(
+        noted.contains("no icon for 1 achievement: Steam shows its own\n"),
+        "{noted}"
+    );
+    for unsaid in ["each set", "progress bar", "no locked icon"] {
+        assert!(!noted.contains(unsaid), "{unsaid} in {noted}");
+    }
+    assert!(!out.join("OLD_ACHIEVED.png").exists());
+    assert!(
+        out.join("notes.md").is_file(),
+        "a file of no kind written is left"
+    );
+    assert_eq!(write_inn(game.path(), true).0, Some(0_i32));
+}
+
+#[test]
+fn the_achievement_editors_files_are_refused_as_the_editor_would_refuse_them() {
+    let game = inn_mod();
+    let base = game.path().join("mods/base");
+    let records = base.join("data/achievements.json");
+    let german = game.path().join("locale/de.po");
+    let out = game.path().join("out");
+    let write = |files: &[&Path]| {
+        let mut args = vec!["achievements", "5440760", "--write"];
+        let named: Vec<String> = files
+            .iter()
+            .map(|file| file.to_string_lossy().into_owned())
+            .collect();
+        args.extend(named.iter().map(String::as_str));
+        let out = out.to_string_lossy().into_owned();
+        args.extend(["--out", &out]);
+        let (code, _, why) = steamship(
+            &args,
+            Some(game.path()),
+            &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+        );
+        assert_eq!(code, Some(2_i32), "{why}");
+        why
+    };
+
+    fs::write(base.join("icons/five_floors.png"), png_header(256, 128)).unwrap();
+    let oblong = write(&[&records]);
+    assert!(
+        oblong.contains(
+            "FIVE_FLOORS's icon is a PNG of 256 by 128 pixels, where the achievement editor \
+             takes a square PNG of 64 pixels or more, 256 at best\n"
+        ),
+        "{oblong}"
+    );
+    fs::write(base.join("icons/five_floors.png"), png_header(32, 32)).unwrap();
+    let small = write(&[&records]);
+    assert!(
+        small.contains("FIVE_FLOORS's icon is a PNG of 32 by 32 pixels"),
+        "{small}"
+    );
+    fs::write(base.join("icons/five_floors.png"), png_header(256, 256)).unwrap();
+
+    let english = game.path().join("locale/en.po");
+    fs::write(&english, "msgid \"\"\nmsgstr \"Language: en\\n\"\n").unwrap();
+    let in_english = write(&[&records, &english]);
+    assert!(
+        in_english.contains("en.po: is in English, which the achievements' own files give\n"),
+        "{in_english}"
+    );
+    let again = game.path().join("locale/de_DE.po");
+    fs::write(&again, INN_GERMAN).unwrap();
+    let twice = write(&[&records, &german, &again]);
+    assert!(
+        twice.contains(&format!(
+            "de_DE.po: is in german, as {} is\n",
+            german.display()
+        )),
+        "{twice}"
+    );
+
+    fs::write(&german, INN_GERMAN.replace("\"Unten im Keller\"", "\"\"")).unwrap();
+    let untranslated = write(&[&records, &german]);
+    assert!(
+        untranslated.contains(
+            "de.po has no name of FIRST_CELLAR, under msgctxt \"achievement.name\" and msgid \
+             \"base:first_cellar\"\n"
+        ),
+        "{untranslated}"
+    );
+
+    let klingon = game.path().join("locale/tlh.po");
+    fs::write(&klingon, "msgid \"x\"\nmsgstr \"y\"\n").unwrap();
+    let unknown = write(&[&records, &klingon]);
+    assert!(
+        unknown.contains("tlh.po: is in the locale tlh, which Steam has no language for\n"),
+        "{unknown}"
+    );
+
+    fs::write(&records, INN_RECORDS.replace("\"stat\": \"floors\", ", "")).unwrap();
+    let uncounted = write(&[&records]);
+    assert!(
+        uncounted.contains(
+            "FIVE_FLOORS unlocks at 5 but gives no \"stat\" for its progress bar to count\n"
+        ),
+        "{uncounted}"
+    );
+    assert!(
+        !out.exists(),
+        "nothing is written while the files are refused"
+    );
+
+    fs::write(&records, INN_RECORDS).unwrap();
+    fs::write(&out, "notes\n").unwrap();
+    let filed = write(&[&records]);
+    assert!(
+        filed.contains(&format!(
+            "{}: is a file, where --out names the folder the files are written into\n",
+            out.display()
+        )),
+        "{filed}"
+    );
+    assert_eq!(fs::read_to_string(&out).unwrap(), "notes\n");
+}
+
+#[test]
+fn more_than_a_hundred_achievements_are_said_to_need_a_vetted_app() {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("achievements.json");
+    let out = folder.path().join("out");
+    for (count, said) in [(100_u32, false), (101_u32, true)] {
+        let achievements: Vec<String> = (0_u32..count)
+            .map(|each| format!(r#"{{"api_name": "A{each}", "name": "A"}}"#))
+            .collect();
+        fs::write(
+            &file,
+            format!(r#"{{"achievements": [{}]}}"#, achievements.join(",")),
+        )
+        .unwrap();
+        let (code, _, noted) = steamship(
+            &[
+                "achievements",
+                "480",
+                "--write",
+                &file.to_string_lossy(),
+                "--out",
+                &out.to_string_lossy(),
+            ],
+            Some(folder.path()),
+            &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+        );
+        assert_eq!(code, Some(0_i32), "{noted}");
+        assert_eq!(
+            noted.contains(
+                "Steam takes more than 100 achievements only once Valve has vetted the app\n"
+            ),
+            said,
+            "{count}: {noted}"
+        );
+    }
+}
+
+#[test]
+fn achievements_are_checked_in_each_language_a_catalogue_is_in() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![("200 OK", CELLAR), ("200 OK", KELLER)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let files = tempfile::tempdir().unwrap();
+    let records = files.path().join("achievements.json");
+    fs::write(
+        &records,
+        r#"[{"type": "achievement", "id": "base:first_cellar", "steam": "FIRST_CELLAR",
+            "name": "Down in the Cellar", "description": "Dig an inn's first cellar."}]"#,
+    )
+    .unwrap();
+    let german = files.path().join("de.po");
+    fs::write(
+        &german,
+        "msgctxt \"achievement.name\"\nmsgid \"base:first_cellar\"\nmsgstr \"Unten im Keller\"\n\
+         msgctxt \"achievement.description\"\nmsgid \"base:first_cellar\"\n\
+         msgstr \"Grabe den ersten Keller einer Herberge.\"\n",
+    )
+    .unwrap();
+    let args = [
+        "achievements",
+        "5440760",
+        "--check",
+        &records.to_string_lossy(),
+        &german.to_string_lossy(),
+    ];
+
+    let (code, said, _) = steamship(&args, Some(home.path()), &set);
+    assert_eq!(code, Some(0_i32), "{said}");
+    assert!(said.contains("de.po, german\n"), "{said}");
+    assert!(
+        said.contains("Steam's achievements and stats match the files\n"),
+        "{said}"
+    );
+    let first = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    let second = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(first.contains("l=english"), "{first}");
+    assert!(second.contains("l=german"), "{second}");
 }
 
 #[test]
