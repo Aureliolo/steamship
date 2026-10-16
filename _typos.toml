@@ -47,6 +47,8 @@ set_access_synchronized = "set_access_synchronized"
 # anstyle's colour type, and the variable the no-color.org convention names.
 AnsiColor = "AnsiColor"
 NO_COLOR = "NO_COLOR"
+# A stat of Spacewar, Valve's example app, which Steam's answers in the tests name.
+FeetTraveled = "FeetTraveled"
 
 [files]
 # Hidden paths too: the workflows' comments are prose like any other.
