@@ -1643,6 +1643,22 @@ fn try_builds(app: &str, count: u32, json: bool) -> Result<ExitCode, ExitCode> {
 fn achievements_file(path: &Path, app: u32) -> Result<achievements::Listed, ExitCode> {
     let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
     let text = fs::read_to_string(path).map_err(|error| refused(&error))?;
+    let localisation = path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("csv"));
+    if localisation {
+        let listed = achievements::read_localisation(&text).map_err(|why| refused(&why))?;
+        show::field(
+            "file",
+            &format!(
+                "{}, {} in {}",
+                path.display(),
+                show::counted(listed.translations.len(), "achievement"),
+                show::counted(listed.languages().len(), "language")
+            ),
+        );
+        return Ok(listed);
+    }
     let listed = achievements::read(&text).map_err(|why| refused(&why))?;
     if let Some(other) = listed.app.filter(|named| *named != u64::from(app)) {
         return Err(refused(&format!("is for app {other}, not app {app}")));
@@ -1681,6 +1697,55 @@ fn achievements_files(
     Ok(Some(listed))
 }
 
+/// Every way Steam's achievements differ from the `listed` translations, in each language they
+/// are in: English from what Steam `held`, and each other language asked of Steam in turn.
+fn translation_drift(
+    api: &webapi::Api,
+    app: u32,
+    listed: &achievements::Listed,
+    held: &webapi::Schema,
+) -> Result<Vec<achievements::Drift>, ExitCode> {
+    let languages = listed.languages();
+    let others: Vec<&str> = languages
+        .iter()
+        .copied()
+        .filter(|language| *language != "english")
+        .collect();
+    let mut drift = achievements::compare_translations(
+        &listed.translations,
+        "english",
+        &held.achievements,
+        &held.achievements,
+    );
+    if others.is_empty() {
+        return Ok(drift);
+    }
+    let spinner = Spinner::start(
+        "steam",
+        &format!(
+            "asking for them in {}",
+            show::counted(others.len(), "more language")
+        ),
+        false,
+    );
+    for language in &others {
+        match api.schema(app, language) {
+            Ok(in_language) => drift.extend(achievements::compare_translations(
+                &listed.translations,
+                language,
+                &in_language.achievements,
+                &held.achievements,
+            )),
+            Err(error) => return Err(web_api_failed(spinner, &error)),
+        }
+    }
+    spinner.done(&format!(
+        "in {} as well",
+        show::counted(others.len(), "language")
+    ));
+    Ok(drift)
+}
+
 fn try_achievements(app: &str, check: &[PathBuf], json: bool) -> Result<ExitCode, ExitCode> {
     if json {
         show::divert();
@@ -1691,7 +1756,7 @@ fn try_achievements(app: &str, check: &[PathBuf], json: bool) -> Result<ExitCode
     let home = home()?;
     let (api, from) = web_api(&home)?;
     let spinner = Spinner::start("steam", "asking for the achievements", false);
-    let held = match api.schema(app_id) {
+    let held = match api.schema(app_id, "english") {
         Ok(held) => held,
         Err(error) => {
             let code = web_api_failed(spinner, &error);
@@ -1735,7 +1800,8 @@ fn try_achievements(app: &str, check: &[PathBuf], json: bool) -> Result<ExitCode
         }
         return Ok(ExitCode::SUCCESS);
     };
-    let drift = achievements::compare(&listed.achievements, &held.achievements);
+    let mut drift = achievements::compare(&listed.achievements, &held.achievements);
+    drift.extend(translation_drift(&api, app_id, &listed, &held)?);
     let stat_drift = listed
         .stats
         .as_ref()

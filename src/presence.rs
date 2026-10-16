@@ -17,6 +17,18 @@ pub struct Language {
     pub tokens: Vec<(String, String)>,
 }
 
+/// Whether `name` could be a language as Steam names them: a single lowercase word.
+#[must_use]
+pub fn is_language(name: &str) -> bool {
+    !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_lowercase())
+}
+
+/// What is wrong with `name`, which [`is_language`] refused.
+#[must_use]
+pub fn not_language(name: &str) -> String {
+    format!("\"{name}\" is not a language as Steam names them, such as english or schinese")
+}
+
 /// Reads a rich presence file: a `"lang"` block naming its `"Language"`, with its `"Tokens"`.
 ///
 /// # Errors
@@ -31,10 +43,8 @@ pub fn read(text: &str) -> Result<Language, String> {
         .text("Language")
         .ok_or("\"lang\" names no \"Language\"")?
         .to_owned();
-    if language.is_empty() || !language.bytes().all(|byte| byte.is_ascii_lowercase()) {
-        return Err(format!(
-            "\"{language}\" is not a language as Steam names them, such as english or schinese"
-        ));
+    if !is_language(&language) {
+        return Err(not_language(&language));
     }
     let listed = lang.block("Tokens").ok_or("\"lang\" holds no \"Tokens\"")?;
     let mut tokens: Vec<(String, String)> = Vec::with_capacity(listed.pairs.len());
