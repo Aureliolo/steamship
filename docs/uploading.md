@@ -430,7 +430,8 @@ from the same files `--check` reads, without asking Steam anything:
 
 Besides what the check reads, an achievement may give its `set`, `archived` as true for one that
 can no longer be earned, which Valve asks for in place of deleting one players hold, and its
-`permission`: `Client`, the default, `GameServer` or `OfficialGameServer`. Its icons are paths
+`permission`: `Client`, the default, `GameServer` or `OfficialGameServer`, which a godot-kit
+record words as `client`, `game_server` or `official_game_server`. Its icons are paths
 inside the godot-kit mod its records are in, the folder holding the mod's `manifest.json`, or
 beside the file of the kind above; each has to be a square PNG of 64 pixels or more, 256 at
 best. A set is listed with its set ID and English name, as `sets` in that file:
@@ -442,10 +443,11 @@ best. A set is listed with its set ID and English name, as `sets` in that file:
 or as a godot-kit record, which an achievement's `set` names by its `id`:
 
 ```json
-{ "type": "achievement_set", "id": "base:cellar", "steam": "1", "name": "The Cellar" }
+{ "type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar" }
 ```
 
 A set is made in the editor, which gives it its ID, before an import can put achievements in it.
+The ID may be given as text or as a whole number.
 Before anything is written, and before `--check` asks Steam anything, the files are refused,
 exiting 2, where the editor would refuse them: an achievement that counts a `stat` with no
 `at`, or unlocks `at` a value with no stat, at 0 or below, or at a fraction of a stat whose

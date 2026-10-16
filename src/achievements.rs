@@ -22,8 +22,13 @@ pub const MOST_UNVETTED: usize = 100;
 /// The most sets it takes, the base set included.
 pub const MOST_SETS: usize = 40;
 
-/// Who may unlock an achievement, as the achievement editor words it.
-const PERMISSIONS: [&str; 3] = ["Client", "GameServer", "OfficialGameServer"];
+/// Who may unlock an achievement, as the achievement editor words it and as godot-kit's records
+/// do.
+const PERMISSIONS: [(&str, &str); 3] = [
+    ("Client", "client"),
+    ("GameServer", "game_server"),
+    ("OfficialGameServer", "official_game_server"),
+];
 
 /// An achievement as the file wants it.
 #[derive(Debug, Clone, PartialEq)]
@@ -411,15 +416,25 @@ fn achievement(entry: &Value, label: &str, named_by: &str) -> Result<Wanted, Str
         Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
         Some(_) => Err(format!("{api_name}: \"{key}\" is not text")),
     };
-    let permission = text("permission")?;
-    if let Some(permission) = &permission
-        && !PERMISSIONS.contains(&permission.as_str())
-    {
-        return Err(format!(
-            "{api_name}: \"permission\" is {permission}, not {}",
-            PERMISSIONS.join(", ")
-        ));
-    }
+    // A record is godot-kit's, which words the permission its own way; a file's matches the CSV.
+    let worded = |(editor, kit): &(&'static str, &'static str)| {
+        if named_by == "steam" { *kit } else { *editor }
+    };
+    let permission = text("permission")?
+        .map(|given| {
+            PERMISSIONS
+                .iter()
+                .find(|each| worded(each) == given)
+                .map(|(editor, _)| (*editor).to_owned())
+                .ok_or_else(|| {
+                    let known: Vec<&str> = PERMISSIONS.iter().map(worded).collect();
+                    format!(
+                        "{api_name}: \"permission\" is {given}, not {}",
+                        known.join(", ")
+                    )
+                })
+        })
+        .transpose()?;
     let at = entry
         .get("at")
         .map(|at| {
@@ -448,7 +463,12 @@ fn achievement(entry: &Value, label: &str, named_by: &str) -> Result<Wanted, Str
         }
     };
     let defined = Definition {
-        set: text("set")?,
+        set: match entry.get("set") {
+            None => None,
+            Some(set) => {
+                Some(set_id(set).ok_or_else(|| format!("{api_name}: \"set\" is not a set's ID"))?)
+            }
+        },
         archived: flag("archived")?,
         permission,
         progress,
@@ -465,13 +485,24 @@ fn achievement(entry: &Value, label: &str, named_by: &str) -> Result<Wanted, Str
     })
 }
 
+/// A set's ID as `value` gives it: text, or a whole number from 1, as godot-kit keeps the one the
+/// achievement editor gave the set. Valve does not say which its IDs are, so either is taken.
+fn set_id(value: &Value) -> Option<String> {
+    match value {
+        Value::String(id) if !id.is_empty() => Some(id.clone()),
+        Value::Number(id) => id.as_u64().filter(|id| *id > 0).map(|id| id.to_string()),
+        Value::Null | Value::Bool(_) | Value::String(_) | Value::Array(_) | Value::Object(_) => {
+            None
+        }
+    }
+}
+
 /// The set `entry`, as `achievement` reads one.
 fn set(entry: &Value, label: &str, named_by: &str) -> Result<WantedSet, String> {
-    let words = |key: &str| match entry.get(key) {
-        Some(Value::String(value)) if !value.is_empty() => Ok(value.clone()),
-        _ => Err(format!("{label} has no \"{key}\" text")),
-    };
-    let setid = words(named_by)?;
+    let setid = entry
+        .get(named_by)
+        .and_then(set_id)
+        .ok_or_else(|| format!("{label} has no \"{named_by}\", the set's ID"))?;
     let name = match entry.get("name") {
         Some(Value::String(name)) if !name.is_empty() => name.clone(),
         _ => return Err(format!("set {setid} has no \"name\" in English")),
@@ -1491,13 +1522,13 @@ mod tests {
     /// Tall Tales Inn's records, as `read` takes them, with the cellar's achievements in a set.
     const INN: &str = r#"[
         {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
-        {"type": "achievement_set", "id": "base:cellar", "steam": "1", "name": "The Cellar"},
+        {"type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar"},
         {"type": "achievement", "id": "base:room_to_grow", "steam": "ROOM_TO_GROW",
          "name": "Room to Grow", "description": "Build a second floor of guest rooms.",
          "stat": "floors", "at": 2, "icon": "icons/room_to_grow.png"},
         {"type": "achievement", "id": "base:first_cellar", "steam": "FIRST_CELLAR",
          "name": "Down in the Cellar", "description": "Dig an inn's first cellar.",
-         "set": "cellar", "archived": true, "permission": "GameServer", "hidden": true}
+         "set": "cellar", "archived": true, "permission": "game_server", "hidden": true}
     ]"#;
 
     #[test]
@@ -1532,16 +1563,29 @@ mod tests {
             ]
         );
         let object = read(
-            r#"{"achievements": [{"api_name": "A", "name": "A", "set": "7"}],
-                "sets": [{"setid": "7", "name": "Seven"}]}"#,
+            r#"{"achievements": [
+                    {"api_name": "A", "name": "A", "set": "7", "permission": "OfficialGameServer"},
+                    {"api_name": "B", "name": "B", "set": 8}],
+                "sets": [{"setid": "7", "name": "Seven"}, {"setid": 8, "name": "Eight"}]}"#,
         )
         .unwrap();
         let grouped = together(vec![("a.json".to_owned(), object)]).unwrap();
+        let defined: Vec<(Option<&str>, Option<&str>)> = grouped
+            .achievements
+            .iter()
+            .map(|wanted| {
+                (
+                    wanted.defined.set.as_deref(),
+                    wanted.defined.permission.as_deref(),
+                )
+            })
+            .collect();
         assert_eq!(
-            grouped.achievements.first().unwrap().defined.set.as_deref(),
-            Some("7")
+            defined,
+            [(Some("7"), Some("OfficialGameServer")), (Some("8"), None)]
         );
-        assert_eq!(grouped.sets.first().unwrap().id, "7");
+        let ids: Vec<&str> = grouped.sets.iter().map(|set| set.id.as_str()).collect();
+        assert_eq!(ids, ["7", "8"]);
     }
 
     #[test]
@@ -1564,31 +1608,43 @@ mod tests {
                 "A: \"at\" is not a number",
             ),
             (
-                r#"[{"type": "achievement", "steam": "A", "name": "A", "permission": "Anyone"}]"#,
-                "A: \"permission\" is Anyone, not Client, GameServer, OfficialGameServer",
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "permission": "GameServer"}]"#,
+                "A: \"permission\" is GameServer, not client, game_server, official_game_server",
+            ),
+            (
+                r#"{"achievements": [{"api_name": "A", "name": "A", "permission": "client"}]}"#,
+                "A: \"permission\" is client, not Client, GameServer, OfficialGameServer",
             ),
             (
                 r#"[{"type": "achievement", "steam": "A", "name": "A", "archived": "no"}]"#,
                 "A: \"archived\" is not true or false",
             ),
             (
-                r#"[{"type": "achievement", "steam": "A", "name": "A", "set": 1}]"#,
-                "A: \"set\" is not text",
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "set": 0}]"#,
+                "A: \"set\" is not a set's ID",
             ),
             (
-                r#"[{"type": "achievement_set", "steam": "1"}]"#,
+                r#"[{"type": "achievement", "steam": "A", "name": "A", "set": ""}]"#,
+                "A: \"set\" is not a set's ID",
+            ),
+            (
+                r#"[{"type": "achievement_set", "steam": 1}]"#,
                 "set 1 has no \"name\" in English",
             ),
             (
                 r#"[{"type": "achievement_set", "name": "One"}]"#,
-                "record 1 has no \"steam\" text",
+                "record 1 has no \"steam\", the set's ID",
+            ),
+            (
+                r#"[{"type": "achievement_set", "steam": 1.5, "name": "One"}]"#,
+                "record 1 has no \"steam\", the set's ID",
             ),
             (
                 r#"[{"type": "stat", "steam": "s", "kind": "big"}]"#,
                 "stat s: \"kind\" is not int or float",
             ),
             (
-                r#"[{"type": "achievement_set", "steam": "1", "name": "One"},
+                r#"[{"type": "achievement_set", "steam": 1, "name": "One"},
                     {"type": "achievement_set", "steam": "1", "name": "Two"}]"#,
                 "set 1 is in the file twice",
             ),

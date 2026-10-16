@@ -188,13 +188,13 @@ mod tests {
 
     const INN: &str = r#"[
         {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
-        {"type": "achievement_set", "id": "base:cellar", "steam": "1", "name": "The Cellar"},
+        {"type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar"},
         {"type": "achievement", "id": "base:five_floors", "steam": "FIVE_FLOORS",
          "name": "Five Floors Up", "description": "Stand an inn five floors above its taproom.",
          "stat": "base:floors", "at": 5},
         {"type": "achievement", "id": "base:first_cellar", "steam": "FIRST_CELLAR",
          "name": "Down in the Cellar", "description": "Dig an inn's \"first\" cellar, at last.",
-         "set": "base:cellar", "archived": true, "hidden": true, "permission": "GameServer"}
+         "set": "base:cellar", "archived": true, "hidden": true, "permission": "game_server"}
     ]"#;
 
     /// What the table of `written` named `kind` after the app holds.

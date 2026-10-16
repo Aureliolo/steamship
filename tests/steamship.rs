@@ -3640,7 +3640,7 @@ fn achievements_are_checked_in_each_language_a_localisation_has() {
 /// icon for each.
 const INN_RECORDS: &str = r#"[
     {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
-    {"type": "achievement_set", "id": "base:cellar", "steam": "1", "name": "The Cellar"},
+    {"type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar"},
     {"type": "achievement", "id": "base:five_floors", "steam": "FIVE_FLOORS",
      "name": "Five Floors Up", "description": "Stand an inn five floors above its taproom.",
      "stat": "floors", "at": 5, "icon": "icons/five_floors.png"},
@@ -3776,7 +3776,7 @@ fn a_file_written_otherwise_or_left_over_is_named_and_rewritten_or_removed() {
     // The cellar's set dropped, and the floors counted and drawn no more.
     let records = INN_RECORDS
         .replace(
-            r#"{"type": "achievement_set", "id": "base:cellar", "steam": "1", "name": "The Cellar"},"#,
+            r#"{"type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar"},"#,
             "",
         )
         .replace(r#""set": "cellar", "#, "")
