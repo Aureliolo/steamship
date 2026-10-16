@@ -365,9 +365,10 @@ always checked, a stat's `name` and `default` only when its record sets them.
 
 `--check` takes several files, after it or each after its own `--check`, and reads them
 together, so achievements and stats kept in more than one file are checked as one list. An
-achievement or stat in two of them is refused, naming both. Steam's Web API does not
-give a stat's type or an achievement's progress stat and maximum, so `kind`, `stat` and `at` go
-unchecked, and the check says so.
+achievement or stat in two of them is refused, naming both. Steam's Web API does not give a
+stat's type, an achievement's progress stat and maximum, its set, whether it is archived or who
+may unlock it, so `kind`, `stat`, `at`, `set`, `archived` and `permission` go unchecked, and the
+check says so. They are still checked against each other, as the next section describes.
 
 ### Every language
 
@@ -393,6 +394,74 @@ translation of in English, so one the localisation has and Steam lacks is said t
 and a language Steam holds nothing in is said once. The editor's import can apply only part of
 a localisation the first time, which this catches. Every achievement the other files list must
 be in the localisation, and nothing else may be.
+
+A game that keeps its translations in gettext catalogues gives those instead, each `.po` file in
+the language its header's `Language` names, or else its file name, such as `de.po` or
+`pt_BR.po`, which steamship turns into Steam's name for it with Valve's table. An achievement's
+name and description are under the contexts `achievement.name` and `achievement.description`,
+and a set's name under `achievement_set.name`, each by the record's `id`, as godot-kit keeps a
+record's translations; a file of the kind above, with no `id`, uses the API name or set ID. A
+text a catalogue lacks, leaves empty or marks fuzzy is refused, naming the catalogue, the
+context and the id.
+
+```sh
+steamship achievements 480 --check mods/base/data/achievements.json game/locale/*.po
+```
+
+### The achievement editor's import
+
+```sh
+steamship achievements 480 --write mods/base/data/achievements.json game/locale/*.po --out steam/achievements
+steamship achievements 480 --write mods/base/data/achievements.json game/locale/*.po --out steam/achievements --unchanged
+```
+
+Steamworks' achievement editor takes a game's achievements as files dropped on it under Bulk
+Import/Export, and no Web API sets them. `--write` writes those files into the `--out` folder,
+from the same files `--check` reads, without asking Steam anything:
+
+- `480-achievements-definitions.csv`: each achievement's set, who may unlock it, whether it is
+  a spoiler (hidden) or archived, and the stat its progress bar counts, from 0 up to its `at`;
+- `480-achievements-localization.csv`: each name and description in English and in each
+  language of the catalogues or localisation given;
+- `480-achievement-sets-localization.csv`, when there are sets: each set's name in the same
+  languages;
+- `<API name>_ACHIEVED.png` and `<API name>_UNACHIEVED.png`, each achievement's `icon` and
+  `icon_locked`, which the editor puts on the achievement they are named for.
+
+Besides what the check reads, an achievement may give its `set`, `archived` as true for one that
+can no longer be earned, which Valve asks for in place of deleting one players hold, and its
+`permission`: `Client`, the default, `GameServer` or `OfficialGameServer`. Its icons are paths
+inside the godot-kit mod its records are in, the folder holding the mod's `manifest.json`, or
+beside the file of the kind above; each has to be a square PNG of 64 pixels or more, 256 at
+best. A set is listed with its set ID and English name, as `sets` in that file:
+
+```json
+{ "setid": "1", "name": "The Cellar" }
+```
+
+or as a godot-kit record, which an achievement's `set` names by its `id`:
+
+```json
+{ "type": "achievement_set", "id": "base:cellar", "steam": "1", "name": "The Cellar" }
+```
+
+A set is made in the editor, which gives it its ID, before an import can put achievements in it.
+Before anything is written, and before `--check` asks Steam anything, the files are refused,
+exiting 2, where the editor would refuse them: an achievement that counts a `stat` with no
+`at`, or unlocks `at` a value with no stat, at 0 or below, or at a fraction of a stat whose
+`kind` is `int`; one that counts a stat or is in a set no file lists; a set with no English
+name; and more than 40 sets with the base set, or more than 5,000 achievements, archived ones
+included. Over 100, steamship says that Steam takes them only once Valve has vetted the app.
+
+A file of the kinds written for the app that `--write` would no longer write, such as the icon
+of an achievement since removed, is removed from the folder; other files are left alone. With
+`--unchanged` nothing is written, and it exits 2 naming each file that is missing, differs or
+is left over, which keeps the folder in step with the records in a game's own checks.
+
+Once written, drop every file on the editor and Save imported data, then drop the
+`achievements-localization.csv` again on its own: the editor applies only part of a
+localisation in the import that makes the achievements it names. `--check` then reads them back
+from Steam in every language.
 
 ## Leaderboards
 
