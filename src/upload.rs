@@ -444,6 +444,12 @@ pub const RUNS: u32 = 4;
 /// that was. Seen once in CI, on a run between two that built minutes before and after.
 const NO_CONNECTION_AT_BUILD: &str = "ERROR! Failed to initialize build on server (No Connection)";
 
+/// What steamcmd says when Steam drops it after it connected. Seen once in CI, as steamcmd
+/// 1791918946 waited for the user info of its anonymous login, on a run between others that
+/// logged in.
+const DISCONNECTED: &str =
+    "steamcmd has been disconnected from steam with result 3 (No Connection)";
+
 /// Why a build failed that may pass when steamcmd runs again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Retry {
@@ -451,16 +457,26 @@ pub enum Retry {
     Unserved(Unserved),
     /// For no connection to Steam's build server; it is tried once more.
     NoConnection,
+    /// For Steam dropping steamcmd's connection; it is tried once more, as for no connection.
+    Disconnected,
 }
 
 /// Why steamcmd's build failed, from `console` and `log`, if running it again may pass.
 #[must_use]
 pub fn retry(console: &str, log: Option<&str>) -> Option<Retry> {
-    unserved(console, log).map(Retry::Unserved).or_else(|| {
+    let says = |line: &str| {
         log.into_iter()
             .chain([console])
-            .any(|text| text.contains(NO_CONNECTION_AT_BUILD))
-            .then_some(Retry::NoConnection)
+            .any(|text| text.contains(line))
+    };
+    unserved(console, log).map(Retry::Unserved).or_else(|| {
+        if says(NO_CONNECTION_AT_BUILD) {
+            Some(Retry::NoConnection)
+        } else if says(DISCONNECTED) {
+            Some(Retry::Disconnected)
+        } else {
+            None
+        }
     })
 }
 
@@ -757,10 +773,29 @@ mod tests {
          \n\
          [2026-10-12 15:35:56]: ERROR! Build for depot 481 failed : Failure\n";
 
+    /// The console of CI's anonymous upload of app 480 that Steam dropped steamcmd 1791918946
+    /// from before it logged in, its colours left out.
+    const DISCONNECTED_CONSOLE: &str = "Connecting anonymously to Steam Public...OK\n\
+         Waiting for client config...OK\n\
+         Waiting for user info...\n\
+         steamcmd has been disconnected from steam with result 3 (No Connection)\n\
+         ERROR! (Timed out)\n\
+         Unloading Steam API...OK\n";
+
     #[test]
     fn a_build_that_may_pass_when_steamcmd_runs_again_says_why() {
         let no_connection = Some(Retry::NoConnection);
         assert_eq!(retry(NO_CONNECTION_AT_BUILD_CONSOLE, None), no_connection);
+        assert_eq!(retry(DISCONNECTED_CONSOLE, None), Some(Retry::Disconnected));
+        assert_eq!(
+            retry("", Some(DISCONNECTED_CONSOLE)),
+            Some(Retry::Disconnected)
+        );
+        assert_eq!(
+            judge(480, Some(6_i32), DISCONNECTED_CONSOLE, None, true),
+            Outcome::Failed(vec!["(Timed out)".to_owned()]),
+            "a failure, so the build is tried again"
+        );
         assert_eq!(
             retry("", Some(NO_CONNECTION_AT_BUILD_CONSOLE)),
             no_connection

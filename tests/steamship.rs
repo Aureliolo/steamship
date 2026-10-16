@@ -656,6 +656,18 @@ fn unconnected_then_built(failing: u32) -> String {
     )
 }
 
+/// A steamcmd whose first `failing` runs fail as steamcmd 1791918946 did once in CI, Steam
+/// dropping it before it logged in.
+#[cfg(unix)]
+fn disconnected_then_built(failing: u32) -> String {
+    failing_then_built(
+        "echo 'Waiting for user info...'\n\
+         echo 'steamcmd has been disconnected from steam with result 3 (No Connection)'\n\
+         echo 'ERROR! (Timed out)'\n",
+        failing,
+    )
+}
+
 /// How many times the steamcmd of `failing_then_built` ran in `home`.
 #[cfg(unix)]
 fn runs(home: &Path) -> usize {
@@ -732,6 +744,28 @@ fn an_upload_runs_steamcmd_once_more_when_it_did_not_reach_steams_build_server()
         why.contains("Failed to initialize build on server (No Connection)"),
         "{why}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_runs_steamcmd_once_more_when_steam_disconnects_it() {
+    let home = faked_with(&disconnected_then_built(1));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(runs(home.path()), 2);
+    for line in [
+        "  steam     \u{2717} Steam disconnected steamcmd after ",
+        "  steam     \u{2713} uploaded in ",
+    ] {
+        assert!(stdout.contains(line), "{line:?} in {stdout}");
+    }
+
+    let dropped = faked_with(&disconnected_then_built(99));
+    let (failed, said, why) = upload(&script, dropped.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(failed, Some(1_i32), "{said}{why}");
+    assert_eq!(runs(dropped.path()), 2, "only once more");
+    assert!(why.contains("Timed out"), "{why}");
 }
 
 /// The one line of JSON a `--json` command printed on standard output, which must be all there
