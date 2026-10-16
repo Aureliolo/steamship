@@ -298,17 +298,21 @@ steamship achievements 480 --check steam/achievements.json
 
 Steamworks is where achievements and stats are made and published, and steamship changes
 nothing there. `achievements` lists those Steam holds for the app, in English, with the same
-Web API key as `builds`. With `--check`, it compares them with a file kept beside your scripts,
-and exits 2 naming each achievement that is in the file but not on Steam or the other way
-round, each display name, description or hidden flag that differs, and each icon Steam has none
-of. It ends with how many of the file's achievements match, and of its stats when it lists
-any, such as `14 of 15 achievements match: 1 differs`. Run it before a release, and the release
-waits while the two have drifted apart.
+Web API key as `builds`, each achievement with the share of players who have it and each stat
+with its total over all players. Steam gives those once players have the game, and a total only
+for a stat marked as aggregated in Steamworks. With `--check`, it compares them with a file kept
+beside your scripts, and exits 2 naming each achievement that is in the file but not on Steam or
+the other way round, each display name, description or hidden flag that differs, and each icon
+Steam has none of. It ends with how many of the file's achievements match, and of its stats when
+it lists any, such as `14 of 15 achievements match: 1 differs`. Run it before a release, and the
+release waits while the two have drifted apart.
 
 `achievements --json` prints what Steam holds on standard output as one line of JSON, with the
 achievements and stats in the keys the file below uses, each achievement's `icon` and
-`icon_locked` added as addresses, or null where Steam has none. Steam failing is an `error` as
-`builds --json` gives it. It does not go with `--check`.
+`icon_locked` added as addresses, or null where Steam has none. Each achievement's `percent` is
+the share of players who have it, and each stat's `total` its total over all players, either
+null where Steam gives none. Steam failing is an `error` as `builds --json` gives it. It does not
+go with `--check`.
 
 The file lists each achievement by the API name the game unlocks it with, and each stat by the
 one the game sets it by:

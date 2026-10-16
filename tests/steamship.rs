@@ -3410,6 +3410,12 @@ const SCHEMA: &str = r#"{"game": {"gameName": "Spacewar", "availableGameStats": 
      "icongray": "https://cdn/o_bw.jpg"}
 ]}}}"#;
 
+/// `GetGlobalAchievementPercentagesForApp` as Steam answered it for Team Fortress 2, its two
+/// achievements named as Spacewar's are.
+const SHARES: &str = r#"{"achievementpercentages":{"achievements":[
+    {"name":"ACH_WIN_ONE_GAME","percent":"49.6"},{"name":"ACH_TRAVEL_FAR_SINGLE","percent":"3.1"}
+]}}"#;
+
 /// An achievements file for Spacewar, the second achievement's description as `orbiter` says.
 fn achievements_file(folder: &Path, orbiter: &str) -> String {
     let path = folder.join("achievements.json");
@@ -3432,6 +3438,7 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
     let home = tempfile::tempdir().unwrap();
     let (host, requests) = web_api(vec![
         ("200 OK", SCHEMA),
+        ("200 OK", SHARES),
         ("200 OK", SCHEMA),
         ("200 OK", SCHEMA),
         ("500 Internal Server Error", ""),
@@ -3445,15 +3452,20 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
     let (code, listed, _) = steamship(&["achievements", "480"], Some(home.path()), &set);
     assert_eq!(code, Some(0_i32), "{listed}");
     assert!(
-        listed.contains("  steam     \u{2713} 2 achievements on Steam\n"),
+        listed.contains("  steam     \u{2713} 2 achievements on Steam\n")
+            && listed
+                .contains("  steam     \u{2713} shares of 2 achievements and totals of 0 stats\n"),
         "{listed}"
     );
     assert!(
-        listed.contains("  ACH_WIN_ONE_GAME      Winner: Win one game.\n"),
+        listed.contains("  ACH_WIN_ONE_GAME      Winner, 49.6 % of players: Win one game.\n"),
         "{listed}"
     );
     assert!(
-        listed.contains("  ACH_TRAVEL_FAR_SINGLE Orbiter, hidden: Travel 500 feet in one life.\n"),
+        listed.contains(
+            "  ACH_TRAVEL_FAR_SINGLE Orbiter, hidden, 3.1 % of players: Travel 500 feet in one \
+             life.\n"
+        ),
         "{listed}"
     );
     let asked = requests.recv_timeout(Duration::from_secs(10)).unwrap();
@@ -3462,6 +3474,12 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
             && asked.contains("appid=480")
             && asked.contains("l=english"),
         "{asked}"
+    );
+    let shared = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        shared.starts_with("GET /ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?")
+            && shared.contains("gameid=480"),
+        "{shared}"
     );
 
     let files = tempfile::tempdir().unwrap();
@@ -4017,7 +4035,14 @@ fn achievements_are_checked_in_each_language_a_catalogue_is_in() {
 #[test]
 fn achievements_json_prints_them_alone_on_standard_output_and_not_with_check() {
     let home = tempfile::tempdir().unwrap();
-    let (host, _requests) = web_api(vec![("200 OK", SCHEMA), ("200 OK", WITH_STATS)]);
+    let (host, requests) = web_api(vec![
+        ("200 OK", SCHEMA),
+        ("403 Forbidden", "{}"),
+        ("200 OK", WITH_STATS),
+        ("403 Forbidden", "{}"),
+        ("200 OK", NOT_AGGREGATED),
+        ("200 OK", TOTALS),
+    ]);
     let set = [
         ("STEAMSHIP_WEB_API_KEY", KEY),
         ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
@@ -4032,25 +4057,53 @@ fn achievements_json_prints_them_alone_on_standard_output_and_not_with_check() {
             "app": 480_u32,
             "achievements": [
                 {"api_name": "ACH_WIN_ONE_GAME", "name": "Winner", "description": "Win one game.",
-                 "hidden": false, "icon": "https://cdn/w.jpg", "icon_locked": "https://cdn/w_bw.jpg"},
+                 "hidden": false, "icon": "https://cdn/w.jpg", "icon_locked": "https://cdn/w_bw.jpg",
+                 "percent": null},
                 {"api_name": "ACH_TRAVEL_FAR_SINGLE", "name": "Orbiter",
                  "description": "Travel 500 feet in one life.", "hidden": true,
-                 "icon": "https://cdn/o.jpg", "icon_locked": "https://cdn/o_bw.jpg"},
+                 "icon": "https://cdn/o.jpg", "icon_locked": "https://cdn/o_bw.jpg", "percent": null},
             ],
             "stats": [],
         })
     );
-    assert!(stderr.contains("2 achievements on Steam"), "{stderr}");
+    assert!(
+        stderr.contains("2 achievements on Steam")
+            && stderr.contains("Steam gives no shares of players or totals yet"),
+        "{stderr}"
+    );
 
-    let (with_stats, statted, _) =
+    let (with_stats, statted, told) =
         steamship(&["achievements", "480", "--json"], Some(home.path()), &set);
-    assert_eq!(with_stats, Some(0_i32), "{statted}");
+    assert_eq!(with_stats, Some(0_i32), "{statted}{told}");
     assert_eq!(
         summary_of(&statted).get("stats"),
         Some(&serde_json::json!([
-            {"api_name": "NumGames", "name": "Games played", "default": 0.0_f64},
-            {"api_name": "AverageSpeed", "name": "", "default": 1.5_f64},
+            {"api_name": "NumGames", "name": "Games played", "default": 0.0_f64,
+             "total": 211_140_488_449_u64},
+            {"api_name": "AverageSpeed", "name": "", "default": 1.5_f64, "total": null},
         ]))
+    );
+    assert!(
+        told.contains("shares of 0 achievements and totals of 1 stat"),
+        "{told}"
+    );
+    let totals: Vec<String> =
+        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(6)
+            .filter(|request| request.contains("GetGlobalStatsForGame"))
+            .collect();
+    assert!(
+        totals.len() == 2
+            && totals.iter().all(|asked| asked.contains("appid=480"))
+            && totals.first().is_some_and(|asked| {
+                asked.contains("count=2")
+                    && asked.contains("=NumGames")
+                    && asked.contains("=AverageSpeed")
+            })
+            && totals.last().is_some_and(|asked| {
+                asked.contains("count=1") && !asked.contains("AverageSpeed")
+            }),
+        "Steam is asked again without the stat it does not add up: {totals:?}"
     );
 
     let (refused, nothing, why) = steamship(
@@ -4074,12 +4127,29 @@ const WITH_STATS: &str = r#"{"game": {"availableGameStats": {"stats": [
     {"name": "AverageSpeed", "defaultvalue": 1.5}
 ]}}}"#;
 
+/// `GetGlobalStatsForGame` refusing a stat it keeps no totals of, as Steam answered for Spacewar,
+/// the stat named as `WITH_STATS` names it.
+const NOT_AGGREGATED: &str =
+    r#"{"response":{"result":8,"error":"Stat 'AverageSpeed' is not an aggregated stat"}}"#;
+
+/// `GetGlobalStatsForGame` as Steam answered it for Spacewar, trimmed to one stat.
+const TOTALS: &str =
+    r#"{"response":{"globalstats":{"NumGames":{"total":"211140488449"}},"result":1}}"#;
+
 #[test]
 fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(vec![
         ("200 OK", WITH_STATS),
+        ("403 Forbidden", "{}"),
+        // A stat steamship never asked for, as Steam named one for Spacewar: asking again
+        // without it would get the same answer, so totals are given up rather than asked for
+        // without end.
+        (
+            "200 OK",
+            r#"{"response":{"result":8,"error":"Stat 'NumWins' is not an aggregated stat"}}"#,
+        ),
         ("200 OK", WITH_STATS),
         ("200 OK", WITH_STATS),
     ]);

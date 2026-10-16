@@ -1864,32 +1864,7 @@ fn try_achievements(
     spinner.done(&format!("{holds} on Steam"));
     offer_to_keep(&home, &api, from);
     let Some(listed) = listed else {
-        if held.achievements.is_empty() && held.stats.is_empty() {
-            show::field(
-                "next",
-                &format!(
-                    "make and publish app {app_id}'s achievements and stats in Steamworks, under \
-                     Stats & Achievements"
-                ),
-            );
-        }
-        let achievements = held.achievements.iter().map(|achievement| {
-            (
-                achievement.api_name.clone(),
-                achievements::line(achievement),
-            )
-        });
-        let stats = held.stats.iter().map(|stat| {
-            (
-                format!("stat {}", stat.api_name),
-                achievements::stat_line(stat),
-            )
-        });
-        show::fields(&achievements.chain(stats).collect::<Vec<_>>());
-        if json {
-            show::plain(&format!("{}\n", held.json(app_id)));
-        }
-        return Ok(ExitCode::SUCCESS);
+        return list_achievements(&api, app_id, &held, json);
     };
     let mut drift = achievements::compare(&listed.achievements, &held.achievements);
     drift.extend(translation_drift(&api, app_id, &listed, &held)?);
@@ -1927,6 +1902,82 @@ fn try_achievements(
         }
     }
     Ok(ExitCode::from(REFUSED))
+}
+
+/// Lists the achievements and stats Steam `held` for `app`, each with how far players have got
+/// with it, and prints them as JSON as well when asked.
+fn list_achievements(
+    api: &webapi::Api,
+    app: u32,
+    held: &webapi::Schema,
+    json: bool,
+) -> Result<ExitCode, ExitCode> {
+    if held.achievements.is_empty() && held.stats.is_empty() {
+        show::field(
+            "next",
+            &format!(
+                "make and publish app {app}'s achievements and stats in Steamworks, under Stats \
+                 & Achievements"
+            ),
+        );
+        if json {
+            show::plain(&format!("{}\n", held.json(app, &webapi::Global::default())));
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    let spinner = Spinner::start("steam", "asking how far players have got with them", false);
+    let stat_names: Vec<String> = held
+        .stats
+        .iter()
+        .map(|stat| stat.api_name.clone())
+        .collect();
+    let global = match api.global(app, &stat_names) {
+        Ok(global) => global,
+        Err(error) => {
+            let code = web_api_failed(spinner, &error);
+            if json {
+                show::plain(&format!("{}\n", webapi::error_json(app, &error, None)));
+            }
+            return Err(code);
+        }
+    };
+    let totalled = global
+        .totals
+        .values()
+        .filter(|total| total.is_some())
+        .count();
+    spinner.done(&if global.shares.is_empty() && totalled == 0 {
+        "Steam gives no shares of players or totals yet".to_owned()
+    } else {
+        format!(
+            "shares of {} and totals of {}",
+            show::counted(global.shares.len(), "achievement"),
+            show::counted(totalled, "stat")
+        )
+    });
+    let achievements = held.achievements.iter().map(|achievement| {
+        (
+            achievement.api_name.clone(),
+            achievements::line(
+                achievement,
+                global.shares.get(&achievement.api_name).copied(),
+            ),
+        )
+    });
+    let stats = held.stats.iter().map(|stat| {
+        (
+            format!("stat {}", stat.api_name),
+            achievements::stat_line(
+                stat,
+                global.totals.get(&stat.api_name).and_then(Option::as_deref),
+            ),
+        )
+    });
+    show::fields(&achievements.chain(stats).collect::<Vec<_>>());
+    if json {
+        show::plain(&format!("{}\n", held.json(app, &global)));
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Each icon the `listed` achievements give, read and named as the achievement editor puts it on
