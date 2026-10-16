@@ -24,6 +24,9 @@ const LOCALISED: [&str; 2] = [
     "field (name or description)",
 ];
 
+/// The set localisation's first column head, worded as the editor exports it.
+const SET: &str = "setid (required; the id of a set that already exists)";
+
 /// One file the editor imports: its name, and what it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Table {
@@ -94,8 +97,7 @@ pub fn tables(app: u32, listed: &Listed) -> Vec<Table> {
                     .collect()
             },
         );
-        // The editor reads a head's note in brackets as no part of it, so this one needs none.
-        let mut names = row(iter::once("setid").chain(set_languages.iter().copied()));
+        let mut names = row(iter::once(SET).chain(set_languages.iter().copied()));
         for set in &listed.sets {
             let translated = listed
                 .set_names
@@ -258,7 +260,7 @@ mod tests {
         );
         assert_eq!(
             table(&written, "-achievement-sets-localization.csv"),
-            "setid,english\n1,The Cellar\n"
+            "setid (required; the id of a set that already exists),english\n1,The Cellar\n"
         );
     }
 
@@ -297,7 +299,8 @@ mod tests {
         assert_eq!(localisation.len(), 5);
         assert_eq!(
             table(&written, "-achievement-sets-localization.csv"),
-            "setid,english,german\n1,The Cellar,Der Keller\n"
+            "setid (required; the id of a set that already exists),english,german\n\
+             1,The Cellar,Der Keller\n"
         );
     }
 

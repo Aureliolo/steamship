@@ -3769,7 +3769,8 @@ fn the_achievement_editors_files_are_written_from_records_catalogues_and_icons()
     );
     assert_eq!(
         read("1000050-achievement-sets-localization.csv"),
-        "setid,english,german\n1,The Cellar,Der Keller\n"
+        "setid (required; the id of a set that already exists),english,german\n\
+         1,The Cellar,Der Keller\n"
     );
     assert_eq!(
         fs::read(out.join("FIRST_ANCHOR_UNACHIEVED.png")).unwrap(),
