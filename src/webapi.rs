@@ -7,6 +7,7 @@
 //! a list or a map of entries, and numbers written as numbers or as text.
 
 use std::cmp::Reverse;
+use std::collections::BTreeMap;
 use std::env;
 use std::error;
 use std::fmt;
@@ -228,6 +229,90 @@ pub fn schema_from(answer: &Value) -> Result<Schema, Error> {
         achievements,
         stats,
     })
+}
+
+/// How far players have got with an app's achievements and stats, where Steam gives it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Global {
+    /// The share of players who have each achievement, in percent, by API name.
+    pub shares: BTreeMap<String, f64>,
+    /// Each stat Steam adds up over all players, by API name, with the total as Steam writes it;
+    /// none for one no player has set.
+    pub totals: BTreeMap<String, Option<String>>,
+}
+
+/// The share of players who have each achievement, as `GetGlobalAchievementPercentagesForApp`
+/// answers it.
+///
+/// # Errors
+///
+/// When an achievement in it has no API name or no share.
+pub fn shares_from(answer: &Value) -> Result<BTreeMap<String, f64>, Error> {
+    answer
+        .pointer("/achievementpercentages/achievements")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .map(|entry| {
+            let api_name = text(entry, &["name"]);
+            let share = field(entry, &["percent"]).and_then(|share| {
+                share
+                    .as_f64()
+                    .or_else(|| share.as_str()?.trim().parse().ok())
+            });
+            match share {
+                Some(share) if !api_name.is_empty() => Ok((api_name, share)),
+                _ => Err(Error::Unreadable("achievement share")),
+            }
+        })
+        .collect()
+}
+
+/// What `GetGlobalStatsForGame` answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Totals {
+    /// Each stat asked for, with its total over all players; none for one no player has set.
+    Given(BTreeMap<String, Option<String>>),
+    /// A stat asked for that Steam does not add up over all players, which it names.
+    NotAggregated(String),
+    /// Steam answered that it gives none, saying this.
+    Withheld(String),
+}
+
+/// The totals `GetGlobalStatsForGame` answered, or why it gave none.
+///
+/// # Errors
+///
+/// When the answer is not one.
+pub fn totals_from(answer: &Value) -> Result<Totals, Error> {
+    let response = field(answer, &["response"]).ok_or(Error::Unreadable("global stats"))?;
+    if number(field(response, &["result"])) == Some(1) {
+        let given = field(response, &["globalstats"])
+            .and_then(Value::as_object)
+            .ok_or(Error::Unreadable("global stats"))?;
+        return Ok(Totals::Given(
+            given
+                .iter()
+                .map(|(api_name, stat)| {
+                    let total = match field(stat, &["total"]) {
+                        Some(Value::String(total)) => Some(total.clone()),
+                        Some(Value::Number(total)) => Some(total.to_string()),
+                        _ => None,
+                    };
+                    (api_name.clone(), total)
+                })
+                .collect(),
+        ));
+    }
+    let said = text(response, &["error"]);
+    // Steam names the stat it stopped at: "Stat 'NumWins' is not an aggregated stat".
+    if let Some(named) = said
+        .strip_prefix("Stat '")
+        .and_then(|rest| rest.strip_suffix("' is not an aggregated stat"))
+    {
+        return Ok(Totals::NotAggregated(named.to_owned()));
+    }
+    Ok(Totals::Withheld(said))
 }
 
 /// A leaderboard as Steam holds it, or as a file wants it made.
@@ -615,10 +700,11 @@ impl Overview {
 }
 
 impl Schema {
-    /// The achievements and stats of `app` as `achievements --json` prints them; an icon Steam
-    /// gave none of is null.
+    /// The achievements and stats of `app` as `achievements --json` prints them, each with how
+    /// far players have got with it from `global`; an icon Steam gave none of, and a share or
+    /// total it gave none of, is null.
     #[must_use]
-    pub fn json(&self, app: u32) -> Value {
+    pub fn json(&self, app: u32, global: &Global) -> Value {
         let icon = |address: &str| (!address.is_empty()).then(|| address.to_owned());
         let achievements: Vec<Value> = self
             .achievements
@@ -631,6 +717,7 @@ impl Schema {
                     "hidden": achievement.hidden,
                     "icon": icon(&achievement.icon),
                     "icon_locked": icon(&achievement.icon_locked),
+                    "percent": global.shares.get(&achievement.api_name),
                 })
             })
             .collect();
@@ -638,10 +725,16 @@ impl Schema {
             .stats
             .iter()
             .map(|stat| {
+                let total = global
+                    .totals
+                    .get(&stat.api_name)
+                    .and_then(Option::as_deref)
+                    .and_then(|total| serde_json::from_str::<serde_json::Number>(total).ok());
                 json!({
                     "api_name": stat.api_name,
                     "name": stat.name,
                     "default": stat.default,
+                    "total": total,
                 })
             })
             .collect();
@@ -763,6 +856,55 @@ impl Api {
             &[("appid", app.to_string()), ("l", language.to_owned())],
         )?;
         schema_from(&answer)
+    }
+
+    /// How far players have got with `app`'s achievements and with those of its `stats` Steam
+    /// adds up over all players; nothing of either where Steam gives none, as for an app no
+    /// player has yet.
+    ///
+    /// Steam refuses a request for totals at the first stat it does not add up, naming it, so it
+    /// is asked again without each it names.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::branches`], but for Steam refusing the shares, which is their being withheld.
+    pub fn global(&self, app: u32, stats: &[String]) -> Result<Global, Error> {
+        let shares = match self.get_from(
+            "ISteamUserStats",
+            "GetGlobalAchievementPercentagesForApp/v2",
+            &[("gameid", app.to_string())],
+        ) {
+            Ok(answer) => shares_from(&answer)?,
+            Err(Error::Refused) => BTreeMap::new(),
+            Err(error) => return Err(error),
+        };
+        let mut asked: Vec<&String> = stats.iter().collect();
+        while !asked.is_empty() {
+            let keys: Vec<String> = (0..asked.len())
+                .map(|index| format!("name[{index}]"))
+                .collect();
+            let mut query = vec![
+                ("appid", app.to_string()),
+                ("count", asked.len().to_string()),
+            ];
+            query.extend(
+                keys.iter()
+                    .map(String::as_str)
+                    .zip(asked.iter().map(|stat| (*stat).clone())),
+            );
+            let answer = self.get_from("ISteamUserStats", "GetGlobalStatsForGame/v1", &query)?;
+            match totals_from(&answer)? {
+                Totals::NotAggregated(named) if asked.iter().any(|stat| **stat == named) => {
+                    asked.retain(|stat| **stat != named);
+                }
+                Totals::Given(totals) => return Ok(Global { shares, totals }),
+                Totals::NotAggregated(_) | Totals::Withheld(_) => break,
+            }
+        }
+        Ok(Global {
+            shares,
+            totals: BTreeMap::new(),
+        })
     }
 
     /// The last `count` builds of `app`, newest first.
@@ -1779,7 +1921,7 @@ mod tests {
     }
 
     #[test]
-    fn an_icon_steam_gave_none_of_is_null() {
+    fn an_icon_share_or_total_steam_gave_none_of_is_null() {
         let schema = Schema {
             achievements: vec![Achievement {
                 api_name: "first_job".to_owned(),
@@ -1789,14 +1931,110 @@ mod tests {
                 icon: "https://cdn/w.jpg".to_owned(),
                 icon_locked: String::new(),
             }],
-            stats: Vec::new(),
+            stats: ["NumGames", "FeetTraveled", "NumWins"]
+                .map(|api_name| Stat {
+                    api_name: api_name.to_owned(),
+                    name: String::new(),
+                    default: 0.0_f64,
+                })
+                .to_vec(),
         };
         assert_eq!(
-            schema.json(5_335_950),
-            json!({"app": 5_335_950_u32, "stats": [], "achievements": [{
+            schema.json(5_335_950, &Global::default()),
+            json!({"app": 5_335_950_u32, "achievements": [{
                 "api_name": "first_job", "name": "Open for business", "description": "",
-                "hidden": false, "icon": "https://cdn/w.jpg", "icon_locked": null,
-            }]})
+                "hidden": false, "icon": "https://cdn/w.jpg", "icon_locked": null, "percent": null,
+            }], "stats": [
+                {"api_name": "NumGames", "name": "", "default": 0.0_f64, "total": null},
+                {"api_name": "FeetTraveled", "name": "", "default": 0.0_f64, "total": null},
+                {"api_name": "NumWins", "name": "", "default": 0.0_f64, "total": null},
+            ]})
+        );
+        let global = Global {
+            shares: BTreeMap::from([("first_job".to_owned(), 49.6_f64)]),
+            totals: BTreeMap::from([
+                ("NumGames".to_owned(), Some("211140488449".to_owned())),
+                ("FeetTraveled".to_owned(), None),
+            ]),
+        };
+        let printed = schema.json(5_335_950, &global);
+        assert_eq!(
+            printed.pointer("/achievements/0/percent"),
+            Some(&json!(49.6_f64))
+        );
+        assert_eq!(
+            printed.pointer("/stats/0/total"),
+            Some(&json!(211_140_488_449_u64))
+        );
+        assert_eq!(printed.pointer("/stats/1/total"), Some(&Value::Null));
+        assert_eq!(printed.pointer("/stats/2/total"), Some(&Value::Null));
+    }
+
+    #[test]
+    fn the_share_of_players_with_each_achievement_is_read_as_steam_gives_it() {
+        // As Steam answered for Team Fortress 2, cut to two.
+        let answer = json!({"achievementpercentages": {"achievements": [
+            {"name": "TF_SCOUT_LONG_DISTANCE_RUNNER", "percent": "49.6"},
+            {"name": "TF_HEAVY_DAMAGE_TAKEN", "percent": 40.0_f64}
+        ]}});
+        assert_eq!(
+            shares_from(&answer),
+            Ok(BTreeMap::from([
+                ("TF_HEAVY_DAMAGE_TAKEN".to_owned(), 40.0_f64),
+                ("TF_SCOUT_LONG_DISTANCE_RUNNER".to_owned(), 49.6_f64),
+            ]))
+        );
+        assert_eq!(shares_from(&json!({})), Ok(BTreeMap::new()));
+        assert_eq!(
+            shares_from(&json!({"achievementpercentages": {"achievements": [{"name": "A"}]}})),
+            Err(Error::Unreadable("achievement share"))
+        );
+        assert_eq!(
+            shares_from(&json!({"achievementpercentages": {"achievements": [{"percent": "1.0"}]}})),
+            Err(Error::Unreadable("achievement share"))
+        );
+    }
+
+    #[test]
+    fn global_totals_are_read_with_the_stat_steam_does_not_add_up_named() {
+        // Each as Steam answered for Spacewar.
+        assert_eq!(
+            totals_from(&json!({"response": {"globalstats": {
+                "NumGames": {"total": "211140488449"}, "FeetTraveled": {"total": null}
+            }, "result": 1_i32}})),
+            Ok(Totals::Given(BTreeMap::from([
+                ("FeetTraveled".to_owned(), None),
+                ("NumGames".to_owned(), Some("211140488449".to_owned())),
+            ])))
+        );
+        assert_eq!(
+            totals_from(
+                &json!({"response": {"globalstats": {"N": {"total": 7_i32}}, "result": 1_i32}})
+            ),
+            Ok(Totals::Given(BTreeMap::from([(
+                "N".to_owned(),
+                Some("7".to_owned())
+            )])))
+        );
+        assert_eq!(
+            totals_from(&json!({"response": {"result": 8_i32,
+                "error": "Stat 'AverageSpeed' is not an aggregated stat"}})),
+            Ok(Totals::NotAggregated("AverageSpeed".to_owned()))
+        );
+        // As Steam answered for Tall Tales Inn before its release.
+        assert_eq!(
+            totals_from(
+                &json!({"response": {"result": 24_i32, "error": "Insufficient Privilege"}})
+            ),
+            Ok(Totals::Withheld("Insufficient Privilege".to_owned()))
+        );
+        assert_eq!(
+            totals_from(&json!({"response": {"result": 1_i32}})),
+            Err(Error::Unreadable("global stats"))
+        );
+        assert_eq!(
+            totals_from(&json!({})),
+            Err(Error::Unreadable("global stats"))
         );
     }
 
