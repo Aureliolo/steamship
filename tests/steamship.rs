@@ -2982,6 +2982,38 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn an_item_made_whose_id_cannot_be_kept_says_what_to_keep_by_hand_and_exits_1() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let home = publishing("Success.", 0);
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    fs::write(&items, r#"{"app": 480, "items": {"hats": 5674}}"#).unwrap();
+    fs::set_permissions(&items, fs::Permissions::from_mode(0o444)).unwrap();
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("\u{2717} app 480: Workshop item 777 was made\n")
+            && stderr.contains(&format!("{}: ", items.display()))
+            && stderr.contains(
+                "; add \"example\": 777 to its \"items\", or the next upload makes another"
+            ),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&items).unwrap(),
+        r#"{"app": 480, "items": {"hats": 5674}}"#
+    );
+}
+
 #[test]
 fn an_item_given_by_its_fields_is_refused_before_steam_when_it_cannot_be_kept_or_made() {
     let home = tempfile::tempdir().unwrap();
@@ -3020,6 +3052,30 @@ fn an_item_given_by_its_fields_is_refused_before_steam_when_it_cannot_be_kept_or
     assert_eq!(
         refused(&[], &[]),
         format!("{}: \"app\" is not an app ID", items.display())
+    );
+
+    let unnamed: Vec<String> = by_fields(folder, &items, &[])
+        .into_iter()
+        .map(|arg| if arg == "example" { String::new() } else { arg })
+        .collect();
+    let (unnamed_code, _, unnamed_stderr) = steamship(
+        &unnamed.iter().map(String::as_str).collect::<Vec<_>>(),
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(unnamed_code, Some(2_i32), "{unnamed_stderr}");
+    assert_eq!(failure(&unnamed_stderr), "--name is empty");
+
+    let unreadable = by_fields(folder, temp.path(), &[]);
+    let (unreadable_code, _, unreadable_stderr) = steamship(
+        &unreadable.iter().map(String::as_str).collect::<Vec<_>>(),
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(unreadable_code, Some(2_i32), "{unreadable_stderr}");
+    assert!(
+        failure(&unreadable_stderr).starts_with(&format!("{}: ", temp.path().display())),
+        "{unreadable_stderr}"
     );
 
     for (args, why) in [
