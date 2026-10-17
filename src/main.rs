@@ -1868,10 +1868,11 @@ fn try_achievements(
     };
     let mut drift = achievements::compare(&listed.achievements, &held.achievements);
     drift.extend(translation_drift(&api, app_id, &listed, &held)?);
+    let totalled = aggregation(&api, app_id, &listed, &held)?;
     let stat_drift = listed
         .stats
         .as_ref()
-        .map(|stats| achievements::compare_stats(stats, &held.stats))
+        .map(|stats| achievements::compare_stats(stats, &held.stats, totalled.as_ref()))
         .unwrap_or_default();
     if drift.is_empty() && stat_drift.is_empty() {
         let what = if listed.stats.is_some() {
@@ -1902,6 +1903,55 @@ fn try_achievements(
         }
     }
     Ok(ExitCode::from(REFUSED))
+}
+
+/// What Steam says of whether it adds up over all players each stat it `held` that the `listed`
+/// files say it does or does not; nothing is asked when no file says of any.
+fn aggregation(
+    api: &webapi::Api,
+    app: u32,
+    listed: &achievements::Listed,
+    held: &webapi::Schema,
+) -> Result<Option<webapi::Totalled>, ExitCode> {
+    let said: Vec<String> = listed
+        .stats
+        .iter()
+        .flatten()
+        .filter(|wanted| {
+            wanted.aggregated.is_some()
+                && held
+                    .stats
+                    .iter()
+                    .any(|stat| stat.api_name == wanted.api_name)
+        })
+        .map(|wanted| wanted.api_name.clone())
+        .collect();
+    if said.is_empty() {
+        return Ok(None);
+    }
+    let spinner = Spinner::start("steam", "asking which stats it adds up", false);
+    let totalled = match api.totalled(app, &said) {
+        Ok(totalled) => totalled,
+        Err(error) => return Err(web_api_failed(spinner, &error)),
+    };
+    spinner.done(&format!(
+        "{} of {} aggregated",
+        totalled.totals.len(),
+        show::counted(said.len(), "stat")
+    ));
+    let unsaid = said
+        .iter()
+        .filter(|api_name| totalled.aggregated(api_name).is_none())
+        .count();
+    if unsaid > 0 {
+        show::note(&format!(
+            "whether {} {} aggregated went unchecked: Steam answered \"{}\"",
+            show::counted(unsaid, "stat"),
+            if unsaid == 1 { "is" } else { "are" },
+            totalled.withheld.as_deref().unwrap_or_default()
+        ));
+    }
+    Ok(Some(totalled))
 }
 
 /// Lists the achievements and stats Steam `held` for `app`, each with how far players have got
