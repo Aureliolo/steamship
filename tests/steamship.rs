@@ -4124,6 +4124,43 @@ fn imported_names_once_an_achievement_steam_does_not_have() {
 }
 
 #[test]
+fn imported_refuses_an_icon_steam_has_that_the_files_give_none_of() {
+    let game = inn_mod();
+    let records = game.path().join("mods/base/data/achievements.json");
+    fs::write(
+        &records,
+        INN_RECORDS.replace(r#", "icon": "icons/five_floors.png""#, ""),
+    )
+    .unwrap();
+    let (written, wrote, why_written) = write_inn(game.path(), false);
+    assert_eq!(written, Some(0_i32), "{wrote}{why_written}");
+    let retired = r#""achievements":[{"name":"OLD_TAPROOM","defaultvalue":0,"displayName":"Old Taproom","hidden":0,"description":"Keep the old taproom.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/5440760/9e1f0a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f.jpg","icongray":""},"#;
+    let uploaded = inn_schema(FIRST_IMPORT)
+        .replacen(r#""achievements":["#, retired, 1)
+        .leak();
+    let (refused, told, why) = inn_on_steam(game.path(), true, vec![("200 OK", uploaded)]);
+    assert_eq!(refused, Some(2_i32), "{told}{why}");
+    assert!(
+        why.contains("FIVE_FLOORS: the files give no icon, where Steam has one\n"),
+        "{why}"
+    );
+    assert!(
+        !why.contains("OLD_TAPROOM"),
+        "an achievement the files leave out is --check's to name: {why}"
+    );
+    assert!(
+        !why.contains("no locked icon"),
+        "Steam makes a locked icon itself when asked to: {why}"
+    );
+    assert!(
+        told.contains("give each of those achievements its `icon` in the files, run it without ")
+            && !told.contains("icons as the files"),
+        "{told}"
+    );
+    assert!(!inn_receipt(game.path()).exists());
+}
+
+#[test]
 fn imported_refuses_an_icon_steam_serves_otherwise_than_the_file() {
     let game = inn_mod();
     let (written, wrote, why_written) = write_inn(game.path(), false);

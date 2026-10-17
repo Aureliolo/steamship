@@ -496,10 +496,12 @@ nothing else.
 
 It is refused, exiting 2, when the folder is not as `--write` would write it, when Steam has an
 icon's achievement or the icon itself not yet, when an icon's file changed since the last
-receipt but Steam still has the image the last import made, and when an icon Steam serves is
-not its file, saying how many pixels are off and by how much on average. Steam answers with
-what is published, the Web API and the images alike, so an import saved in the editor but not
-yet published still shows the icons before it.
+receipt but Steam still has the image the last import made, when Steam has an icon for an
+achievement the files give none, as one uploaded in the editor by hand, and when an icon Steam
+serves is not its file, saying how many pixels are off and by how much on average. A locked
+icon the files lack is left to Steam, which makes one when the import is told to. Steam answers
+with what is published, the Web API and the images alike, so an import saved in the editor but
+not yet published still shows the icons before it.
 
 `--check` with that folder as `--out` then reads the receipt as well, and names each icon whose
 file changed since the import it records, each whose image on Steam changed though its file did
