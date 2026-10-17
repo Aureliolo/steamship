@@ -558,6 +558,17 @@ the file.
 see only their friends' scores) may be left out, for `false`. `app`, when there, must be the app
 checked, and other keys are left alone.
 
+A game built on godot-kit keeps its leaderboards as records, beside its achievements and stats,
+and `--check` reads them as it reads those: a list of records, of which each typed `leaderboard`
+is read the same way by its Steamworks name in `steam`. Its `upload` and `details` are what the
+game sends with each score, not settings Steam keeps, so they are left alone. `--check` takes
+several files, after it or each after its own `--check`, so the files given to `achievements
+--check` can be given here too, and a leaderboard in two of them is refused, naming both.
+
+```sh
+steamship leaderboards 5440760 --check mods/base/data/achievements.json mods/base/data/boards.json
+```
+
 ## Rich presence
 
 ```sh

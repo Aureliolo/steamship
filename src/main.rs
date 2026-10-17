@@ -122,7 +122,7 @@ fn run(command: Command) -> ExitCode {
             named(account.as_deref()),
         )),
         Command::Leaderboards { app, check, create } => {
-            either(try_leaderboards(&app, check.as_deref(), create))
+            either(try_leaderboards(&app, &check, create))
         }
         Command::RichPresence {
             app,
@@ -2873,12 +2873,14 @@ fn leaderboards_file(path: &Path, app: u32) -> Result<leaderboards::Listed, Exit
     Ok(listed)
 }
 
-fn try_leaderboards(app: &str, check: Option<&Path>, create: bool) -> Result<ExitCode, ExitCode> {
+fn try_leaderboards(app: &str, check: &[PathBuf], create: bool) -> Result<ExitCode, ExitCode> {
     show::title("leaderboards");
     let app_id = app_named(app)?;
-    let listed = check
-        .map(|path| leaderboards_file(path, app_id))
-        .transpose()?;
+    let mut files = Vec::with_capacity(check.len());
+    for path in check {
+        files.push((path.display().to_string(), leaderboards_file(path, app_id)?));
+    }
+    let wants = leaderboards::together(files).map_err(|why| fail(&why, REFUSED))?;
     let home = home()?;
     let (api, from) = web_api(&home)?;
     let asking = Spinner::start("steam", "asking for the leaderboards", false);
@@ -2891,7 +2893,7 @@ fn try_leaderboards(app: &str, check: Option<&Path>, create: bool) -> Result<Exi
         show::counted(held.len(), "leaderboard")
     ));
     offer_to_keep(&home, &api, from);
-    let Some(listed) = listed else {
+    if check.is_empty() {
         show::fields(
             &held
                 .iter()
@@ -2899,9 +2901,9 @@ fn try_leaderboards(app: &str, check: Option<&Path>, create: bool) -> Result<Exi
                 .collect::<Vec<_>>(),
         );
         return Ok(ExitCode::SUCCESS);
-    };
+    }
     if create {
-        for wanted in &listed.leaderboards {
+        for wanted in &wants {
             if held
                 .iter()
                 .any(|leaderboard| leaderboard.name == wanted.name)
@@ -2918,9 +2920,10 @@ fn try_leaderboards(app: &str, check: Option<&Path>, create: bool) -> Result<Exi
             }
         }
     }
-    let drift = leaderboards::compare(&listed.leaderboards, &held);
+    let drift = leaderboards::compare(&wants, &held);
     if drift.is_empty() {
-        show::success("Steam's leaderboards match the file", "");
+        let named = if check.len() > 1 { "files" } else { "file" };
+        show::success(&format!("Steam's leaderboards match the {named}"), "");
         return Ok(ExitCode::SUCCESS);
     }
     for difference in &drift {
