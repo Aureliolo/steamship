@@ -340,11 +340,14 @@ one the game sets it by:
 
 `description` and `hidden` may be left out, for none and `false`. The stats are checked only
 when the file has a `stats` list: each stat missing on either side, and each display name or
-default that differs, the rest of a stat's settings being Steamworks' alone to show. A stat's
-`name` and `default` may be left out, for none and 0. `app`, when there, must be the app
-checked, and other keys, such as your own tools', are left alone. Achievements and stats count
-on Steam only once published in Steamworks, so one entered but not yet published is missing
-from Steam's.
+default that differs. A stat's `name` and `default` may be left out, for none and 0. A stat may
+also say whether it is `aggregated`, true or false, which is checked against the totals Steam
+keeps of it over all players; where Steam answers neither a total nor that it keeps none, the
+check says so and leaves it. Its minimum, maximum, maximum change, whether it only goes up and
+who may set it are not in Steam's Web API, so only Steamworks shows them. `app`, when there,
+must be the app checked, and other keys, such as your own tools', are left alone. Achievements
+and stats count on Steam only once published in Steamworks, so one entered but not yet
+published is missing from Steam's.
 
 A game made with godot-kit can be checked against its own achievement records instead, a list
 in which those typed `achievement` and `stat` are read as above, by the API name in `steam`:

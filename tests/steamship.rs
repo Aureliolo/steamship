@@ -4219,6 +4219,92 @@ fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
 }
 
 #[test]
+fn whether_a_stat_is_aggregated_is_checked_against_the_totals_steam_keeps() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![
+        ("200 OK", WITH_STATS),
+        ("200 OK", NOT_AGGREGATED),
+        ("200 OK", TOTALS),
+        ("200 OK", WITH_STATS),
+        // As Steam answered for Tall Tales Inn before its release.
+        (
+            "200 OK",
+            r#"{"response":{"result":24,"error":"Insufficient Privilege"}}"#,
+        ),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let both = files.path().join("both.json");
+    fs::write(
+        &both,
+        r#"{"achievements": [], "stats": [
+            {"api_name": "NumGames", "name": "Games played", "aggregated": true},
+            {"api_name": "AverageSpeed", "default": 1.5, "aggregated": true},
+            {"api_name": "Unmade", "aggregated": true}
+        ]}"#,
+    )
+    .unwrap();
+    let (refused, shown, why) = steamship(
+        &["achievements", "480", "--check", &both.to_string_lossy()],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{shown}{why}");
+    assert!(
+        shown.contains("  steam     \u{2713} 1 of 2 stats aggregated\n"),
+        "{shown}"
+    );
+    assert!(
+        why.contains(
+            "stat AverageSpeed: aggregated is \"false\" on Steam and \"true\" in the file\n"
+        ) && why.ends_with("1 of 3 stats match: 1 differs, 1 not on Steam\n")
+            && !why.contains("went unchecked"),
+        "Steam is asked only of the stats it holds, and says of each: {why}"
+    );
+    let asked: Vec<String> =
+        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(3)
+            .collect();
+    assert!(
+        asked.get(1).is_some_and(|first| first
+            .starts_with("GET /ISteamUserStats/GetGlobalStatsForGame/v1/?")
+            && first.contains("count=2")
+            && !first.contains("Unmade"))
+            && asked
+                .last()
+                .is_some_and(|again| again.contains("count=1") && !again.contains("AverageSpeed")),
+        "{asked:?}"
+    );
+
+    let held = files.path().join("held.json");
+    fs::write(
+        &held,
+        r#"{"achievements": [], "stats": [
+            {"api_name": "NumGames", "name": "Games played", "aggregated": true},
+            {"api_name": "AverageSpeed", "default": 1.5, "aggregated": true}
+        ]}"#,
+    )
+    .unwrap();
+    let (matched, said, noted) = steamship(
+        &["achievements", "480", "--check", &held.to_string_lossy()],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(matched, Some(0_i32), "{said}{noted}");
+    assert!(
+        noted.contains(
+            "whether 2 stats are aggregated went unchecked: Steam answered \"Insufficient \
+             Privilege\""
+        ) && said.contains("Steam's achievements and stats match the file\n"),
+        "{said}{noted}"
+    );
+}
+
+#[test]
 fn an_app_with_nothing_on_steam_is_listed_as_none_with_where_they_are_made() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
