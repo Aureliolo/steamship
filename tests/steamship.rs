@@ -2977,7 +2977,7 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci
     );
     let copy = fs::read_to_string(home.path().join("workshop/480/workshop_item.vdf")).unwrap();
     assert!(
-        copy.contains("\"publishedfileid\"\t\"777\"") && !copy.contains("visibility"),
+        copy.contains("\"publishedfileid\"\t\t\"777\"") && !copy.contains("visibility"),
         "the item made is updated, keeping the visibility it has: {copy}"
     );
 }
@@ -3001,11 +3001,11 @@ fn an_item_made_whose_id_cannot_be_kept_says_what_to_keep_by_hand_and_exits_1() 
     let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     assert!(
-        stderr.contains("\u{2717} app 480: Workshop item 777 was made\n")
-            && stderr.contains(&format!("{}: ", items.display()))
-            && stderr.contains(
-                "; add \"example\": 777 to its \"items\", or the next upload makes another"
-            ),
+        stderr.contains(&format!(
+            "\u{2717} app 480: Workshop item 777 was made: {}: ",
+            items.display()
+        )) && stderr
+            .contains("; add \"example\": 777 to its \"items\", or the next upload makes another"),
         "{stderr}"
     );
     assert_eq!(
