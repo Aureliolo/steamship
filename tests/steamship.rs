@@ -12,7 +12,7 @@ pub mod common;
 
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
-use std::io::{Read as _, Write};
+use std::io::{self, Read as _, Write};
 use std::iter;
 use std::net::TcpListener;
 #[cfg(target_os = "linux")]
@@ -2882,7 +2882,10 @@ const SET_LIVE: &str = r#"{"response": {"result": 1}}"#;
 /// sent to through `STEAMSHIP_WEB_API_STAND_IN`. It answers one request with each status and body
 /// in `answers`, in turn, and hands over each request it read. A status can carry header lines
 /// after it, as Steam's service methods give their result in one.
-fn web_api(answers: Vec<(&'static str, &'static str)>) -> (String, mpsc::Receiver<String>) {
+fn web_api<Body>(answers: Vec<(&'static str, Body)>) -> (String, mpsc::Receiver<String>)
+where
+    Body: AsRef<[u8]> + Send + 'static,
+{
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let (sender, requests) = mpsc::channel();
@@ -2911,12 +2914,14 @@ fn web_api(answers: Vec<(&'static str, &'static str)>) -> (String, mpsc::Receive
                     break text;
                 }
             };
-            let response = format!(
+            let body = body.as_ref();
+            let head = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\
-                 Connection: close\r\n\r\n{body}",
+                 Connection: close\r\n\r\n",
                 body.len()
             );
-            stream.write_all(response.as_bytes()).unwrap();
+            stream.write_all(head.as_bytes()).unwrap();
+            stream.write_all(body).unwrap();
             drop(sender.send(request));
         }
     });
@@ -3354,7 +3359,7 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
 
     // No key set or kept: nothing is asked of Steam, and the branch is said to be unchecked, with
     // what that risks and how to have it checked.
-    let (unasked, _never) = web_api(vec![]);
+    let (unasked, _never) = web_api::<&str>(vec![]);
     let (keyless, warned, _) = steamship(
         &["check", &script],
         Some(home.path()),
@@ -3678,6 +3683,24 @@ const INN_GERMAN: &str = "msgid \"\"\nmsgstr \"Language: de\\n\"\n\n\
     msgstr \"Gib die erste Schleuse eines Mahlwerks frei.\"\n\n\
     msgctxt \"achievement_set.name\"\nmsgid \"base:cellar\"\nmsgstr \"Der Keller\"\n";
 
+/// A square icon of `size` pixels: a field of `shade` with a light square in its middle.
+fn icon_png(size: u32, shade: u8) -> Vec<u8> {
+    let quarter = size.checked_div(4).unwrap();
+    let middle = quarter..size.saturating_sub(quarter);
+    let picture = image::RgbaImage::from_fn(size, size, |x, y| {
+        if middle.contains(&x) && middle.contains(&y) {
+            image::Rgba([240, 220, 160, 255])
+        } else {
+            image::Rgba([shade, 40, 90, 255])
+        }
+    });
+    let mut bytes = io::Cursor::new(Vec::new());
+    picture
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap();
+    bytes.into_inner()
+}
+
 /// A games-kit mod holding [`INN_RECORDS`] under its `data` folder and their icons, with the
 /// German catalogue beside it, as the game keeps them.
 fn inn_mod() -> tempfile::TempDir {
@@ -3687,14 +3710,14 @@ fn inn_mod() -> tempfile::TempDir {
     fs::create_dir_all(base.join("icons")).unwrap();
     fs::write(base.join("manifest.json"), "{}").unwrap();
     fs::write(base.join("data").join("achievements.json"), INN_RECORDS).unwrap();
-    for (icon, size) in [
-        ("five_levels", 256),
-        ("first_anchor", 256),
-        ("first_anchor_locked", 64),
+    for (icon, size, shade) in [
+        ("five_levels", 256, 200),
+        ("first_anchor", 256, 120),
+        ("first_anchor_locked", 64, 60),
     ] {
         fs::write(
             base.join("icons").join(format!("{icon}.png")),
-            png_header(size, size),
+            icon_png(size, shade),
         )
         .unwrap();
     }
@@ -3776,7 +3799,7 @@ fn the_achievement_editors_files_are_written_from_records_catalogues_and_icons()
     );
     assert_eq!(
         fs::read(out.join("FIRST_ANCHOR_UNACHIEVED.png")).unwrap(),
-        png_header(64, 64),
+        icon_png(64, 60),
         "64 pixels is the least the editor takes"
     );
     assert!(!noted.contains("no icon for"), "{noted}");
@@ -3878,12 +3901,20 @@ fn inn_schema(icons: [&str; 3]) -> &'static str {
 /// `steamship achievements` in `game`, an [`inn_mod`], with its `steam/achievements` folder as
 /// `--out`, and the Web API answering with `answers`: `--write`, `--imported` and its records
 /// and catalogue when `imported`, or else `--check` and its records.
-fn inn_on_steam(
+fn inn_on_steam<Body>(
     game: &Path,
     imported: bool,
-    answers: Vec<(&'static str, &'static str)>,
-) -> (Option<i32>, String, String) {
+    answers: Vec<(&'static str, Body)>,
+) -> (Option<i32>, String, String)
+where
+    Body: AsRef<[u8]> + Send + 'static,
+{
     let (host, _requests) = web_api(answers);
+    inn_at(game, imported, &host)
+}
+
+/// [`inn_on_steam`] with the Web API's stand-in at `host`.
+fn inn_at(game: &Path, imported: bool, host: &str) -> (Option<i32>, String, String) {
     let named = [
         game.join("mods/base/data/achievements.json"),
         game.join("locale/de.po"),
@@ -3904,9 +3935,40 @@ fn inn_on_steam(
         &[
             ("STEAMSHIP_WEB_API_KEY", KEY),
             ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &host),
+            (STAND_IN, host),
         ],
     )
+}
+
+/// What a stand-in answers when steamship is refused before it asks Steam anything.
+const UNASKED: [(&str, &str); 0] = [];
+
+/// The icons the inn's import holds, in the order its records give them.
+const INN_ICONS: [&str; 3] = [
+    "FIVE_LEVELS_ACHIEVED.png",
+    "FIRST_ANCHOR_ACHIEVED.png",
+    "FIRST_ANCHOR_UNACHIEVED.png",
+];
+
+/// A JPEG of the PNG `file`, as Steam serves an icon it took.
+fn served(file: &[u8]) -> Vec<u8> {
+    let picture = image::load_from_memory_with_format(file, image::ImageFormat::Png)
+        .unwrap()
+        .to_rgb8();
+    let mut bytes = io::Cursor::new(Vec::new());
+    picture
+        .write_to(&mut bytes, image::ImageFormat::Jpeg)
+        .unwrap();
+    bytes.into_inner()
+}
+
+/// Steam's answers to `--imported` in `game`, an [`inn_mod`] whose files are written, once Steam
+/// took them in the import whose images `icons` names: the schema, then each image it serves.
+fn inn_served(game: &Path, icons: [&'static str; 3]) -> Vec<(&'static str, Vec<u8>)> {
+    let out = game.join("steam").join("achievements");
+    iter::once(("200 OK", inn_schema(icons).as_bytes().to_vec()))
+        .chain(INN_ICONS.map(|name| ("200 OK", served(&fs::read(out.join(name)).unwrap()))))
+        .collect()
 }
 
 /// The names [`INN_SCHEMA`] gives Steam's images of five floors' icon and the cellar's two, as
@@ -3930,11 +3992,8 @@ fn inn_imported() -> (tempfile::TempDir, String, String) {
     let game = inn_mod();
     let (written, wrote, why) = write_inn(game.path(), false);
     assert_eq!(written, Some(0_i32), "{wrote}{why}");
-    let (recorded, said, noted) = inn_on_steam(
-        game.path(),
-        true,
-        vec![("200 OK", inn_schema(FIRST_IMPORT))],
-    );
+    let (recorded, said, noted) =
+        inn_on_steam(game.path(), true, inn_served(game.path(), FIRST_IMPORT));
     assert_eq!(recorded, Some(0_i32), "{said}{noted}");
     (game, said, noted)
 }
@@ -3950,17 +4009,12 @@ fn inn_receipt(game: &Path) -> PathBuf {
 fn imported_records_each_icon_steam_holds_and_write_leaves_the_receipt_alone() {
     let (game, said, noted) = inn_imported();
     assert!(
-        said.contains("  wrote     steam-icons.json\n")
-            && said.contains("records the 3 icons Steam holds\n"),
+        said.contains("  steam     \u{2713} 3 of 3 icons as the files\n")
+            && said.contains("  wrote     steam-icons.json\n")
+            && said.contains("records the 3 icons Steam has published, each as its file\n"),
         "{said}"
     );
-    assert!(
-        noted.contains(
-            "the receipt takes Steam's icons to be the files': look at each once in the \
-             achievement editor\n"
-        ),
-        "{noted}"
-    );
+    assert!(!noted.contains("published:"), "{noted}");
     let receipt = inn_receipt(game.path());
     let kept: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&receipt).unwrap()).unwrap();
@@ -4002,7 +4056,7 @@ fn an_icon_changed_in_the_files_is_named_until_steam_takes_its_import() {
     let checked = inn_checked;
     fs::write(
         game.path().join("mods/base/icons/five_levels.png"),
-        png_header(128, 128),
+        icon_png(128, 20),
     )
     .unwrap();
     let (changed, _, why_changed) = inn_on_steam(game.path(), false, checked(first));
@@ -4011,11 +4065,15 @@ fn an_icon_changed_in_the_files_is_named_until_steam_takes_its_import() {
         why_changed.contains(
             "FIVE_LEVELS: the icon changed in the files since the import steam-icons.json \
              records: import it, publish, then run --imported\n"
-        ) && why_changed.contains("1 of 2 achievements match: 1 differs\n"),
+        ) && why_changed.contains("1 of 2 achievements match: 1 differs\n")
+            && why_changed.contains(
+                "Steam answers with what is published: an import saved in Steamworks counts \
+                 here once it is published\n"
+            ),
         "{why_changed}"
     );
 
-    let (unwritten, told, why_unwritten) = inn_on_steam(game.path(), true, Vec::new());
+    let (unwritten, told, why_unwritten) = inn_on_steam(game.path(), true, UNASKED.to_vec());
     assert_eq!(unwritten, Some(2_i32), "{why_unwritten}");
     assert!(
         why_unwritten.contains("FIVE_LEVELS_ACHIEVED.png differs from what the files make\n")
@@ -4040,12 +4098,8 @@ fn an_icon_changed_in_the_files_is_named_until_steam_takes_its_import() {
         first[2],
     ];
     let (taken, said_again, noted_again) =
-        inn_on_steam(game.path(), true, vec![("200 OK", inn_schema(again))]);
+        inn_on_steam(game.path(), true, inn_served(game.path(), again));
     assert_eq!(taken, Some(0_i32), "{said_again}{noted_again}");
-    assert!(
-        !noted_again.contains("look at each once"),
-        "only the first receipt is looked at by eye: {noted_again}"
-    );
     let (matched, shown, _) = inn_on_steam(game.path(), false, checked(again));
     assert_eq!(matched, Some(0_i32), "{shown}");
 }
@@ -4067,6 +4121,61 @@ fn imported_names_once_an_achievement_steam_does_not_have() {
     );
     assert!(why.contains("FIRST_ANCHOR: not on Steam\n"), "{why}");
     assert!(!inn_receipt(game.path()).exists());
+}
+
+#[test]
+fn imported_refuses_an_icon_steam_serves_otherwise_than_the_file() {
+    let game = inn_mod();
+    let (written, wrote, why_written) = write_inn(game.path(), false);
+    assert_eq!(written, Some(0_i32), "{wrote}{why_written}");
+    let mut answers = inn_served(game.path(), FIRST_IMPORT);
+    let [_, five_levels, first_anchor, first_anchor_locked] = answers.as_mut_slice() else {
+        panic!("the schema and three images");
+    };
+    *five_levels = ("200 OK", served(&icon_png(256, 20)));
+    *first_anchor = ("404 Not Found", Vec::new());
+    *first_anchor_locked = ("200 OK", b"not a JPEG".to_vec());
+    let (host, requests) = web_api(answers);
+    let (refused, told, why) = inn_at(game.path(), true, &host);
+    assert_eq!(refused, Some(2_i32), "{told}{why}");
+    for said in [
+        "FIVE_LEVELS: Steam's icon is not the file's: 49152 of 65536 pixels more than 64 off, ",
+        "FIRST_ANCHOR: Steam's icon could not be compared with the file: Steam's image host \
+         answered HTTP 404\n",
+        "FIRST_ANCHOR: Steam's locked icon could not be compared with the file: Steam's image: ",
+        "Steam answers with what is published: an import saved in Steamworks counts here once \
+         it is published\n",
+    ] {
+        assert!(why.contains(said), "{said} in {why}");
+    }
+    assert!(
+        told.contains("  steam     \u{2717} 0 of 3 icons as the files\n")
+            && told.contains("drop the PNG files in "),
+        "{told}"
+    );
+    assert!(!inn_receipt(game.path()).exists());
+
+    let asked: Vec<String> = requests.try_iter().collect();
+    let images: Vec<&String> = asked
+        .iter()
+        .filter(|request| request.contains("/community_assets/images/apps/1000050/"))
+        .collect();
+    assert_eq!(images.len(), 3, "{asked:?}");
+    assert!(
+        images.first().is_some_and(|request| {
+            request.starts_with(
+                "GET /community_assets/images/apps/1000050/\
+                 f895e737db45e18257a61fac5b6d409aa6872b82.jpg ",
+            )
+        }),
+        "{images:?}"
+    );
+    assert!(
+        images
+            .iter()
+            .all(|request| !request.to_ascii_lowercase().contains("x-webapi-key")),
+        "the key goes to the Web API alone: {images:?}"
+    );
 }
 
 #[test]
@@ -4093,7 +4202,7 @@ fn an_icon_steam_made_anew_from_the_file_imported_is_named() {
 fn a_check_against_no_receipt_or_another_apps_is_refused_and_imported_replaces_one() {
     let bare = inn_mod();
     assert_eq!(write_inn(bare.path(), false).0, Some(0_i32));
-    let (unrecorded, _, why) = inn_on_steam(bare.path(), false, Vec::new());
+    let (unrecorded, _, why) = inn_on_steam(bare.path(), false, UNASKED.to_vec());
     assert_eq!(unrecorded, Some(2_i32), "{why}");
     assert!(
         why.contains(
@@ -4104,7 +4213,7 @@ fn a_check_against_no_receipt_or_another_apps_is_refused_and_imported_replaces_o
     );
     let unreadable = inn_receipt(bare.path());
     fs::create_dir_all(&unreadable).unwrap();
-    let (failed, _, why_failed) = inn_on_steam(bare.path(), false, Vec::new());
+    let (failed, _, why_failed) = inn_on_steam(bare.path(), false, UNASKED.to_vec());
     assert_eq!(failed, Some(1_i32), "{why_failed}");
     assert!(
         why_failed.contains(&format!("{}: ", unreadable.display()))
@@ -4116,24 +4225,20 @@ fn a_check_against_no_receipt_or_another_apps_is_refused_and_imported_replaces_o
     let receipt = inn_receipt(game.path());
     let kept = fs::read_to_string(&receipt).unwrap();
     fs::write(&receipt, kept.replace("1000050", "480")).unwrap();
-    let (elsewhere, _, why_elsewhere) = inn_on_steam(game.path(), false, Vec::new());
+    let (elsewhere, _, why_elsewhere) = inn_on_steam(game.path(), false, UNASKED.to_vec());
     assert_eq!(elsewhere, Some(2_i32), "{why_elsewhere}");
     assert!(
         why_elsewhere.contains("steam-icons.json: records app 480's icons, not app 1000050's\n"),
         "{why_elsewhere}"
     );
     fs::write(&receipt, "{}").unwrap();
-    let (unread, _, why_unread) = inn_on_steam(game.path(), false, Vec::new());
+    let (unread, _, why_unread) = inn_on_steam(game.path(), false, UNASKED.to_vec());
     assert_eq!(unread, Some(2_i32), "{why_unread}");
     assert!(
         why_unread.contains("steam-icons.json: \"app\" is not an app ID\n"),
         "{why_unread}"
     );
-    let (replaced, _, _) = inn_on_steam(
-        game.path(),
-        true,
-        vec![("200 OK", inn_schema(FIRST_IMPORT))],
-    );
+    let (replaced, _, _) = inn_on_steam(game.path(), true, inn_served(game.path(), FIRST_IMPORT));
     assert_eq!(
         replaced,
         Some(0_i32),

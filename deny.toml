@@ -38,6 +38,10 @@ reason = "ring 0.17 depends on it; everything else is on a newer getrandom"
 crate = "windows-sys@0.52.0"
 reason = "ring 0.17 depends on it; everything else is on a newer windows-sys"
 
+[[bans.skip]]
+crate = "miniz_oxide@0.8.9"
+reason = "png 0.18, the icon decoder, depends on it; zip's deflate is on a newer miniz_oxide"
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
