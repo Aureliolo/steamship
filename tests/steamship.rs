@@ -4384,11 +4384,30 @@ fn a_check_with_drift_in_its_stats_still_says_its_achievements_match() {
 /// achievements.
 const TTI_SCHEMA: &str = r#"{"game":{"gameName":"Tall Tales Inn","gameVersion":"2","availableGameStats":{"stats":[{"name":"floors","defaultvalue":0,"displayName":"Floors standing above the taproom"},{"name":"staff","defaultvalue":0,"displayName":"Staff working in the inn"}],"achievements":[{"name":"ROOM_TO_GROW","defaultvalue":0,"displayName":"Room to Grow","hidden":0,"description":"Build a second floor of guest rooms.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/5440760/f895e737db45e18257a61fac5b6d409aa6872b82.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/5440760/a25a9ca72da3dae23b05f2fb6f712527cf3634d9.jpg"},{"name":"BUILT_BY_HAND","defaultvalue":0,"displayName":"Brick by Brick","hidden":0,"description":"Build a floor by hand.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/5440760/41373b0acc59cfbe2c973699975640bc1db1026a.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/5440760/c4d7c246b05fc3bacc39c9106295794b52faee45.jpg"}]}}}"#;
 
+/// What Steam answers for Tall Tales Inn when asked for the totals of its stats, which it keeps
+/// none of, naming each in turn.
+const TTI_UNAGGREGATED: [(&str, &str); 2] = [
+    (
+        "200 OK",
+        r#"{"response":{"result":8,"error":"Stat 'floors' is not an aggregated stat"}}"#,
+    ),
+    (
+        "200 OK",
+        r#"{"response":{"result":8,"error":"Stat 'staff' is not an aggregated stat"}}"#,
+    ),
+];
+
+/// Steam's answers to two checks of Tall Tales Inn's records.
+fn tti_checked_twice() -> Vec<(&'static str, &'static str)> {
+    let once = iter::once(("200 OK", TTI_SCHEMA)).chain(TTI_UNAGGREGATED);
+    once.clone().chain(once).collect()
+}
+
 #[test]
 fn godot_kits_records_are_checked_saying_what_steam_does_not_give() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
-    let (host, _requests) = web_api(vec![("200 OK", TTI_SCHEMA), ("200 OK", TTI_SCHEMA)]);
+    let (host, _requests) = web_api(tti_checked_twice());
     let set = [
         ("STEAMSHIP_WEB_API_KEY", KEY),
         ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
@@ -4426,8 +4445,8 @@ fn godot_kits_records_are_checked_saying_what_steam_does_not_give() {
         said.contains(
             "  unchecked the stats' types and the achievements' progress, which Steam's Web API \
              does not give\n"
-        ),
-        "{said}"
+        ) && said.contains("  steam     \u{2713} 0 of 2 stats aggregated\n"),
+        "a record that does not say so is a stat Steam keeps no total of: {said}"
     );
     assert!(
         said.contains("Steam's achievements and stats match the file\n"),
@@ -4454,7 +4473,7 @@ fn godot_kits_records_are_checked_saying_what_steam_does_not_give() {
 fn records_split_over_several_files_are_checked_as_one_and_none_may_repeat() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
-    let (host, _requests) = web_api(vec![("200 OK", TTI_SCHEMA), ("200 OK", TTI_SCHEMA)]);
+    let (host, _requests) = web_api(tti_checked_twice());
     let set = [
         ("STEAMSHIP_WEB_API_KEY", KEY),
         ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
