@@ -173,7 +173,8 @@ item, since steamship never chooses who sees one; left out, an item already made
 has on Steam.
 
 `--items` names a file kept with the game that holds the ID of each item made, by the name
-`--name` gives it. When the file has no item of that name, a new one is made, and steamship
+`--name` gives it, of letters, digits, `-`, `_` and `.`, not first. When the file has no item
+of that name, a new one is made, and steamship
 writes its ID into the file, making the file if missing. When the file has one, that item is
 updated. Commit the file, so that a run from any machine, CI among them, updates the items
 made before:
@@ -187,17 +188,30 @@ made before:
 }
 ```
 
-A new item is refused in CI unless `--new` is given, as for a script. With `--json`, either
-form prints what came of the upload on standard output as one line of JSON, once steamcmd has
-run, and everything meant for a person on standard error:
+A new item is refused in CI unless `--new` is given, as for a script.
+
+Each item has a folder of its own in steamship's home, named by `--name`, or for a script by
+its `publishedfileid`, or `new` when it has none. The script steamcmd is given and steamcmd's
+console go there, so uploading several items in a row leaves each one's console to read.
+
+With `--json`, either form prints what came of the upload on standard output as one line of
+JSON, here spread out, once steamcmd has run, and everything meant for a person on standard
+error:
 
 ```json
-{"app":5441000,"item":3821807235,"name":"example","outcome":"made"}
+{
+  "app": 5441000,
+  "item": 3821807235,
+  "log": "/home/you/.local/share/steamship/workshop/5441000/example/steamcmd.log",
+  "name": "example",
+  "outcome": "made"
+}
 ```
 
 `outcome` is `made`, `updated`, `failed` or `not-logged-in`, `item` is the item's ID when there
-is one, and `name` is the item's name in the `--items` file, or `null` for a script. The exit
-code is as without it, and a run refused before steamcmd starts prints no JSON.
+is one, `log` is where steamcmd's console was saved, and `name` is the item's name in the
+`--items` file, or `null` for a script. The exit code is as without it, and a run refused
+before steamcmd starts prints no JSON.
 
 ## Branches and promoting
 

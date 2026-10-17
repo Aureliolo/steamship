@@ -2913,7 +2913,7 @@ fn a_new_workshop_item_is_uploaded_and_its_id_given_to_add_to_the_script() {
         !fs::read_to_string(&script).unwrap().contains("777"),
         "the script is left for its author"
     );
-    let console = fs::read_to_string(home.path().join("workshop/480/steamcmd.log")).unwrap();
+    let console = fs::read_to_string(home.path().join("workshop/480/new/steamcmd.log")).unwrap();
     assert!(console.contains("Success."), "{console}");
 }
 
@@ -3090,10 +3090,20 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci
     let made: Vec<&str> = made.iter().map(String::as_str).collect();
     let (code, stdout, stderr) = steamship(&made, Some(home.path()), &[]);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
-    assert_eq!(
-        stdout,
-        "{\"app\":480,\"item\":777,\"name\":\"example\",\"outcome\":\"made\"}\n"
-    );
+    let log = home.path().join("workshop/480/example/steamcmd.log");
+    let summary = |outcome: &str| {
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "app": 480,
+                "item": 777,
+                "log": log.to_str().unwrap(),
+                "name": "example",
+                "outcome": outcome,
+            })
+        )
+    };
+    assert_eq!(stdout, summary("made"));
     assert!(
         stderr.contains(&format!("  items     {}\n", items.display()))
             && stderr.contains("  item      \u{2713} app 480, a new item, 1 file, checked\n")
@@ -3111,21 +3121,45 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci
 
     let updated = by_fields(folder, &items, &["--json"]);
     let updated: Vec<&str> = updated.iter().map(String::as_str).collect();
-    let (again, summary, said) = steamship(&updated, Some(home.path()), &[("CI", "true")]);
-    assert_eq!(again, Some(0_i32), "{summary}{said}");
-    assert_eq!(
-        summary,
-        "{\"app\":480,\"item\":777,\"name\":\"example\",\"outcome\":\"updated\"}\n"
-    );
+    let (again, printed, said) = steamship(&updated, Some(home.path()), &[("CI", "true")]);
+    assert_eq!(again, Some(0_i32), "{printed}{said}");
+    assert_eq!(printed, summary("updated"));
     assert!(
         said.contains("app 480, item 777, 1 file, checked"),
         "{said}"
     );
-    let copy = fs::read_to_string(home.path().join("workshop/480/workshop_item.vdf")).unwrap();
+    let copy =
+        fs::read_to_string(home.path().join("workshop/480/example/workshop_item.vdf")).unwrap();
     assert!(
         copy.contains("\"publishedfileid\"\t\t\"777\"") && !copy.contains("visibility"),
         "the item made is updated, keeping the visibility it has: {copy}"
     );
+
+    // Another item uploaded after it keeps its console beside its own copy, leaving the first's.
+    let other: Vec<String> = by_fields(folder, &items, &["--visibility", "private"])
+        .into_iter()
+        .map(|arg| {
+            if arg == "example" {
+                "boots".to_owned()
+            } else {
+                arg
+            }
+        })
+        .collect();
+    let (third, _, third_said) = steamship(
+        &other.iter().map(String::as_str).collect::<Vec<_>>(),
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(third, Some(0_i32), "{third_said}");
+    for name in ["example", "boots"] {
+        let console = fs::read_to_string(
+            home.path()
+                .join(format!("workshop/480/{name}/steamcmd.log")),
+        )
+        .unwrap();
+        assert!(console.contains("Success."), "{name}: {console}");
+    }
 }
 
 #[cfg(unix)]
@@ -3211,6 +3245,27 @@ fn an_item_given_by_its_fields_is_refused_before_steam_when_it_cannot_be_kept_or
     );
     assert_eq!(unnamed_code, Some(2_i32), "{unnamed_stderr}");
     assert_eq!(failure(&unnamed_stderr), "--name is empty");
+
+    let climbing: Vec<String> = by_fields(folder, &items, &[])
+        .into_iter()
+        .map(|arg| {
+            if arg == "example" {
+                "../hats".to_owned()
+            } else {
+                arg
+            }
+        })
+        .collect();
+    let (climbing_code, _, climbing_stderr) = steamship(
+        &climbing.iter().map(String::as_str).collect::<Vec<_>>(),
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(climbing_code, Some(2_i32), "{climbing_stderr}");
+    assert_eq!(
+        failure(&climbing_stderr),
+        "--name ../hats may hold only letters, digits, '-', '_' and '.', and not begin with '.'"
+    );
 
     let unreadable = by_fields(folder, temp.path(), &[]);
     let (unreadable_code, _, unreadable_stderr) = steamship(
