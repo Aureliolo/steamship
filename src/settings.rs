@@ -28,9 +28,19 @@ const BOOKKEEPING: [&str; 4] = [
 ///
 /// # Errors
 ///
+/// As [`info_from_console`].
+pub fn from_console(console: &str, app: u32) -> Result<Block, String> {
+    info_from_console(console, app).map(|shown| kept(&shown))
+}
+
+/// All of `app`'s info in steamcmd's `console`, where `app_info_print` printed it, Steam's own
+/// bookkeeping and release state among it.
+///
+/// # Errors
+///
 /// When steamcmd printed none, what it printed cannot be read, or Steam showed the build account
 /// nothing, as for an app it cannot see.
-pub fn from_console(console: &str, app: u32) -> Result<Block, String> {
+pub fn info_from_console(console: &str, app: u32) -> Result<Block, String> {
     let named = format!("\"{app}\"");
     let mut printed = String::new();
     // Its closing brace is the only one at the start of a line: those within are indented.
@@ -54,7 +64,7 @@ pub fn from_console(console: &str, app: u32) -> Result<Block, String> {
              there is no such app"
         ));
     }
-    Ok(kept(shown))
+    Ok(shown.clone())
 }
 
 /// What of `shown` is kept: see the module's description.

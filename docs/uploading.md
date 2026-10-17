@@ -50,7 +50,8 @@ steamship check steam/app_build.vdf
 
 `check` reads the app script and every depot script it names, without logging in, and refuses:
 
-- `SetLive` naming `default` or `public`, which Valve only allows from the Steamworks site, or a
+- `SetLive` naming `default` or `public`, which steamcmd never sets live (see
+  [the default branch](#the-default-branch)), or a
   branch the app does not have, when a Web API key is set or kept (with neither, it says the
   branch was not checked);
 - `Preview` or `Local` set in the file (use `--preview` instead);
@@ -117,17 +118,27 @@ Connection)`, steamship runs it once more.
 nothing is set live.
 
 For a script that runs steamship, `--json` prints what came of the upload on standard output as
-one line of JSON, once steamcmd has run, and sends everything meant for a person to standard
-error:
+one line of JSON, here spread out, once steamcmd has run, and sends everything meant for a
+person to standard error:
 
 ```json
-{"app":1000,"branch":"testing","build_id":4242,"description":"1.4.0 4f3c2a1e9b07","live":true,"outcome":"uploaded"}
+{
+  "app": 1000,
+  "branch": "testing",
+  "build_id": 4242,
+  "default": false,
+  "description": "1.4.0 4f3c2a1e9b07",
+  "live": true,
+  "outcome": "uploaded"
+}
 ```
 
 `outcome` is `uploaded`, `previewed`, `not-live` (built, but Steam shows another build on the
-branch), `built-then-failed`, `failed` or `not-logged-in`; `build_id` is the build Steam made,
-when it made one, and `branch` the one the script sets live, when it names one. The exit code is
-as without it, and a run refused before steamcmd starts prints no JSON.
+branch, or did not set it live on default when asked), `built-then-failed`, `failed` or
+`not-logged-in`; `build_id` is the build Steam made, when it made one, and `branch` the one the
+script sets live, when it names one. `live` says whether the build is live on that branch, and
+`default` whether on [the default branch](#the-default-branch). The exit code is as without it,
+and a run refused before steamcmd starts prints no JSON.
 
 ## Workshop items
 
@@ -198,16 +209,39 @@ steamship branch 480 testing --description "0.3.0, the season update"
 
 `builds` lists each branch with the build live on it, and the last builds uploaded, with the day
 each was uploaded and where it is live. `promote` sets an uploaded build live on a beta branch
-without uploading it again; the default branch is set live in Steamworks only, so `promote`
-refuses it. `branch` sets the description players see beside a beta branch when they choose
-it in the game's Betas properties, such as the version live on it; nothing is sent when it
-already reads so, and the default branch's description is set in Steamworks only. An app is
-named by its ID or by its app build script.
+without uploading it again, and on the default branch while the app is unreleased, as below.
+`branch` sets the description players see beside a beta branch when they choose it in the
+game's Betas properties, such as the version live on it; nothing is sent when it already reads
+so, and the default branch's description is set in Steamworks only. An app is named by its ID
+or by its app build script.
 
 A new app has only its default branch, and Steamworks lets you create others only once a build
 is live on it. So the first upload of a script that sets a beta branch live leaves the build on
-Steam, live nowhere. In Steamworks, under SteamPipe, Builds, set that build live on the default
-branch, create the branch the script names, then upload again or `promote` the build.
+Steam, live nowhere. Set that build live on the default branch with `promote`, as below, create
+the branch the script names in Steamworks under SteamPipe, Builds, then upload again or
+`promote` the build.
+
+### The default branch
+
+```sh
+steamship upload steam/app_build.vdf --version 1.4.0 --default
+steamship promote 480 --build 12345678 --branch default
+```
+
+Until a game is released, nobody plays its default branch but its developers, and Valve sets a
+build live there for the publisher key alone. `upload --default` sets the build live on the
+default branch too, after the branch the script sets live, and `promote --branch default` sets
+an uploaded one live there. steamcmd's `SetLive` cannot name the default branch, so both go
+through the Web API, with the key as for `promote`.
+
+Before anything is sent, steamship asks steamcmd, logged in as the build account, for the app's
+release state, and goes on only while Steam shows it `unavailable` (no store page yet) or
+`prerelease` (coming soon). Once the game is released, both are refused: its default branch is
+the one players get, and Valve asks for a Steam Mobile confirmation, so it is set live in
+Steamworks. steamship never sends the SteamID that confirmation needs, so Valve refuses too.
+
+With `--json`, `default` says whether the build is live on the default branch, and `outcome`
+is `not-live` when it was asked for and Steam did not set it.
 
 For a script that runs steamship, `builds --json` prints the branches and builds on standard
 output as one line of JSON, here spread out, and sends everything meant for a person to

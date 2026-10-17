@@ -31,6 +31,13 @@ its attestation check out, uploads, and gives the BuildID as its `build-id` outp
 `preview: true` makes it Valve's dry run. It runs on Linux, Windows and macOS runners, and
 Renovate raises its pin by itself.
 
+Until the game is released, `default: true` sets each build live on the default branch too, as
+[`upload --default`](uploading.md#the-default-branch) does. That goes through the partner Web
+API, so it needs the publisher key, kept as a secret of its own and given as
+`web-api-key: ${{ secrets.STEAMSHIP_WEB_API_KEY }}`; with the key, steamship also confirms the
+build live on the script's branch. Once Steam shows the game released, the step is refused before
+anything is uploaded.
+
 When your content is built in another job, hand it over as a tar archive:
 `actions/upload-artifact` does not keep file permissions, so a Linux or macOS program would
 arrive without its executable bit, which `check` refuses.
