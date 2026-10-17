@@ -10,7 +10,7 @@ use std::fmt;
 use std::io::Cursor;
 
 use image::imageops::{self, FilterType};
-use image::{DynamicImage, ImageFormat, ImageReader, Limits};
+use image::{DynamicImage, ImageFormat, ImageReader, Limits, RgbImage, RgbaImage};
 
 /// How far a channel may be off, out of 255, before its pixel differs.
 pub const OFF: u8 = 64;
@@ -92,6 +92,11 @@ pub fn compare(file: &[u8], served: &[u8]) -> Result<Likeness, String> {
     } else {
         imageops::resize(&file, served.width(), served.height(), FilterType::Lanczos3)
     };
+    Ok(measure(&file, &served))
+}
+
+/// How alike `file` and `served` are, pixel by pixel, where both are the same size.
+fn measure(file: &RgbaImage, served: &RgbImage) -> Likeness {
     let mut likeness = Likeness::default();
     for (theirs, ours) in served.pixels().zip(file.pixels()) {
         let [red, green, blue, alpha] = ours.0;
@@ -112,7 +117,7 @@ pub fn compare(file: &[u8], served: &[u8]) -> Result<Likeness, String> {
             likeness.differing = likeness.differing.saturating_add(1);
         }
     }
-    Ok(likeness)
+    likeness
 }
 
 #[cfg(test)]
@@ -126,9 +131,16 @@ mod tests {
 
     /// A 256-pixel icon: a dark field with a light square of `side` pixels in its middle.
     fn drawn(side: u32) -> RgbaImage {
-        let start = 128_u32.saturating_sub(side.checked_div(2).unwrap_or(0));
+        drawn_at(256, side)
+    }
+
+    /// An icon of `width` pixels square, a dark field with a light square of `side` pixels in its
+    /// middle.
+    fn drawn_at(width: u32, side: u32) -> RgbaImage {
+        let halved = |length: u32| length.checked_div(2).unwrap_or(0);
+        let start = halved(width).saturating_sub(halved(side));
         let end = start.saturating_add(side);
-        ImageBuffer::from_fn(256, 256, |x, y| {
+        ImageBuffer::from_fn(width, width, |x, y| {
             if (start..end).contains(&x) && (start..end).contains(&y) {
                 Rgba([240, 220, 160, 255])
             } else {
@@ -183,9 +195,9 @@ mod tests {
 
     #[test]
     fn a_file_larger_than_steams_image_is_scaled_to_it() {
-        let large: RgbaImage = ImageBuffer::from_pixel(512, 512, Rgba([30, 40, 90, 255]));
-        let likeness = compare(&png(&large), &jpeg(&drawn(0))).unwrap();
-        assert_eq!((likeness.compared, likeness.differing), (ALL, 0));
+        let likeness = compare(&png(&drawn_at(512, 192)), &jpeg(&drawn(96))).unwrap();
+        assert_eq!(likeness.compared, ALL);
+        assert!(likeness.same(), "{likeness}");
     }
 
     #[test]
@@ -215,6 +227,20 @@ mod tests {
         wide.write_to(&mut bytes, ImageFormat::Png).unwrap();
         let too_wide = compare(&bytes.into_inner(), &icon).unwrap_err();
         assert!(too_wide.starts_with("the file: "), "{too_wide}");
+    }
+
+    #[test]
+    fn a_pixel_differs_only_past_64_off_in_its_furthest_channel() {
+        let file: RgbaImage = ImageBuffer::from_pixel(3, 1, Rgba([100, 100, 100, 255]));
+        let mut served: RgbImage = ImageBuffer::from_pixel(3, 1, Rgb([100, 100, 100]));
+        served.put_pixel(0, 0, Rgb([164, 100, 100]));
+        served.put_pixel(1, 0, Rgb([100, 165, 100]));
+        served.put_pixel(2, 0, Rgb([100, 100, 36]));
+        let likeness = measure(&file, &served);
+        assert_eq!(
+            (likeness.compared, likeness.differing, likeness.total),
+            (3, 1, 193)
+        );
     }
 
     #[test]

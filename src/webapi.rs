@@ -821,7 +821,8 @@ where
 /// app is released or not. The `icon` addresses the Web API gives serve nothing until it is.
 const IMAGES: &str = "https://shared.akamai.steamstatic.com/community_assets/images/apps";
 
-/// The largest image of an icon read. Steam serves them at 256 pixels in a few kilobytes.
+/// The size an image of an icon has to stay under to be read. Steam serves them at 256 pixels
+/// in a few kilobytes.
 const IMAGE_LIMIT: u64 = 4 * 1024 * 1024;
 
 /// The partner Web API, called with one key.
@@ -1712,6 +1713,20 @@ mod tests {
         assert_eq!(
             api("http://127.0.0.1:1").images,
             "http://127.0.0.1:1/community_assets/images/apps"
+        );
+        let limit = usize::try_from(IMAGE_LIMIT).unwrap();
+        let (host, _requests) = serving(vec![
+            ("200 OK", "0".repeat(limit.saturating_sub(1)).leak()),
+            ("200 OK", "0".repeat(limit).leak()),
+        ]);
+        assert_eq!(
+            api(&host).icon_image(1, "ab.jpg").map(|image| image.len()),
+            Ok(4 * 1024 * 1024 - 1)
+        );
+        let over = api(&host).icon_image(1, "ab.jpg").unwrap_err();
+        assert!(
+            over.starts_with("Steam's image could not be read whole: "),
+            "{over}"
         );
         for name in ["", ".jpg", "../keys.jpg", "ab.png", "ab.jpg?x", "ab"] {
             assert_eq!(
