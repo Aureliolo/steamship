@@ -3233,7 +3233,6 @@ fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
     let written = kept
         .path
         .parent()
-        .filter(|folder| !folder.as_os_str().is_empty())
         .map_or(Ok(()), fs::create_dir_all)
         .and_then(|()| fs::write(kept.path, record.text()));
     match written {
