@@ -845,8 +845,9 @@ fn once<'name>(
 /// A way Steam's achievements and the file's differ.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Drift {
-    /// Steam holds no achievements at all, and the file this many: said once, not once for each.
-    NoneOnSteam(usize),
+    /// Steam holds none of a `kind` at all, and the file `count` of them: said once, not once for
+    /// each.
+    NoneOnSteam { count: usize, kind: &'static str },
     /// In the file, not on Steam.
     NotOnSteam(String),
     /// On Steam, not in the file.
@@ -953,10 +954,15 @@ impl fmt::Display for Drift {
                  localisation in Steamworks, under Stats & Achievements, and publish",
                 counted(api_names.len(), "achievement")
             ),
-            Self::NoneOnSteam(count) => write!(
+            Self::NoneOnSteam { count, kind } => write!(
                 formatter,
-                "Steam holds none of the file's {count} achievements: they count once entered and \
-                 published in Steamworks"
+                "Steam holds none of the file's {}: {} once entered and published in Steamworks",
+                counted(*count, kind),
+                if *count == 1 {
+                    "it counts"
+                } else {
+                    "they count"
+                }
             ),
             Self::IconImport {
                 api_name,
@@ -1036,6 +1042,12 @@ pub fn compare_stats(
     held: &[Stat],
     totalled: Option<&Totalled>,
 ) -> Vec<Drift> {
+    if held.is_empty() && !wants.is_empty() {
+        return vec![Drift::NoneOnSteam {
+            count: wants.len(),
+            kind: "stat",
+        }];
+    }
     let label = |api_name: &str| format!("stat {api_name}");
     let mut drift = Vec::new();
     for wanted in wants {
@@ -1091,7 +1103,10 @@ pub fn compare_stats(
 #[must_use]
 pub fn compare(wants: &[Wanted], held: &[Achievement]) -> Vec<Drift> {
     if held.is_empty() && !wants.is_empty() {
-        return vec![Drift::NoneOnSteam(wants.len())];
+        return vec![Drift::NoneOnSteam {
+            count: wants.len(),
+            kind: "achievement",
+        }];
     }
     let mut drift = Vec::new();
     for wanted in wants {
@@ -1247,7 +1262,7 @@ pub fn tally(drift: &[Drift], wanted: usize, kind: &str) -> String {
     let mut only_on_steam = 0_usize;
     for difference in drift {
         match difference {
-            Drift::NoneOnSteam(count) => not_on_steam = not_on_steam.saturating_add(*count),
+            Drift::NoneOnSteam { count, .. } => not_on_steam = not_on_steam.saturating_add(*count),
             Drift::NotOnSteam(_) => not_on_steam = not_on_steam.saturating_add(1),
             Drift::NotInFile(_) => only_on_steam = only_on_steam.saturating_add(1),
             Drift::Differs { api_name, .. }
@@ -2050,11 +2065,22 @@ mod tests {
         // As for Falcon Ridge Overseer before its fifteen were entered in Steamworks.
         let wants = [wanted("a", "A"), wanted("b", "B")];
         let drift = compare(&wants, &[]);
-        assert_eq!(drift, [Drift::NoneOnSteam(2)]);
+        assert_eq!(
+            drift,
+            [Drift::NoneOnSteam {
+                count: 2,
+                kind: "achievement"
+            }]
+        );
         assert_eq!(
             drift.first().unwrap().to_string(),
             "Steam holds none of the file's 2 achievements: they count once entered and \
              published in Steamworks"
+        );
+        assert_eq!(
+            compare(&wants[..1], &[]).first().unwrap().to_string(),
+            "Steam holds none of the file's 1 achievement: it counts once entered and published \
+             in Steamworks"
         );
         assert_eq!(compare(&[], &[]), Vec::<Drift>::new());
         assert_eq!(
@@ -2136,7 +2162,14 @@ mod tests {
             "2 of 2 stats match: 1 on Steam only"
         );
         assert_eq!(
-            tally(&[Drift::NoneOnSteam(15)], 15, "achievements"),
+            tally(
+                &[Drift::NoneOnSteam {
+                    count: 15,
+                    kind: "achievement"
+                }],
+                15,
+                "achievements"
+            ),
             "0 of 15 achievements match: 15 not on Steam"
         );
     }
@@ -2217,6 +2250,27 @@ mod tests {
             [],
             "a name and default the file does not set are Steamworks' own"
         );
+        let none = compare_stats(
+            &[
+                wanted("NumGames", "Games played", 0.0_f64),
+                wanted("NumWins", "Games won", 0.0_f64),
+            ],
+            &[],
+            None,
+        );
+        assert_eq!(
+            none.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            [
+                "Steam holds none of the file's 2 stats: they count once entered and published in \
+              Steamworks"
+            ],
+            "said once, not once for each"
+        );
+        assert_eq!(
+            tally(&none, 2, "stats"),
+            "0 of 2 stats match: 2 not on Steam"
+        );
+        assert_eq!(compare_stats(&[], &[], None), []);
     }
 
     #[test]
