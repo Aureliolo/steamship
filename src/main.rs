@@ -2199,7 +2199,7 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
             );
             return Ok(ExitCode::from(REFUSED));
         }
-        return try_achievements_imported(app_id, &icons, out);
+        return try_achievements_imported(app_id, &listed.achievements, &icons, out);
     }
     let failed = |error: &io::Error| fail(&format!("{folder}: {error}"), FAILED);
     fs::create_dir_all(out).map_err(|error| failed(&error))?;
@@ -2235,6 +2235,7 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
 /// published; refused when Steam lacks one or plainly has not taken the import yet.
 fn try_achievements_imported(
     app: u32,
+    wanted: &[achievements::Wanted],
     icons: &[editor::Icon],
     out: &Path,
 ) -> Result<ExitCode, ExitCode> {
@@ -2258,45 +2259,29 @@ fn try_achievements_imported(
     ));
     offer_to_keep(&home, &api, from);
     let receipt = editor::Receipt::of(app, icons, &held.achievements);
-    let mut untaken: Vec<String> = Vec::new();
-    for icon in icons {
-        let address = icon.on_steam(&held.achievements);
-        let recorded = last.as_ref().and_then(|last| last.icons.get(&icon.name));
-        let why = if !held
-            .achievements
-            .iter()
-            .any(|achievement| achievement.api_name == icon.api_name)
-        {
-            // Said once for the achievement, not again for each of its icons.
-            format!("{}: not on Steam", icon.api_name)
-        } else if address.is_empty() {
-            format!("{}: Steam has no {}", icon.api_name, icon.which())
-        } else if recorded.is_some_and(|imported| {
-            imported.sha256 != icon.sha256() && imported.steam == editor::steam_image(address)
-        }) {
-            format!(
-                "{}: Steam still has the {} the last import made, where the file changed since",
-                icon.api_name,
-                icon.which()
-            )
-        } else {
-            continue;
-        };
-        if !untaken.contains(&why) {
-            untaken.push(why);
-        }
-    }
-    if !untaken.is_empty() {
-        for why in &untaken {
+    let untaken = untaken_icons(icons, &held.achievements, last.as_ref());
+    // An icon uploaded in the editor alone would pass unseen: the receipt records only the
+    // icons the files give.
+    let unnamed = unnamed_icons(wanted, icons, &held.achievements);
+    if !unnamed.is_empty() || !untaken.is_empty() {
+        for why in unnamed.iter().chain(&untaken) {
             show::failure(why, "", None);
         }
+        let folder = out.display();
         show::field(
             "next",
-            &format!(
-                "in Steamworks, under app {app}'s Stats & Achievements, import and publish the \
-                 files in {}, then run --imported again",
-                out.display()
-            ),
+            &if unnamed.is_empty() {
+                format!(
+                    "in Steamworks, under app {app}'s Stats & Achievements, import and publish \
+                     the files in {folder}, then run --imported again"
+                )
+            } else {
+                format!(
+                    "give each of those achievements its `icon` in the files, run it without \
+                     --imported to write {folder}, import and publish what it writes, then run \
+                     --imported again"
+                )
+            },
         );
         show::note(PUBLISHED);
         return Ok(ExitCode::from(REFUSED));
@@ -2338,6 +2323,70 @@ fn try_achievements_imported(
         ),
     );
     Ok(ExitCode::SUCCESS)
+}
+
+/// Each of the `icons` Steam, among its achievements `held`, has not taken: its achievement or
+/// itself missing, or, by the `last` receipt, still the image of an import before the file.
+fn untaken_icons(
+    icons: &[editor::Icon],
+    held: &[webapi::Achievement],
+    last: Option<&editor::Receipt>,
+) -> Vec<String> {
+    let mut untaken: Vec<String> = Vec::new();
+    for icon in icons {
+        let address = icon.on_steam(held);
+        let recorded = last.and_then(|last| last.icons.get(&icon.name));
+        let why = if !held
+            .iter()
+            .any(|achievement| achievement.api_name == icon.api_name)
+        {
+            // Said once for the achievement, not again for each of its icons.
+            format!("{}: not on Steam", icon.api_name)
+        } else if address.is_empty() {
+            format!("{}: Steam has no {}", icon.api_name, icon.which())
+        } else if recorded.is_some_and(|imported| {
+            imported.sha256 != icon.sha256() && imported.steam == editor::steam_image(address)
+        }) {
+            format!(
+                "{}: Steam still has the {} the last import made, where the file changed since",
+                icon.api_name,
+                icon.which()
+            )
+        } else {
+            continue;
+        };
+        if !untaken.contains(&why) {
+            untaken.push(why);
+        }
+    }
+    untaken
+}
+
+/// Each achievement `wanted` that Steam, among its achievements `held`, has an icon of where the
+/// files give none among their `icons`. A locked icon the files lack is Steam's to make, when the
+/// import is told to generate it, so only the icon is asked after.
+fn unnamed_icons(
+    wanted: &[achievements::Wanted],
+    icons: &[editor::Icon],
+    held: &[webapi::Achievement],
+) -> Vec<String> {
+    held.iter()
+        .filter(|achievement| {
+            !achievement.icon.is_empty()
+                && wanted
+                    .iter()
+                    .any(|wanted| wanted.api_name == achievement.api_name)
+                && !icons
+                    .iter()
+                    .any(|icon| icon.api_name == achievement.api_name && !icon.locked)
+        })
+        .map(|achievement| {
+            format!(
+                "{}: the files give no icon, where Steam has one",
+                achievement.api_name
+            )
+        })
+        .collect()
 }
 
 /// Each of `app`'s `icons` whose image on Steam, among its achievements `held`, is not its file,
