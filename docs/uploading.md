@@ -474,8 +474,14 @@ is left over, which keeps the folder in step with the records in a game's own ch
 
 Once written, drop every CSV and PNG file on the editor and Save imported data, then drop the
 `achievements-localization.csv` again on its own: the editor applies only part of a
-localisation in the import that makes the achievements it names. Once published, `--check`
-reads them back from Steam in every language.
+localisation in the import that makes the achievements it names. Each time, stay on the page
+until Pending Changes is gone; a page left sooner has applied only some of the icons. Once
+published, `--check` reads them back from Steam in every language.
+
+An import leaves the progress bar of an achievement Steam already has as it was, and Steam's
+Web API does not give the bar, so `--check` cannot see it. When `--write` changes a bar the
+folder's definitions gave before, it names the achievement with both ranges, to set by hand in
+the editor before publishing.
 
 ### Which icons Steam has
 

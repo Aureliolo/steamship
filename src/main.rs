@@ -2201,6 +2201,8 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
         }
         return try_achievements_imported(app_id, &listed.achievements, &icons, out);
     }
+    let definitions = format!("{app_id}-achievements-definitions.csv");
+    let defined_before = fs::read_to_string(out.join(&definitions)).unwrap_or_default();
     let failed = |error: &io::Error| fail(&format!("{folder}: {error}"), FAILED);
     fs::create_dir_all(out).map_err(|error| failed(&error))?;
     for (name, bytes) in &stale {
@@ -2222,14 +2224,28 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
         "next",
         &format!(
             "in Steamworks, under app {app_id}'s Stats & Achievements, Bulk Import/Export: drop \
-             every CSV and PNG file in {folder} and Save imported data; then drop \
-             {app_id}-achievements-localization.csv again on its own, since the first import \
-             applies it only in part; publish, and run this again with --imported"
+             every CSV and PNG file in {folder} and {SAVED}; then drop \
+             {app_id}-achievements-localization.csv again on its own the same way, since the \
+             first import applies it only in part; publish, and run this again with --imported"
         ),
     );
     import_notes(&listed);
+    let defined = package
+        .iter()
+        .find(|(name, _)| *name == definitions)
+        .map(|(_, bytes)| String::from_utf8_lossy(bytes));
+    for (api_name, was, is) in editor::rebarred(&defined_before, defined.as_deref().unwrap_or("")) {
+        show::note(&format!(
+            "{api_name}'s progress bar goes from {was} to {is}, which an import leaves as it \
+             was: set it in the editor by hand, then publish"
+        ));
+    }
     Ok(ExitCode::SUCCESS)
 }
+
+/// How an import is saved so that all of it is applied: a page left before Pending Changes
+/// cleared had applied only some of its icons.
+const SAVED: &str = "Save imported data, staying on the page until Pending Changes is gone";
 
 /// Records in `out` the image Steam made of each of `app`'s `icons`, once they are imported and
 /// published; refused when Steam lacks one or plainly has not taken the import yet.
@@ -2295,8 +2311,7 @@ fn try_achievements_imported(
             "next",
             &format!(
                 "in Steamworks, under app {app}'s Stats & Achievements, Bulk Import/Export: drop \
-                 the PNG files in {} again, Save imported data and publish, then run --imported \
-                 again",
+                 the PNG files in {} again, {SAVED}, and publish, then run --imported again",
                 out.display()
             ),
         );
