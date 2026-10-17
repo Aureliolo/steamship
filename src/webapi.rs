@@ -817,12 +817,21 @@ where
     HOST.to_owned()
 }
 
+/// Where Steam serves the images it makes of each app's achievement icons, by name, whether the
+/// app is released or not. The `icon` addresses the Web API gives serve nothing until it is.
+const IMAGES: &str = "https://shared.akamai.steamstatic.com/community_assets/images/apps";
+
+/// The size an image of an icon has to stay under to be read. Steam serves them at 256 pixels
+/// in a few kilobytes.
+const IMAGE_LIMIT: u64 = 4 * 1024 * 1024;
+
 /// The partner Web API, called with one key.
 #[derive(Debug)]
 pub struct Api {
     agent: ureq::Agent,
     key: Key,
     host: String,
+    images: String,
 }
 
 impl Api {
@@ -837,11 +846,49 @@ impl Api {
             .http_status_as_error(false)
             .build()
             .into();
+        let images = if host == HOST {
+            IMAGES.to_owned()
+        } else {
+            format!("{host}/community_assets/images/apps")
+        };
         Self {
             agent,
             key,
             host: host.to_owned(),
+            images,
         }
+    }
+
+    /// The image Steam serves of one of `app`'s achievement icons, by the `name` it serves it
+    /// under, as [`crate::editor::steam_image`] gives it. The image is public, so the key is not
+    /// sent with the request.
+    ///
+    /// # Errors
+    ///
+    /// When `name` is not one Steam gives an image, or the image cannot be fetched, saying why.
+    pub fn icon_image(&self, app: u32, name: &str) -> Result<Vec<u8>, String> {
+        let named = name.strip_suffix(".jpg").is_some_and(|hash| {
+            !hash.is_empty() && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+        });
+        if !named {
+            return Err(format!("\"{name}\" is not the name of an image Steam made"));
+        }
+        let mut response = self
+            .agent
+            .get(format!("{}/{app}/{name}", self.images))
+            .call()
+            .ok()
+            .ok_or("Steam's image host could not be reached")?;
+        let status = response.status().as_u16();
+        if !(200..=299).contains(&status) {
+            return Err(format!("Steam's image host answered HTTP {status}"));
+        }
+        response
+            .body_mut()
+            .with_config()
+            .limit(IMAGE_LIMIT)
+            .read_to_vec()
+            .map_err(|error| format!("Steam's image could not be read whole: {error}"))
     }
 
     /// The key the calls are made with.
@@ -1658,6 +1705,36 @@ mod tests {
 
     fn api(host: &str) -> Api {
         Api::at(Key::parse(KEY_TEXT).unwrap(), host)
+    }
+
+    #[test]
+    fn icon_images_come_from_steams_image_host_and_only_by_an_image_name() {
+        assert_eq!(api(HOST).images, IMAGES);
+        assert_eq!(
+            api("http://127.0.0.1:1").images,
+            "http://127.0.0.1:1/community_assets/images/apps"
+        );
+        let limit = usize::try_from(IMAGE_LIMIT).unwrap();
+        let (host, _requests) = serving(vec![
+            ("200 OK", "0".repeat(limit.saturating_sub(1)).leak()),
+            ("200 OK", "0".repeat(limit).leak()),
+        ]);
+        assert_eq!(
+            api(&host).icon_image(1, "ab.jpg").map(|image| image.len()),
+            Ok(4 * 1024 * 1024 - 1)
+        );
+        let over = api(&host).icon_image(1, "ab.jpg").unwrap_err();
+        assert!(
+            over.starts_with("Steam's image could not be read whole: "),
+            "{over}"
+        );
+        for name in ["", ".jpg", "../keys.jpg", "ab.png", "ab.jpg?x", "ab"] {
+            assert_eq!(
+                api("http://127.0.0.1:1").icon_image(1, name),
+                Err(format!("\"{name}\" is not the name of an image Steam made")),
+                "{name}"
+            );
+        }
     }
 
     #[test]

@@ -348,8 +348,8 @@ keeps of it over all players; where Steam answers neither a total nor that it ke
 check says so and leaves it. Its minimum, maximum, maximum change, whether it only goes up and
 who may set it are not in Steam's Web API, so only Steamworks shows them. `app`, when there,
 must be the app checked, and other keys, such as your own tools', are left alone. Achievements
-and stats count on Steam only once published in Steamworks, so one entered but not yet
-published is missing from Steam's.
+and stats count on Steam only once published in Steamworks, so one entered or imported but not
+yet published is missing from Steam's, or shows as it was before; a check that fails says so.
 
 A game made with godot-kit can be checked against its own achievement records instead, a list
 in which those typed `achievement` and `stat` are read as above, by the API name in `steam`:
@@ -484,23 +484,28 @@ steamship achievements 480 --write mods/base/data/achievements.json game/locale/
 steamship achievements 480 --check mods/base/data/achievements.json --out steam/achievements
 ```
 
-Steam's Web API gives each icon's address, and the address of an unreleased app's icon serves
-nothing, so whether Steam's icon is the file's is told from a receipt of the import instead.
-Once the import is saved and published, `--imported` writes `steam-icons.json` into the
-`--out` folder, recording each icon's file by its SHA-256 and the image Steam made of it by the
-name it serves it under, and writes nothing else. It is refused, exiting 2, when the folder is
-not as `--write` would write it, when Steam has an icon's achievement or the icon itself not
-yet, and when an
-icon's file changed since the last receipt but Steam still has the image the last import made.
-Steam makes each import's icons anew, under a new name, so the last is an import not yet saved
-or published.
+Once the import is saved and published, `--imported` fetches each icon Steam serves, for an
+unreleased app too, and compares it with its file pixel by pixel, the file scaled to the size
+Steam serves. Steam serves a JPEG, which leaves every pixel of an icon it took within 48 of the
+file in each channel, out of 255; an icon is not the file's when more than one pixel in a
+thousand is more than 64 off, so a changed detail ten pixels square is caught. Pixels the file
+has see-through are left out, since what Steam puts behind them is not known. When every icon
+is alike, `--imported` writes `steam-icons.json` into the `--out` folder, recording each icon's
+file by its SHA-256 and the image Steam made of it by the name it serves it under, and writes
+nothing else.
+
+It is refused, exiting 2, when the folder is not as `--write` would write it, when Steam has an
+icon's achievement or the icon itself not yet, when an icon's file changed since the last
+receipt but Steam still has the image the last import made, and when an icon Steam serves is
+not its file, saying how many pixels are off and by how much on average. Steam answers with
+what is published, the Web API and the images alike, so an import saved in the editor but not
+yet published still shows the icons before it.
 
 `--check` with that folder as `--out` then reads the receipt as well, and names each icon whose
 file changed since the import it records, each whose image on Steam changed though its file did
-not, and each it has no import of; a folder with no receipt is refused. `--write` and
-`--unchanged` leave `steam-icons.json` alone, so a game's own checks can run `--unchanged`
-without Steam. Keep the receipt with the records. It trusts that the import it records took the
-files as they were, so look at the icons once in the editor after the first.
+not, and each it has no import of, without fetching the images; a folder with no receipt is
+refused. `--write` and `--unchanged` leave `steam-icons.json` alone, so a game's own checks can
+run `--unchanged` without Steam. Keep the receipt with the records.
 
 ## Leaderboards
 

@@ -26,8 +26,8 @@ use steamship::update::{self, Installed};
 use steamship::windows::Terminal;
 use steamship::{
     achievements, assets, check, ci, conversation, download, drm, dump, editor, init, keychain,
-    leaderboards, magic, picture, po, presence, run, scripts, settings, steamcmd, upload, vdf,
-    webapi, workshop,
+    leaderboards, likeness, magic, picture, po, presence, run, scripts, settings, steamcmd, upload,
+    vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -1891,6 +1891,7 @@ fn try_achievements(
         show::success(&format!("Steam's {what} match the {files}"), "");
         return Ok(ExitCode::SUCCESS);
     }
+    show::note(PUBLISHED);
     for difference in drift.iter().chain(&stat_drift) {
         show::failure(&difference.to_string(), "", None);
     }
@@ -1911,6 +1912,12 @@ fn try_achievements(
     }
     Ok(ExitCode::from(REFUSED))
 }
+
+/// Why Steam can differ from an import saved in Steamworks: its Web API and image host give the
+/// achievements, stats and icons as last published, where a saved import changes only the editor
+/// until then.
+const PUBLISHED: &str = "Steam answers with what is published: an import saved in Steamworks \
+                         counts here once it is published";
 
 /// What Steam says of whether it adds up over all players each stat it `held` that the `listed`
 /// files say it does or does not; nothing is asked when no file says of any.
@@ -2291,6 +2298,24 @@ fn try_achievements_imported(
                 out.display()
             ),
         );
+        show::note(PUBLISHED);
+        return Ok(ExitCode::from(REFUSED));
+    }
+    let unlike = unlike_icons(&api, app, icons, &held.achievements);
+    if !unlike.is_empty() {
+        for why in &unlike {
+            show::failure(why, "", None);
+        }
+        show::field(
+            "next",
+            &format!(
+                "in Steamworks, under app {app}'s Stats & Achievements, Bulk Import/Export: drop \
+                 the PNG files in {} again, Save imported data and publish, then run --imported \
+                 again",
+                out.display()
+            ),
+        );
+        show::note(PUBLISHED);
         return Ok(ExitCode::from(REFUSED));
     }
     fs::write(&path, receipt.text())
@@ -2298,19 +2323,13 @@ fn try_achievements_imported(
     show::field("wrote", editor::RECEIPT);
     show::success(
         &format!(
-            "{} in {} records the {} Steam holds",
+            "{} in {} records the {} Steam has published, each as its file",
             editor::RECEIPT,
             out.display(),
             show::counted(icons.len(), "icon")
         ),
         "",
     );
-    if last.is_none() && !icons.is_empty() {
-        show::note(
-            "the receipt takes Steam's icons to be the files': look at each once in the \
-             achievement editor",
-        );
-    }
     show::field(
         "next",
         &format!(
@@ -2319,6 +2338,52 @@ fn try_achievements_imported(
         ),
     );
     Ok(ExitCode::SUCCESS)
+}
+
+/// Each of `app`'s `icons` whose image on Steam, among its achievements `held`, is not its file,
+/// pixel by pixel, or could not be compared, saying how.
+fn unlike_icons(
+    api: &webapi::Api,
+    app: u32,
+    icons: &[editor::Icon],
+    held: &[webapi::Achievement],
+) -> Vec<String> {
+    let spinner = Spinner::start(
+        "steam",
+        "comparing the icons it serves with the files",
+        false,
+    );
+    let mut unlike = Vec::new();
+    for icon in icons {
+        let name = editor::steam_image(icon.on_steam(held));
+        let compared = api
+            .icon_image(app, name)
+            .and_then(|served| likeness::compare(&icon.bytes, &served));
+        match compared {
+            Ok(likeness) if likeness.same() => {}
+            Ok(likeness) => unlike.push(format!(
+                "{}: Steam's {} is not the file's: {likeness}",
+                icon.api_name,
+                icon.which()
+            )),
+            Err(why) => unlike.push(format!(
+                "{}: Steam's {} could not be compared with the file: {why}",
+                icon.api_name,
+                icon.which()
+            )),
+        }
+    }
+    let alike = icons.len().saturating_sub(unlike.len());
+    let said = format!(
+        "{alike} of {} as the files",
+        show::counted(icons.len(), "icon")
+    );
+    if unlike.is_empty() {
+        spinner.done(&said);
+    } else {
+        spinner.failed(&said);
+    }
+    unlike
 }
 
 /// Says whether the `count` files `--write` makes are in `out` as it would write them, naming each
