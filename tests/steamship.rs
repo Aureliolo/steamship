@@ -3773,7 +3773,10 @@ fn the_achievement_editors_files_are_written_from_records_catalogues_and_icons()
     );
     assert!(
         said.contains("drop every CSV and PNG file in ")
-            && said.contains("then drop 5440760-achievements-localization.csv again on its own")
+            && said.contains(
+                " and Save imported data, staying on the page until Pending Changes is gone; then \
+                 drop 5440760-achievements-localization.csv again on its own the same way"
+            )
             && said.contains("publish, and run this again with --imported\n"),
         "{said}"
     );
@@ -3858,10 +3861,18 @@ fn a_file_written_otherwise_or_left_over_is_named_and_rewritten_or_removed() {
         "a file already as written is left alone: {again}"
     );
     assert!(
-        noted.contains("no icon for 1 achievement: Steam shows its own\n"),
+        noted.contains("no icon for 1 achievement: Steam shows its own\n")
+            && noted.contains(
+                "FIVE_FLOORS's progress bar goes from floors 0 - 5 to no progress bar, which an \
+                 import leaves as it was: set it in the editor by hand, then publish\n"
+            ),
         "{noted}"
     );
-    for unsaid in ["each set", "progress bar", "no locked icon"] {
+    for unsaid in [
+        "each set",
+        "each stat a progress bar counts",
+        "no locked icon",
+    ] {
         assert!(!noted.contains(unsaid), "{unsaid} in {noted}");
     }
     assert!(!out.join("OLD_ACHIEVED.png").exists());
@@ -4188,7 +4199,11 @@ fn imported_refuses_an_icon_steam_serves_otherwise_than_the_file() {
     }
     assert!(
         told.contains("  steam     \u{2717} 0 of 3 icons as the files\n")
-            && told.contains("drop the PNG files in "),
+            && told.contains("drop the PNG files in ")
+            && told.contains(
+                " again, Save imported data, staying on the page until Pending Changes is gone, \
+                 and publish, then run --imported again\n"
+            ),
         "{told}"
     );
     assert!(!inn_receipt(game.path()).exists());

@@ -148,6 +148,43 @@ fn definition(wanted: &Wanted) -> String {
     ])
 }
 
+/// Each achievement whose progress bar the definitions `after` give otherwise than `before` did,
+/// both as [`tables`] writes them: its API name, and its bar in each as the editor shows it.
+#[must_use]
+pub fn rebarred(before: &str, after: &str) -> Vec<(String, String, String)> {
+    let was = progress_bars(before);
+    progress_bars(after)
+        .into_iter()
+        .filter_map(|(api_name, bar)| {
+            let (_, old) = was.iter().find(|(each, _)| *each == api_name)?;
+            (*old != bar).then(|| (api_name, old.clone(), bar))
+        })
+        .collect()
+}
+
+/// Each achievement in `definitions` and its progress bar, as the editor shows it: the stat it
+/// counts and the values it runs between, or "no progress bar".
+fn progress_bars(definitions: &str) -> Vec<(String, String)> {
+    definitions
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            // An API name, a set ID, a permission, two flags, a stat's name and two numbers: no
+            // field of a row has a comma or a quote to escape, as the header's do.
+            let fields: Vec<&str> = line.split(',').collect();
+            let [api_name, _, _, _, _, stat, least, most] = fields.as_slice() else {
+                return None;
+            };
+            let bar = if stat.is_empty() {
+                "no progress bar".to_owned()
+            } else {
+                format!("{stat} {least} - {most}")
+            };
+            Some(((*api_name).to_owned(), bar))
+        })
+        .collect()
+}
+
 /// The name the editor puts the icon of the achievement `api_name` on it by: the one shown once
 /// it is unlocked, or while it is `locked`.
 #[must_use]
@@ -540,6 +577,39 @@ mod tests {
                 .as_slice()
             )
         );
+    }
+
+    #[test]
+    fn a_progress_bar_changed_since_the_last_definitions_is_named_with_both_ranges() {
+        let head = "\"api_name (required, unique)\",setid\n";
+        let before = format!(
+            "{head}FULL_GRIMOIRE,,Client,false,false,REACTIONS_FOUND,0,12\n\
+             FIRST_DAY,,Client,false,false,,0,0\n\
+             STAYED_ON,,Client,false,false,DAYS,0,30\n"
+        );
+        let after = format!(
+            "{head}FULL_GRIMOIRE,,Client,false,false,REACTIONS_FOUND,0,11\n\
+             FIRST_DAY,,Client,false,false,DAYS,0,1\n\
+             STAYED_ON,,Client,true,false,DAYS,0,30\n\
+             NEW_ONE,,Client,false,false,DAYS,0,2\n"
+        );
+        assert_eq!(
+            rebarred(&before, &after),
+            [
+                (
+                    "FULL_GRIMOIRE".to_owned(),
+                    "REACTIONS_FOUND 0 - 12".to_owned(),
+                    "REACTIONS_FOUND 0 - 11".to_owned()
+                ),
+                (
+                    "FIRST_DAY".to_owned(),
+                    "no progress bar".to_owned(),
+                    "DAYS 0 - 1".to_owned()
+                ),
+            ],
+            "neither a flag changed nor an achievement new to the definitions"
+        );
+        assert_eq!(rebarred("", &after), []);
     }
 
     #[test]
