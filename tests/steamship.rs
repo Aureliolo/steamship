@@ -968,10 +968,13 @@ fn an_upload_built_then_failed_keeps_its_build_id_and_shows_steams_logs_in_actio
     );
 }
 
-/// A steamcmd that logs in, says where it is, and then waits as one that has hung.
+/// A steamcmd that logs in, fails to reach the build server, says where it is, and then waits as
+/// one that has hung. A run that ended so would be run again, were steamship not told to stop.
 #[cfg(unix)]
 const HUNG: &str = "#!/bin/sh\n\
+    echo ran >> \"$HOME/runs\"\n\
     echo 'Logging in user build_bot to Steam Public...OK'\n\
+    echo '[2026-10-12 15:35:56]: ERROR! Failed to initialize build on server (No Connection) '\n\
     echo $$ > \"$HOME/steamcmd.pid\"\n\
     exec sleep 120\n";
 
@@ -1013,14 +1016,21 @@ fn an_upload_told_to_stop_stops_steamcmd_shows_what_it_said_and_ends_by_that_sig
             );
             thread::sleep(Duration::from_millis(50));
         };
-        let signalled = run::output(
-            run::command("kill")
-                .args(["-s", name])
-                .arg(started.id().to_string()),
-        )
-        .unwrap();
+        let pid = started.id().to_string();
+        let signalled = run::output(run::command("kill").args(["-s", name, &pid])).unwrap();
         assert!(signalled.status.success(), "{signalled:?}");
-        let ended = started.wait_with_output().unwrap();
+        let (ending, endings) = mpsc::channel();
+        let waited = thread::spawn(move || ending.send(started.wait_with_output().unwrap()));
+        let Ok(ended) = endings.recv_timeout(Duration::from_secs(30)) else {
+            drop(run::output(run::command("kill").args(["-s", "KILL", &pid])));
+            panic!("{name}: steamship did not end");
+        };
+        waited.join().unwrap().unwrap();
+        assert_eq!(
+            fs::read_to_string(home.path().join("runs")).unwrap(),
+            "ran\n",
+            "{name}: steamcmd ran again after steamship was told to stop"
+        );
         let stdout = String::from_utf8_lossy(&ended.stdout);
         let stderr = String::from_utf8_lossy(&ended.stderr);
         assert_eq!(
@@ -1031,7 +1041,7 @@ fn an_upload_told_to_stop_stops_steamcmd_shows_what_it_said_and_ends_by_that_sig
         assert!(
             stderr.contains(&format!(
                 "steamship was told to stop by SIG{name}, and stopped steamcmd"
-            )),
+            )) && stderr.contains("Failed to initialize build on server (No Connection)"),
             "{name}: {stderr}"
         );
         assert!(
