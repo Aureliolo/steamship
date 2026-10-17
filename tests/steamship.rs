@@ -4051,6 +4051,25 @@ fn an_icon_changed_in_the_files_is_named_until_steam_takes_its_import() {
 }
 
 #[test]
+fn imported_names_once_an_achievement_steam_does_not_have() {
+    let game = inn_mod();
+    let (written, wrote, why_written) = write_inn(game.path(), false);
+    assert_eq!(written, Some(0_i32), "{wrote}{why_written}");
+    let unpublished = inn_schema(FIRST_IMPORT)
+        .replace(r#""name":"FIRST_CELLAR""#, r#""name":"LAST_CELLAR""#)
+        .leak();
+    let (refused, _, why) = inn_on_steam(game.path(), true, vec![("200 OK", unpublished)]);
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert_eq!(
+        why.matches("FIRST_CELLAR").count(),
+        1,
+        "the achievement, not each of its two icons: {why}"
+    );
+    assert!(why.contains("FIRST_CELLAR: not on Steam\n"), "{why}");
+    assert!(!inn_receipt(game.path()).exists());
+}
+
+#[test]
 fn an_icon_steam_made_anew_from_the_file_imported_is_named() {
     let (game, _, _) = inn_imported();
     let [five_floors, first_cellar, _] = FIRST_IMPORT;

@@ -2251,27 +2251,34 @@ fn try_achievements_imported(
     ));
     offer_to_keep(&home, &api, from);
     let receipt = editor::Receipt::of(app, icons, &held.achievements);
-    let untaken: Vec<String> = icons
-        .iter()
-        .filter_map(|icon| {
-            let address = icon.on_steam(&held.achievements);
-            let recorded = last.as_ref().and_then(|last| last.icons.get(&icon.name));
-            if address.is_empty() {
-                Some(format!("{}: Steam has no {}", icon.api_name, icon.which()))
-            } else if recorded.is_some_and(|imported| {
-                imported.sha256 != icon.sha256() && imported.steam == editor::steam_image(address)
-            }) {
-                Some(format!(
-                    "{}: Steam still has the {} the last import made, where the file changed \
-                     since",
-                    icon.api_name,
-                    icon.which()
-                ))
-            } else {
-                None
-            }
-        })
-        .collect();
+    let mut untaken: Vec<String> = Vec::new();
+    for icon in icons {
+        let address = icon.on_steam(&held.achievements);
+        let recorded = last.as_ref().and_then(|last| last.icons.get(&icon.name));
+        let why = if !held
+            .achievements
+            .iter()
+            .any(|achievement| achievement.api_name == icon.api_name)
+        {
+            // Said once for the achievement, not again for each of its icons.
+            format!("{}: not on Steam", icon.api_name)
+        } else if address.is_empty() {
+            format!("{}: Steam has no {}", icon.api_name, icon.which())
+        } else if recorded.is_some_and(|imported| {
+            imported.sha256 != icon.sha256() && imported.steam == editor::steam_image(address)
+        }) {
+            format!(
+                "{}: Steam still has the {} the last import made, where the file changed since",
+                icon.api_name,
+                icon.which()
+            )
+        } else {
+            continue;
+        };
+        if !untaken.contains(&why) {
+            untaken.push(why);
+        }
+    }
     if !untaken.is_empty() {
         for why in &untaken {
             show::failure(why, "", None);
