@@ -174,8 +174,9 @@ pub enum Command {
     /// Lists the achievements and stats Steam holds for the app, in English, through Steam's
     /// partner Web API with the publisher key as `builds` finds it. With `--check`, compares them
     /// with the files, read together, by API name, and exits 2 naming every achievement missing
-    /// on either side and every display name, description, hidden flag or icon that differs; and
-    /// the same of the stats, their display names and defaults, when a file lists them. With a
+    /// on either side, every display name, description or hidden flag that differs, and every
+    /// icon Steam has none of; and the same of the stats, their display names, defaults and
+    /// whether Steam adds them up over all players, when a file lists them. With a
     /// localisation or gettext catalogues among the files, it asks Steam for the achievements in
     /// each of their languages as well, and names every name or description that differs or that
     /// Steam lacks in one. Nothing on Steam is changed.
