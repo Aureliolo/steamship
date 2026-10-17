@@ -102,6 +102,8 @@ runs:
         WORKSHOP: ${{ inputs.workshop }}
         NEW_ITEM: ${{ inputs.new-item }}
         PREVIEW: ${{ inputs.preview }}
+      # steamship takes the shell's place: a cancelled job signals the step's process alone, which
+      # the shell does not pass on, so steamship would never stop steamcmd or show what it said.
       run: |
         set -euo pipefail
         if [[ -n "${SCRIPT}" && -n "${WORKSHOP}" ]] || [[ -z "${SCRIPT}" && -z "${WORKSHOP}" ]]; then
@@ -110,17 +112,17 @@ runs:
         fi
         if [[ -n "${WORKSHOP}" ]]; then
           if [[ "${NEW_ITEM}" == true ]]; then
-            "${STEAMSHIP}" workshop "${WORKSHOP}" --new
+            exec "${STEAMSHIP}" workshop "${WORKSHOP}" --new
           else
-            "${STEAMSHIP}" workshop "${WORKSHOP}"
+            exec "${STEAMSHIP}" workshop "${WORKSHOP}"
           fi
         elif [[ -z "${VERSION}" ]]; then
           echo "::error::A build needs version, which with the commit becomes its description." >&2
           exit 2
         elif [[ "${PREVIEW}" == true ]]; then
-          "${STEAMSHIP}" upload "${SCRIPT}" --version "${VERSION}" --preview
+          exec "${STEAMSHIP}" upload "${SCRIPT}" --version "${VERSION}" --preview
         else
-          "${STEAMSHIP}" upload "${SCRIPT}" --version "${VERSION}"
+          exec "${STEAMSHIP}" upload "${SCRIPT}" --version "${VERSION}"
         fi
 
     - name: Forget the login

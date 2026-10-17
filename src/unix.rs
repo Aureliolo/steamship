@@ -32,6 +32,13 @@ const POLL: Duration = Duration::from_millis(50);
 /// ends this group first.
 static RUNNING: AtomicI32 = AtomicI32::new(0);
 
+/// Whether what the running program says is shown once it ends, as it is for one run to its end
+/// and not for one on a terminal, whose conversation may be waiting on what is typed.
+static SHOWN: AtomicBool = AtomicBool::new(false);
+
+/// The signal that stopped the running program, or 0 while none has.
+static TOLD: AtomicI32 = AtomicI32::new(0);
+
 /// The signals that end steamship from outside: Ctrl+C, the terminal closing, and `kill`.
 const ENDING: [libc::c_int; 3] = [libc::SIGINT, libc::SIGHUP, libc::SIGTERM];
 
@@ -40,9 +47,10 @@ const ENDING: [libc::c_int; 3] = [libc::SIGINT, libc::SIGHUP, libc::SIGTERM];
 struct Running;
 
 impl Running {
-    fn mark(group: i32) -> Self {
+    fn mark(group: i32, shown: bool) -> Self {
         static CATCHING: Once = Once::new();
         CATCHING.call_once(catch_ending_signals);
+        SHOWN.store(shown, Ordering::SeqCst);
         RUNNING.store(group, Ordering::SeqCst);
         Self
     }
@@ -53,6 +61,7 @@ impl Drop for Running {
         // Cleared, so that a signal after the group has ended cannot reach another that has
         // since been given its number.
         RUNNING.store(0, Ordering::SeqCst);
+        SHOWN.store(false, Ordering::SeqCst);
     }
 }
 
@@ -63,8 +72,8 @@ impl Drop for Running {
 fn catch_ending_signals() {
     let handler = (on_ending as *const ()).expose_provenance();
     for signal in ENDING {
-        // SAFETY: the handler does only what a signal handler may: an atomic load, killpg,
-        // signal and raise.
+        // SAFETY: the handler does only what a signal handler may: atomic loads and a
+        // compare-exchange, killpg, signal and raise.
         let before = unsafe { libc::signal(signal, handler) };
         if before == libc::SIG_IGN {
             // A signal steamship was started to ignore, as under nohup, stays ignored.
@@ -78,11 +87,45 @@ extern "C" fn on_ending(signal: libc::c_int) {
     let group = RUNNING.load(Ordering::SeqCst);
     if group != 0_i32 {
         stop_group(group);
+        // The first signal stops only the program, so that what it said is shown, as a job
+        // cancelled in CI would otherwise end with nothing to tell why it hung; any later one
+        // ends steamship.
+        if SHOWN.load(Ordering::SeqCst)
+            && TOLD
+                .compare_exchange(0_i32, signal, Ordering::SeqCst, Ordering::SeqCst)
+                .is_ok()
+        {
+            return;
+        }
     }
+    end_by(signal);
+}
+
+/// Ends steamship by `signal`, as it would have with no handler.
+fn end_by(signal: libc::c_int) {
     // SAFETY: puts back the default disposition, which a signal handler may do.
     let _: libc::sighandler_t = unsafe { libc::signal(signal, libc::SIG_DFL) };
     // SAFETY: with the default disposition back, the signal ends steamship as it would have.
     let _: libc::c_int = unsafe { libc::raise(signal) };
+}
+
+/// The signal that stopped a program steamship ran, by its name.
+#[must_use]
+pub fn told() -> Option<&'static str> {
+    match TOLD.load(Ordering::SeqCst) {
+        libc::SIGINT => Some("SIGINT"),
+        libc::SIGHUP => Some("SIGHUP"),
+        libc::SIGTERM => Some("SIGTERM"),
+        _ => None,
+    }
+}
+
+/// Ends steamship by the signal that stopped a program it ran, if one did.
+pub fn end_as_told() {
+    let signal = TOLD.load(Ordering::SeqCst);
+    if signal != 0_i32 {
+        end_by(signal);
+    }
 }
 
 /// [`crate::run::run`], for Unix: the program leads a process group of its own, so that stopping
@@ -111,7 +154,7 @@ pub fn run(
             .process_group(0),
     )?;
     let group = i32::try_from(child.id()).map_err(io::Error::other)?;
-    let _running = Running::mark(group);
+    let _running = Running::mark(group, true);
     let seen = Arc::new(AtomicBool::new(false));
     let watching = Arc::clone(&seen);
     let reading = thread::spawn(move || run::watch(reader, hopeless, &watching));
@@ -137,7 +180,7 @@ pub fn run(
         .join()
         .unwrap_or_else(|panic| panic::resume_unwind(panic))?;
     // A program ended by a signal has no exit code; the shell's convention stands in for one.
-    let code = status.and_then(|status| {
+    let code = status.filter(|_| told().is_none()).and_then(|status| {
         status
             .code()
             .or_else(|| status.signal().map(|signal| signal.saturating_add(128)))
@@ -225,7 +268,7 @@ impl Terminal {
         )?;
         let output = Output(File::from(main.try_clone()?));
         let group = i32::try_from(child.id()).map_err(io::Error::other)?;
-        let running = Running::mark(group);
+        let running = Running::mark(group, false);
         let watching = thread::spawn(move || {
             let status = child.wait();
             stop_group(group);

@@ -10,7 +10,7 @@
 //! [`output`].
 
 use std::ffi::{OsStr, OsString};
-use std::io::{self, BufReader, Read};
+use std::io::{self, BufReader, Read, Write as _};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt as _;
 use std::path::Path;
@@ -109,6 +109,31 @@ pub fn run(
     native::run(program, args, environment, directory, limit, hopeless)
 }
 
+/// What told steamship to stop while [`run`] ran a program, which was stopped then: on Unix, the
+/// first signal that would have ended steamship, by its name.
+#[must_use]
+#[cfg_attr(
+    windows,
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "const only where nothing tells steamship to stop; on Unix a signal does"
+    )
+)]
+pub fn told() -> Option<&'static str> {
+    native::told()
+}
+
+/// Ends steamship as what told it to stop would have, once all it has written is out; when
+/// nothing did, returns.
+pub fn end_as_told() {
+    if told().is_some() {
+        // Nothing more can be said of a stream that will not take the rest.
+        drop(io::stdout().flush());
+        drop(io::stderr().flush());
+        native::end_as_told();
+    }
+}
+
 /// Reads `output` to its end, and sets `seen` once it has held one of `hopeless`.
 ///
 /// # Errors
@@ -138,7 +163,6 @@ mod tests {
     use super::*;
     use std::env;
     use std::fs;
-    use std::io::Write as _;
     use std::sync::mpsc;
     use std::thread;
     use std::time::Instant;
