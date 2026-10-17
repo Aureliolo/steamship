@@ -919,14 +919,20 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
     restore(packed.as_ref(), &home)?;
     let prepared = upload::prepare(&home, request.script, &description, request.preview)
         .map_err(|error| fail(&error, FAILED))?;
+    // Asked for on every upload by a game's tools, the default branch is left once the game is
+    // released, and the upload goes on to its own branch as ever.
     let default = if request.default {
-        let (api, from) = web_api(&home)?;
         let asked = unreleased(&home, &account, prepared.app_id, packed.as_ref());
         if asked.is_err() {
             install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
         }
-        asked?;
-        Some((api, from))
+        match asked? {
+            Ok(()) => Some(web_api(&home)?),
+            Err(why) => {
+                show::note(&format!("{why}; the build goes up without it"));
+                None
+            }
+        }
     } else {
         None
     };
@@ -966,13 +972,14 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         default: default.as_ref().map(|(api, _)| api),
     };
     let (code, live) = report(&outcome, reporting);
+    let setting_default = default.is_some();
     if let Some((api, from)) = default {
         offer_to_keep(&home, &api, from);
     }
     if request.json {
         show::plain(&format!(
             "{}\n",
-            summary(&outcome, live, request.default, &prepared, &description)
+            summary(&outcome, live, setting_default, &prepared, &description)
         ));
     }
     if matches!(
@@ -1381,8 +1388,8 @@ fn live_on_default(api: &webapi::Api, app: u32, build_id: u64, branch: Option<&s
 
 /// What an upload came to, for the program that ran steamship with `--json`: the outcome, the
 /// app, the build Steam made of it if any, the branch the script sets live and whether the build
-/// is live there and on default, and the build's description. `default` is whether it was asked
-/// to go live on default too.
+/// is live there and on default, and the build's description. `default` is whether it was to go
+/// live on default too: asked to, while the app is unreleased.
 fn summary(
     outcome: &upload::Outcome,
     live: Live,
@@ -2901,15 +2908,17 @@ fn app_info(
     }
 }
 
-/// Refuses unless Steam shows `account` that nobody can buy `app` yet, asked through steamcmd run
-/// from `home`. A build live on a released app's default branch is the one its players get, and
-/// Valve then asks for a Steam Mobile confirmation, given in Steamworks.
+/// Whether steamship may set `app`'s default branch live: only while Steam shows `account` that
+/// nobody can buy the app yet, asked through steamcmd run from `home`. A build live on a released
+/// app's default branch is the one its players get, and Valve then asks for a Steam Mobile
+/// confirmation, given in Steamworks. Answers why not when it may not, and fails when Steam could
+/// not be asked.
 fn unreleased(
     home: &Path,
     account: &Account,
     app: u32,
     packed: Option<&ci::Login>,
-) -> Result<(), ExitCode> {
+) -> Result<Result<(), String>, ExitCode> {
     let (console, spinner) = app_info(
         home,
         account,
@@ -2921,27 +2930,21 @@ fn unreleased(
     match info.as_ref().map(release::state) {
         Ok(Some(state)) if release::unreleased(state) => {
             spinner.done(&format!("unreleased, as Steam shows it ({state})"));
-            Ok(())
+            Ok(Ok(()))
         }
         Ok(Some(state)) => {
             spinner.failed(&format!("released, as Steam shows it ({state})"));
-            Err(fail(
-                &format!(
-                    "app {app} is released, so its default branch is set live in Steamworks, \
-                     where Valve asks for a Steam Mobile confirmation"
-                ),
-                REFUSED,
-            ))
+            Ok(Err(format!(
+                "app {app} is released, so its default branch is set live in Steamworks, where \
+                 Valve asks for a Steam Mobile confirmation"
+            )))
         }
         Ok(None) => {
             spinner.failed("not shown");
-            Err(fail(
-                &format!(
-                    "Steam shows no release state for app {app}, so steamship leaves its default \
-                     branch to Steamworks"
-                ),
-                REFUSED,
-            ))
+            Ok(Err(format!(
+                "Steam shows no release state for app {app}, so steamship leaves its default \
+                 branch to Steamworks"
+            )))
         }
         Err(why) => {
             spinner.failed("not shown");
@@ -3188,7 +3191,7 @@ fn try_promote(request: &cli::Promote) -> Result<ExitCode, ExitCode> {
         restore(packed.as_ref(), &home)?;
         let asked = unreleased(&home, &account, app_id, packed.as_ref());
         install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
-        asked?;
+        asked?.map_err(|why| fail(&why, REFUSED))?;
     }
     let spinner = Spinner::start("steam", "setting it live", false);
     if let Err(error) = api.set_live(app_id, build, key) {

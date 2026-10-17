@@ -30,7 +30,7 @@ inputs:
     required: false
     default: "false"
   default:
-    description: Also set the build live on the default branch, refused once Steam shows the app released; needs web-api-key.
+    description: Also set the build live on the default branch while Steam shows the app unreleased, and leave it once released; needs web-api-key.
     required: false
     default: "false"
   web-api-key:
