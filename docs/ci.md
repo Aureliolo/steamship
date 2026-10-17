@@ -54,6 +54,11 @@ reasons, each as a collapsed group: steamcmd's console, the app and depot build 
 steamcmd added to its own logs during the run. All of it is redacted as steamship's logs always
 are, and the account's name is masked.
 
+It prints them too when a job on Linux or macOS is cancelled or runs past its
+`timeout-minutes`: steamship stops steamcmd at the first signal, prints the logs and why it
+stopped, and then ends as the signal would have. A second signal ends it at once. On Windows,
+steamcmd ends with steamship, and nothing of it is printed.
+
 Anything `ci` cannot find it asks for; `--script`, `--repo`, `--account` and `--secret` answer
 ahead. The secret holds the token steamcmd saved, the account's name and the day it was packed,
 never a password or a Steam Guard secret, and nothing of it is shown. It is a few kilobytes:
