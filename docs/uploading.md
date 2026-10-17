@@ -146,6 +146,48 @@ line to add to the script, so that later uploads update the same item. Your scri
 rewritten. In CI nobody adds that line, so every run would make another item: there, a script
 with no `publishedfileid` is refused unless `--new` is given.
 
+A game that would rather not write Valve's script gives the item's fields, and steamship
+writes the script itself:
+
+```sh
+steamship workshop --app 1000070 --items steam/workshop_items.json --name example \
+  --content mods/example --preview art/example.png --title "Example mod" \
+  --description "What the mod shows." --change-note "1.0.0" --visibility private
+```
+
+`--app`, `--items`, `--name`, `--content` and `--title` are needed; `--preview`,
+`--description` and `--change-note` may be left out. They are checked as a script's are.
+`--visibility` is `public`, `friends-only`, `private` or `unlisted`. It is needed to make an
+item, since steamship never chooses who sees one; left out, an item already made keeps what it
+has on Steam.
+
+`--items` names a file kept with the game that holds the ID of each item made, by the name
+`--name` gives it. When the file has no item of that name, a new one is made, and steamship
+writes its ID into the file, making the file if missing. When the file has one, that item is
+updated. Commit the file, so that a run from any machine, CI among them, updates the items
+made before:
+
+```json
+{
+  "app": 1000070,
+  "items": {
+    "example": 3000000001
+  }
+}
+```
+
+A new item is refused in CI unless `--new` is given, as for a script. With `--json`, either
+form prints what came of the upload on standard output as one line of JSON, once steamcmd has
+run, and everything meant for a person on standard error:
+
+```json
+{"app":1000070,"item":3000000001,"name":"example","outcome":"made"}
+```
+
+`outcome` is `made`, `updated`, `failed` or `not-logged-in`, `item` is the item's ID when there
+is one, and `name` is the item's name in the `--items` file, or `null` for a script. The exit
+code is as without it, and a run refused before steamcmd starts prints no JSON.
+
 ## Branches and promoting
 
 ```sh

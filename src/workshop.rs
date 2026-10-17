@@ -5,6 +5,7 @@
 //! copy in the home with every path made absolute, so the ID is read back from the copy, and the
 //! original is left for its author to change.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{self, Path, PathBuf};
@@ -75,41 +76,17 @@ pub fn check(path: &Path) -> Result<Item, Vec<Problem>> {
     let content = item
         .text("contentfolder")
         .map(|written| scripts::resolve(&folder, written));
-    let files = content
-        .as_deref()
-        .map_or(0, |content| match count(content) {
-            Ok(0) => {
-                refuse(format!(
-                    "contentfolder {} holds no files",
-                    content.display()
-                ));
-                0
-            }
-            Ok(files) => files,
-            Err(error) => {
-                refuse(format!(
-                    "contentfolder {} cannot be read: {error}",
-                    content.display()
-                ));
-                0
-            }
-        });
-    if let Some(preview) = item.text("previewfile") {
-        let preview = scripts::resolve(&folder, preview);
-        match fs::metadata(&preview) {
-            Ok(metadata) if !metadata.is_file() => {
-                refuse(format!("previewfile {} is not a file", preview.display()));
-            }
-            Ok(metadata) if metadata.len() > PREVIEW => refuse(format!(
-                "previewfile {} is larger than the 1 MB Steam takes",
-                preview.display()
-            )),
-            Ok(_) => {}
-            Err(error) => refuse(format!(
-                "previewfile {} cannot be read: {error}",
-                preview.display()
-            )),
-        }
+    let files = content.as_deref().map_or(0, |content| {
+        files_in(content, "contentfolder").unwrap_or_else(|problem| {
+            refuse(problem);
+            0
+        })
+    });
+    if let Some(problem) = item
+        .text("previewfile")
+        .and_then(|preview| unpreviewable(&scripts::resolve(&folder, preview), "previewfile"))
+    {
+        refuse(problem);
     }
     match item.text("visibility").map(str::parse::<u8>) {
         None | Some(Ok(0..=3)) => {}
@@ -123,10 +100,11 @@ pub fn check(path: &Path) -> Result<Item, Vec<Problem>> {
         ("description", TEXT),
         ("changenote", TEXT),
     ] {
-        if item.text(key).is_some_and(|text| text.len() > longest) {
-            refuse(format!(
-                "\"{key}\" is longer than the {longest} bytes Steam takes"
-            ));
+        if let Some(problem) = item
+            .text(key)
+            .and_then(|text| too_long(text, &format!("\"{key}\""), longest))
+        {
+            refuse(problem);
         }
     }
     match (app_id, problems.is_empty()) {
@@ -138,6 +116,43 @@ pub fn check(path: &Path) -> Result<Item, Vec<Problem>> {
         }),
         _ => Err(problems),
     }
+}
+
+/// How many files the item's content folder `content` holds, or why it cannot go up, the folder
+/// `said` as it was given.
+fn files_in(content: &Path, said: &str) -> Result<usize, String> {
+    match count(content) {
+        Ok(0) => Err(format!("{said} {} holds no files", content.display())),
+        Ok(files) => Ok(files),
+        Err(error) => Err(format!(
+            "{said} {} cannot be read: {error}",
+            content.display()
+        )),
+    }
+}
+
+/// Why the preview image at `preview` cannot go up, if it cannot, the image `said` as it was
+/// given.
+fn unpreviewable(preview: &Path, said: &str) -> Option<String> {
+    match fs::metadata(preview) {
+        Ok(metadata) if !metadata.is_file() => {
+            Some(format!("{said} {} is not a file", preview.display()))
+        }
+        Ok(metadata) if metadata.len() > PREVIEW => Some(format!(
+            "{said} {} is larger than the 1 MB Steam takes",
+            preview.display()
+        )),
+        Ok(_) => None,
+        Err(error) => Some(format!(
+            "{said} {} cannot be read: {error}",
+            preview.display()
+        )),
+    }
+}
+
+/// That `text`, `said` as it was given, is longer than the `longest` Steam takes, if it is.
+fn too_long(text: &str, said: &str, longest: usize) -> Option<String> {
+    (text.len() > longest).then(|| format!("{said} is longer than the {longest} bytes Steam takes"))
 }
 
 fn folder(path: &Path) -> PathBuf {
@@ -197,18 +212,228 @@ pub fn prepare(home: &Path, original: &Path, app_id: u32) -> Result<PathBuf, upl
             value,
         });
     }
+    write_copy(home, app_id, rewritten).map_err(|error| match error {
+        upload::Error::Script { reason, .. } => problem(reason),
+        other @ (upload::Error::Io { .. } | upload::Error::Description(_)) => other,
+    })
+}
+
+/// Writes `item`, the inside of a `workshopitem` block, as the script steamcmd is given for
+/// `app_id` in `home`, and says where it is.
+fn write_copy(home: &Path, app_id: u32, item: Block) -> Result<PathBuf, upload::Error> {
+    let at = |path: &Path| {
+        let path = path.to_path_buf();
+        move |error| upload::Error::Io { path, error }
+    };
     let whole = Block {
         pairs: vec![Pair {
             key: "workshopitem".to_owned(),
-            value: Value::Block(rewritten),
+            value: Value::Block(item),
         }],
     };
     let items = home.join(ITEMS).join(app_id.to_string());
     fs::create_dir_all(&items).map_err(at(&items))?;
     let copy = items.join("workshop_item.vdf");
-    let text = vdf::write(&whole).map_err(|error| problem(error.to_string()))?;
+    let text = vdf::write(&whole).map_err(|error| upload::Error::Script {
+        path: copy.clone(),
+        reason: error.to_string(),
+    })?;
     fs::write(&copy, text).map_err(at(&copy))?;
     Ok(copy)
+}
+
+/// Who may see an item on Steam, as `workshopitem` numbers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Visibility {
+    Public,
+    FriendsOnly,
+    Private,
+    Unlisted,
+}
+
+/// The visibilities by the word each is given as, in Valve's order.
+const VISIBILITIES: [(&str, Visibility); 4] = [
+    ("public", Visibility::Public),
+    ("friends-only", Visibility::FriendsOnly),
+    ("private", Visibility::Private),
+    ("unlisted", Visibility::Unlisted),
+];
+
+/// Reads a visibility given as its word, such as `private`.
+///
+/// # Errors
+///
+/// When `text` is none of the words.
+pub fn visibility(text: &str) -> Result<Visibility, String> {
+    VISIBILITIES
+        .iter()
+        .find(|(word, _)| *word == text)
+        .map(|(_, visibility)| *visibility)
+        .ok_or_else(|| "it is public, friends-only, private or unlisted".to_owned())
+}
+
+impl Visibility {
+    /// The number `workshopitem` gives it as.
+    const fn number(self) -> &'static str {
+        match self {
+            Self::Public => "0",
+            Self::FriendsOnly => "1",
+            Self::Private => "2",
+            Self::Unlisted => "3",
+        }
+    }
+}
+
+/// An item given by its fields rather than by a script.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Fields {
+    pub app_id: u32,
+    /// The item it updates; none when it makes a new one.
+    pub published: Option<u64>,
+    pub content: PathBuf,
+    pub preview: Option<PathBuf>,
+    pub title: String,
+    pub description: Option<String>,
+    pub change_note: Option<String>,
+    /// Who may see it; none leaves an existing item as it is on Steam.
+    pub visibility: Option<Visibility>,
+}
+
+/// Checks the item `fields` give, and says every problem at once.
+///
+/// # Errors
+///
+/// Every problem found.
+pub fn check_fields(fields: &Fields) -> Result<Item, Vec<String>> {
+    let mut problems = Vec::new();
+    let files = files_in(&fields.content, "--content").unwrap_or_else(|problem| {
+        problems.push(problem);
+        0
+    });
+    if let Some(problem) = fields
+        .preview
+        .as_deref()
+        .and_then(|preview| unpreviewable(preview, "--preview"))
+    {
+        problems.push(problem);
+    }
+    if fields.published.is_none() && fields.visibility.is_none() {
+        problems
+            .push("a new item needs --visibility, which steamship never chooses for it".to_owned());
+    }
+    for (text, said, longest) in [
+        (Some(&fields.title), "--title", TITLE),
+        (fields.description.as_ref(), "--description", TEXT),
+        (fields.change_note.as_ref(), "--change-note", TEXT),
+    ] {
+        if let Some(problem) = text.and_then(|text| too_long(text, said, longest)) {
+            problems.push(problem);
+        }
+    }
+    if problems.is_empty() {
+        Ok(Item {
+            app_id: fields.app_id,
+            published: fields.published,
+            content: Some(fields.content.clone()),
+            files,
+        })
+    } else {
+        Err(problems)
+    }
+}
+
+/// Writes the script steamcmd is given for the item `fields` give into the app's folder in
+/// `home`, with its paths made absolute, and says where it is.
+///
+/// # Errors
+///
+/// When a path is not valid Unicode, or the script cannot be written.
+pub fn prepare_fields(home: &Path, fields: &Fields) -> Result<PathBuf, upload::Error> {
+    let path = |given: &Path| -> Result<String, upload::Error> {
+        let absolute = path::absolute(given).map_err(|error| upload::Error::Io {
+            path: given.to_path_buf(),
+            error,
+        })?;
+        upload::written(&absolute).map_err(|reason| upload::Error::Script {
+            path: given.to_path_buf(),
+            reason,
+        })
+    };
+    let mut item = Block::default();
+    let mut put = |key: &str, value: String| {
+        item.pairs.push(Pair {
+            key: key.to_owned(),
+            value: Value::Text(value),
+        });
+    };
+    put("appid", fields.app_id.to_string());
+    if let Some(published) = fields.published {
+        put("publishedfileid", published.to_string());
+    }
+    put("contentfolder", path(&fields.content)?);
+    if let Some(preview) = &fields.preview {
+        put("previewfile", path(preview)?);
+    }
+    if let Some(visibility) = fields.visibility {
+        put("visibility", visibility.number().to_owned());
+    }
+    put("title", fields.title.clone());
+    if let Some(description) = &fields.description {
+        put("description", description.clone());
+    }
+    if let Some(change_note) = &fields.change_note {
+        put("changenote", change_note.clone());
+    }
+    write_copy(home, fields.app_id, item)
+}
+
+/// A game's items by the name it gives each, kept in a file in its repository that steamship
+/// writes, so that a run from any machine updates the item an earlier one made.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Record {
+    pub app_id: u32,
+    pub items: BTreeMap<String, u64>,
+}
+
+impl Record {
+    /// Reads a record from its `text`: an object with the `app` and the `items`, each name's
+    /// item ID.
+    ///
+    /// # Errors
+    ///
+    /// When the text is not such an object.
+    pub fn read(text: &str) -> Result<Self, String> {
+        let file: serde_json::Value =
+            serde_json::from_str(text).map_err(|error| format!("not JSON: {error}"))?;
+        let app_id = file
+            .get("app")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|app| u32::try_from(app).ok())
+            .filter(|app| *app > 0)
+            .ok_or("\"app\" is not an app ID")?;
+        let listed = file
+            .get("items")
+            .and_then(serde_json::Value::as_object)
+            .ok_or("there is no \"items\" object")?;
+        let mut items = BTreeMap::new();
+        for (name, published) in listed {
+            let published = published
+                .as_u64()
+                .filter(|published| *published > 0)
+                .ok_or_else(|| format!("{name} is not given an item's ID"))?;
+            let _: Option<u64> = items.insert(name.clone(), published);
+        }
+        Ok(Self { app_id, items })
+    }
+
+    /// The record as its file holds it.
+    #[must_use]
+    pub fn text(&self) -> String {
+        let file = serde_json::json!({"app": self.app_id, "items": self.items});
+        let mut text = serde_json::to_string_pretty(&file).unwrap_or_default();
+        text.push('\n');
+        text
+    }
 }
 
 /// The item's ID in the copy steamcmd was given, which steamcmd writes when it made the item.
@@ -480,6 +705,181 @@ mod tests {
         .unwrap();
         assert_eq!(published(&copy), None);
         assert_eq!(published(&home.path().join("missing.vdf")), None);
+    }
+
+    fn fields(folder: &Folder) -> Fields {
+        Fields {
+            app_id: 480,
+            published: None,
+            content: folder.root.join("workshop").join("hat"),
+            preview: Some(folder.root.join("workshop").join("hat.png")),
+            title: "A green hat".to_owned(),
+            description: Some("Green.".to_owned()),
+            change_note: Some("1.2".to_owned()),
+            visibility: Some(Visibility::Private),
+        }
+    }
+
+    #[test]
+    fn a_visibility_is_given_by_its_word_and_written_as_valves_number() {
+        for (word, number) in [
+            ("public", "0"),
+            ("friends-only", "1"),
+            ("private", "2"),
+            ("unlisted", "3"),
+        ] {
+            assert_eq!(visibility(word).map(Visibility::number), Ok(number));
+        }
+        assert_eq!(
+            visibility("Public"),
+            Err("it is public, friends-only, private or unlisted".to_owned())
+        );
+    }
+
+    #[test]
+    fn an_item_given_by_its_fields_is_checked_as_a_script_is() {
+        let folder = sound();
+        let item = check_fields(&fields(&folder)).unwrap();
+        assert_eq!(
+            item,
+            Item {
+                app_id: 480,
+                published: None,
+                content: Some(folder.root.join("workshop").join("hat")),
+                files: 2,
+            }
+        );
+        let at_most = Fields {
+            title: "t".repeat(128),
+            description: Some("d".repeat(8000)),
+            change_note: Some("c".repeat(8000)),
+            ..fields(&folder)
+        };
+        assert_eq!(check_fields(&at_most).map(|taken| taken.files), Ok(2));
+        let updated = Fields {
+            published: Some(5674),
+            preview: None,
+            description: None,
+            change_note: None,
+            visibility: None,
+            ..fields(&folder)
+        };
+        assert_eq!(check_fields(&updated).unwrap().published, Some(5674));
+    }
+
+    #[test]
+    fn every_problem_with_an_items_fields_is_named_at_once() {
+        let folder = sound();
+        drop(folder.put("workshop/empty/.keep", b""));
+        fs::remove_file(folder.root.join("workshop/empty/.keep")).unwrap();
+        let big = folder.put("workshop/big.png", &vec![0_u8; 1024 * 1024 + 1]);
+        let empty = folder.root.join("workshop").join("empty");
+        let wrong = Fields {
+            content: empty.clone(),
+            preview: Some(big.clone()),
+            title: "t".repeat(129),
+            description: Some("d".repeat(8001)),
+            change_note: Some("c".repeat(8001)),
+            visibility: None,
+            ..fields(&folder)
+        };
+        assert_eq!(
+            check_fields(&wrong).unwrap_err(),
+            [
+                format!("--content {} holds no files", empty.display()),
+                format!(
+                    "--preview {} is larger than the 1 MB Steam takes",
+                    big.display()
+                ),
+                "a new item needs --visibility, which steamship never chooses for it".to_owned(),
+                "--title is longer than the 128 bytes Steam takes".to_owned(),
+                "--description is longer than the 8000 bytes Steam takes".to_owned(),
+                "--change-note is longer than the 8000 bytes Steam takes".to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_script_written_from_fields_has_each_one_given_and_absolute_paths() {
+        let folder = sound();
+        let home = tempfile::tempdir().unwrap();
+        let copy = prepare_fields(home.path(), &fields(&folder)).unwrap();
+        assert_eq!(copy, home.path().join("workshop/480/workshop_item.vdf"));
+        let absolute = |relative: &str| {
+            upload::written(&path::absolute(folder.root.join("workshop").join(relative)).unwrap())
+                .unwrap()
+        };
+        let document = scripts::read(&copy).unwrap();
+        let item = document.block("workshopitem").unwrap();
+        let pairs: Vec<(&str, &str)> = item
+            .pairs
+            .iter()
+            .map(|pair| (pair.key.as_str(), item.text(&pair.key).unwrap()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("appid", "480"),
+                ("contentfolder", absolute("hat").as_str()),
+                ("previewfile", absolute("hat.png").as_str()),
+                ("visibility", "2"),
+                ("title", "A green hat"),
+                ("description", "Green."),
+                ("changenote", "1.2"),
+            ]
+        );
+        let updated = Fields {
+            published: Some(5674),
+            preview: None,
+            description: None,
+            change_note: None,
+            visibility: None,
+            ..fields(&folder)
+        };
+        let again = prepare_fields(home.path(), &updated).unwrap();
+        let rewritten = scripts::read(&again).unwrap();
+        let keys: Vec<&str> = rewritten
+            .block("workshopitem")
+            .unwrap()
+            .pairs
+            .iter()
+            .map(|pair| pair.key.as_str())
+            .collect();
+        assert_eq!(keys, ["appid", "publishedfileid", "contentfolder", "title"]);
+        assert_eq!(published(&again), Some(5674));
+    }
+
+    #[test]
+    fn an_items_file_is_read_and_written_by_name() {
+        let text = "{\n  \"app\": 480,\n  \"items\": {\n    \"example\": 777,\n    \"hats\": 5674\n  }\n}\n";
+        let record = Record::read(text).unwrap();
+        assert_eq!(record.app_id, 480);
+        assert_eq!(
+            record.items,
+            BTreeMap::from([("example".to_owned(), 777), ("hats".to_owned(), 5674)])
+        );
+        assert_eq!(record.text(), text);
+        for (unread, why) in [
+            ("{", "not JSON"),
+            (r#"{"items": {}}"#, "\"app\" is not an app ID"),
+            (r#"{"app": 0, "items": {}}"#, "\"app\" is not an app ID"),
+            (
+                r#"{"app": 4294967296, "items": {}}"#,
+                "\"app\" is not an app ID",
+            ),
+            (r#"{"app": 480}"#, "there is no \"items\" object"),
+            (
+                r#"{"app": 480, "items": {"a": "777"}}"#,
+                "a is not given an item's ID",
+            ),
+            (
+                r#"{"app": 480, "items": {"a": 0}}"#,
+                "a is not given an item's ID",
+            ),
+        ] {
+            let error = Record::read(unread).unwrap_err();
+            assert!(error.starts_with(why), "{unread}: {error}");
+        }
     }
 
     #[test]

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::{ci, init, platform, show, update, webapi};
+use crate::{ci, init, platform, show, update, webapi, workshop};
 
 /// Something failed; what, and why, is printed.
 pub const FAILED: u8 = 1;
@@ -139,20 +139,14 @@ pub enum Command {
     },
     /// Upload a Workshop item, then print its ID.
     ///
-    /// Checks a `workshopitem` script and what it names, then has steamcmd upload the item with
-    /// the saved login. A script with no `publishedfileid` makes a new item, whose ID is printed
-    /// to add to the script so that later uploads update the same item. In CI that is refused
-    /// without `--new`, since every run would make another.
-    Workshop {
-        /// The item script, such as `workshop/item.vdf`.
-        script: PathBuf,
-        /// The build account, if not the one the last login remembered.
-        #[arg(long, env = ACCOUNT)]
-        account: Option<String>,
-        /// Make a new item from CI, which a script with no `publishedfileid` otherwise is not.
-        #[arg(long)]
-        new: bool,
-    },
+    /// Takes the item as Valve's `workshopitem` script, or by its fields with `--app` and the
+    /// rest, from which steamship writes the script itself. Checks the item and what it names,
+    /// then has steamcmd upload it with the saved login. A script with no `publishedfileid`
+    /// makes a new item, whose ID is printed to add to the script; an item by its fields makes a
+    /// new one when the `--items` file has none of its name, and writes the new ID into it. Either
+    /// way later uploads update the same item. In CI a new item is refused without `--new`, since
+    /// every run would make another.
+    Workshop(Workshop),
     /// Show an app's branches and last builds.
     ///
     /// Lists each branch with the build live on it, then the last builds uploaded, through
@@ -440,6 +434,61 @@ pub struct Writing {
     /// pixel well within that.
     #[arg(long, requires = "write", conflicts_with = "unchanged")]
     pub imported: bool,
+}
+
+/// What `workshop` uploads, and how.
+#[derive(Debug, Args)]
+pub struct Workshop {
+    /// The item script, such as `workshop/item.vdf`.
+    #[arg(required_unless_present = "app", conflicts_with = "app")]
+    pub script: Option<PathBuf>,
+    #[command(flatten)]
+    pub item: WorkshopItem,
+    /// The build account, if not the one the last login remembered.
+    #[arg(long, env = ACCOUNT)]
+    pub account: Option<String>,
+    /// Make a new item from CI, which is otherwise refused there.
+    #[arg(long)]
+    pub new: bool,
+    /// Once steamcmd has run, print what came of it on standard output as one line of JSON:
+    /// `outcome`, `app`, `item` and `name`. Everything else goes to standard error.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// A Workshop item given by its fields, from which steamship writes its `workshopitem` script.
+#[derive(Debug, Args)]
+pub struct WorkshopItem {
+    /// The app the item is for, by its ID or its app build script.
+    #[arg(long, requires_all = ["items", "name", "content", "title"])]
+    pub app: Option<String>,
+    /// The file that keeps the ID of each item made, by its name, such as
+    /// `steam/workshop_items.json`: kept with the game, so that a run from any machine updates
+    /// the item an earlier one made. steamship writes it, and makes it if missing.
+    #[arg(long, value_name = "FILE", requires = "app")]
+    pub items: Option<PathBuf>,
+    /// The item's name in the `--items` file, such as `example`.
+    #[arg(long, requires = "app")]
+    pub name: Option<String>,
+    /// The folder uploaded as the item's content.
+    #[arg(long, value_name = "FOLDER", requires = "app")]
+    pub content: Option<PathBuf>,
+    /// The item's preview image, 1 MB at most.
+    #[arg(long, value_name = "IMAGE", requires = "app")]
+    pub preview: Option<PathBuf>,
+    /// The item's title, 128 bytes at most.
+    #[arg(long, requires = "app")]
+    pub title: Option<String>,
+    /// The item's description, 8000 bytes at most.
+    #[arg(long, value_name = "TEXT", requires = "app")]
+    pub description: Option<String>,
+    /// What changed in this upload, 8000 bytes at most, shown in the item's change notes.
+    #[arg(long, value_name = "TEXT", requires = "app")]
+    pub change_note: Option<String>,
+    /// Who may see the item: `public`, `friends-only`, `private` or `unlisted`. Needed to make
+    /// one, since steamship never chooses; left out, an item already made keeps what it has.
+    #[arg(long, value_parser = workshop::visibility, requires = "app")]
+    pub visibility: Option<workshop::Visibility>,
 }
 
 #[cfg(test)]
