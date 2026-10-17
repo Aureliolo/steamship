@@ -603,10 +603,13 @@ pub fn judge_login(code: Option<i32>, console: &str) -> Login {
 }
 
 /// Every error steamcmd reported, from the log and the console, once each, and what its exit
-/// said when nothing else did.
+/// said when nothing else did; first of all, what told steamship to stop it, if anything did.
 #[must_use]
 pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<String> {
-    let mut found: Vec<String> = Vec::new();
+    let mut found: Vec<String> = run::told()
+        .map(|signal| format!("steamship was told to stop by {signal}, and stopped steamcmd"))
+        .into_iter()
+        .collect();
     for line in log.into_iter().flat_map(str::lines).chain(console.lines()) {
         let error = if let Some((_, error)) = line.split_once("ERROR!") {
             error.trim().to_owned()

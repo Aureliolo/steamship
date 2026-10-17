@@ -50,6 +50,7 @@ fn main() -> ExitCode {
         update_check()
     };
     let code = run(command);
+    run::end_as_told();
     if let Some(latest) = update.and_then(update::Check::newer) {
         show::upgrade(
             &latest.to_string(),
@@ -1091,7 +1092,7 @@ fn build(steam: &Steam<'_>, doing: &str) -> Result<Ran, ExitCode> {
         log.as_deref(),
         steam.preview,
     );
-    let retry = if matches!(outcome, upload::Outcome::Failed(_)) {
+    let retry = if matches!(outcome, upload::Outcome::Failed(_)) && run::told().is_none() {
         upload::retry(&console, log.as_deref())
     } else {
         None

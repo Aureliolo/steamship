@@ -150,6 +150,16 @@ pub fn run(
     Ok(Finished { code, output })
 }
 
+/// What told steamship to stop while a program ran: on Windows, nothing does, since Ctrl+C ends
+/// steamship and the job then ends the program.
+#[must_use]
+pub const fn told() -> Option<&'static str> {
+    None
+}
+
+/// Nothing tells steamship to stop on Windows; see [`told`].
+pub const fn end_as_told() {}
+
 /// Keeps Windows from showing a dialogue when a program crashes or cannot find a disk or file.
 ///
 /// The setting is per process and inherited, so set here it reaches steamcmd and everything
