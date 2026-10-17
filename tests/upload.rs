@@ -199,18 +199,20 @@ fn a_script_that_is_not_there_is_an_error() {
 }
 
 fn git(folder: &Path, args: &[&str]) {
-    let status = run::command("git")
-        .args([
-            "-c",
-            "user.name=steamship",
-            "-c",
-            "user.email=steamship@example.invalid",
-        ])
-        .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
-        .args(args)
-        .current_dir(folder)
-        .status()
-        .unwrap();
+    let status = run::spawn(
+        run::command("git")
+            .args([
+                "-c",
+                "user.name=steamship",
+                "-c",
+                "user.email=steamship@example.invalid",
+            ])
+            .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
+            .args(args)
+            .current_dir(folder),
+    )
+    .and_then(|mut git| git.wait())
+    .unwrap();
     assert!(status.success(), "git {args:?}");
 }
 
@@ -221,11 +223,12 @@ fn the_commit_is_the_one_the_scripts_are_in() {
     git(&project.root, &["init", "--quiet"]);
     git(&project.root, &["add", "."]);
     git(&project.root, &["commit", "--quiet", "-m", "scripts"]);
-    let output = run::command("git")
-        .args(["rev-parse", "--short=12", "HEAD"])
-        .current_dir(&project.root)
-        .output()
-        .unwrap();
+    let output = run::output(
+        run::command("git")
+            .args(["rev-parse", "--short=12", "HEAD"])
+            .current_dir(&project.root),
+    )
+    .unwrap();
     let expected = String::from_utf8(output.stdout).unwrap();
     assert_eq!(upload::commit(&original).unwrap(), expected.trim());
     assert_eq!(upload::commit(&project.root).unwrap(), expected.trim());

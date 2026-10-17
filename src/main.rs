@@ -3264,13 +3264,13 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
 
 /// The top of the Git repository `folder` is in, if it is in one.
 fn repository_root(folder: &Path) -> Option<PathBuf> {
-    let output = run::command("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(folder)
-        .stderr(process::Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())?;
+    let output = run::output(
+        run::command("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(folder),
+    )
+    .ok()
+    .filter(|output| output.status.success())?;
     let root = String::from_utf8(output.stdout).ok()?;
     Some(Path::new(root.trim()).components().collect())
 }
@@ -3352,14 +3352,14 @@ fn ci_repository(named: Option<&str>, script: &Path) -> Result<String, ExitCode>
         .parent()
         .filter(|folder| !folder.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let origin = run::command("git")
-        .args(["remote", "get-url", "origin"])
-        .current_dir(folder)
-        .stderr(process::Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok());
+    let origin = run::output(
+        run::command("git")
+            .args(["remote", "get-url", "origin"])
+            .current_dir(folder),
+    )
+    .ok()
+    .filter(|output| output.status.success())
+    .and_then(|output| String::from_utf8(output.stdout).ok());
     let repository = origin
         .as_deref()
         .and_then(ci::github_repository)
@@ -3403,12 +3403,13 @@ fn set_secret(repository: &str, secret: &str, packed: &str) -> Result<(), ExitCo
         &format!("setting {secret} on {repository}"),
         false,
     );
-    let started = run::command("gh")
-        .args(["secret", "set", secret, "--repo", repository])
-        .stdin(process::Stdio::piped())
-        .stdout(process::Stdio::null())
-        .stderr(process::Stdio::piped())
-        .spawn();
+    let started = run::spawn(
+        run::command("gh")
+            .args(["secret", "set", secret, "--repo", repository])
+            .stdin(process::Stdio::piped())
+            .stdout(process::Stdio::null())
+            .stderr(process::Stdio::piped()),
+    );
     let mut child = match started {
         Ok(child) => child,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -3457,20 +3458,17 @@ fn set_secret(repository: &str, secret: &str, packed: &str) -> Result<(), ExitCo
 /// commit; the release's tag alone when GitHub cannot be asked.
 fn pinned_action() -> (String, String) {
     let release = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let commit = run::command("gh")
-        .args([
-            "api",
-            &format!("repos/Aureliolo/steamship/commits/{release}"),
-            "--jq",
-            ".sha",
-        ])
-        .stderr(process::Stdio::null())
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|sha| sha.trim().to_owned())
-        .filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()));
+    let commit = run::output(run::command("gh").args([
+        "api",
+        &format!("repos/Aureliolo/steamship/commits/{release}"),
+        "--jq",
+        ".sha",
+    ]))
+    .ok()
+    .filter(|output| output.status.success())
+    .and_then(|output| String::from_utf8(output.stdout).ok())
+    .map(|sha| sha.trim().to_owned())
+    .filter(|sha| sha.len() == 40 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()));
     match commit {
         Some(commit) => (commit, release),
         None => (release.clone(), release),
