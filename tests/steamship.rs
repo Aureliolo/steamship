@@ -2896,6 +2896,149 @@ fn a_failed_workshop_upload_names_why_and_where_the_log_is_and_exits_1() {
     assert!(stderr.contains("log  "), "{stderr}");
 }
 
+/// `workshop` for the item at `folder`, as `workshop_item` lays it out, given by its fields and
+/// kept in `items` as `example`, with `extra` after them.
+fn by_fields(folder: &Path, items: &Path, extra: &[&str]) -> Vec<String> {
+    let mut args: Vec<String> = [
+        "workshop",
+        "--app",
+        "480",
+        "--items",
+        items.to_str().unwrap(),
+        "--name",
+        "example",
+        "--content",
+        folder.join("hat").to_str().unwrap(),
+        "--title",
+        "A green hat",
+    ]
+    .map(str::to_owned)
+    .into();
+    args.extend(extra.iter().map(|&arg| arg.to_owned()));
+    args
+}
+
+#[cfg(unix)]
+#[test]
+fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated() {
+    let home = publishing("Success.", 0);
+    let (temp, script) = workshop_item("");
+    let folder = script.parent().unwrap();
+    let items = temp.path().join("my game (x86)/steam/workshop_items.json");
+    let preview = folder.join("hat.png");
+    let made = by_fields(
+        folder,
+        &items,
+        &[
+            "--preview",
+            preview.to_str().unwrap(),
+            "--description",
+            "Green.",
+            "--change-note",
+            "1.0.0",
+            "--visibility",
+            "private",
+            "--json",
+        ],
+    );
+    let made: Vec<&str> = made.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&made, Some(home.path()), &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(
+        stdout,
+        "{\"app\":480,\"item\":777,\"name\":\"example\",\"outcome\":\"made\"}\n"
+    );
+    assert!(
+        stderr.contains(&format!("  items     {}\n", items.display()))
+            && stderr.contains("  item      \u{2713} app 480, a new item, 1 file, checked\n")
+            && stderr.contains(&format!(
+                "  \u{2713} app 480: Workshop item 777\n    a new item, kept in {} as example: \
+                 commit it so that later uploads update it\n",
+                items.display()
+            )),
+        "{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&items).unwrap(),
+        "{\n  \"app\": 480,\n  \"items\": {\n    \"example\": 777\n  }\n}\n"
+    );
+
+    let updated = by_fields(folder, &items, &["--json"]);
+    let updated: Vec<&str> = updated.iter().map(String::as_str).collect();
+    let (again, summary, said) = steamship(&updated, Some(home.path()), &[]);
+    assert_eq!(again, Some(0_i32), "{summary}{said}");
+    assert_eq!(
+        summary,
+        "{\"app\":480,\"item\":777,\"name\":\"example\",\"outcome\":\"updated\"}\n"
+    );
+    assert!(
+        said.contains("app 480, item 777, 1 file, checked"),
+        "{said}"
+    );
+    let copy = fs::read_to_string(home.path().join("workshop/480/workshop_item.vdf")).unwrap();
+    assert!(
+        copy.contains("\"publishedfileid\"\t\"777\"") && !copy.contains("visibility"),
+        "the item made is updated, keeping the visibility it has: {copy}"
+    );
+}
+
+#[test]
+fn an_item_given_by_its_fields_is_refused_before_steam_when_it_cannot_be_kept_or_made() {
+    let home = tempfile::tempdir().unwrap();
+    let (temp, script) = workshop_item("");
+    let folder = script.parent().unwrap();
+    let items = temp.path().join("workshop_items.json");
+    let refused = |extra: &[&str], variables: &[(&str, &str)]| {
+        let args = by_fields(folder, &items, extra);
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = steamship(&args, Some(home.path()), variables);
+        assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+        failure(&stderr).to_owned()
+    };
+
+    assert_eq!(
+        refused(&["--account", "build_bot"], &[]),
+        "refused: a new item needs --visibility, which steamship never chooses for it"
+    );
+    assert_eq!(
+        refused(
+            &["--account", "build_bot", "--visibility", "public"],
+            &[("CI", "true")]
+        ),
+        format!(
+            "refused: {} has no item example, so every CI run would make a new Workshop item; \
+             make it outside CI and commit the file, or pass --new to make one",
+            items.display()
+        )
+    );
+    fs::write(&items, r#"{"app": 5440760, "items": {"example": 777}}"#).unwrap();
+    assert_eq!(
+        refused(&[], &[]),
+        format!("{}: is for app 5440760, not app 480", items.display())
+    );
+    fs::write(&items, "[]").unwrap();
+    assert_eq!(
+        refused(&[], &[]),
+        format!("{}: \"app\" is not an app ID", items.display())
+    );
+
+    for (args, why) in [
+        (
+            vec!["workshop", script.to_str().unwrap(), "--app", "480"],
+            "cannot be used with",
+        ),
+        (
+            vec!["workshop", "--app", "480", "--name", "example"],
+            "the following required arguments were not provided",
+        ),
+        (vec!["workshop"], "<SCRIPT>"),
+    ] {
+        let (code, _, stderr) = steamship(&args, Some(home.path()), &[]);
+        assert_eq!(code, Some(2_i32), "{args:?}: {stderr}");
+        assert!(stderr.contains(why), "{args:?}: {stderr}");
+    }
+}
+
 #[test]
 fn builds_with_no_key_set_or_kept_and_no_one_to_ask_says_how_to_keep_one_and_exits_2() {
     let home = tempfile::tempdir().unwrap();
