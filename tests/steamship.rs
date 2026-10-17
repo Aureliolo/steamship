@@ -4084,7 +4084,7 @@ fn a_check_against_no_receipt_or_another_apps_is_refused_and_imported_replaces_o
         "{why}"
     );
     let unreadable = inn_receipt(bare.path());
-    fs::create_dir(&unreadable).unwrap();
+    fs::create_dir_all(&unreadable).unwrap();
     let (failed, _, why_failed) = inn_on_steam(bare.path(), false, Vec::new());
     assert_eq!(failed, Some(1_i32), "{why_failed}");
     assert!(
