@@ -3240,7 +3240,7 @@ fn try_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     restore(packed.as_ref(), &home)?;
     let copy = match &given {
         Given::Script(script) => workshop::prepare(&home, script, item.app_id),
-        Given::Fields(fields, _) => workshop::prepare_fields(&home, fields),
+        Given::Fields(fields, kept) => workshop::prepare_fields(&home, fields, kept.name),
     }
     .map_err(|error| fail(&error, FAILED))?;
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
@@ -3277,7 +3277,10 @@ fn try_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     );
     let log = format!("log  {}", saved.display());
     if request.json {
-        show::plain(&format!("{}\n", item_summary(&outcome, &item, &given)));
+        show::plain(&format!(
+            "{}\n",
+            item_summary(&outcome, &item, &given, &saved)
+        ));
     }
     let code = match outcome {
         workshop::Outcome::Published { published } => {
@@ -3311,11 +3314,13 @@ fn try_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     Ok(code)
 }
 
-/// What came of uploading `item`, given as `given`, as `--json` prints it.
+/// What came of uploading `item`, given as `given`, as `--json` prints it, with `log`, where
+/// steamcmd's console was saved.
 fn item_summary(
     outcome: &workshop::Outcome,
     item: &workshop::Item,
     given: &Given<'_>,
+    log: &Path,
 ) -> serde_json::Value {
     let (said, published) = match outcome {
         workshop::Outcome::Published { published } if item.published.is_none() => {
@@ -3334,6 +3339,7 @@ fn item_summary(
         "app": item.app_id,
         "item": published,
         "name": name,
+        "log": log.to_string_lossy(),
     })
 }
 
@@ -3371,9 +3377,7 @@ fn given_fields(item: &cli::WorkshopItem) -> Result<Given<'_>, ExitCode> {
         ));
     };
     let app_id = app_named(app)?;
-    if name.is_empty() {
-        return Err(refused(&"--name is empty"));
-    }
+    workshop::named(name).map_err(|why| refused(&why))?;
     show::field("items", &path.display().to_string());
     let record = match fs::read_to_string(path) {
         Ok(text) => workshop::Record::read(&text)
