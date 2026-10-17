@@ -1800,7 +1800,8 @@ fn translation_drift(
         &held.achievements,
         &held.achievements,
     );
-    if others.is_empty() {
+    // Steam has a text in another language only of an achievement it holds.
+    if others.is_empty() || held.achievements.is_empty() {
         return Ok(drift);
     }
     let spinner = Spinner::start(

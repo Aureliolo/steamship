@@ -4796,6 +4796,40 @@ fn whether_a_stat_is_aggregated_is_checked_against_the_totals_steam_keeps() {
 }
 
 #[test]
+fn a_check_against_an_app_with_nothing_on_steam_says_so_once_for_each_kind_in_any_language() {
+    let game = inn_mod();
+    let named = [
+        game.path().join("mods/base/data/achievements.json"),
+        game.path().join("locale/de.po"),
+    ]
+    .map(|path| path.to_string_lossy().into_owned());
+    let [records, german] = named.each_ref().map(String::as_str);
+    // One answer only: asking for the achievements in German as well would find none.
+    let (host, _requests) = web_api(vec![("200 OK", r#"{"game": {}}"#)]);
+    let (refused, shown, why) = steamship(
+        &["achievements", "1000050", "--check", records, german],
+        Some(game.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!(refused, Some(2_i32), "{shown}{why}");
+    assert!(
+        why.contains(
+            "Steam holds none of the file's 2 achievements: they count once entered and \
+             published in Steamworks\n"
+        ) && why.contains(
+            "Steam holds none of the file's 1 stat: it counts once entered and published in \
+             Steamworks\n"
+        ) && !why.contains("stat floors"),
+        "{why}"
+    );
+    assert!(!shown.contains("more language"), "{shown}");
+}
+
+#[test]
 fn an_app_with_nothing_on_steam_is_listed_as_none_with_where_they_are_made() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
@@ -4833,6 +4867,10 @@ fn an_app_with_nothing_on_steam_is_listed_as_none_with_where_they_are_made() {
             && !shown.contains("Stats & Achievements"),
         "{shown}{why}"
     );
+    assert!(
+        !shown.contains("more language"),
+        "Steam has a text in no language of an achievement it does not hold: {shown}"
+    );
 }
 
 #[test]
@@ -4865,7 +4903,7 @@ fn a_check_with_drift_in_its_stats_still_says_its_achievements_match() {
     assert_eq!(refused, Some(2_i32), "{shown}{why}");
     assert!(shown.contains("2 of 2 achievements match\n"), "{shown}");
     assert!(
-        why.contains("stat years_open: in the file, not on Steam\n")
+        why.contains("Steam holds none of the file's 1 stat: it counts once entered and published")
             && why.ends_with("0 of 1 stats match: 1 not on Steam\n"),
         "{why}"
     );
