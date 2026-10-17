@@ -87,7 +87,7 @@ fn steamship_in(
     };
     // After the environment may have been cleared, so that nothing reaches the session's store.
     let _: &mut Command = command.envs(common::store::environment());
-    let output = command.envs(variables.iter().copied()).output().unwrap();
+    let output = run::output(command.envs(variables.iter().copied())).unwrap();
     (
         output.status.code(),
         String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -341,11 +341,12 @@ fn the_windows_program_carries_its_icon_and_version_details() {
         $v.CompanyName, $v.FileDescription, $v.ProductName, $v.ProductVersion,
           $v.FileVersionRaw.ToString(), $v.LegalCopyright, $v.OriginalFilename,
           [Shell.Icons]::ExtractIconExW($env:PROGRAM, -1, $null, $null, 0)";
-    let output = run::command("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("PROGRAM", env!("CARGO_BIN_EXE_steamship"))
-        .output()
-        .unwrap();
+    let output = run::output(
+        run::command("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .env("PROGRAM", env!("CARGO_BIN_EXE_steamship")),
+    )
+    .unwrap();
     let said = String::from_utf8(output.stdout).unwrap();
     let version = env!("CARGO_PKG_VERSION");
     assert_eq!(
@@ -999,15 +1000,16 @@ fn a_login_handed_over_that_is_not_text_is_refused() {
     use std::os::unix::ffi::OsStrExt as _;
 
     let home = tempfile::tempdir().unwrap();
-    let output = steamship_command()
-        .arg("status")
-        .env("STEAMSHIP_HOME", home.path())
-        .env(
-            "STEAMSHIP_LOGIN",
-            OsStr::from_bytes(b"steamship-login-1:\xff"),
-        )
-        .output()
-        .unwrap();
+    let output = run::output(
+        steamship_command()
+            .arg("status")
+            .env("STEAMSHIP_HOME", home.path())
+            .env(
+                "STEAMSHIP_LOGIN",
+                OsStr::from_bytes(b"steamship-login-1:\xff"),
+            ),
+    )
+    .unwrap();
     assert_eq!(output.status.code(), Some(2_i32));
     assert_eq!(
         failure(&String::from_utf8_lossy(&output.stderr)),
@@ -1387,10 +1389,7 @@ fn ci_without_gh_says_where_to_get_it_and_exits_1() {
     );
     let (_project, root) = github_project();
     let bin = tempfile::tempdir().unwrap();
-    let git = run::command("sh")
-        .args(["-c", "command -v git"])
-        .output()
-        .unwrap();
+    let git = run::output(run::command("sh").args(["-c", "command -v git"])).unwrap();
     let git = String::from_utf8(git.stdout).unwrap();
     symlink(git.trim(), bin.path().join("git")).unwrap();
     let (code, stdout, stderr) = steamship_in(
@@ -1424,10 +1423,7 @@ fn ci_with_a_gh_that_cannot_start_says_so_and_exits_1() {
     );
     let (_project, root) = github_project();
     let bin = tempfile::tempdir().unwrap();
-    let git = run::command("sh")
-        .args(["-c", "command -v git"])
-        .output()
-        .unwrap();
+    let git = run::output(run::command("sh").args(["-c", "command -v git"])).unwrap();
     symlink(
         String::from_utf8(git.stdout).unwrap().trim(),
         bin.path().join("git"),
@@ -1724,12 +1720,13 @@ fn faked_with(script: &str) -> tempfile::TempDir {
 /// every handle until it runs; running `program` in those moments fails with "Text file busy".
 #[cfg(unix)]
 fn write_program(program: &Path, script: &str) {
-    let mut writer = run::command("sh")
-        .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
-        .arg(program)
-        .stdin(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut writer = run::spawn(
+        run::command("sh")
+            .args(["-c", "cat > \"$1\" && chmod 755 \"$1\"", "sh"])
+            .arg(program)
+            .stdin(Stdio::piped()),
+    )
+    .unwrap();
     writer
         .stdin
         .take()
@@ -1852,16 +1849,17 @@ fn login_typing(
     typed: &str,
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
-    let mut child = steamship_command()
-        .args(["login", "--account", "build_bot"])
-        .env_remove("STEAMSHIP_ACCOUNT")
-        .env("STEAMSHIP_HOME", home)
-        .envs(variables.iter().copied())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = run::spawn(
+        steamship_command()
+            .args(["login", "--account", "build_bot"])
+            .env_remove("STEAMSHIP_ACCOUNT")
+            .env("STEAMSHIP_HOME", home)
+            .envs(variables.iter().copied())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .unwrap();
     child
         .stdin
         .take()
@@ -2345,18 +2343,20 @@ fn login_with_nowhere_to_look_for_an_account_exits_1() {
 }
 
 fn git(folder: &Path, args: &[&str]) {
-    let status = run::command("git")
-        .args([
-            "-c",
-            "user.name=steamship",
-            "-c",
-            "user.email=steamship@example.invalid",
-        ])
-        .args(["-c", "commit.gpgsign=false"])
-        .args(args)
-        .current_dir(folder)
-        .status()
-        .unwrap();
+    let status = run::spawn(
+        run::command("git")
+            .args([
+                "-c",
+                "user.name=steamship",
+                "-c",
+                "user.email=steamship@example.invalid",
+            ])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(folder),
+    )
+    .and_then(|mut git| git.wait())
+    .unwrap();
     assert!(status.success(), "git {args:?}");
 }
 
@@ -2840,7 +2840,7 @@ fn login_with_web_api_key_refuses_what_is_not_a_key_before_asking_steam() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command.spawn().unwrap();
+    let mut child = run::spawn(&mut command).unwrap();
     child
         .stdin
         .take()
@@ -2936,16 +2936,17 @@ fn login_with_key(
     typed: &str,
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
-    let mut child = steamship_command()
-        .args(["login", "--web-api-key"])
-        .env("STEAMSHIP_HOME", home)
-        .env(STAND_IN, host)
-        .envs(variables.iter().copied())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = run::spawn(
+        steamship_command()
+            .args(["login", "--web-api-key"])
+            .env("STEAMSHIP_HOME", home)
+            .env(STAND_IN, host)
+            .envs(variables.iter().copied())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .unwrap();
     child
         .stdin
         .take()
@@ -5771,12 +5772,14 @@ where
 /// Sends `which` signal to the process `pid`, and says whether it was there to receive it.
 #[cfg(unix)]
 fn signal(which: &str, pid: &str) -> bool {
-    run::command("kill")
-        .args([which, pid])
-        .stderr(Stdio::null())
-        .status()
-        .unwrap()
-        .success()
+    run::spawn(
+        run::command("kill")
+            .args([which, pid])
+            .stderr(Stdio::null()),
+    )
+    .and_then(|mut kill| kill.wait())
+    .unwrap()
+    .success()
 }
 
 /// SIGHUP, SIGINT and SIGTERM, the signals that end steamship from outside, as bits of the masks
@@ -5816,17 +5819,18 @@ fn uploading(launcher: Option<&str>) -> (Child, String, tempfile::TempDir, tempf
     let home = faked_with("#!/bin/sh\necho $$ > \"$HOME/steamcmd.pid\"\nexec sleep 60\n");
     let (project, script) = project(true);
     let steamship = env!("CARGO_BIN_EXE_steamship");
-    let started = run::command(launcher.unwrap_or(steamship))
-        .args(launcher.map(|_| steamship))
-        .envs(common::store::environment())
-        .args(["upload", script.to_str().unwrap(), "--version", "1.4.0"])
-        .args(["--account", "build_bot"])
-        .env("STEAMSHIP_HOME", home.path())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let started = run::spawn(
+        run::command(launcher.unwrap_or(steamship))
+            .args(launcher.map(|_| steamship))
+            .envs(common::store::environment())
+            .args(["upload", script.to_str().unwrap(), "--version", "1.4.0"])
+            .args(["--account", "build_bot"])
+            .env("STEAMSHIP_HOME", home.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+    )
+    .unwrap();
     let pid_file = home.path().join("steamcmd.pid");
     assert!(
         soon(|| fs::read_to_string(&pid_file).is_ok_and(|pid| pid.ends_with('\n'))),

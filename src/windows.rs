@@ -19,8 +19,8 @@ use std::path::Path;
 use std::process;
 use std::ptr::{self, NonNull};
 use std::slice;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -86,6 +86,21 @@ use windows_sys::core::BOOL;
 /// Numbers each desktop this process makes, so that no two runs share one: a desktop goes away
 /// when its last handle closes, and a run opening one by the same name at that moment is refused.
 static DESKTOPS: AtomicU64 = AtomicU64::new(0);
+
+/// Held while a handle of steamship's is marked to be handed down, and while the standard library
+/// starts a program.
+///
+/// The standard library hands a program every handle the process has marked so at that moment.
+/// steamship marks the output of a run for as long as it takes to start the program, and making a
+/// pseudo console marks its pipes for as long as it takes to start the console; a program the
+/// standard library started then would hold that output open for as long as it ran.
+static HANDING_DOWN: Mutex<()> = Mutex::new(());
+
+/// [`HANDING_DOWN`], held until dropped.
+pub fn handing_down() -> MutexGuard<'static, ()> {
+    // The lock guards no data, so one a panic left is as good as any.
+    HANDING_DOWN.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// How often a wait looks up from the program to see whether it has said it will never finish.
 const POLL: Duration = Duration::from_millis(50);
@@ -385,6 +400,7 @@ struct PseudoConsole(HPCON);
 
 impl PseudoConsole {
     fn create(input: &PipeReader, output: &PipeWriter, size: COORD) -> io::Result<Self> {
+        let _handing_down = handing_down();
         let mut console: HPCON = 0;
         // SAFETY: both pipe ends are open for the length of the call, and the console takes its
         // own copies of them.
@@ -515,6 +531,7 @@ fn spawn(
     job: &Job,
     streams: Streams,
 ) -> io::Result<Process> {
+    let _handing_down = handing_down();
     let (mut list, [input, output], inherit, creation) = match streams {
         Streams::Handles(handles) => {
             for handle in handles {
@@ -577,6 +594,13 @@ fn spawn(
             &raw mut started,
         )
     };
+    if inherit != 0_i32 {
+        for handle in [input, output] {
+            // SAFETY: both handles are open for the length of this call. Should Windows refuse,
+            // the handle is the caller's to close straight after, which ends the moment as well.
+            let _: i32 = unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
+        }
+    }
     if created == 0_i32 {
         return Err(io::Error::last_os_error());
     }
@@ -1350,7 +1374,7 @@ mod tests {
     use std::os::windows::ffi::OsStringExt as _;
     use std::path::PathBuf;
     use std::slice;
-    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::Foundation::{GetHandleInformation, HWND, LPARAM};
     use windows_sys::Win32::Globalization::lstrlenW;
     use windows_sys::Win32::Security::{
         CreateWellKnownSid, INHERITED_ACE, SECURITY_MAX_SID_SIZE, WinLocalSystemSid,
@@ -1369,6 +1393,37 @@ mod tests {
 
     /// What Windows answers for a file that carries no signature.
     const TRUST_E_NOSIGNATURE: u32 = 0x800b_0100;
+
+    #[test]
+    fn a_runs_handles_are_handed_down_only_while_its_program_starts() {
+        let desktop = Desktop::create().unwrap();
+        let job = Job::create().unwrap();
+        let (_reader, writer) = io::pipe().unwrap();
+        let input = File::open("NUL").unwrap();
+        let cmd = Path::new(&env::var_os("SystemRoot").unwrap()).join(r"System32\cmd.exe");
+        let process = spawn(
+            &cmd,
+            &["/d", "/c", "exit 0"].map(OsString::from),
+            None,
+            &env::temp_dir(),
+            &desktop,
+            &job,
+            Streams::Handles([input.as_raw_handle(), writer.as_raw_handle()]),
+        )
+        .unwrap();
+        for handle in [input.as_raw_handle(), writer.as_raw_handle()] {
+            let mut flags = 0_u32;
+            // SAFETY: the handle is open, and `flags` receives its flags.
+            let read = unsafe { GetHandleInformation(handle, &raw mut flags) };
+            assert_ne!(read, 0_i32);
+            assert_eq!(
+                flags & HANDLE_FLAG_INHERIT,
+                0,
+                "a program started next would be handed it"
+            );
+        }
+        process.ended();
+    }
 
     #[test]
     fn names_the_signer_of_a_signed_file() {
@@ -1746,10 +1801,10 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let account = home.path().display().to_string();
         keep_secret(&account, b"0123456789abcdef0123456789abcdef").unwrap();
-        let listed = run::command("cmdkey")
-            .arg(format!("/list:steamship:web-api-key:{account}"))
-            .output()
-            .unwrap();
+        let listed = run::output(
+            run::command("cmdkey").arg(format!("/list:steamship:web-api-key:{account}")),
+        )
+        .unwrap();
         assert!(forget_secret(&account).unwrap());
         let listed = String::from_utf8_lossy(&listed.stdout);
         assert!(

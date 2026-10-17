@@ -123,13 +123,14 @@ pub fn secret_service() -> &'static str {
     &HELD
         .get_or_init(|| {
             let folder = tempfile::tempdir().unwrap().keep();
-            let mut child = run::command("sh")
-                .args(["-c", SCRIPT, "sh"])
-                .arg(&folder)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .spawn()
-                .unwrap();
+            let mut child = run::spawn(
+                run::command("sh")
+                    .args(["-c", SCRIPT, "sh"])
+                    .arg(&folder)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped()),
+            )
+            .unwrap();
             let mut line = String::new();
             let _: usize = BufReader::new(child.stdout.take().unwrap())
                 .read_line(&mut line)

@@ -100,11 +100,12 @@ pub fn commit(path: &Path) -> Result<String, Error> {
     // Looked at first: a folder that is not there and a Git that is not installed fail to start
     // with the same error, and only one of them is about the folder.
     let _: fs::Metadata = fs::metadata(&folder).map_err(at(&folder))?;
-    let output = run::command("git")
-        .args(["rev-parse", "--short=12", "HEAD"])
-        .current_dir(&folder)
-        .output()
-        .map_err(|error| {
+    let output = run::output(
+        run::command("git")
+            .args(["rev-parse", "--short=12", "HEAD"])
+            .current_dir(&folder),
+    )
+    .map_err(|error| {
             Error::Description(if error.kind() == io::ErrorKind::NotFound {
                 "Git is not installed, or not on the PATH, and the build description names the \
                  commit the scripts are at"

@@ -100,15 +100,16 @@ pub fn run(
     hopeless: &'static [&'static str],
 ) -> io::Result<Finished> {
     let (reader, writer) = io::pipe()?;
-    let mut child = run::command(program)
-        .args(args)
-        .envs(environment.iter().map(|(name, value)| (name, value)))
-        .current_dir(directory)
-        .stdin(Stdio::null())
-        .stdout(writer.try_clone()?)
-        .stderr(writer)
-        .process_group(0)
-        .spawn()?;
+    let mut child = run::spawn(
+        run::command(program)
+            .args(args)
+            .envs(environment.iter().map(|(name, value)| (name, value)))
+            .current_dir(directory)
+            .stdin(Stdio::null())
+            .stdout(writer.try_clone()?)
+            .stderr(writer)
+            .process_group(0),
+    )?;
     let group = i32::try_from(child.id()).map_err(io::Error::other)?;
     let _running = Running::mark(group);
     let seen = Arc::new(AtomicBool::new(false));
@@ -212,15 +213,16 @@ impl Terminal {
         // What is typed must never come back in the output, where it would be read, so the
         // terminal does not echo it, whatever the program itself asks for.
         quiet(replica.as_raw_fd())?;
-        let mut child = run::command(program)
-            .args(args)
-            .envs(environment.iter().map(|(name, value)| (name, value)))
-            .current_dir(directory)
-            .stdin(Stdio::from(replica.try_clone()?))
-            .stdout(Stdio::from(replica.try_clone()?))
-            .stderr(Stdio::from(replica))
-            .process_group(0)
-            .spawn()?;
+        let mut child = run::spawn(
+            run::command(program)
+                .args(args)
+                .envs(environment.iter().map(|(name, value)| (name, value)))
+                .current_dir(directory)
+                .stdin(Stdio::from(replica.try_clone()?))
+                .stdout(Stdio::from(replica.try_clone()?))
+                .stderr(Stdio::from(replica))
+                .process_group(0),
+        )?;
         let output = Output(File::from(main.try_clone()?));
         let group = i32::try_from(child.id()).map_err(io::Error::other)?;
         let running = Running::mark(group);
