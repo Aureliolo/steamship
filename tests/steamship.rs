@@ -3748,7 +3748,9 @@ fn the_achievement_editors_files_are_written_from_records_catalogues_and_icons()
         "{said}"
     );
     assert!(
-        said.contains("then drop 5440760-achievements-localization.csv again on its own"),
+        said.contains("drop every CSV and PNG file in ")
+            && said.contains("then drop 5440760-achievements-localization.csv again on its own")
+            && said.contains("publish, and run this again with --imported\n"),
         "{said}"
     );
     assert!(
@@ -3844,6 +3846,318 @@ fn a_file_written_otherwise_or_left_over_is_named_and_rewritten_or_removed() {
         "a file of no kind written is left"
     );
     assert_eq!(write_inn(game.path(), true).0, Some(0_i32));
+}
+
+/// [`TTI_SCHEMA`] holding [`INN_RECORDS`]' stat and achievements, with Steam's images of five
+/// floors' icon and the cellar's two named by `icons` in turn.
+fn inn_schema(icons: [&str; 3]) -> &'static str {
+    let [five_floors, first_cellar, first_cellar_locked] = icons;
+    TTI_SCHEMA
+        .replace(
+            r#",{"name":"staff","defaultvalue":0,"displayName":"Staff working in the inn"}"#,
+            "",
+        )
+        .replace("ROOM_TO_GROW", "FIVE_FLOORS")
+        .replace("Room to Grow", "Five Floors Up")
+        .replace(
+            "Build a second floor of guest rooms.",
+            "Stand an inn five floors above its taproom.",
+        )
+        .replace("BUILT_BY_HAND", "FIRST_CELLAR")
+        .replace("Brick by Brick", "Down in the Cellar")
+        .replace("Build a floor by hand.", "Dig an inn's first cellar.")
+        .replace("f895e737db45e18257a61fac5b6d409aa6872b82", five_floors)
+        .replace("41373b0acc59cfbe2c973699975640bc1db1026a", first_cellar)
+        .replace(
+            "c4d7c246b05fc3bacc39c9106295794b52faee45",
+            first_cellar_locked,
+        )
+        .leak()
+}
+
+/// `steamship achievements` in `game`, an [`inn_mod`], with its `steam/achievements` folder as
+/// `--out`, and the Web API answering with `answers`: `--write`, `--imported` and its records
+/// and catalogue when `imported`, or else `--check` and its records.
+fn inn_on_steam(
+    game: &Path,
+    imported: bool,
+    answers: Vec<(&'static str, &'static str)>,
+) -> (Option<i32>, String, String) {
+    let (host, _requests) = web_api(answers);
+    let named = [
+        game.join("mods/base/data/achievements.json"),
+        game.join("locale/de.po"),
+        game.join("steam").join("achievements"),
+    ]
+    .map(|path| path.to_string_lossy().into_owned());
+    let [records, german, out] = named.each_ref().map(String::as_str);
+    let mut all = vec!["achievements", "5440760"];
+    if imported {
+        all.extend(["--write", records, german, "--imported"]);
+    } else {
+        all.extend(["--check", records]);
+    }
+    all.extend(["--out", out]);
+    steamship(
+        &all,
+        Some(game),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &host),
+        ],
+    )
+}
+
+/// The names [`TTI_SCHEMA`] gives Steam's images of five floors' icon and the cellar's two, as
+/// the inn's first import made them.
+const FIRST_IMPORT: [&str; 3] = [
+    "f895e737db45e18257a61fac5b6d409aa6872b82",
+    "41373b0acc59cfbe2c973699975640bc1db1026a",
+    "c4d7c246b05fc3bacc39c9106295794b52faee45",
+];
+
+/// Steam's answers to a check of the inn's records, its icons' images named by `icons`.
+fn inn_checked(icons: [&'static str; 3]) -> Vec<(&'static str, &'static str)> {
+    iter::once(("200 OK", inn_schema(icons)))
+        .chain(TTI_UNAGGREGATED.into_iter().take(1))
+        .collect()
+}
+
+/// An [`inn_mod`] with its files written and `--imported` run once Steam took them in
+/// [`FIRST_IMPORT`]; and what `--imported` printed and noted.
+fn inn_imported() -> (tempfile::TempDir, String, String) {
+    let game = inn_mod();
+    let (written, wrote, why) = write_inn(game.path(), false);
+    assert_eq!(written, Some(0_i32), "{wrote}{why}");
+    let (recorded, said, noted) = inn_on_steam(
+        game.path(),
+        true,
+        vec![("200 OK", inn_schema(FIRST_IMPORT))],
+    );
+    assert_eq!(recorded, Some(0_i32), "{said}{noted}");
+    (game, said, noted)
+}
+
+/// The receipt in `game`, an [`inn_mod`].
+fn inn_receipt(game: &Path) -> PathBuf {
+    game.join("steam")
+        .join("achievements")
+        .join("steam-icons.json")
+}
+
+#[test]
+fn imported_records_each_icon_steam_holds_and_write_leaves_the_receipt_alone() {
+    let (game, said, noted) = inn_imported();
+    assert!(
+        said.contains("  wrote     steam-icons.json\n")
+            && said.contains("records the 3 icons Steam holds\n"),
+        "{said}"
+    );
+    assert!(
+        noted.contains(
+            "the receipt takes Steam's icons to be the files': look at each once in the \
+             achievement editor\n"
+        ),
+        "{noted}"
+    );
+    let receipt = inn_receipt(game.path());
+    let kept: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&receipt).unwrap()).unwrap();
+    assert_eq!(
+        kept.get("app").and_then(serde_json::Value::as_u64),
+        Some(5_440_760)
+    );
+    assert_eq!(
+        kept.pointer("/icons/FIRST_CELLAR_UNACHIEVED.png/steam")
+            .and_then(serde_json::Value::as_str),
+        Some("c4d7c246b05fc3bacc39c9106295794b52faee45.jpg")
+    );
+    assert_eq!(
+        kept.pointer("/icons/FIVE_FLOORS_ACHIEVED.png/sha256")
+            .and_then(serde_json::Value::as_str)
+            .map(str::len),
+        Some(64)
+    );
+    assert_eq!(
+        write_inn(game.path(), true).0,
+        Some(0_i32),
+        "the receipt is no file --write makes, nor one left over"
+    );
+    assert_eq!(write_inn(game.path(), false).0, Some(0_i32));
+    assert!(receipt.is_file(), "--write leaves the receipt alone");
+
+    let (matched, shown, _) = inn_on_steam(game.path(), false, inn_checked(FIRST_IMPORT));
+    assert_eq!(matched, Some(0_i32), "{shown}");
+    assert!(
+        shown.contains("Steam's achievements and stats match the file\n"),
+        "{shown}"
+    );
+}
+
+#[test]
+fn an_icon_changed_in_the_files_is_named_until_steam_takes_its_import() {
+    let (game, _, _) = inn_imported();
+    let first = FIRST_IMPORT;
+    let checked = inn_checked;
+    fs::write(
+        game.path().join("mods/base/icons/five_floors.png"),
+        png_header(128, 128),
+    )
+    .unwrap();
+    let (changed, _, why_changed) = inn_on_steam(game.path(), false, checked(first));
+    assert_eq!(changed, Some(2_i32), "{why_changed}");
+    assert!(
+        why_changed.contains(
+            "FIVE_FLOORS: the icon changed in the files since the import steam-icons.json \
+             records: import it, publish, then run --imported\n"
+        ) && why_changed.contains("1 of 2 achievements match: 1 differs\n"),
+        "{why_changed}"
+    );
+
+    let (unwritten, told, why_unwritten) = inn_on_steam(game.path(), true, Vec::new());
+    assert_eq!(unwritten, Some(2_i32), "{why_unwritten}");
+    assert!(
+        why_unwritten.contains("FIVE_FLOORS_ACHIEVED.png differs from what the files make\n")
+            && told.contains("run it without --imported to write "),
+        "{told}{why_unwritten}"
+    );
+
+    assert_eq!(write_inn(game.path(), false).0, Some(0_i32));
+    let (untaken, _, why_untaken) =
+        inn_on_steam(game.path(), true, vec![("200 OK", inn_schema(first))]);
+    assert_eq!(untaken, Some(2_i32), "{why_untaken}");
+    assert!(
+        why_untaken.contains(
+            "FIVE_FLOORS: Steam still has the icon the last import made, where the file changed \
+             since\n"
+        ),
+        "{why_untaken}"
+    );
+    let again = [
+        "0d2c5c6b7e3a1f4e9b8a7c6d5e4f3a2b1c0d9e8f",
+        first[1],
+        first[2],
+    ];
+    let (taken, said_again, noted_again) =
+        inn_on_steam(game.path(), true, vec![("200 OK", inn_schema(again))]);
+    assert_eq!(taken, Some(0_i32), "{said_again}{noted_again}");
+    assert!(
+        !noted_again.contains("look at each once"),
+        "only the first receipt is looked at by eye: {noted_again}"
+    );
+    let (matched, shown, _) = inn_on_steam(game.path(), false, checked(again));
+    assert_eq!(matched, Some(0_i32), "{shown}");
+}
+
+#[test]
+fn an_icon_steam_made_anew_from_the_file_imported_is_named() {
+    let (game, _, _) = inn_imported();
+    let [five_floors, first_cellar, _] = FIRST_IMPORT;
+    let redrawn = [
+        five_floors,
+        first_cellar,
+        "5b1e0c2d9f8a7b6c5d4e3f2a1b0c9d8e7f6a5b4c",
+    ];
+    let (moved, _, why_moved) = inn_on_steam(game.path(), false, inn_checked(redrawn));
+    assert_eq!(moved, Some(2_i32), "{why_moved}");
+    assert!(
+        why_moved.contains(
+            "FIRST_CELLAR: the locked icon on Steam changed since the import steam-icons.json \
+             records, and not from the files: import it again, publish, then run --imported\n"
+        ),
+        "{why_moved}"
+    );
+}
+
+#[test]
+fn a_check_against_no_receipt_or_another_apps_is_refused_and_imported_replaces_one() {
+    let bare = inn_mod();
+    assert_eq!(write_inn(bare.path(), false).0, Some(0_i32));
+    let (unrecorded, _, why) = inn_on_steam(bare.path(), false, Vec::new());
+    assert_eq!(unrecorded, Some(2_i32), "{why}");
+    assert!(
+        why.contains(
+            "achievements: has no steam-icons.json: import and publish the files --write wrote \
+             there, then run --imported\n"
+        ),
+        "{why}"
+    );
+    let unreadable = inn_receipt(bare.path());
+    fs::create_dir_all(&unreadable).unwrap();
+    let (failed, _, why_failed) = inn_on_steam(bare.path(), false, Vec::new());
+    assert_eq!(failed, Some(1_i32), "{why_failed}");
+    assert!(
+        why_failed.contains(&format!("{}: ", unreadable.display()))
+            && !why_failed.contains("has no steam-icons.json"),
+        "a receipt that cannot be read is not taken for none: {why_failed}"
+    );
+
+    let (game, _, _) = inn_imported();
+    let receipt = inn_receipt(game.path());
+    let kept = fs::read_to_string(&receipt).unwrap();
+    fs::write(&receipt, kept.replace("5440760", "480")).unwrap();
+    let (elsewhere, _, why_elsewhere) = inn_on_steam(game.path(), false, Vec::new());
+    assert_eq!(elsewhere, Some(2_i32), "{why_elsewhere}");
+    assert!(
+        why_elsewhere.contains("steam-icons.json: records app 480's icons, not app 5440760's\n"),
+        "{why_elsewhere}"
+    );
+    fs::write(&receipt, "{}").unwrap();
+    let (unread, _, why_unread) = inn_on_steam(game.path(), false, Vec::new());
+    assert_eq!(unread, Some(2_i32), "{why_unread}");
+    assert!(
+        why_unread.contains("steam-icons.json: \"app\" is not an app ID\n"),
+        "{why_unread}"
+    );
+    let (replaced, _, _) = inn_on_steam(
+        game.path(),
+        true,
+        vec![("200 OK", inn_schema(FIRST_IMPORT))],
+    );
+    assert_eq!(
+        replaced,
+        Some(0_i32),
+        "--imported replaces a receipt it cannot use"
+    );
+    assert!(
+        fs::read_to_string(&receipt)
+            .unwrap()
+            .contains("\"app\": 5440760")
+    );
+}
+
+#[test]
+fn a_receipts_flags_are_refused_where_they_mean_nothing() {
+    let game = tempfile::tempdir().unwrap();
+    for (args, refusal) in [
+        (
+            ["--out", "steam/achievements", "--json"].as_slice(),
+            "the following required arguments were not provided",
+        ),
+        (
+            [
+                "--write",
+                "a.json",
+                "--out",
+                "o",
+                "--imported",
+                "--unchanged",
+            ]
+            .as_slice(),
+            "cannot be used with",
+        ),
+        (
+            ["--imported"].as_slice(),
+            "the following required arguments were not provided",
+        ),
+    ] {
+        let mut all = vec!["achievements", "5440760"];
+        all.extend(args);
+        let (refused, _, why) = steamship(&all, Some(game.path()), &[]);
+        assert_eq!(refused, Some(2_i32), "{args:?}: {why}");
+        assert!(why.contains(refusal), "{args:?}: {why}");
+    }
 }
 
 #[test]
