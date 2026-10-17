@@ -254,7 +254,12 @@ const ACHIEVEMENTS_UNCHECKED: [(&[&str], &str); 4] = [
 ];
 
 /// The same of a stat.
-const STATS_UNCHECKED: [(&[&str], &str); 1] = [(&["kind"], "the stats' types")];
+const STATS_UNCHECKED: [(&[&str], &str); 4] = [
+    (&["kind"], "the stats' types"),
+    (&["min", "max", "max_change"], "the stats' bounds"),
+    (&["increment_only"], "which stats only go up"),
+    (&["permission"], "who may set the stats"),
+];
 
 /// Adds to `unchecked` what of `keys` the `entry` sets, once each.
 fn note_unchecked(
@@ -378,7 +383,14 @@ fn read_records(records: &[Value]) -> Result<Listed, String> {
                 note_unchecked(record, &ACHIEVEMENTS_UNCHECKED, &mut unchecked);
             }
             "stat" => {
-                stats.push(stat(record, &label, "steam")?);
+                let wanted = stat(record, &label, "steam")?;
+                // games-kit gives a stat that does not say otherwise the default 0, and has
+                // Steam keep no total of it.
+                stats.push(WantedStat {
+                    default: Some(wanted.default.unwrap_or(0.0_f64)),
+                    aggregated: Some(wanted.aggregated.unwrap_or(false)),
+                    ..wanted
+                });
                 note_unchecked(record, &STATS_UNCHECKED, &mut unchecked);
             }
             "achievement_set" => sets.push(set(record, &label, "steam")?),
@@ -1399,7 +1411,8 @@ mod tests {
                 {"type": "achievement", "id": "base:secret", "steam": "SECRET",
                  "name": "Hush", "hidden": true, "icon": "res://icons/secret.png"},
                 {"type": "stat", "id": "base:gold", "steam": "gold", "name": "Gold earned",
-                 "default": 5, "aggregated": true}
+                 "default": 5, "aggregated": true, "max": 1000, "increment_only": true,
+                 "permission": "game_server"}
             ]"#,
         )
         .unwrap();
@@ -1437,10 +1450,10 @@ mod tests {
                 WantedStat {
                     api_name: "floors".to_owned(),
                     name: None,
-                    default: None,
+                    default: Some(0.0_f64),
                     id: Some("base:floors".to_owned()),
                     whole: Some(true),
-                    aggregated: None,
+                    aggregated: Some(false),
                 },
                 WantedStat {
                     api_name: "gold".to_owned(),
@@ -1454,7 +1467,13 @@ mod tests {
         );
         assert_eq!(
             listed.unchecked,
-            ["the stats' types", "the achievements' progress"]
+            [
+                "the stats' types",
+                "the achievements' progress",
+                "the stats' bounds",
+                "which stats only go up",
+                "who may set the stats",
+            ]
         );
 
         let bare = read(r#"[{"type": "achievement", "steam": "A", "name": "A"}]"#).unwrap();
