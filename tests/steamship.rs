@@ -3095,8 +3095,8 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci
         format!(
             "{}\n",
             serde_json::json!({
-                "app": 480,
-                "item": 777,
+                "app": 480_u32,
+                "item": 777_u64,
                 "log": log.to_str().unwrap(),
                 "name": "example",
                 "outcome": outcome,
