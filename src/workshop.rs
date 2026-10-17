@@ -212,15 +212,25 @@ pub fn prepare(home: &Path, original: &Path, app_id: u32) -> Result<PathBuf, upl
             value,
         });
     }
-    write_copy(home, app_id, rewritten).map_err(|error| match error {
+    let slot = item
+        .text("publishedfileid")
+        .map(str::trim)
+        .filter(|published| !matches!(*published, "" | "0"))
+        .unwrap_or(NEW);
+    write_copy(home, app_id, slot, rewritten).map_err(|error| match error {
         upload::Error::Script { reason, .. } => problem(reason),
         other @ (upload::Error::Io { .. } | upload::Error::Description(_)) => other,
     })
 }
 
+/// The folder a script's copy, and steamcmd's console beside it, go into for an item the script
+/// gives no ID: one item a run makes, which is then given one.
+const NEW: &str = "new";
+
 /// Writes `item`, the inside of a `workshopitem` block, as the script steamcmd is given for
-/// `app_id` in `home`, and says where it is.
-fn write_copy(home: &Path, app_id: u32, item: Block) -> Result<PathBuf, upload::Error> {
+/// `app_id` in `home`, in the item's own folder `slot`, and says where it is. Each item has one,
+/// so that uploading several in a row leaves each one's console to read.
+fn write_copy(home: &Path, app_id: u32, slot: &str, item: Block) -> Result<PathBuf, upload::Error> {
     let at = |path: &Path| {
         let path = path.to_path_buf();
         move |error| upload::Error::Io { path, error }
@@ -231,7 +241,7 @@ fn write_copy(home: &Path, app_id: u32, item: Block) -> Result<PathBuf, upload::
             value: Value::Block(item),
         }],
     };
-    let items = home.join(ITEMS).join(app_id.to_string());
+    let items = home.join(ITEMS).join(app_id.to_string()).join(slot);
     fs::create_dir_all(&items).map_err(at(&items))?;
     let copy = items.join("workshop_item.vdf");
     let text = vdf::write(&whole).map_err(|error| upload::Error::Script {
@@ -342,13 +352,36 @@ pub fn check_fields(fields: &Fields) -> Result<Item, Vec<String>> {
     }
 }
 
-/// Writes the script steamcmd is given for the item `fields` give into the app's folder in
-/// `home`, with its paths made absolute, and says where it is.
+/// Whether `name`, an item's name in a game's record, may name the item's folder.
+///
+/// It may hold letters, digits, `-`, `_` and `.`, not first, so that it stays one folder inside
+/// the app's in steamship's home, whatever the system.
+///
+/// # Errors
+///
+/// When it may not, saying why.
+pub fn named(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("--name is empty".to_owned());
+    }
+    let kept = name
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'));
+    if !kept || name.starts_with('.') {
+        return Err(format!(
+            "--name {name} may hold only letters, digits, '-', '_' and '.', and not begin with '.'"
+        ));
+    }
+    Ok(())
+}
+
+/// Writes the script steamcmd is given for the item `fields` give, named `name`, into its folder
+/// in `home`, with its paths made absolute, and says where it is.
 ///
 /// # Errors
 ///
 /// When a path is not valid Unicode, or the script cannot be written.
-pub fn prepare_fields(home: &Path, fields: &Fields) -> Result<PathBuf, upload::Error> {
+pub fn prepare_fields(home: &Path, fields: &Fields, name: &str) -> Result<PathBuf, upload::Error> {
     let path = |given: &Path| -> Result<String, upload::Error> {
         let absolute = path::absolute(given).map_err(|error| upload::Error::Io {
             path: given.to_path_buf(),
@@ -384,7 +417,7 @@ pub fn prepare_fields(home: &Path, fields: &Fields) -> Result<PathBuf, upload::E
     if let Some(change_note) = &fields.change_note {
         put("changenote", change_note.clone());
     }
-    write_copy(home, fields.app_id, item)
+    write_copy(home, fields.app_id, name, item)
 }
 
 /// A game's items by the name it gives each, kept in a file in its repository that steamship
@@ -656,7 +689,14 @@ mod tests {
             home.path()
                 .join("workshop")
                 .join("480")
+                .join("new")
                 .join("workshop_item.vdf")
+        );
+        let update = folder.script(&format!("{SOUND} \"publishedfileid\" \"5674\""));
+        assert_eq!(
+            prepare(home.path(), &update, 480).unwrap(),
+            home.path().join("workshop/480/5674/workshop_item.vdf"),
+            "an item with an ID has a folder of its own"
         );
         let document = scripts::read(&copy).unwrap();
         let item = document.block("workshopitem").unwrap();
@@ -803,8 +843,11 @@ mod tests {
     fn the_script_written_from_fields_has_each_one_given_and_absolute_paths() {
         let folder = sound();
         let home = tempfile::tempdir().unwrap();
-        let copy = prepare_fields(home.path(), &fields(&folder)).unwrap();
-        assert_eq!(copy, home.path().join("workshop/480/workshop_item.vdf"));
+        let copy = prepare_fields(home.path(), &fields(&folder), "green-hat").unwrap();
+        assert_eq!(
+            copy,
+            home.path().join("workshop/480/green-hat/workshop_item.vdf")
+        );
         let absolute = |relative: &str| {
             upload::written(&path::absolute(folder.root.join("workshop").join(relative)).unwrap())
                 .unwrap()
@@ -836,7 +879,8 @@ mod tests {
             visibility: None,
             ..fields(&folder)
         };
-        let again = prepare_fields(home.path(), &updated).unwrap();
+        let again = prepare_fields(home.path(), &updated, "green-hat").unwrap();
+        assert_eq!(again, copy, "an item keeps its folder");
         let rewritten = scripts::read(&again).unwrap();
         let keys: Vec<&str> = rewritten
             .block("workshopitem")
@@ -847,6 +891,24 @@ mod tests {
             .collect();
         assert_eq!(keys, ["appid", "publishedfileid", "contentfolder", "title"]);
         assert_eq!(published(&again), Some(5674));
+    }
+
+    #[test]
+    fn an_item_is_named_by_letters_digits_dashes_underscores_and_dots_not_first() {
+        for taken in ["example", "Green-hat_2", "mod.v2", "7"] {
+            assert_eq!(named(taken), Ok(()), "{taken}");
+        }
+        assert_eq!(named(""), Err("--name is empty".to_owned()));
+        for refused in ["../hats", "a/b", "a\\b", ".hidden", "two words", "h\u{e4}t"] {
+            assert_eq!(
+                named(refused),
+                Err(format!(
+                    "--name {refused} may hold only letters, digits, '-', '_' and '.', and not \
+                     begin with '.'"
+                )),
+                "{refused}"
+            );
+        }
     }
 
     #[test]
