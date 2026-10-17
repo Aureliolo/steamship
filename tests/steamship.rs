@@ -4442,6 +4442,42 @@ fn the_achievement_editors_files_are_refused_as_the_editor_would_refuse_them() {
 }
 
 #[test]
+fn an_achievement_and_a_stat_of_one_api_name_are_refused_before_anything_is_written() {
+    let game = inn_mod();
+    let records = game.path().join("mods/base/data/achievements.json");
+    fs::write(
+        &records,
+        INN_RECORDS.replace("\"steam\": \"floors\"", "\"steam\": \"FIVE_FLOORS\""),
+    )
+    .unwrap();
+    let out = game.path().join("out");
+    let named = [&records, &out].map(|path| path.to_string_lossy().into_owned());
+    for args in [
+        ["--write", &named[0], "--out", &named[1]].as_slice(),
+        ["--check", &named[0]].as_slice(),
+    ] {
+        let (code, _, why) = steamship(
+            &[["achievements", "5440760"].as_slice(), args].concat(),
+            Some(game.path()),
+            &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+        );
+        assert_eq!(code, Some(2_i32), "{args:?}: {why}");
+        assert!(
+            why.contains(&format!(
+                "FIVE_FLOORS is both an achievement and a stat in {}: Steamworks publishes no \
+                 achievement and stat of one API name, so rename one\n",
+                records.display()
+            )),
+            "{args:?}: {why}"
+        );
+    }
+    assert!(
+        !out.exists(),
+        "nothing is written while the files are refused"
+    );
+}
+
+#[test]
 fn more_than_a_hundred_achievements_are_said_to_need_a_vetted_app() {
     let folder = tempfile::tempdir().unwrap();
     let file = folder.path().join("achievements.json");

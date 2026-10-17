@@ -587,7 +587,7 @@ fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String
 /// # Errors
 ///
 /// When an achievement, a stat or a set is in two of the files, or is translated in two, naming
-/// both; when there are translations, but not of every achievement, or of one no file lists;
+/// both; when an achievement and a stat share an API name; when there are translations, but not of every achievement, or of one no file lists;
 /// and when [`resolve`] refuses them.
 pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
     let mut whole = Listed::default();
@@ -638,6 +638,23 @@ pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
                 whole.unchecked.push(what);
             }
         }
+    }
+    if let Some((api_name, achievement_in, stat_in)) =
+        achievements_from.iter().find_map(|(api_name, file)| {
+            stats_from
+                .get(api_name)
+                .map(|stat_in| (api_name, file, stat_in))
+        })
+    {
+        let where_ = if achievement_in == stat_in {
+            format!("both an achievement and a stat in {stat_in}")
+        } else {
+            format!("an achievement in {achievement_in} and a stat in {stat_in}")
+        };
+        return Err(format!(
+            "{api_name} is {where_}: Steamworks publishes no achievement and stat of one API \
+             name, so rename one"
+        ));
     }
     if let Some((api_name, file)) = translated_in
         .iter()
@@ -1640,6 +1657,32 @@ mod tests {
             ])
             .unwrap_err(),
             "stat s is in both counters.json and again.json"
+        );
+    }
+
+    #[test]
+    fn an_achievement_and_a_stat_of_one_api_name_are_refused_naming_where_each_is() {
+        let records = read(
+            r#"[{"type": "stat", "id": "base:fate", "steam": "FATE_KNOCKS"},
+                {"type": "achievement", "steam": "FATE_KNOCKS", "name": "Fate Knocks",
+                 "stat": "base:fate", "at": 3}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            together(vec![("base.json".to_owned(), records)]).unwrap_err(),
+            "FATE_KNOCKS is both an achievement and a stat in base.json: Steamworks publishes \
+             no achievement and stat of one API name, so rename one"
+        );
+        let feats = read(r#"{"achievements": [{"api_name": "s", "name": "S"}]}"#).unwrap();
+        let counters = read(r#"[{"type": "stat", "steam": "s"}]"#).unwrap();
+        assert_eq!(
+            together(vec![
+                ("feats.json".to_owned(), feats),
+                ("counters.json".to_owned(), counters),
+            ])
+            .unwrap_err(),
+            "s is an achievement in feats.json and a stat in counters.json: Steamworks \
+             publishes no achievement and stat of one API name, so rename one"
         );
     }
 
