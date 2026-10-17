@@ -129,7 +129,10 @@ fn setting_default_live_is_refused() {
     fs::write(&app, text).unwrap();
     assert_eq!(
         messages(&check(&app)),
-        ["\"SetLive\" names \"default\", which Valve only allows from the Steamworks site"]
+        [
+            "\"SetLive\" names \"default\", which steamcmd never sets live; upload --default sets \
+             it live while the app is unreleased"
+        ]
     );
 }
 
@@ -144,7 +147,7 @@ fn setting_public_live_is_refused_as_the_default_branch() {
         messages(&check(&app)),
         [
             "\"SetLive\" names \"public\", the Web API's name for the default branch, which \
-             Valve only allows from the Steamworks site"
+             steamcmd never sets live; upload --default sets it live while the app is unreleased"
         ]
     );
 }

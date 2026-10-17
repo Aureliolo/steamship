@@ -23,8 +23,12 @@ pub const KEY: &str = "STEAMSHIP_WEB_API_KEY";
 
 const HOST: &str = "https://partner.steam-api.com";
 
-/// Branches Valve keeps for the default one, which only the Steamworks site sets a build live on.
+/// The names the default branch goes by: `default` on the Steamworks site, `public` in the Web
+/// API.
 pub const DEFAULT: [&str; 2] = ["default", "public"];
+
+/// The default branch's name in the Web API, which `SetAppBuildLive` takes for it.
+pub const DEFAULT_KEY: &str = "public";
 
 /// A publisher Web API key.
 pub struct Key(Zeroizing<String>);

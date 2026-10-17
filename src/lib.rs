@@ -32,6 +32,7 @@ pub mod platform;
 pub mod po;
 pub mod presence;
 pub mod redact;
+pub mod release;
 pub mod run;
 pub mod scripts;
 #[cfg(target_os = "linux")]
