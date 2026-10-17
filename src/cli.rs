@@ -187,6 +187,15 @@ pub enum Command {
     /// named for its achievement. Either way, the files are refused first, exiting 2, when an
     /// achievement counts a stat it unlocks at no value of, is in a set no file lists, or there
     /// are more sets or achievements than Steam takes.
+    ///
+    /// Steam's Web API serves no icon's image, only its address, so whether Steam's icon is the
+    /// file's is told from a receipt. Once the files are imported and published, `--imported`
+    /// writes `steam-icons.json` into the `--out` folder, recording each icon's SHA-256 and the
+    /// image Steam made of it. `--check` with that `--out` then also names every icon changed in
+    /// the files since, every icon Steam made anew though its file is the one imported, and every
+    /// icon the receipt has no import of. The receipt trusts that the import it records took the
+    /// files as they were, which the achievement editor shows.
+    #[command(group(clap::ArgGroup::new("files").args(["check", "write"]).multiple(true)))]
     Achievements {
         /// The app, by its ID or its app build script.
         app: String,
@@ -413,13 +422,20 @@ pub struct Writing {
     )]
     pub write: Vec<PathBuf>,
     /// The folder `--write` writes into, made if missing. Files of the kinds it writes for the app
-    /// that it no longer would are removed; others are left alone.
-    #[arg(long, value_name = "FOLDER", requires = "write")]
+    /// that it no longer would are removed; others, `steam-icons.json` among them, are left
+    /// alone. With `--check`, the folder whose `steam-icons.json` the icons are checked against.
+    #[arg(long, value_name = "FOLDER", requires = "files")]
     pub out: Option<PathBuf>,
     /// Write nothing, and exit 2 naming each file in the folder that differs from what `--write`
-    /// would write there, is missing, or is left over.
+    /// would write there, is missing, or is left over. `steam-icons.json` is none of these.
     #[arg(long, requires = "write")]
     pub unchanged: bool,
+    /// Write only `steam-icons.json` in the folder, from the icons Steam holds once the folder's
+    /// files are imported and published; refused, exiting 2, when the folder is not as `--write`
+    /// would write it, or Steam lacks an icon of the files or still has the one last recorded
+    /// for an icon that changed.
+    #[arg(long, requires = "write", conflicts_with = "unchanged")]
+    pub imported: bool,
 }
 
 #[cfg(test)]

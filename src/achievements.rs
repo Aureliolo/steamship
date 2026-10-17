@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use serde_json::Value;
 
+use crate::editor::RECEIPT;
 use crate::po::Catalogue;
 use crate::presence;
 use crate::show::counted;
@@ -884,6 +885,23 @@ pub enum Drift {
         language: String,
         api_names: Vec<String>,
     },
+    /// An icon whose file, or whose image on Steam, is not the one the import receipt records.
+    IconImport {
+        api_name: String,
+        which: &'static str,
+        change: IconChange,
+    },
+}
+
+/// How an icon has moved from the import its receipt records.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IconChange {
+    /// The receipt has no import of it.
+    Unrecorded,
+    /// Its file is not the one imported.
+    ChangedInFiles,
+    /// Steam's image of it is not the one the import made, though its file is the one imported.
+    ChangedOnSteam,
 }
 
 impl fmt::Display for Drift {
@@ -939,6 +957,33 @@ impl fmt::Display for Drift {
                 formatter,
                 "Steam holds none of the file's {count} achievements: they count once entered and \
                  published in Steamworks"
+            ),
+            Self::IconImport {
+                api_name,
+                which,
+                change: IconChange::Unrecorded,
+            } => write!(
+                formatter,
+                "{api_name}: the {which} has no import in {RECEIPT}: import it, publish, then run \
+                 --imported"
+            ),
+            Self::IconImport {
+                api_name,
+                which,
+                change: IconChange::ChangedInFiles,
+            } => write!(
+                formatter,
+                "{api_name}: the {which} changed in the files since the import {RECEIPT} records: \
+                 import it, publish, then run --imported"
+            ),
+            Self::IconImport {
+                api_name,
+                which,
+                change: IconChange::ChangedOnSteam,
+            } => write!(
+                formatter,
+                "{api_name}: the {which} on Steam changed since the import {RECEIPT} records, and \
+                 not from the files: import it again, publish, then run --imported"
             ),
         }
     }
@@ -1207,6 +1252,7 @@ pub fn tally(drift: &[Drift], wanted: usize, kind: &str) -> String {
             Drift::NotInFile(_) => only_on_steam = only_on_steam.saturating_add(1),
             Drift::Differs { api_name, .. }
             | Drift::NoIcon { api_name, .. }
+            | Drift::IconImport { api_name, .. }
             | Drift::Translation { api_name, .. }
             | Drift::Untranslated { api_name, .. } => {
                 if !differing.contains(&api_name.as_str()) {

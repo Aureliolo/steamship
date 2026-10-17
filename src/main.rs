@@ -1835,8 +1835,8 @@ fn try_achievements(
     writing: &Writing,
     json: bool,
 ) -> Result<ExitCode, ExitCode> {
-    if let Some(out) = &writing.out {
-        return try_achievements_write(app, &writing.write, out, writing.unchanged);
+    if let Some(out) = writing.out.as_deref().filter(|_| !writing.write.is_empty()) {
+        return try_achievements_write(app, out, writing);
     }
     if json {
         show::divert();
@@ -1844,6 +1844,10 @@ fn try_achievements(
     show::title("achievements");
     let app_id = app_named(app)?;
     let listed = achievements_files(check, app_id, true)?;
+    let receipt = match (&listed, &writing.out) {
+        (Some(listed), Some(out)) => Some((receipt_in(out, app_id)?, achievement_icons(listed)?)),
+        _ => None,
+    };
     let home = home()?;
     let (api, from) = web_api(&home)?;
     let spinner = Spinner::start("steam", "asking for the achievements", false);
@@ -1867,6 +1871,9 @@ fn try_achievements(
         return list_achievements(&api, app_id, &held, json);
     };
     let mut drift = achievements::compare(&listed.achievements, &held.achievements);
+    if let Some((receipt, icons)) = &receipt {
+        drift.extend(receipt.drift(icons, &held.achievements));
+    }
     drift.extend(translation_drift(&api, app_id, &listed, &held)?);
     let totalled = aggregation(&api, app_id, &listed, &held)?;
     let stat_drift = listed
@@ -2032,7 +2039,7 @@ fn list_achievements(
 
 /// Each icon the `listed` achievements give, read and named as the achievement editor puts it on
 /// its achievement; refused unless it is a square PNG of 64 pixels or more.
-fn achievement_icons(listed: &achievements::Listed) -> Result<Vec<(String, Vec<u8>)>, ExitCode> {
+fn achievement_icons(listed: &achievements::Listed) -> Result<Vec<editor::Icon>, ExitCode> {
     let mut icons = Vec::new();
     for wanted in &listed.achievements {
         let defined = &wanted.defined;
@@ -2057,10 +2064,48 @@ fn achievement_icons(listed: &achievements::Listed) -> Result<Vec<(String, Vec<u
                     read.height
                 )));
             }
-            icons.push((editor::icon_name(&wanted.api_name, locked), bytes));
+            icons.push(editor::Icon {
+                api_name: wanted.api_name.clone(),
+                locked,
+                name: editor::icon_name(&wanted.api_name, locked),
+                bytes,
+            });
         }
     }
     Ok(icons)
+}
+
+/// The receipt kept in `out` of the last import of `app`'s icons, refused when there is none.
+fn receipt_in(out: &Path, app: u32) -> Result<editor::Receipt, ExitCode> {
+    let path = out.join(editor::RECEIPT);
+    let text = match fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(fail(
+                &format!(
+                    "{}: has no {}: import and publish the files --write wrote there, then run \
+                     --imported",
+                    out.display(),
+                    editor::RECEIPT
+                ),
+                REFUSED,
+            ));
+        }
+        Err(error) => return Err(fail(&format!("{}: {error}", path.display()), FAILED)),
+    };
+    let receipt = editor::Receipt::read(&text)
+        .map_err(|why| fail(&format!("{}: {why}", path.display()), REFUSED))?;
+    if receipt.app != app {
+        return Err(fail(
+            &format!(
+                "{}: records app {}'s icons, not app {app}'s",
+                path.display(),
+                receipt.app
+            ),
+            REFUSED,
+        ));
+    }
+    Ok(receipt)
 }
 
 /// The names of the files in `out` of the kinds written for `app`, in order; none when there is
@@ -2094,24 +2139,27 @@ fn written_before(out: &Path, app: u32) -> Result<Vec<String>, ExitCode> {
     Ok(names)
 }
 
-fn try_achievements_write(
-    app: &str,
-    files: &[PathBuf],
-    out: &Path,
-    unchanged: bool,
-) -> Result<ExitCode, ExitCode> {
+fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<ExitCode, ExitCode> {
+    let unchanged = writing.unchanged;
     show::title(if unchanged {
         "achievements, unchanged"
+    } else if writing.imported {
+        "achievements, imported"
     } else {
         "achievements, write"
     });
     let app_id = app_named(app)?;
-    let listed = achievements_files(files, app_id, false)?.unwrap_or_default();
+    let listed = achievements_files(&writing.write, app_id, false)?.unwrap_or_default();
     let mut package: Vec<(String, Vec<u8>)> = editor::tables(app_id, &listed)
         .into_iter()
         .map(|table| (table.name, table.text.into_bytes()))
         .collect();
-    package.extend(achievement_icons(&listed)?);
+    let icons = achievement_icons(&listed)?;
+    package.extend(
+        icons
+            .iter()
+            .map(|icon| (icon.name.clone(), icon.bytes.clone())),
+    );
     let before = written_before(out, app_id)?;
     let stale: Vec<&(String, Vec<u8>)> = package
         .iter()
@@ -2122,14 +2170,29 @@ fn try_achievements_write(
         .filter(|name| !package.iter().any(|(written, _)| written == *name))
         .collect();
     let folder = out.display();
+    let stale_names: Vec<&String> = stale.iter().map(|(name, _)| name).collect();
     if unchanged {
         return Ok(unchanged_or_not(
             out,
             package.len(),
-            &stale.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+            &stale_names,
             &left,
             &before,
         ));
+    }
+    if writing.imported {
+        if !stale_names.is_empty() || !left.is_empty() {
+            name_differences(&stale_names, &left, &before);
+            show::field(
+                "next",
+                &format!(
+                    "run it without --imported to write {folder} as the files make it, import \
+                     and publish what it writes, then run --imported"
+                ),
+            );
+            return Ok(ExitCode::from(REFUSED));
+        }
+        return try_achievements_imported(app_id, &icons, out);
     }
     let failed = |error: &io::Error| fail(&format!("{folder}: {error}"), FAILED);
     fs::create_dir_all(out).map_err(|error| failed(&error))?;
@@ -2152,12 +2215,102 @@ fn try_achievements_write(
         "next",
         &format!(
             "in Steamworks, under app {app_id}'s Stats & Achievements, Bulk Import/Export: drop \
-             every file in {folder} and Save imported data; then drop \
+             every CSV and PNG file in {folder} and Save imported data; then drop \
              {app_id}-achievements-localization.csv again on its own, since the first import \
-             applies it only in part"
+             applies it only in part; publish, and run this again with --imported"
         ),
     );
     import_notes(&listed);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Records in `out` the image Steam made of each of `app`'s `icons`, once they are imported and
+/// published; refused when Steam lacks one or plainly has not taken the import yet.
+fn try_achievements_imported(
+    app: u32,
+    icons: &[editor::Icon],
+    out: &Path,
+) -> Result<ExitCode, ExitCode> {
+    let path = out.join(editor::RECEIPT);
+    // Only a readable receipt of this app tells an import Steam has not taken; any other is
+    // replaced.
+    let last = fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| editor::Receipt::read(&text).ok())
+        .filter(|receipt| receipt.app == app);
+    let home = home()?;
+    let (api, from) = web_api(&home)?;
+    let spinner = Spinner::start("steam", "asking for the achievements", false);
+    let held = match api.schema(app, "english") {
+        Ok(held) => held,
+        Err(error) => return Err(web_api_failed(spinner, &error)),
+    };
+    spinner.done(&format!(
+        "{} on Steam",
+        show::counted(held.achievements.len(), "achievement")
+    ));
+    offer_to_keep(&home, &api, from);
+    let receipt = editor::Receipt::of(app, icons, &held.achievements);
+    let untaken: Vec<String> = icons
+        .iter()
+        .filter_map(|icon| {
+            let address = icon.on_steam(&held.achievements);
+            let recorded = last.as_ref().and_then(|last| last.icons.get(&icon.name));
+            if address.is_empty() {
+                Some(format!("{}: Steam has no {}", icon.api_name, icon.which()))
+            } else if recorded.is_some_and(|imported| {
+                imported.sha256 != icon.sha256() && imported.steam == editor::steam_image(address)
+            }) {
+                Some(format!(
+                    "{}: Steam still has the {} the last import made, where the file changed \
+                     since",
+                    icon.api_name,
+                    icon.which()
+                ))
+            } else {
+                None
+            }
+        })
+        .collect();
+    if !untaken.is_empty() {
+        for why in &untaken {
+            show::failure(why, "", None);
+        }
+        show::field(
+            "next",
+            &format!(
+                "in Steamworks, under app {app}'s Stats & Achievements, import and publish the \
+                 files in {}, then run --imported again",
+                out.display()
+            ),
+        );
+        return Ok(ExitCode::from(REFUSED));
+    }
+    fs::write(&path, receipt.text())
+        .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
+    show::field("wrote", editor::RECEIPT);
+    show::success(
+        &format!(
+            "{} in {} records the {} Steam holds",
+            editor::RECEIPT,
+            out.display(),
+            show::counted(icons.len(), "icon")
+        ),
+        "",
+    );
+    if last.is_none() && !icons.is_empty() {
+        show::note(
+            "the receipt takes Steam's icons to be the files': look at each once in the \
+             achievement editor",
+        );
+    }
+    show::field(
+        "next",
+        &format!(
+            "keep {} with the files; --check with --out names each icon that changes after",
+            editor::RECEIPT
+        ),
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -2181,6 +2334,17 @@ fn unchanged_or_not(
         );
         return ExitCode::SUCCESS;
     }
+    name_differences(stale, left, before);
+    show::field(
+        "next",
+        "run it again without --unchanged to write them as the files make them",
+    );
+    ExitCode::from(REFUSED)
+}
+
+/// Names each file `stale` in a folder, as missing when it is not among those there `before`, and
+/// each `left` over there.
+fn name_differences(stale: &[&String], left: &[&String], before: &[String]) {
     for name in stale {
         let why = if before.contains(name) {
             "differs from what the files make"
@@ -2192,11 +2356,6 @@ fn unchanged_or_not(
     for name in left {
         show::failure(&format!("{name} is left over"), "", None);
     }
-    show::field(
-        "next",
-        "run it again without --unchanged to write them as the files make them",
-    );
-    ExitCode::from(REFUSED)
 }
 
 /// What the import of what `listed` makes needs beside the files themselves.
