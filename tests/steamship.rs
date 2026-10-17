@@ -6232,6 +6232,25 @@ fn promote_sets_the_default_branch_live_only_while_steam_shows_the_app_unrelease
         "{setting}"
     );
 
+    // In CI, Steam is asked as the account the login handed over is for, which no home remembers.
+    let handed_over = faked_with(&released_as("unavailable"));
+    let (ci_host, _ci_requests) = web_api(vec![("200 OK", SET_LIVE)]);
+    let (from_ci, ci_said, ci_why) = steamship(
+        &["promote", script, "--build", "1234", "--branch", "default"],
+        Some(handed_over.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            ("STEAMSHIP_LOGIN", &packed_login()),
+            (STAND_IN, &ci_host),
+        ],
+    );
+    assert_eq!(from_ci, Some(0_i32), "{ci_said}{ci_why}");
+    assert!(
+        ci_said.contains("app 1000: BuildID 1234 live on default"),
+        "{ci_said}"
+    );
+
     let released = faked_with(&released_as("released"));
     saved_login(released.path());
     // A stand-in that answers nothing: a request would fail with 1, not be refused with 2.
