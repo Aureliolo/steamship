@@ -375,7 +375,9 @@ as games-kit gives them, 0 and `false` where the record says nothing.
 
 `--check` takes several files, after it or each after its own `--check`, and reads them
 together, so achievements and stats kept in more than one file are checked as one list. An
-achievement or stat in two of them is refused, naming both. Steam's Web API does not give a
+achievement or stat in two of them is refused, naming both, and so is an achievement and a stat
+of one API name, in one file or two: Steamworks saves such an import but refuses to publish it,
+saying the achievement "has API name conflict with stat". Steam's Web API does not give a
 stat's type, bounds, whether it only goes up or who may set it, nor an achievement's progress
 stat and maximum, its set, whether it is archived or who may unlock it. So a stat's `kind`,
 `min`, `max`, `max_change`, `increment_only` and `permission`, and an achievement's `stat`, `at`,
