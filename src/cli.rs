@@ -188,13 +188,13 @@ pub enum Command {
     /// achievement counts a stat it unlocks at no value of, is in a set no file lists, or there
     /// are more sets or achievements than Steam takes.
     ///
-    /// Steam's Web API serves no icon's image, only its address, so whether Steam's icon is the
-    /// file's is told from a receipt. Once the files are imported and published, `--imported`
-    /// writes `steam-icons.json` into the `--out` folder, recording each icon's SHA-256 and the
-    /// image Steam made of it. `--check` with that `--out` then also names every icon changed in
-    /// the files since, every icon Steam made anew though its file is the one imported, and every
-    /// icon the receipt has no import of. The receipt trusts that the import it records took the
-    /// files as they were, which the achievement editor shows.
+    /// Once the files are imported and published, `--imported` compares each icon Steam serves
+    /// with its file, pixel by pixel, and when all are alike writes `steam-icons.json` into the
+    /// `--out` folder, recording each icon's SHA-256 and the image Steam made of it. `--check`
+    /// with that `--out` then also names every icon changed in the files since, every icon Steam
+    /// made anew though its file is the one imported, and every icon the receipt has no import
+    /// of, without fetching the images. Steam answers with what is published, so an import saved
+    /// but not published counts once it is.
     #[command(group(clap::ArgGroup::new("files").args(["check", "write"]).multiple(true)))]
     Achievements {
         /// The app, by its ID or its app build script.
@@ -432,8 +432,9 @@ pub struct Writing {
     pub unchanged: bool,
     /// Write only `steam-icons.json` in the folder, from the icons Steam holds once the folder's
     /// files are imported and published; refused, exiting 2, when the folder is not as `--write`
-    /// would write it, or Steam lacks an icon of the files or still has the one last recorded
-    /// for an icon that changed.
+    /// would write it, Steam lacks an achievement or icon of the files, or an icon Steam serves
+    /// is not its file: more than one pixel in a thousand more than 64 off in a channel, out of
+    /// 255, where its JPEG leaves each pixel well within that.
     #[arg(long, requires = "write", conflicts_with = "unchanged")]
     pub imported: bool,
 }
