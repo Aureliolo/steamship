@@ -631,7 +631,10 @@ pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<Strin
                 "steamcmd exited 0, but its build log does not say the build finished".to_owned()
             }
             Some(code) => format!("steamcmd exited {code} without saying why"),
-            None => "steamcmd did not finish in time and was stopped".to_owned(),
+            None => run::told().map_or_else(
+                || "steamcmd did not finish in time and was stopped".to_owned(),
+                |signal| format!("steamship was told to stop by {signal}, and stopped steamcmd"),
+            ),
         });
     }
     found

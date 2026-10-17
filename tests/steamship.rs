@@ -968,6 +968,82 @@ fn an_upload_built_then_failed_keeps_its_build_id_and_shows_steams_logs_in_actio
     );
 }
 
+/// A steamcmd that logs in, says where it is, and then waits as one that has hung.
+#[cfg(unix)]
+const HUNG: &str = "#!/bin/sh\n\
+    echo 'Logging in user build_bot to Steam Public...OK'\n\
+    echo $$ > \"$HOME/steamcmd.pid\"\n\
+    exec sleep 120\n";
+
+#[cfg(unix)]
+#[test]
+fn an_upload_told_to_stop_stops_steamcmd_shows_what_it_said_and_ends_by_that_signal() {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    for (name, number) in [("INT", 2_i32), ("HUP", 1_i32), ("TERM", 15_i32)] {
+        let home = faked_with(HUNG);
+        let outputs = home.path().join("github_output");
+        fs::write(&outputs, "").unwrap();
+        let (_project, script) = project(true);
+        let mut command = steamship_command();
+        let _: &mut Command = command
+            .args(["upload", script.to_str().unwrap(), "--account", "build_bot"])
+            .args(["--version", "1.4.0"])
+            .env_remove("CI")
+            .env("STEAMSHIP_HOME", home.path())
+            .env("STEAMSHIP_LOGIN", packed_login())
+            .env("GITHUB_ACTIONS", "true")
+            .env("GITHUB_OUTPUT", &outputs)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let started = run::spawn(&mut command).unwrap();
+        let pid_file = home.path().join("steamcmd.pid");
+        let waiting = Instant::now();
+        let steamcmd = loop {
+            if let Some(pid) = fs::read_to_string(&pid_file)
+                .ok()
+                .filter(|pid| pid.ends_with('\n'))
+            {
+                break pid.trim().to_owned();
+            }
+            assert!(
+                waiting.elapsed() < Duration::from_secs(60),
+                "steamcmd never started"
+            );
+            thread::sleep(Duration::from_millis(50));
+        };
+        let signalled = run::output(
+            run::command("kill")
+                .args(["-s", name])
+                .arg(started.id().to_string()),
+        )
+        .unwrap();
+        assert!(signalled.status.success(), "{signalled:?}");
+        let ended = started.wait_with_output().unwrap();
+        let stdout = String::from_utf8_lossy(&ended.stdout);
+        let stderr = String::from_utf8_lossy(&ended.stderr);
+        assert_eq!(
+            ended.status.signal(),
+            Some(number),
+            "{name}: {stdout}{stderr}"
+        );
+        assert!(
+            stderr.contains(&format!(
+                "steamship was told to stop by SIG{name}, and stopped steamcmd"
+            )),
+            "{name}: {stderr}"
+        );
+        assert!(
+            stdout.contains("::group::steamcmd's console\n")
+                && stdout.contains("Logging in user build_bot to Steam Public...OK"),
+            "{name}: {stdout}"
+        );
+        let gone = run::output(run::command("kill").args(["-0", &steamcmd])).unwrap();
+        assert!(!gone.status.success(), "{name}: steamcmd still runs");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn a_failed_upload_outside_actions_shows_no_log_groups() {
