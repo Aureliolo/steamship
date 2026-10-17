@@ -13,7 +13,7 @@ use serde_json::Value;
 use crate::po::Catalogue;
 use crate::presence;
 use crate::show::counted;
-use crate::webapi::{Achievement, Stat};
+use crate::webapi::{Achievement, Stat, Totalled};
 
 /// The most achievements Steam takes for an app, archived ones included.
 pub const MOST_ACHIEVEMENTS: usize = 5_000;
@@ -77,6 +77,8 @@ pub struct WantedStat {
     pub id: Option<String>,
     /// Whether it counts in whole steps, when the file says.
     pub whole: Option<bool>,
+    /// Whether Steam adds it up over all players, when the file says.
+    pub aggregated: Option<bool>,
 }
 
 /// A set of achievements as the file wants it.
@@ -542,6 +544,15 @@ fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String
         Some(Some("float")) => Some(false),
         Some(_) => return Err(format!("stat {api_name}: \"kind\" is not int or float")),
     };
+    let aggregated = match entry.get("aggregated") {
+        None => None,
+        Some(Value::Bool(aggregated)) => Some(*aggregated),
+        Some(_) => {
+            return Err(format!(
+                "stat {api_name}: \"aggregated\" is not true or false"
+            ));
+        }
+    };
     Ok(WantedStat {
         api_name,
         name,
@@ -551,6 +562,7 @@ fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String
             _ => None,
         },
         whole,
+        aggregated,
     })
 }
 
@@ -959,8 +971,14 @@ pub fn stat_line(stat: &Stat, total: Option<&str>) -> String {
 
 /// Every way `held`, Steam's stats, differ from those the file `wants`, each named as a stat:
 /// first each of the file's in its order, then those only Steam has, in Steam's.
+///
+/// Whether a stat is aggregated is compared where the file says and Steam's `totalled` does.
 #[must_use]
-pub fn compare_stats(wants: &[WantedStat], held: &[Stat]) -> Vec<Drift> {
+pub fn compare_stats(
+    wants: &[WantedStat],
+    held: &[Stat],
+    totalled: Option<&Totalled>,
+) -> Vec<Drift> {
     let label = |api_name: &str| format!("stat {api_name}");
     let mut drift = Vec::new();
     for wanted in wants {
@@ -988,6 +1006,18 @@ pub fn compare_stats(wants: &[WantedStat], held: &[Stat]) -> Vec<Drift> {
                 field: "the default",
                 steam: steam.default.to_string(),
                 file: default.to_string(),
+            });
+        }
+        if let Some(wanted_aggregated) = wanted.aggregated
+            && let Some(steam_aggregated) =
+                totalled.and_then(|totalled| totalled.aggregated(&wanted.api_name))
+            && wanted_aggregated != steam_aggregated
+        {
+            drift.push(Drift::Differs {
+                api_name: label(&wanted.api_name),
+                field: "aggregated",
+                steam: steam_aggregated.to_string(),
+                file: wanted_aggregated.to_string(),
             });
         }
     }
@@ -1280,6 +1310,7 @@ mod tests {
             default: Some(default),
             id: None,
             whole: None,
+            aggregated: None,
         };
         assert_eq!(
             listed.stats,
@@ -1368,7 +1399,7 @@ mod tests {
                 {"type": "achievement", "id": "base:secret", "steam": "SECRET",
                  "name": "Hush", "hidden": true, "icon": "res://icons/secret.png"},
                 {"type": "stat", "id": "base:gold", "steam": "gold", "name": "Gold earned",
-                 "default": 5}
+                 "default": 5, "aggregated": true}
             ]"#,
         )
         .unwrap();
@@ -1409,6 +1440,7 @@ mod tests {
                     default: None,
                     id: Some("base:floors".to_owned()),
                     whole: Some(true),
+                    aggregated: None,
                 },
                 WantedStat {
                     api_name: "gold".to_owned(),
@@ -1416,6 +1448,7 @@ mod tests {
                     default: Some(5.0_f64),
                     id: Some("base:gold".to_owned()),
                     whole: None,
+                    aggregated: Some(true),
                 },
             ])
         );
@@ -2069,6 +2102,7 @@ mod tests {
             default: Some(default),
             id: None,
             whole: None,
+            aggregated: None,
         };
         let held = |api_name: &str, name: &str, default: f64| Stat {
             api_name: api_name.to_owned(),
@@ -2078,7 +2112,8 @@ mod tests {
         assert_eq!(
             compare_stats(
                 &[wanted("NumGames", "Games played", 0.0_f64)],
-                &[held("NumGames", "Games played", 0.0_f64)]
+                &[held("NumGames", "Games played", 0.0_f64)],
+                None
             ),
             []
         );
@@ -2091,6 +2126,7 @@ mod tests {
                 held("Extra", "", 0.0_f64),
                 held("NumGames", "Games", 1.5_f64),
             ],
+            None,
         );
         let said: Vec<String> = drift.iter().map(ToString::to_string).collect();
         assert_eq!(
@@ -2109,11 +2145,60 @@ mod tests {
             default: None,
             id: None,
             whole: None,
+            aggregated: None,
         };
         assert_eq!(
-            compare_stats(&[unset], &[held("NumGames", "Games", 1.5_f64)]),
+            compare_stats(&[unset], &[held("NumGames", "Games", 1.5_f64)], None),
             [],
             "a name and default the file does not set are Steamworks' own"
+        );
+    }
+
+    #[test]
+    fn a_stat_is_said_to_differ_where_steam_aggregates_it_otherwise_than_the_file_says() {
+        let wanted = |api_name: &str, aggregated: Option<bool>| WantedStat {
+            api_name: api_name.to_owned(),
+            name: None,
+            default: None,
+            id: None,
+            whole: None,
+            aggregated,
+        };
+        let held: Vec<Stat> = ["floors", "gold", "staff", "unsaid"]
+            .into_iter()
+            .map(|api_name| Stat {
+                api_name: api_name.to_owned(),
+                name: String::new(),
+                default: 0.0_f64,
+            })
+            .collect();
+        let totalled = Totalled {
+            totals: BTreeMap::from([("gold".to_owned(), None)]),
+            unaggregated: BTreeSet::from(["floors".to_owned(), "staff".to_owned()]),
+            withheld: None,
+        };
+        let wants = [
+            wanted("floors", Some(true)),
+            wanted("gold", Some(false)),
+            wanted("staff", Some(false)),
+            wanted("unsaid", Some(true)),
+        ];
+        let said: Vec<String> = compare_stats(&wants, &held, Some(&totalled))
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            said,
+            [
+                "stat floors: aggregated is \"false\" on Steam and \"true\" in the file",
+                "stat gold: aggregated is \"true\" on Steam and \"false\" in the file",
+            ],
+            "a stat Steam said nothing of is not counted as differing"
+        );
+        assert_eq!(
+            compare_stats(&wants, &held, None),
+            [],
+            "nothing is compared where Steam was not asked"
         );
     }
 
