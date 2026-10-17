@@ -489,7 +489,8 @@ nothing, so whether Steam's icon is the file's is told from a receipt of the imp
 Once the import is saved and published, `--imported` writes `steam-icons.json` into the
 `--out` folder, recording each icon's file by its SHA-256 and the image Steam made of it by the
 name it serves it under, and writes nothing else. It is refused, exiting 2, when the folder is
-not as `--write` would write it, when Steam has none of an icon the files give, and when an
+not as `--write` would write it, when Steam has an icon's achievement or the icon itself not
+yet, and when an
 icon's file changed since the last receipt but Steam still has the image the last import made.
 Steam makes each import's icons anew, under a new name, so the last is an import not yet saved
 or published.
