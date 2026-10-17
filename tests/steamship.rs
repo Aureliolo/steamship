@@ -2920,7 +2920,7 @@ fn by_fields(folder: &Path, items: &Path, extra: &[&str]) -> Vec<String> {
 
 #[cfg(unix)]
 #[test]
-fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated() {
+fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci() {
     let home = publishing("Success.", 0);
     let (temp, script) = workshop_item("");
     let folder = script.parent().unwrap();
@@ -2965,7 +2965,7 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated() {
 
     let updated = by_fields(folder, &items, &["--json"]);
     let updated: Vec<&str> = updated.iter().map(String::as_str).collect();
-    let (again, summary, said) = steamship(&updated, Some(home.path()), &[]);
+    let (again, summary, said) = steamship(&updated, Some(home.path()), &[("CI", "true")]);
     assert_eq!(again, Some(0_i32), "{summary}{said}");
     assert_eq!(
         summary,
