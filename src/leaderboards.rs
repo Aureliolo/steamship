@@ -3,7 +3,7 @@
 //! Steam makes a leaderboard it lacks as the file has it, but keeps an existing one's settings,
 //! and its scores with them; so one that differs is reported, never changed or made again.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde_json::Value;
@@ -21,68 +21,110 @@ pub struct Listed {
     pub leaderboards: Vec<Leaderboard>,
 }
 
-/// Reads the file's `text`: an object with a `leaderboards` list.
+/// Reads the file's `text`: an object with a `leaderboards` list, or a list of games-kit's
+/// records, of which those typed `leaderboard` are read by the name in `steam`.
 ///
 /// Each entry has its `name`, `sort` (`ascending` or `descending`) and `display` (`numeric`,
 /// `seconds` or `milliseconds`), and `trusted_writes` and `friends_only` when they are set. Other
-/// keys are left alone.
+/// keys, among them a record's `upload` and `details`, which the game sends with each score, are
+/// left alone.
 ///
 /// # Errors
 ///
-/// When the text is not such an object, an entry lacks its name, sort or display or has one Steam
-/// does not take, a value has the wrong type, or a name is there twice.
+/// When the text is neither, an entry lacks its name, sort or display or has one Steam does not
+/// take, a value has the wrong type, or a name is there twice.
 pub fn read(text: &str) -> Result<Listed, String> {
     let file: Value = serde_json::from_str(text).map_err(|error| format!("not JSON: {error}"))?;
-    let app = match file.get("app") {
-        None => None,
-        Some(app) => Some(app.as_u64().ok_or("\"app\" is not an app ID")?),
+    let mut leaderboards = Vec::new();
+    let app = if let Value::Array(records) = &file {
+        for (index, record) in records.iter().enumerate() {
+            let label = format!("record {}", index.saturating_add(1));
+            let Some(Value::String(kind)) = record.get("type") else {
+                return Err(format!("{label} has no \"type\" text"));
+            };
+            if kind == "leaderboard" {
+                leaderboards.push(leaderboard(record, &label, "steam")?);
+            }
+        }
+        None
+    } else {
+        let entries = file
+            .get("leaderboards")
+            .and_then(Value::as_array)
+            .ok_or("there is no \"leaderboards\" list")?;
+        for (index, entry) in entries.iter().enumerate() {
+            let label = format!("leaderboard {}", index.saturating_add(1));
+            leaderboards.push(leaderboard(entry, &label, "name")?);
+        }
+        match file.get("app") {
+            None => None,
+            Some(app) => Some(app.as_u64().ok_or("\"app\" is not an app ID")?),
+        }
     };
-    let entries = file
-        .get("leaderboards")
-        .and_then(Value::as_array)
-        .ok_or("there is no \"leaderboards\" list")?;
     let mut seen = BTreeSet::new();
-    let mut leaderboards = Vec::with_capacity(entries.len());
-    for (index, entry) in entries.iter().enumerate() {
-        let place = index.saturating_add(1);
-        let name = match entry.get("name") {
-            Some(Value::String(name)) if !name.is_empty() => name.clone(),
-            _ => return Err(format!("leaderboard {place} has no \"name\" text")),
-        };
-        if name.len() > LONGEST {
-            return Err(format!("{name}: longer than Steam's {LONGEST} bytes"));
-        }
-        let one_of = |key: &str, words: &[&str]| -> Result<String, String> {
-            let given = entry.get(key).and_then(Value::as_str).unwrap_or_default();
-            words
-                .iter()
-                .find(|word| word.eq_ignore_ascii_case(given))
-                .map(|&word| word.to_owned())
-                .ok_or_else(|| {
-                    let lowered: Vec<String> =
-                        words.iter().map(|word| word.to_ascii_lowercase()).collect();
-                    format!("{name}: \"{key}\" is not {}", or_list(&lowered))
-                })
-        };
-        let flag = |key: &str| match entry.get(key) {
-            None => Ok(false),
-            Some(Value::Bool(on)) => Ok(*on),
-            Some(_) => Err(format!("{name}: \"{key}\" is not true or false")),
-        };
-        let leaderboard = Leaderboard {
-            sort: one_of("sort", &["Ascending", "Descending"])?,
-            display: one_of("display", &["Numeric", "Seconds", "MilliSeconds"])?,
-            trusted_writes: flag("trusted_writes")?,
-            friends_only: flag("friends_only")?,
-            entries: 0,
-            name,
-        };
-        if !seen.insert(leaderboard.name.clone()) {
-            return Err(format!("{} is in the file twice", leaderboard.name));
-        }
-        leaderboards.push(leaderboard);
+    if let Some(again) = leaderboards
+        .iter()
+        .find(|leaderboard| !seen.insert(&leaderboard.name))
+    {
+        return Err(format!("{} is in the file twice", again.name));
     }
     Ok(Listed { app, leaderboards })
+}
+
+/// The leaderboard `entry`, its name under `named_by`, called `label` in what is wrong with it
+/// until that name is known.
+fn leaderboard(entry: &Value, label: &str, named_by: &str) -> Result<Leaderboard, String> {
+    let name = match entry.get(named_by) {
+        Some(Value::String(name)) if !name.is_empty() => name.clone(),
+        _ => return Err(format!("{label} has no \"{named_by}\" text")),
+    };
+    if name.len() > LONGEST {
+        return Err(format!("{name}: longer than Steam's {LONGEST} bytes"));
+    }
+    let one_of = |key: &str, words: &[&str]| -> Result<String, String> {
+        let given = entry.get(key).and_then(Value::as_str).unwrap_or_default();
+        words
+            .iter()
+            .find(|word| word.eq_ignore_ascii_case(given))
+            .map(|&word| word.to_owned())
+            .ok_or_else(|| {
+                let lowered: Vec<String> =
+                    words.iter().map(|word| word.to_ascii_lowercase()).collect();
+                format!("{name}: \"{key}\" is not {}", or_list(&lowered))
+            })
+    };
+    let flag = |key: &str| match entry.get(key) {
+        None => Ok(false),
+        Some(Value::Bool(on)) => Ok(*on),
+        Some(_) => Err(format!("{name}: \"{key}\" is not true or false")),
+    };
+    Ok(Leaderboard {
+        sort: one_of("sort", &["Ascending", "Descending"])?,
+        display: one_of("display", &["Numeric", "Seconds", "MilliSeconds"])?,
+        trusted_writes: flag("trusted_writes")?,
+        friends_only: flag("friends_only")?,
+        entries: 0,
+        name,
+    })
+}
+
+/// The leaderboards of the `files`, each read and named, of each in turn.
+///
+/// # Errors
+///
+/// When a leaderboard is in two of the files, naming both.
+pub fn together(files: Vec<(String, Listed)>) -> Result<Vec<Leaderboard>, String> {
+    let mut whole = Vec::new();
+    let mut from: BTreeMap<String, String> = BTreeMap::new();
+    for (file, listed) in files {
+        for wanted in listed.leaderboards {
+            if let Some(first) = from.insert(wanted.name.clone(), file.clone()) {
+                return Err(format!("{} is in both {first} and {file}", wanted.name));
+            }
+            whole.push(wanted);
+        }
+    }
+    Ok(whole)
 }
 
 /// `words` as a sentence gives a choice: `a`, `a or b`, `a, b or c`.
@@ -263,7 +305,7 @@ mod tests {
     fn a_file_steam_would_not_take_says_why() {
         let long = "x".repeat(129);
         for (text, why) in [
-            ("[]".to_owned(), "there is no \"leaderboards\" list"),
+            ("{}".to_owned(), "there is no \"leaderboards\" list"),
             ("{".to_owned(), "not JSON"),
             (
                 r#"{"app": "x", "leaderboards": []}"#.to_owned(),
@@ -319,6 +361,78 @@ mod tests {
             ))
             .is_ok(),
             "Steam's longest is taken"
+        );
+    }
+
+    #[test]
+    fn games_kits_leaderboard_records_are_read_by_their_steam_name_and_others_left_alone() {
+        let listed = read(
+            r#"[{"type": "stat", "id": "base:floors", "steam": "floors"},
+                {"type": "leaderboard", "id": "base:fastest_inn", "steam": "FASTEST_INN",
+                 "name": "Fastest Inn", "sort": "ascending", "display": "seconds",
+                 "upload": "keep_best", "details": 2},
+                {"type": "leaderboard", "steam": "GOLD", "sort": "descending",
+                 "display": "numeric", "upload": "force", "trusted_writes": true}]"#,
+        )
+        .unwrap();
+        let mut gold = board("GOLD", "Descending", "Numeric");
+        gold.trusted_writes = true;
+        assert_eq!(
+            listed,
+            Listed {
+                app: None,
+                leaderboards: vec![board("FASTEST_INN", "Ascending", "Seconds"), gold],
+            }
+        );
+        assert_eq!(read("[]").unwrap().leaderboards, []);
+        for (text, why) in [
+            (r#"[{"steam": "A"}]"#, "record 1 has no \"type\" text"),
+            (
+                r#"[{"type": "stat", "steam": "s"}, {"type": "leaderboard", "name": "A"}]"#,
+                "record 2 has no \"steam\" text",
+            ),
+            (
+                r#"[{"type": "leaderboard", "steam": "A", "sort": "ascending"}]"#,
+                "A: \"display\" is not numeric, seconds or milliseconds",
+            ),
+            (
+                r#"[{"type": "leaderboard", "steam": "A", "sort": "ascending", "display": "numeric"},
+                    {"type": "leaderboard", "steam": "A", "sort": "ascending", "display": "numeric"}]"#,
+                "A is in the file twice",
+            ),
+        ] {
+            assert_eq!(read(text).unwrap_err(), why, "{text}");
+        }
+    }
+
+    #[test]
+    fn several_files_are_read_as_one_and_none_may_repeat_another() {
+        let listed = |names: &[&str]| Listed {
+            app: None,
+            leaderboards: names
+                .iter()
+                .map(|name| board(name, "Ascending", "Numeric"))
+                .collect(),
+        };
+        assert_eq!(
+            together(vec![
+                ("base.json".to_owned(), listed(&["a", "b"])),
+                ("more.json".to_owned(), listed(&["c"])),
+            ])
+            .unwrap(),
+            [
+                board("a", "Ascending", "Numeric"),
+                board("b", "Ascending", "Numeric"),
+                board("c", "Ascending", "Numeric"),
+            ]
+        );
+        assert_eq!(
+            together(vec![
+                ("base.json".to_owned(), listed(&["a"])),
+                ("more.json".to_owned(), listed(&["a"])),
+            ])
+            .unwrap_err(),
+            "a is in both base.json and more.json"
         );
     }
 

@@ -5382,6 +5382,75 @@ fn leaderboards_are_listed_and_checked_and_those_missing_are_made_as_the_file_ha
 }
 
 #[test]
+fn games_kits_leaderboard_records_are_checked_and_a_leaderboard_in_two_files_is_refused() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", LEADERBOARDS), ("200 OK", LEADERBOARDS)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let records = files.path().join("achievements.json");
+    fs::write(
+        &records,
+        r#"[{"type": "stat", "id": "base:gold", "steam": "gold_banked"},
+            {"type": "leaderboard", "id": "base:gold", "steam": "gold", "name": "Gold",
+             "sort": "descending", "display": "numeric", "upload": "keep_best", "details": 1,
+             "trusted_writes": true}]"#,
+    )
+    .unwrap();
+    let records = records.to_string_lossy().into_owned();
+
+    let (code, said, stderr) = steamship(
+        &["leaderboards", "480", "--check", &records],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(code, Some(0_i32), "{said}{stderr}");
+    assert!(
+        said.contains(&format!("{records}, 1 leaderboard\n"))
+            && said.contains("Steam's leaderboards match the file")
+            && !said.contains("match the files"),
+        "{said}"
+    );
+
+    let stats = files.path().join("stats.json");
+    fs::write(&stats, r#"[{"type": "stat", "steam": "floors"}]"#).unwrap();
+    let stats = stats.to_string_lossy().into_owned();
+    let (both, matching, unsaid) = steamship(
+        &[
+            "leaderboards",
+            "480",
+            "--check",
+            &records,
+            "--check",
+            &stats,
+        ],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(both, Some(0_i32), "{matching}{unsaid}");
+    assert!(
+        matching.contains(&format!("{stats}, 0 leaderboards\n"))
+            && matching.contains("Steam's leaderboards match the files"),
+        "{matching}"
+    );
+
+    let other = leaderboards_file(files.path(), true);
+    let (refused, _, why) = steamship(
+        &["leaderboards", "480", "--check", &records, &other],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert!(
+        why.contains(&format!("gold is in both {records} and {other}")),
+        "{why}"
+    );
+}
+
+#[test]
 fn a_leaderboards_file_that_is_not_one_is_refused_before_steam_and_create_needs_check() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
