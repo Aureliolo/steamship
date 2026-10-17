@@ -6,15 +6,18 @@
 //! process it starts. Elsewhere it runs in a process group of its own, for the same ending.
 //!
 //! Every program steamship starts with the standard library, steamcmd outside Windows and Git and
-//! the GitHub command line everywhere, is made by [`command`].
+//! the GitHub command line everywhere, is made by [`command`] and started by [`spawn`] or
+//! [`output`].
 
 use std::ffi::{OsStr, OsString};
 use std::io::{self, BufReader, Read};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt as _;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(windows)]
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 #[cfg(windows)]
@@ -47,6 +50,55 @@ where
     #[cfg(windows)]
     let _: &mut Command = command.creation_flags(CREATE_NO_WINDOW);
     command
+}
+
+/// Held while a handle of steamship's is marked to be handed down, and while the standard library
+/// starts a program.
+///
+/// The standard library hands a program every handle the process has marked so at that moment.
+/// steamship marks the output of a run for as long as it takes to start the program, and making a
+/// pseudo console marks its pipes for as long as it takes to start the console; a program the
+/// standard library started then would hold that output open for as long as it ran.
+#[cfg(windows)]
+static HANDING_DOWN: Mutex<()> = Mutex::new(());
+
+/// [`HANDING_DOWN`], held until dropped.
+#[cfg(windows)]
+pub fn handing_down() -> MutexGuard<'static, ()> {
+    // The lock guards no data, so one a panic left is as good as any.
+    HANDING_DOWN.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Starts `command`, made by [`command`].
+///
+/// # Errors
+///
+/// When the program cannot be started.
+pub fn spawn(command: &mut Command) -> io::Result<Child> {
+    #[cfg(windows)]
+    let _handing_down = handing_down();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the one place the standard library starts a program, with nothing handed down \
+                  that is not the program's"
+    )]
+    command.spawn()
+}
+
+/// Runs `command`, made by [`command`], to its end, with nothing on its input, and gives its exit
+/// status and all it wrote to each stream.
+///
+/// # Errors
+///
+/// When the program cannot be started or what it writes cannot be read.
+pub fn output(command: &mut Command) -> io::Result<Output> {
+    spawn(
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )?
+    .wait_with_output()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,17 +273,15 @@ mod tests {
     #[test]
     #[ignore = "a part of the test below, which runs it from a process with no console"]
     fn console_window_of_a_program_started_by_command() {
-        let output = command("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "Add-Type -Name Console -Namespace Shown -MemberDefinition \
+        let output = output(command("powershell.exe").args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Add-Type -Name Console -Namespace Shown -MemberDefinition \
                  '[DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow();'; \
                  [Shown.Console]::GetConsoleWindow()",
-            ])
-            .output()
-            .unwrap();
+        ]))
+        .unwrap();
         println!(
             "console window: {}\n{}",
             String::from_utf8_lossy(&output.stdout).trim(),
@@ -246,16 +296,17 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn a_program_started_without_a_console_opens_no_window() {
-        let output = command(env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "run::tests::console_window_of_a_program_started_by_command",
-                "--ignored",
-                "--nocapture",
-            ])
-            .creation_flags(DETACHED_PROCESS)
-            .output()
-            .unwrap();
+        let output = output(
+            command(env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "run::tests::console_window_of_a_program_started_by_command",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .creation_flags(DETACHED_PROCESS),
+        )
+        .unwrap();
         let said = String::from_utf8_lossy(&output.stdout);
         assert!(said.contains("console window: 0\n"), "{said}");
     }

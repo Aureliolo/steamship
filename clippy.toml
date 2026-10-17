@@ -8,6 +8,11 @@ allow-print-in-tests = true
 allow-renamed-params-for = ["..", "core::fmt::Display", "core::fmt::Debug"]
 # A console program started by a steamship without a console opens a window on the screen
 # unless it is told not to, which steamship::run::command does.
+# A program the standard library starts on Windows is handed every handle marked to be handed
+# down at that moment, which steamship::run::spawn keeps clear of the ones steamship marks.
 disallowed-methods = [
   { path = "std::process::Command::new", reason = "start programs with steamship::run::command, which opens no console window" },
+  { path = "std::process::Command::spawn", reason = "start programs with steamship::run::spawn, which hands down nothing of another program's" },
+  { path = "std::process::Command::output", reason = "run programs with steamship::run::output, which hands down nothing of another program's" },
+  { path = "std::process::Command::status", reason = "start programs with steamship::run::spawn, which hands down nothing of another program's" },
 ]

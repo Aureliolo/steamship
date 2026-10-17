@@ -87,7 +87,7 @@ fn steamship_in(
     };
     // After the environment may have been cleared, so that nothing reaches the session's store.
     let _: &mut Command = command.envs(common::store::environment());
-    let output = command.envs(variables.iter().copied()).output().unwrap();
+    let output = run::output(command.envs(variables.iter().copied())).unwrap();
     (
         output.status.code(),
         String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -341,11 +341,12 @@ fn the_windows_program_carries_its_icon_and_version_details() {
         $v.CompanyName, $v.FileDescription, $v.ProductName, $v.ProductVersion,
           $v.FileVersionRaw.ToString(), $v.LegalCopyright, $v.OriginalFilename,
           [Shell.Icons]::ExtractIconExW($env:PROGRAM, -1, $null, $null, 0)";
-    let output = run::command("powershell.exe")
-        .args(["-NoProfile", "-NonInteractive", "-Command", script])
-        .env("PROGRAM", env!("CARGO_BIN_EXE_steamship"))
-        .output()
-        .unwrap();
+    let output = run::output(
+        run::command("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", script])
+            .env("PROGRAM", env!("CARGO_BIN_EXE_steamship")),
+    )
+    .unwrap();
     let said = String::from_utf8(output.stdout).unwrap();
     let version = env!("CARGO_PKG_VERSION");
     assert_eq!(
@@ -2345,18 +2346,20 @@ fn login_with_nowhere_to_look_for_an_account_exits_1() {
 }
 
 fn git(folder: &Path, args: &[&str]) {
-    let status = run::command("git")
-        .args([
-            "-c",
-            "user.name=steamship",
-            "-c",
-            "user.email=steamship@example.invalid",
-        ])
-        .args(["-c", "commit.gpgsign=false"])
-        .args(args)
-        .current_dir(folder)
-        .status()
-        .unwrap();
+    let status = run::spawn(
+        run::command("git")
+            .args([
+                "-c",
+                "user.name=steamship",
+                "-c",
+                "user.email=steamship@example.invalid",
+            ])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .current_dir(folder),
+    )
+    .and_then(|mut git| git.wait())
+    .unwrap();
     assert!(status.success(), "git {args:?}");
 }
 
@@ -2840,7 +2843,7 @@ fn login_with_web_api_key_refuses_what_is_not_a_key_before_asking_steam() {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = command.spawn().unwrap();
+    let mut child = run::spawn(&mut command).unwrap();
     child
         .stdin
         .take()
@@ -2936,16 +2939,17 @@ fn login_with_key(
     typed: &str,
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
-    let mut child = steamship_command()
-        .args(["login", "--web-api-key"])
-        .env("STEAMSHIP_HOME", home)
-        .env(STAND_IN, host)
-        .envs(variables.iter().copied())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut child = run::spawn(
+        steamship_command()
+            .args(["login", "--web-api-key"])
+            .env("STEAMSHIP_HOME", home)
+            .env(STAND_IN, host)
+            .envs(variables.iter().copied())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .unwrap();
     child
         .stdin
         .take()
