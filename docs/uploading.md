@@ -303,8 +303,10 @@ with its total over all players. Steam gives those once players have the game, a
 for a stat marked as aggregated in Steamworks. With `--check`, it compares them with a file kept
 beside your scripts, and exits 2 naming each achievement that is in the file but not on Steam or
 the other way round, each display name, description or hidden flag that differs, and each icon
-Steam has none of. It ends with how many of the file's achievements match, and of its stats when
-it lists any, such as `14 of 15 achievements match: 1 differs`. Run it before a release, and the
+Steam has none of; with an import receipt, also each icon changed since that import, as
+[Which icons Steam has](#which-icons-steam-has) describes. It ends with how many of the file's
+achievements match, and of its stats when it lists any, such as
+`14 of 15 achievements match: 1 differs`. Run it before a release, and the
 release waits while the two have drifted apart.
 
 `achievements --json` prints what Steam holds on standard output as one line of JSON, with the
@@ -470,10 +472,34 @@ of an achievement since removed, is removed from the folder; other files are lef
 `--unchanged` nothing is written, and it exits 2 naming each file that is missing, differs or
 is left over, which keeps the folder in step with the records in a game's own checks.
 
-Once written, drop every file on the editor and Save imported data, then drop the
+Once written, drop every CSV and PNG file on the editor and Save imported data, then drop the
 `achievements-localization.csv` again on its own: the editor applies only part of a
-localisation in the import that makes the achievements it names. `--check` then reads them back
-from Steam in every language.
+localisation in the import that makes the achievements it names. Once published, `--check`
+reads them back from Steam in every language.
+
+### Which icons Steam has
+
+```sh
+steamship achievements 480 --write mods/base/data/achievements.json game/locale/*.po --out steam/achievements --imported
+steamship achievements 480 --check mods/base/data/achievements.json --out steam/achievements
+```
+
+Steam's Web API gives each icon's address, and the address of an unreleased app's icon serves
+nothing, so whether Steam's icon is the file's is told from a receipt of the import instead.
+Once the import is saved and published, `--imported` writes `steam-icons.json` into the
+`--out` folder, recording each icon's file by its SHA-256 and the image Steam made of it by the
+name it serves it under, and writes nothing else. It is refused, exiting 2, when the folder is
+not as `--write` would write it, when Steam has none of an icon the files give, and when an
+icon's file changed since the last receipt but Steam still has the image the last import made.
+Steam makes each import's icons anew, under a new name, so the last is an import not yet saved
+or published.
+
+`--check` with that folder as `--out` then reads the receipt as well, and names each icon whose
+file changed since the import it records, each whose image on Steam changed though its file did
+not, and each it has no import of; a folder with no receipt is refused. `--write` and
+`--unchanged` leave `steam-icons.json` alone, so a game's own checks can run `--unchanged`
+without Steam. Keep the receipt with the records. It trusts that the import it records took the
+files as they were, so look at the icons once in the editor after the first.
 
 ## Leaderboards
 
