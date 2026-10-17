@@ -19,8 +19,8 @@ use std::path::Path;
 use std::process;
 use std::ptr::{self, NonNull};
 use std::slice;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -86,6 +86,21 @@ use windows_sys::core::BOOL;
 /// Numbers each desktop this process makes, so that no two runs share one: a desktop goes away
 /// when its last handle closes, and a run opening one by the same name at that moment is refused.
 static DESKTOPS: AtomicU64 = AtomicU64::new(0);
+
+/// Held while a handle of steamship's is marked to be handed down, and while the standard library
+/// starts a program.
+///
+/// The standard library hands a program every handle the process has marked so at that moment.
+/// steamship marks the output of a run for as long as it takes to start the program, and making a
+/// pseudo console marks its pipes for as long as it takes to start the console; a program the
+/// standard library started then would hold that output open for as long as it ran.
+static HANDING_DOWN: Mutex<()> = Mutex::new(());
+
+/// [`HANDING_DOWN`], held until dropped.
+pub fn handing_down() -> MutexGuard<'static, ()> {
+    // The lock guards no data, so one a panic left is as good as any.
+    HANDING_DOWN.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// How often a wait looks up from the program to see whether it has said it will never finish.
 const POLL: Duration = Duration::from_millis(50);
@@ -385,7 +400,7 @@ struct PseudoConsole(HPCON);
 
 impl PseudoConsole {
     fn create(input: &PipeReader, output: &PipeWriter, size: COORD) -> io::Result<Self> {
-        let _handing_down = run::handing_down();
+        let _handing_down = handing_down();
         let mut console: HPCON = 0;
         // SAFETY: both pipe ends are open for the length of the call, and the console takes its
         // own copies of them.
@@ -516,7 +531,7 @@ fn spawn(
     job: &Job,
     streams: Streams,
 ) -> io::Result<Process> {
-    let _handing_down = run::handing_down();
+    let _handing_down = handing_down();
     let (mut list, [input, output], inherit, creation) = match streams {
         Streams::Handles(handles) => {
             for handle in handles {

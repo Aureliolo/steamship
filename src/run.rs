@@ -16,8 +16,6 @@ use std::os::windows::process::CommandExt as _;
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(windows)]
-use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 #[cfg(windows)]
@@ -52,23 +50,6 @@ where
     command
 }
 
-/// Held while a handle of steamship's is marked to be handed down, and while the standard library
-/// starts a program.
-///
-/// The standard library hands a program every handle the process has marked so at that moment.
-/// steamship marks the output of a run for as long as it takes to start the program, and making a
-/// pseudo console marks its pipes for as long as it takes to start the console; a program the
-/// standard library started then would hold that output open for as long as it ran.
-#[cfg(windows)]
-static HANDING_DOWN: Mutex<()> = Mutex::new(());
-
-/// [`HANDING_DOWN`], held until dropped.
-#[cfg(windows)]
-pub fn handing_down() -> MutexGuard<'static, ()> {
-    // The lock guards no data, so one a panic left is as good as any.
-    HANDING_DOWN.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
 /// Starts `command`, made by [`command`].
 ///
 /// # Errors
@@ -76,7 +57,7 @@ pub fn handing_down() -> MutexGuard<'static, ()> {
 /// When the program cannot be started.
 pub fn spawn(command: &mut Command) -> io::Result<Child> {
     #[cfg(windows)]
-    let _handing_down = handing_down();
+    let _handing_down = native::handing_down();
     #[expect(
         clippy::disallowed_methods,
         reason = "the one place the standard library starts a program, with nothing handed down \
