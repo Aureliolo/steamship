@@ -432,9 +432,10 @@ pub struct Writing {
     pub unchanged: bool,
     /// Write only `steam-icons.json` in the folder, from the icons Steam holds once the folder's
     /// files are imported and published; refused, exiting 2, when the folder is not as `--write`
-    /// would write it, Steam lacks an achievement or icon of the files, or an icon Steam serves
-    /// is not its file: more than one pixel in a thousand more than 64 off in a channel, out of
-    /// 255, where its JPEG leaves each pixel well within that.
+    /// would write it, Steam lacks an achievement or icon of the files, Steam has an icon for an
+    /// achievement the files give none, or an icon Steam serves is not its file: more than one
+    /// pixel in a thousand more than 64 off in a channel, out of 255, where its JPEG leaves each
+    /// pixel well within that.
     #[arg(long, requires = "write", conflicts_with = "unchanged")]
     pub imported: bool,
 }
