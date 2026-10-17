@@ -77,3 +77,10 @@ path = "fuzz_targets/po.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "likeness"
+path = "fuzz_targets/likeness.rs"
+test = false
+doc = false
+bench = false
