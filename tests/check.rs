@@ -506,15 +506,16 @@ fn run(script: &Path) -> (Option<i32>, String, String) {
 /// [`run`], with `extra` arguments after the script.
 fn run_with(script: &Path, extra: &[&str]) -> (Option<i32>, String, String) {
     let home = tempfile::tempdir().unwrap();
-    let output = run::command(env!("CARGO_BIN_EXE_steamship"))
-        .arg("check")
-        .arg(script)
-        .args(extra)
-        .env("STEAMSHIP_HOME", home.path())
-        .env_remove("STEAMSHIP_WEB_API_KEY")
-        .envs(common::store::environment())
-        .output();
-    let output = output.unwrap();
+    let output = run::output(
+        run::command(env!("CARGO_BIN_EXE_steamship"))
+            .arg("check")
+            .arg(script)
+            .args(extra)
+            .env("STEAMSHIP_HOME", home.path())
+            .env_remove("STEAMSHIP_WEB_API_KEY")
+            .envs(common::store::environment()),
+    )
+    .unwrap();
     (
         output.status.code(),
         String::from_utf8_lossy(&output.stdout).into_owned(),
