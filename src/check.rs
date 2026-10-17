@@ -73,12 +73,13 @@ fn check_loaded(app: &AppScript, content: bool) -> Report {
     {
         Some("default") => problems.push(Problem::new(
             &app.path,
-            "\"SetLive\" names \"default\", which Valve only allows from the Steamworks site",
+            "\"SetLive\" names \"default\", which steamcmd never sets live; upload --default sets \
+             it live while the app is unreleased",
         )),
         Some("public") => problems.push(Problem::new(
             &app.path,
             "\"SetLive\" names \"public\", the Web API's name for the default branch, which \
-             Valve only allows from the Steamworks site",
+             steamcmd never sets live; upload --default sets it live while the app is unreleased",
         )),
         _ => {}
     }

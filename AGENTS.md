@@ -46,8 +46,10 @@ Everything a person reads counts: messages, help text, docs, comments, commit me
 
 - Credentials reach steamcmd through its environment or the system's credential store, never
   its arguments.
-- steamship never sets the default branch live and never describes it: Valve keeps both to the
-  Steamworks site, and `check` refuses a script that tries.
+- steamship sets the default branch live only through the Web API, and only while steamcmd's
+  app info shows the build account the app unreleased; it never sends the SteamID a released
+  app's default needs. It never describes the default branch, which Valve keeps to the
+  Steamworks site. `check` refuses a script whose `SetLive` names it, which steamcmd cannot do.
 - Every line steamcmd or Steam is expected to print, in code or a test fixture, is copied from a
   real run, never guessed.
 - In scope: getting a game's builds, content and configuration into Steamworks, and checking
