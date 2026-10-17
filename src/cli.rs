@@ -274,16 +274,18 @@ pub enum Command {
     /// Lists the leaderboards Steam holds for the app, through Steam's partner Web API with the
     /// publisher key as `builds` finds it. With `--check`, compares them with a file by name, and
     /// exits 2 naming every leaderboard missing on either side and every setting that differs.
-    /// With `--create` too, those in the file that Steam lacks are made first, as the file has
+    /// With `--create` too, those in the files that Steam lacks are made first, as the files have
     /// them. Steam keeps an existing leaderboard's settings and scores, so none is ever changed,
     /// made again or deleted.
     Leaderboards {
         /// The app, by its ID or its app build script.
         app: String,
-        /// A JSON file of the leaderboards the app should have, each with its `name`, `sort`,
-        /// `display`, `trusted_writes` and `friends_only`.
-        #[arg(long, value_name = "FILE")]
-        check: Option<PathBuf>,
+        /// JSON files of the leaderboards the app should have, each with its `name`, `sort`,
+        /// `display`, `trusted_writes` and `friends_only`; or lists of games-kit's records, those
+        /// typed `leaderboard` read the same way by the name in `steam`. Each leaderboard is in
+        /// one file only.
+        #[arg(long, value_name = "FILE", num_args = 1..)]
+        check: Vec<PathBuf>,
         /// Make the file's leaderboards that Steam lacks, before checking.
         #[arg(long, requires = "check")]
         create: bool,
