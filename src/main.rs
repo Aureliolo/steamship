@@ -27,8 +27,8 @@ use steamship::update::{self, Installed};
 use steamship::windows::Terminal;
 use steamship::{
     achievements, assets, check, ci, conversation, download, drm, dump, editor, init, keychain,
-    leaderboards, likeness, magic, picture, po, presence, run, scripts, settings, steamcmd, upload,
-    vdf, webapi, workshop,
+    leaderboards, likeness, magic, picture, po, presence, release, run, scripts, settings,
+    steamcmd, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -131,7 +131,7 @@ fn run(command: Command) -> ExitCode {
             files,
             preview,
         } => either(try_rich_presence(&app, &files, preview)),
-        Command::Promote { app, build, branch } => either(try_promote(&app, build, &branch)),
+        Command::Promote(request) => either(try_promote(&request)),
         Command::Branch {
             app,
             branch,
@@ -148,12 +148,14 @@ fn run(command: Command) -> ExitCode {
             script,
             version,
             preview,
+            default,
             account,
             json,
         } => run_upload(&Upload {
             script: &script,
             version: &version,
             preview,
+            default,
             account: named(account.as_deref()),
             json,
         }),
@@ -883,6 +885,7 @@ struct Upload<'command> {
     script: &'command Path,
     version: &'command str,
     preview: bool,
+    default: bool,
     account: Option<&'command str>,
     json: bool,
 }
@@ -916,6 +919,17 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
     restore(packed.as_ref(), &home)?;
     let prepared = upload::prepare(&home, request.script, &description, request.preview)
         .map_err(|error| fail(&error, FAILED))?;
+    let default = if request.default {
+        let (api, from) = web_api(&home)?;
+        let asked = unreleased(&home, &account, prepared.app_id, packed.as_ref());
+        if asked.is_err() {
+            install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+        }
+        asked?;
+        Some((api, from))
+    } else {
+        None
+    };
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
     let saved = prepared.output.join("steamcmd.log");
@@ -943,11 +957,22 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         ..
     } = build_retrying(&steam, doing, again)?;
     let outcome = found_on_steam(outcome, &prepared, &description);
-    let (code, live) = report(&outcome, spinner, &took, &prepared, &saved, packed.as_ref());
+    let reporting = Reporting {
+        spinner,
+        took: &took,
+        prepared: &prepared,
+        saved: &saved,
+        packed: packed.as_ref(),
+        default: default.as_ref().map(|(api, _)| api),
+    };
+    let (code, live) = report(&outcome, reporting);
+    if let Some((api, from)) = default {
+        offer_to_keep(&home, &api, from);
+    }
     if request.json {
         show::plain(&format!(
             "{}\n",
-            summary(&outcome, live, &prepared, &description)
+            summary(&outcome, live, request.default, &prepared, &description)
         ));
     }
     if matches!(
@@ -1176,16 +1201,37 @@ fn found_on_steam(
     }
 }
 
-/// Says what `outcome` came to, and answers its exit code and whether the build is live on the
-/// branch the script sets live.
-fn report(
-    outcome: &upload::Outcome,
+/// What an upload's ending is said with: the spinner still turning, how long steamcmd took,
+/// where its console was saved, the login handed over if any, and the Web API to set the build
+/// live on the default branch with, when asked to.
+struct Reporting<'upload> {
     spinner: Spinner,
-    took: &str,
-    prepared: &upload::Prepared,
-    saved: &Path,
-    packed: Option<&ci::Login>,
-) -> (ExitCode, bool) {
+    took: &'upload str,
+    prepared: &'upload upload::Prepared,
+    saved: &'upload Path,
+    packed: Option<&'upload ci::Login>,
+    default: Option<&'upload webapi::Api>,
+}
+
+/// Where an upload's build ended up live.
+#[derive(Clone, Copy, Default)]
+struct Live {
+    /// On the branch the script sets live.
+    branch: bool,
+    /// On the default branch.
+    default: bool,
+}
+
+/// Says what `outcome` came to, and answers its exit code and where the build is live.
+fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Live) {
+    let Reporting {
+        spinner,
+        took,
+        prepared,
+        saved,
+        packed,
+        default,
+    } = reporting;
     let app = prepared.app_id;
     let logs = format!(
         "log  {}, and steamcmd's own in {}",
@@ -1196,33 +1242,7 @@ fn report(
         upload::Outcome::Built { build_id } => {
             spinner.done(&format!("uploaded in {took}"));
             hand_on(*build_id);
-            let Some(branch) = &prepared.set_live else {
-                show::success(&format!("app {app}: BuildID {build_id}"), &logs);
-                return (ExitCode::SUCCESS, false);
-            };
-            if !confirmed_live(app, branch, *build_id) {
-                show::failure(
-                    &format!(
-                        "app {app}: BuildID {build_id} uploaded, but Steam does not show it live \
-                         on {branch}"
-                    ),
-                    "",
-                    Some(Hint {
-                        before: "set it live with ",
-                        command: &format!(
-                            "steamship promote {app} --build {build_id} --branch {branch}"
-                        ),
-                        after: "",
-                    }),
-                );
-                show::note(&logs);
-                return (ExitCode::from(FAILED), false);
-            }
-            show::success(
-                &format!("app {app}: BuildID {build_id}, set live on {branch}"),
-                &logs,
-            );
-            return (ExitCode::SUCCESS, true);
+            return set_live(app, *build_id, prepared.set_live.as_deref(), default, &logs);
         }
         upload::Outcome::Previewed => {
             spinner.done(&format!("preview finished in {took}"));
@@ -1246,7 +1266,12 @@ fn report(
             if let Some(why) = upload::commit_refused(reasons, prepared.set_live.as_deref()) {
                 show::note(&why);
             }
-            if let Some(branch) = &prepared.set_live {
+            let branches = prepared
+                .set_live
+                .iter()
+                .map(String::as_str)
+                .chain(default.map(|_| "default"));
+            for branch in branches {
                 show::hint(Hint {
                     before: "set it live with ",
                     command: &format!(
@@ -1277,25 +1302,102 @@ fn report(
             ExitCode::from(FAILED)
         }
     };
-    (code, false)
+    (code, Live::default())
+}
+
+/// Says where `build_id`, just uploaded for `app`, is live: on `branch`, which the script set it
+/// live on, once Steam shows it there, and then on default, set through `default` when given.
+/// Answers the upload's exit code and where the build is live; `logs` says where to look.
+fn set_live(
+    app: u32,
+    build_id: u64,
+    branch: Option<&str>,
+    default: Option<&webapi::Api>,
+    logs: &str,
+) -> (ExitCode, Live) {
+    if let Some(branch) = branch
+        && !confirmed_live(app, branch, build_id)
+    {
+        show::failure(
+            &format!(
+                "app {app}: BuildID {build_id} uploaded, but Steam does not show it live on \
+                 {branch}"
+            ),
+            "",
+            Some(Hint {
+                before: "set it live with ",
+                command: &format!("steamship promote {app} --build {build_id} --branch {branch}"),
+                after: "",
+            }),
+        );
+        show::note(logs);
+        return (ExitCode::from(FAILED), Live::default());
+    }
+    let mut live = Live {
+        branch: branch.is_some(),
+        default: false,
+    };
+    if let Some(api) = default {
+        if !live_on_default(api, app, build_id, branch) {
+            show::note(logs);
+            return (ExitCode::from(FAILED), live);
+        }
+        live.default = true;
+    }
+    let set = match (branch, live.default) {
+        (Some(branch), true) => format!(", set live on {branch} and default"),
+        (Some(branch), false) => format!(", set live on {branch}"),
+        (None, true) => ", set live on default".to_owned(),
+        (None, false) => String::new(),
+    };
+    show::success(&format!("app {app}: BuildID {build_id}{set}"), logs);
+    (ExitCode::SUCCESS, live)
+}
+
+/// Sets `build_id` of `app` live on the default branch through `api`, and says whether Steam
+/// did; the build is already live on `branch`, if the script sets one live.
+fn live_on_default(api: &webapi::Api, app: u32, build_id: u64, branch: Option<&str>) -> bool {
+    let spinner = Spinner::start("default", "setting it live", false);
+    let Err(error) = api.set_live(app, build_id, webapi::DEFAULT_KEY) else {
+        spinner.done("set live");
+        return true;
+    };
+    spinner.failed("not set live");
+    let also = branch.map_or_else(String::new, |branch| format!(" and live on {branch}"));
+    show::failure(
+        &format!(
+            "app {app}: BuildID {build_id} uploaded{also}, but Steam did not set it live on \
+             default"
+        ),
+        &error.to_string(),
+        Some(Hint {
+            before: "set it live with ",
+            command: &format!("steamship promote {app} --build {build_id} --branch default"),
+            after: "",
+        }),
+    );
+    false
 }
 
 /// What an upload came to, for the program that ran steamship with `--json`: the outcome, the
 /// app, the build Steam made of it if any, the branch the script sets live and whether the build
-/// is live there, and the build's description.
+/// is live there and on default, and the build's description. `default` is whether it was asked
+/// to go live on default too.
 fn summary(
     outcome: &upload::Outcome,
-    live: bool,
+    live: Live,
+    default: bool,
     prepared: &upload::Prepared,
     description: &str,
 ) -> serde_json::Value {
     let (said, build_id) = match outcome {
         upload::Outcome::Built { build_id } => {
-            let said = if prepared.set_live.is_some() && !live {
-                "not-live"
-            } else {
-                "uploaded"
-            };
+            let said =
+                if (prepared.set_live.is_some() && !live.branch) || (default && !live.default) {
+                    "not-live"
+                } else {
+                    "uploaded"
+                };
             (said, Some(*build_id))
         }
         upload::Outcome::Previewed => ("previewed", None),
@@ -1308,7 +1410,8 @@ fn summary(
         "app": prepared.app_id,
         "build_id": build_id,
         "branch": prepared.set_live,
-        "live": live,
+        "live": live.branch,
+        "default": live.default,
         "description": description,
     })
 }
@@ -2759,22 +2862,24 @@ fn settings_file(path: &Path, app: u32) -> Result<vdf::Block, ExitCode> {
     Ok(wanted)
 }
 
-/// `app`'s settings, as Steam shows them to `account` through steamcmd.
-fn asked_settings(
+/// What steamcmd, run from `home` and logged in as `account`, printed of `app`'s info, redacted,
+/// with the spinner that said it was `doing` so still turning; refused when Steam did not take
+/// the login.
+fn app_info(
+    home: &Path,
     account: &Account,
     app: u32,
     packed: Option<&ci::Login>,
-) -> Result<vdf::Block, ExitCode> {
-    let (held, home, manifest) = ready()?;
-    restore(packed, &home)?;
-    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
+    doing: &str,
+) -> Result<(String, Spinner), ExitCode> {
+    let before = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
-    let spinner = Spinner::start("steam", "asking for the settings", true);
+    let spinner = Spinner::start("steam", doing, true);
     let finished = match run::run(
         &program,
         &steamcmd::app_info(account, app),
-        &steamcmd::environment(&home, Platform::THIS),
+        &steamcmd::environment(home, Platform::THIS),
         &root,
         steamcmd::CHECK_LIMIT,
         steamcmd::HOPELESS,
@@ -2785,17 +2890,77 @@ fn asked_settings(
             return Err(fail(&format!("{}: {error}", program.display()), FAILED));
         }
     };
-    let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
-    let console = redactor.redact(&finished.output);
-    let console = String::from_utf8_lossy(&console);
-    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    let redactor = before.and(Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?);
+    let console = String::from_utf8_lossy(&redactor.redact(&finished.output)).into_owned();
     match upload::judge_login(finished.code, &console) {
-        upload::Login::Taken => {}
+        upload::Login::Taken => Ok((console, spinner)),
         judged @ (upload::Login::Refused(_) | upload::Login::Failed(_)) => {
             spinner.failed("not logged in");
-            return Err(verdict(judged, packed));
+            Err(verdict(judged, packed))
         }
     }
+}
+
+/// Refuses unless Steam shows `account` that nobody can buy `app` yet, asked through steamcmd run
+/// from `home`. A build live on a released app's default branch is the one its players get, and
+/// Valve then asks for a Steam Mobile confirmation, given in Steamworks.
+fn unreleased(
+    home: &Path,
+    account: &Account,
+    app: u32,
+    packed: Option<&ci::Login>,
+) -> Result<(), ExitCode> {
+    let (console, spinner) = app_info(
+        home,
+        account,
+        app,
+        packed,
+        "asking whether the app is released",
+    )?;
+    let info = settings::info_from_console(&console, app);
+    match info.as_ref().map(release::state) {
+        Ok(Some(state)) if release::unreleased(state) => {
+            spinner.done(&format!("unreleased, as Steam shows it ({state})"));
+            Ok(())
+        }
+        Ok(Some(state)) => {
+            spinner.failed(&format!("released, as Steam shows it ({state})"));
+            Err(fail(
+                &format!(
+                    "app {app} is released, so its default branch is set live in Steamworks, \
+                     where Valve asks for a Steam Mobile confirmation"
+                ),
+                REFUSED,
+            ))
+        }
+        Ok(None) => {
+            spinner.failed("not shown");
+            Err(fail(
+                &format!(
+                    "Steam shows no release state for app {app}, so steamship leaves its default \
+                     branch to Steamworks"
+                ),
+                REFUSED,
+            ))
+        }
+        Err(why) => {
+            spinner.failed("not shown");
+            Err(fail(why, FAILED))
+        }
+    }
+}
+
+/// `app`'s settings, as Steam shows them to `account` through steamcmd.
+fn asked_settings(
+    account: &Account,
+    app: u32,
+    packed: Option<&ci::Login>,
+) -> Result<vdf::Block, ExitCode> {
+    let (held, home, manifest) = ready()?;
+    restore(packed, &home)?;
+    let asked = app_info(&home, account, app, packed, "asking for the settings");
+    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    let (console, spinner) = asked?;
     match settings::from_console(&console, app) {
         Ok(shown) => {
             spinner.done("shown");
@@ -2998,21 +3163,35 @@ fn try_branch(app: &str, branch: &str, description: &str) -> Result<ExitCode, Ex
     Ok(ExitCode::SUCCESS)
 }
 
-fn try_promote(app: &str, build: u64, branch: &str) -> Result<ExitCode, ExitCode> {
+fn try_promote(request: &cli::Promote) -> Result<ExitCode, ExitCode> {
     show::title("promote");
-    let app_id = app_named(app)?;
-    if webapi::is_default(branch) {
-        return Err(fail(
-            &"the default branch is set live in Steamworks, not by steamship",
-            REFUSED,
-        ));
-    }
+    let app_id = app_named(&request.app)?;
+    let build = request.build;
+    let default = webapi::is_default(&request.branch);
+    let (branch, key) = if default {
+        ("default", webapi::DEFAULT_KEY)
+    } else {
+        (request.branch.as_str(), request.branch.as_str())
+    };
     show::field("build", &build.to_string());
     show::field("branch", branch);
     let home = home()?;
     let (api, from) = web_api(&home)?;
+    if default {
+        let packed = packed_login()?;
+        let asked_as = named(request.account.as_deref());
+        let account = match (&packed, asked_as) {
+            (Some(packed), None) => packed.account().clone(),
+            _ => account(asked_as, false)?.0,
+        };
+        let (held, _, manifest) = ready()?;
+        restore(packed.as_ref(), &home)?;
+        let asked = unreleased(&home, &account, app_id, packed.as_ref());
+        install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+        asked?;
+    }
     let spinner = Spinner::start("steam", "setting it live", false);
-    if let Err(error) = api.set_live(app_id, build, branch) {
+    if let Err(error) = api.set_live(app_id, build, key) {
         return Err(web_api_failed(spinner, &error));
     }
     spinner.done("set live");

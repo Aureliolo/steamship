@@ -128,12 +128,17 @@ pub enum Command {
         /// Valve's dry run: the whole build is computed and logged, and nothing is uploaded.
         #[arg(long)]
         preview: bool,
+        /// Also set the build live on the default branch, through Steam's partner Web API with
+        /// the publisher key as `builds` finds it. Refused unless Steam shows the app unreleased;
+        /// once it is released, its default branch is set live in Steamworks.
+        #[arg(long, conflicts_with = "preview")]
+        default: bool,
         /// The build account, if not the one the last login remembered.
         #[arg(long, env = ACCOUNT)]
         account: Option<String>,
         /// Once steamcmd has run, print what came of it on standard output as one line of JSON:
-        /// `outcome`, `app`, `build_id`, `branch`, `live` and `description`. Everything else goes
-        /// to standard error.
+        /// `outcome`, `app`, `build_id`, `branch`, `live`, `default` and `description`.
+        /// Everything else goes to standard error.
         #[arg(long)]
         json: bool,
     },
@@ -304,19 +309,11 @@ pub enum Command {
     },
     /// Set an uploaded build live on a branch.
     ///
-    /// Sets a build live on a beta branch without uploading it again, through Steam's partner
-    /// Web API, with the publisher key as `builds` finds it. The default branch is set live in
-    /// Steamworks only.
-    Promote {
-        /// The app, by its ID or its app build script.
-        app: String,
-        /// The build, by its build ID.
-        #[arg(long)]
-        build: u64,
-        /// The branch to set it live on.
-        #[arg(long)]
-        branch: String,
-    },
+    /// Sets a build live on a branch without uploading it again, through Steam's partner Web
+    /// API, with the publisher key as `builds` finds it. The default branch is set live only
+    /// while Steam shows the build account the app unreleased; once it is released, in
+    /// Steamworks.
+    Promote(Promote),
     /// Set the description players see for a beta branch.
     ///
     /// Sets the text Steam shows for a beta branch where players choose one, in the game's
@@ -434,6 +431,23 @@ pub struct Writing {
     /// pixel well within that.
     #[arg(long, requires = "write", conflicts_with = "unchanged")]
     pub imported: bool,
+}
+
+/// The build `promote` sets live, and where.
+#[derive(Debug, Args)]
+pub struct Promote {
+    /// The app, by its ID or its app build script.
+    pub app: String,
+    /// The build, by its build ID.
+    #[arg(long)]
+    pub build: u64,
+    /// The branch to set it live on.
+    #[arg(long)]
+    pub branch: String,
+    /// The build account Steam is asked as whether the app is released, for the default branch,
+    /// if not the one the last login remembered.
+    #[arg(long, env = ACCOUNT)]
+    pub account: Option<String>,
 }
 
 /// What `workshop` uploads, and how.

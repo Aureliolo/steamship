@@ -607,6 +607,151 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
     }
 }
 
+/// A steamcmd that, asked for app 1000's info, prints it as [`app_info`] does with the
+/// `ReleaseState` `state`, and otherwise has Valve build the upload as `BuildID` 4242, as [`BUILT`]
+/// does, adding a line to `builds` in the home.
+#[cfg(unix)]
+fn released_as(state: &str) -> String {
+    format!(
+        "#!/bin/sh\n\
+         case \" $* \" in *' +app_info_print '*)\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+         echo 'AppID : 1000, change number : 5/5, last change : Tue Sep 29 20:07:48 2026 '\n\
+         printf '\"1000\"\\n{{\\n\\t\"common\"\\n\\t{{\\n\\t\\t\"name\"\\t\\t\"Spacewar\"\\n'\n\
+         printf '\\t\\t\"ReleaseState\"\\t\\t\"{state}\"\\n\\t}}\\n}}\\n'\n\
+         echo 'Unloading Steam API...OK'\n\
+         exit 0;;\n\
+         esac\n\
+         echo built >> \"$HOME/builds\"\n\
+         output=\"$HOME/apps/1000/output\"\n\
+         mkdir -p \"$output\"\n\
+         echo 'Successfully finished AppID 1000 build (BuildID 4242).' > \"$output/app_build_1000.log\"\n\
+         echo 'Logging in user build_bot to Steam Public...OK'\n"
+    )
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_asked_for_default_too_is_set_live_there_while_steam_shows_the_app_unreleased() {
+    let home = faked_with(&released_as("unavailable"));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let (host, requests) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(4242)),
+        ("200 OK", SET_LIVE),
+    ]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("\"default\":true")
+            && stdout.contains("\"live\":true")
+            && stdout.contains("\"outcome\":\"uploaded\""),
+        "{stdout}"
+    );
+    assert!(
+        stderr.contains("unreleased, as Steam shows it (unavailable)")
+            && stderr.contains("  default   \u{2713} set live\n")
+            && stderr.contains("app 1000: BuildID 4242, set live on testing and default"),
+        "{stderr}"
+    );
+    let asked: Vec<String> =
+        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(3)
+            .collect();
+    let setting = asked.last().unwrap();
+    assert!(
+        setting.starts_with("POST /ISteamApps/SetAppBuildLive/v2/ ")
+            && setting.ends_with("appid=1000&buildid=4242&betakey=public"),
+        "{setting}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_asked_for_default_too_is_refused_before_it_is_built_once_steam_shows_the_app_released()
+{
+    let home = faked_with(&released_as("released"));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let (host, _requests) = web_api(vec![("200 OK", BETAS)]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("released, as Steam shows it (released)"),
+        "{stdout}"
+    );
+    assert_eq!(
+        failure(&stderr),
+        "app 1000 is released, so its default branch is set live in Steamworks, where Valve asks \
+         for a Steam Mobile confirmation"
+    );
+    assert!(!home.path().join("builds").exists(), "nothing was built");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_1() {
+    let home = faked_with(&released_as("prerelease"));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let (host, _requests) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(4242)),
+        ("200 OK", r#"{"response": {"result": 8}}"#),
+    ]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("\"default\":false")
+            && stdout.contains("\"live\":true")
+            && stdout.contains("\"outcome\":\"not-live\""),
+        "{stdout}"
+    );
+    for line in [
+        "app 1000: BuildID 4242 uploaded and live on testing, but Steam did not set it live on \
+         default",
+        "set it live with steamship promote 1000 --build 4242 --branch default",
+    ] {
+        assert!(stderr.contains(line), "{line:?} in {stderr}");
+    }
+}
+
+#[test]
+fn an_upload_asked_for_default_too_cannot_be_a_preview() {
+    let home = tempfile::tempdir().unwrap();
+    let (_project, script) = project(false);
+    let (code, _, stderr) = steamship(
+        &[
+            "upload",
+            script.to_str().unwrap(),
+            "--version",
+            "1.4.0",
+            "--preview",
+            "--default",
+        ],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(stderr.contains("cannot be used with"), "{stderr}");
+}
+
 /// A steamcmd whose first `failing` runs run the shell commands `fail`, which fail the build, and
 /// exit 6; any run after has Valve build the upload as `BuildID` 4242. Each run adds a line to
 /// `runs` in the home.
@@ -812,6 +957,7 @@ fn an_upload_with_json_prints_only_what_came_of_it_on_standard_output() {
             "build_id": 4242_u64,
             "branch": "testing",
             "live": true,
+            "default": false,
         })
     );
     assert!(
@@ -6055,33 +6201,56 @@ fn a_web_api_key_that_is_not_one_is_refused_without_repeating_it() {
     assert!(!format!("{stdout}{stderr}").contains("not_a_key"));
 }
 
+#[cfg(unix)]
 #[test]
-fn promote_leaves_the_default_branch_to_steamworks_and_exits_2() {
+fn promote_sets_the_default_branch_live_only_while_steam_shows_the_app_unreleased() {
     let (_project, script) = project(false);
-    let home = tempfile::tempdir().unwrap();
-    for default in ["default", "public"] {
-        let (code, stdout, stderr) = steamship(
-            &[
-                "promote",
-                script.to_str().unwrap(),
-                "--build",
-                "1234",
-                "--branch",
-                default,
-            ],
-            Some(home.path()),
-            &[],
-        );
-        assert_eq!(code, Some(2_i32), "{stdout}");
-        assert!(
-            stdout.contains("  app       1000\n"),
-            "the app from its script: {stdout}"
-        );
-        assert_eq!(
-            failure(&stderr),
-            "the default branch is set live in Steamworks, not by steamship"
-        );
-    }
+    let script = script.to_str().unwrap();
+    let unreleased = faked_with(&released_as("prerelease"));
+    saved_login(unreleased.path());
+    let (host, requests) = web_api(vec![("200 OK", SET_LIVE)]);
+    let (code, stdout, stderr) = steamship(
+        &["promote", script, "--build", "1234", "--branch", "public"],
+        Some(unreleased.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  app       1000\n")
+            && stdout.contains("  branch    default\n")
+            && stdout.contains("unreleased, as Steam shows it (prerelease)")
+            && stdout.contains("app 1000: BuildID 1234 live on default"),
+        "{stdout}"
+    );
+    let setting = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        setting.ends_with("appid=1000&buildid=1234&betakey=public"),
+        "{setting}"
+    );
+
+    let released = faked_with(&released_as("released"));
+    saved_login(released.path());
+    // A stand-in that answers nothing: a request would fail with 1, not be refused with 2.
+    let (silent, _unasked) = web_api::<&str>(vec![]);
+    let (refused, said, why) = steamship(
+        &["promote", script, "--build", "1234", "--branch", "default"],
+        Some(released.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &silent),
+        ],
+    );
+    assert_eq!(refused, Some(2_i32), "{said}{why}");
+    assert_eq!(
+        failure(&why),
+        "app 1000 is released, so its default branch is set live in Steamworks, where Valve asks \
+         for a Steam Mobile confirmation"
+    );
 }
 
 #[test]

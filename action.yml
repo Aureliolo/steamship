@@ -29,6 +29,14 @@ inputs:
     description: Valve's dry run, which computes and logs the whole build and uploads nothing.
     required: false
     default: "false"
+  default:
+    description: Also set the build live on the default branch, refused once Steam shows the app released; needs web-api-key.
+    required: false
+    default: "false"
+  web-api-key:
+    description: The publisher Web API key, passed as a secret, with which steamship confirms the build live and sets it live on default.
+    required: false
+    default: ""
 
 outputs:
   build-id:
@@ -102,6 +110,8 @@ runs:
         WORKSHOP: ${{ inputs.workshop }}
         NEW_ITEM: ${{ inputs.new-item }}
         PREVIEW: ${{ inputs.preview }}
+        DEFAULT: ${{ inputs.default }}
+        STEAMSHIP_WEB_API_KEY: ${{ inputs.web-api-key }}
       # steamship takes the shell's place: a cancelled job signals the step's process alone, which
       # the shell does not pass on, so steamship would never stop steamcmd or show what it said.
       run: |
@@ -119,11 +129,15 @@ runs:
         elif [[ -z "${VERSION}" ]]; then
           echo "::error::A build needs version, which with the commit becomes its description." >&2
           exit 2
-        elif [[ "${PREVIEW}" == true ]]; then
-          exec "${STEAMSHIP}" upload "${SCRIPT}" --version "${VERSION}" --preview
-        else
-          exec "${STEAMSHIP}" upload "${SCRIPT}" --version "${VERSION}"
         fi
+        upload=(upload "${SCRIPT}" --version "${VERSION}")
+        if [[ "${PREVIEW}" == true ]]; then
+          upload+=(--preview)
+        fi
+        if [[ "${DEFAULT}" == true ]]; then
+          upload+=(--default)
+        fi
+        exec "${STEAMSHIP}" "${upload[@]}"
 
     - name: Forget the login
       if: always()
