@@ -7,7 +7,7 @@
 //! a list or a map of entries, and numbers written as numbers or as text.
 
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error;
 use std::fmt;
@@ -239,6 +239,32 @@ pub struct Global {
     /// Each stat Steam adds up over all players, by API name, with the total as Steam writes it;
     /// none for one no player has set.
     pub totals: BTreeMap<String, Option<String>>,
+}
+
+/// What `GetGlobalStatsForGame` says of the stats it was asked to add up over all players.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Totalled {
+    /// Each it adds up, by API name, with the total as Steam writes it; none for one no player
+    /// has set.
+    pub totals: BTreeMap<String, Option<String>>,
+    /// Each it named as one it does not add up.
+    pub unaggregated: BTreeSet<String>,
+    /// What Steam answered in place of the rest, where it stopped short of them.
+    pub withheld: Option<String>,
+}
+
+impl Totalled {
+    /// Whether Steam adds up the stat `api_name` over all players, where it said.
+    #[must_use]
+    pub fn aggregated(&self, api_name: &str) -> Option<bool> {
+        if self.totals.contains_key(api_name) {
+            Some(true)
+        } else if self.unaggregated.contains(api_name) {
+            Some(false)
+        } else {
+            None
+        }
+    }
 }
 
 /// The share of players who have each achievement, as `GetGlobalAchievementPercentagesForApp`
@@ -862,9 +888,6 @@ impl Api {
     /// adds up over all players; nothing of either where Steam gives none, as for an app no
     /// player has yet.
     ///
-    /// Steam refuses a request for totals at the first stat it does not add up, naming it, so it
-    /// is asked again without each it names.
-    ///
     /// # Errors
     ///
     /// As [`Api::branches`], but for Steam refusing the shares, which is their being withheld.
@@ -878,6 +901,21 @@ impl Api {
             Err(Error::Refused) => BTreeMap::new(),
             Err(error) => return Err(error),
         };
+        let totals = self.totalled(app, stats)?.totals;
+        Ok(Global { shares, totals })
+    }
+
+    /// What Steam says of `app`'s `stats` it is asked to add up over all players: the total of
+    /// each it adds up, and which it does not.
+    ///
+    /// Steam refuses a request for totals at the first stat it does not add up, naming it, so it
+    /// is asked again without each it names.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::branches`].
+    pub fn totalled(&self, app: u32, stats: &[String]) -> Result<Totalled, Error> {
+        let mut totalled = Totalled::default();
         let mut asked: Vec<&String> = stats.iter().collect();
         while !asked.is_empty() {
             let keys: Vec<String> = (0..asked.len())
@@ -896,15 +934,24 @@ impl Api {
             match totals_from(&answer)? {
                 Totals::NotAggregated(named) if asked.iter().any(|stat| **stat == named) => {
                     asked.retain(|stat| **stat != named);
+                    let _: bool = totalled.unaggregated.insert(named);
                 }
-                Totals::Given(totals) => return Ok(Global { shares, totals }),
-                Totals::NotAggregated(_) | Totals::Withheld(_) => break,
+                Totals::Given(totals) => {
+                    totalled.totals = totals;
+                    break;
+                }
+                // Asked again, Steam would only name it again.
+                Totals::NotAggregated(named) => {
+                    totalled.withheld = Some(format!("Stat '{named}' is not an aggregated stat"));
+                    break;
+                }
+                Totals::Withheld(said) => {
+                    totalled.withheld = Some(said);
+                    break;
+                }
             }
         }
-        Ok(Global {
-            shares,
-            totals: BTreeMap::new(),
-        })
+        Ok(totalled)
     }
 
     /// The last `count` builds of `app`, newest first.
