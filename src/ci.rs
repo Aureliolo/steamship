@@ -28,12 +28,9 @@ use crate::windows as native;
 /// The environment variable a CI hands the packed login over in, and the secret's name.
 pub const VARIABLE: &str = "STEAMSHIP_LOGIN";
 
-/// Marks a value as a login packed by steamship, and how it was packed: this form carries the day
-/// it was packed, before the account.
+/// Marks a value as a login packed by steamship, which carries the day it was packed before the
+/// account.
 const TAG: &str = "steamship-login-2:";
-
-/// The first form, with no day, which a login packed by an earlier steamship still carries.
-const FIRST_TAG: &str = "steamship-login-1:";
 
 /// The most GitHub keeps in one secret, in bytes.
 pub const SECRET_LIMIT: usize = 48 * 1024;
@@ -42,7 +39,7 @@ pub const SECRET_LIMIT: usize = 48 * 1024;
 pub struct Login {
     account: Account,
     config: Zeroizing<Vec<u8>>,
-    /// The day `steamship ci` packed it, as YYYY-MM-DD in UTC; unknown in the first form.
+    /// The day `steamship ci` packed it, as YYYY-MM-DD in UTC; none for steamcmd's own saved file.
     packed_on: Option<String>,
 }
 
@@ -116,18 +113,13 @@ impl Login {
     ///
     /// # Errors
     ///
-    /// When `text` is not a login packed by [`Login::packed`], or by an earlier steamship.
+    /// When `text` is not a login packed by [`Login::packed`].
     pub fn unpack(text: &str) -> Result<Self, Error> {
-        let text = text.trim();
-        let (packed_on, rest) = if let Some(rest) = text.strip_prefix(TAG) {
-            let (on, rest) = rest.split_once(':').ok_or(Error::Unreadable)?;
-            if !is_day(on) {
-                return Err(Error::Unreadable);
-            }
-            (Some(on.to_owned()), rest)
-        } else {
-            (None, text.strip_prefix(FIRST_TAG).ok_or(Error::Unreadable)?)
-        };
+        let rest = text.trim().strip_prefix(TAG).ok_or(Error::Unreadable)?;
+        let (on, rest) = rest.split_once(':').ok_or(Error::Unreadable)?;
+        if !is_day(on) {
+            return Err(Error::Unreadable);
+        }
         let (name, digits) = rest.split_once(':').ok_or(Error::Unreadable)?;
         // The name is not repeated in the error, as the rest may be a real login.
         let account = Account::parse(name).ok().ok_or(Error::Unreadable)?;
@@ -137,7 +129,7 @@ impl Login {
         Ok(Self {
             account,
             config: Zeroizing::new(config),
-            packed_on,
+            packed_on: Some(on.to_owned()),
         })
     }
 
@@ -385,15 +377,6 @@ mod tests {
     }
 
     #[test]
-    fn a_login_packed_by_an_earlier_steamship_still_unpacks_with_no_day() {
-        let digits = digest::hex(&login().config);
-        let unpacked = Login::unpack(&format!("steamship-login-1:build_bot:{digits}")).unwrap();
-        assert_eq!(unpacked.account().name(), "build_bot");
-        assert_eq!(*unpacked.config, *login().config);
-        assert_eq!(unpacked.packed_on(), None);
-    }
-
-    #[test]
     fn only_a_login_packed_by_steamship_unpacks_and_none_of_another_is_repeated() {
         let packed = login().packed(DAY);
         let digits = packed.rsplit(':').next().unwrap();
@@ -405,12 +388,12 @@ mod tests {
             format!("steamship-login-2:2026-09-2x:build_bot:{digits}"),
             format!("steamship-login-2:2026_09_28:build_bot:{digits}"),
             format!("steamship-login-2:{DAY}:{digits}"),
+            format!("steamship-login-1:build_bot:{digits}"),
             format!("steamship-login-1:{DAY}:build_bot:{digits}"),
-            format!("steamship-login-1:{digits}"),
-            format!("steamship-login-1:+quit:{digits}"),
-            "steamship-login-1:build_bot:".to_owned(),
-            "steamship-login-1:build_bot:0".to_owned(),
-            "steamship-login-1:build_bot:zz".to_owned(),
+            format!("steamship-login-2:{DAY}:+quit:{digits}"),
+            format!("steamship-login-2:{DAY}:build_bot:"),
+            format!("steamship-login-2:{DAY}:build_bot:0"),
+            format!("steamship-login-2:{DAY}:build_bot:zz"),
         ] {
             let error = Login::unpack(&wrong).unwrap_err();
             assert!(matches!(error, Error::Unreadable), "{wrong}");
