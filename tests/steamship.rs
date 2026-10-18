@@ -7663,15 +7663,22 @@ fn a_games_script_may_set_only_the_games_branch_live() {
     assert!(stdout.contains("  build     "), "past the script: {stdout}");
 }
 
+/// A program that prints how many processors it may run on.
+#[cfg(windows)]
+const COUNTING: [&str; 4] = [
+    "powershell",
+    "-NoProfile",
+    "-Command",
+    "[Convert]::ToString([int64][Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity, 2).Replace('0', '').Length",
+];
+#[cfg(target_os = "linux")]
+const COUNTING: [&str; 1] = ["nproc"];
+
 /// The `cores` line an upload in a game held to `cores` shows, and how many processors its build
 /// found it could run on, which the build prints.
 #[cfg(any(windows, target_os = "linux"))]
 fn shipped_on(cores: usize) -> (String, usize) {
-    #[cfg(windows)]
-    const COUNTED: &str = r#"["powershell", "-NoProfile", "-Command", "[Convert]::ToString([int64][Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity, 2).Replace('0', '').Length"]"#;
-    #[cfg(target_os = "linux")]
-    const COUNTED: &str = r#"["nproc"]"#;
-    let (_temp, root) = pushed_game(Some(&format!("cores = {cores}\nbuild = {COUNTED}\n")));
+    let (_temp, root) = pushed_game(Some(&format!("cores = {cores}\nbuild = {COUNTING:?}\n")));
     let (_code, stdout, stderr) = in_game(&root, &["upload"]);
     let shown = stdout
         .lines()
@@ -7689,7 +7696,14 @@ fn shipped_on(cores: usize) -> (String, usize) {
 #[cfg(any(windows, target_os = "linux"))]
 #[test]
 fn shipping_a_game_holds_the_build_and_steamcmd_to_its_cores() {
+    let (program, args) = COUNTING.split_first().unwrap();
+    let counted = run::output(run::command(program).args(args)).unwrap();
+    let machine: usize = String::from_utf8_lossy(&counted.stdout)
+        .trim()
+        .parse()
+        .unwrap();
     let (unheld, every) = shipped_on(4096);
+    assert_eq!(every, machine, "{unheld}");
     assert_eq!(
         unheld,
         format!("all {every}, within the 4096 steamcmd and the build may run on")
