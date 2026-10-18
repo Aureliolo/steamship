@@ -1049,12 +1049,14 @@ mod tests {
 
     #[test]
     fn a_path_in_the_file_is_joined_part_by_part_whichever_slash_it_was_written_with() {
+        // As written, since paths compare equal by their parts whatever `.` or slashes they hold.
+        let written = |path: PathBuf| path.into_os_string();
         let root = Path::new("game");
-        let expected = root.join("mods").join("base");
-        assert_eq!(under(root, "mods/base"), expected);
-        assert_eq!(under(root, "mods\\base"), expected);
-        assert_eq!(under(root, "./mods//base/"), expected);
-        assert_eq!(under(root, "."), root);
+        let expected = written(root.join("mods").join("base"));
+        assert_eq!(written(under(root, "mods/base")), expected);
+        assert_eq!(written(under(root, "mods\\base")), expected);
+        assert_eq!(written(under(root, "./mods//base/")), expected);
+        assert_eq!(written(under(root, ".")), root.as_os_str());
     }
 
     #[test]
