@@ -258,13 +258,18 @@ fn number(block: &Block, key: &str, path: &Path, problems: &mut Vec<Problem>) ->
         return None;
     };
     let parsed = text.trim().parse().ok();
-    if parsed.is_none() {
-        problems.push(Problem::new(
+    match parsed {
+        None => problems.push(Problem::new(
             path,
             format!("\"{key}\" \"{text}\" is not a number"),
-        ));
+        )),
+        Some(0) => problems.push(Problem::new(
+            path,
+            format!("\"{key}\" is 0, which Steamworks never gives: put in the ID it shows for it"),
+        )),
+        Some(_) => return parsed,
     }
-    parsed
+    None
 }
 
 fn parent(path: &Path) -> PathBuf {

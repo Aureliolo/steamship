@@ -106,10 +106,13 @@ pub enum Command {
     /// Check the build scripts, without logging in.
     ///
     /// Reads an app build script and every depot script it names, and refuses anything that
-    /// would upload the wrong thing.
+    /// would upload the wrong thing. Without a script, in a game's folder, checks its scripts and
+    /// then, as Steam shows them, its achievements, leaderboards, rich presence and branches,
+    /// naming every difference from the game's files; the content is checked by `upload`, once
+    /// it is built.
     Check {
-        /// The app build script, such as `steam/app_build.vdf`.
-        script: PathBuf,
+        /// The app build script, such as `steam/app_build.vdf`; in a game's folder, its own.
+        script: Option<PathBuf>,
         /// Check the scripts alone, not the content they map, as before the build exists;
         /// `upload` still checks both.
         #[arg(long)]
@@ -119,30 +122,14 @@ pub enum Command {
     ///
     /// Runs `check`, then the build, with steamcmd out of sight, and says the build's ID and
     /// the branch it was set live on.
-    Upload {
-        /// The app build script, such as `steam/app_build.vdf`.
-        script: PathBuf,
-        /// The version being shipped, which with the commit becomes the build's description.
-        #[arg(long)]
-        version: String,
-        /// Valve's dry run: the whole build is computed and logged, and nothing is uploaded.
-        #[arg(long)]
-        preview: bool,
-        /// While Steam shows the app unreleased, also set the build live on the default branch,
-        /// through Steam's partner Web API with the publisher key as `builds` finds it. Once it
-        /// is released, its default branch is set live in Steamworks, and the build goes up
-        /// without it.
-        #[arg(long, conflicts_with = "preview")]
-        default: bool,
-        /// The build account, if not the one the last login remembered.
-        #[arg(long, env = ACCOUNT)]
-        account: Option<String>,
-        /// Once steamcmd has run, print what came of it on standard output as one line of JSON:
-        /// `outcome`, `app`, `build_id`, `branch`, `live`, `default` and `description`.
-        /// Everything else goes to standard error.
-        #[arg(long)]
-        json: bool,
-    },
+    ///
+    /// Without a script, in a game's folder, ships the game: refused unless its tree holds
+    /// nothing uncommitted and origin's default branch is at the same commit; then built with its
+    /// `build` command, checked against the settings snapshot `steam/settings.vdf`, its
+    /// achievements, leaderboards and rich presence, and uploaded as the version `project.godot`
+    /// gives, live on the default branch too while the app is unreleased. Once it is live, the
+    /// branch's description becomes the version.
+    Upload(Upload),
     /// Upload a Workshop item, then print its ID.
     ///
     /// Takes the item as Valve's `workshopitem` script, or by its fields with `--app` and the
@@ -152,6 +139,12 @@ pub enum Command {
     /// new one when the `--items` file has none of its name, and writes the new ID into it. Either
     /// way later uploads update the same item. In CI a new item is refused without `--new`, since
     /// every run would make another.
+    ///
+    /// With neither, in a game's folder, uploads each of its example mods, a folder in
+    /// `modding/` holding a godot-kit `manifest.json`, or the one `--name` names: refused unless
+    /// the tree is pushed, as for `upload`. Its title, description and version come from the
+    /// manifest, its preview is the `preview.png` each mod needs beside it, and each item's ID is kept in
+    /// `steam/workshop_items.json`.
     Workshop(Workshop),
     /// Show an app's branches and last builds.
     ///
@@ -159,8 +152,8 @@ pub enum Command {
     /// Steam's partner Web API, with the publisher key from `STEAMSHIP_WEB_API_KEY`, or else the
     /// one `login` kept; at a terminal, one is asked for when there is neither.
     Builds {
-        /// The app, by its ID or its app build script.
-        app: String,
+        /// The app, by its ID or its app build script; in a game's folder, its own.
+        app: Option<String>,
         /// How many of the last builds to list.
         #[arg(long, default_value_t = 10)]
         count: u32,
@@ -195,10 +188,15 @@ pub enum Command {
     /// made anew though its file is the one imported, and every icon the receipt has no import
     /// of, without fetching the images. Steam answers with what is published, so an import saved
     /// but not published counts once it is.
+    ///
+    /// In a game's folder, `--check` and `--write` with no files read the game's own: the
+    /// godot-kit records in `mods/base/data` holding achievements, stats or sets, and every
+    /// catalogue in `game/locale`; the folder is `steam/achievements`, and `--check` compares the
+    /// icons with its receipt once there is one. `--imported` alone writes that receipt.
     #[command(group(clap::ArgGroup::new("files").args(["check", "write"]).multiple(true)))]
     Achievements {
-        /// The app, by its ID or its app build script.
-        app: String,
+        /// The app, by its ID or its app build script; in a game's folder, its own.
+        app: Option<String>,
         /// JSON files of the achievements the app should have, each with its `api_name`, `name`,
         /// `description` and `hidden`, and of its stats if they are to be checked, each with its
         /// `api_name`, `name` and `default`; or lists of godot-kit's records, those typed
@@ -206,8 +204,8 @@ pub enum Command {
         /// achievement and stat is in one file only. A `.csv` file is a localisation in the
         /// columns Steamworks' achievement editor exports, which then has to translate every
         /// achievement; `.po` files are gettext catalogues, which have to.
-        #[arg(long, value_name = "FILE", num_args = 1..)]
-        check: Vec<PathBuf>,
+        #[arg(long, value_name = "FILE", num_args = 0..)]
+        check: Option<Vec<PathBuf>>,
         #[command(flatten)]
         writing: Writing,
         /// Print the achievements and stats on standard output as one line of JSON, or what
@@ -257,14 +255,17 @@ pub enum Command {
     /// beside the build scripts, in Valve's own format; `--check` exits 2 naming every setting
     /// that differs from that file. Nothing on Steam is changed.
     Settings {
-        /// The app, by its ID or its app build script.
-        app: String,
-        /// Write the settings to this file, replacing it, to check against later.
-        #[arg(long, value_name = "FILE", conflicts_with = "check")]
-        save: Option<PathBuf>,
-        /// Compare the settings with this file, as `--save` wrote it.
-        #[arg(long, value_name = "FILE")]
-        check: Option<PathBuf>,
+        /// The app, by its ID or its app build script; in a game's folder, its own.
+        app: Option<String>,
+        /// Write the settings to this file, replacing it, to check against later; in a game's
+        /// folder, `settings.vdf` beside its build scripts. Refused, exiting 2, for an install
+        /// folder of anything but letters and digits.
+        #[arg(long, value_name = "FILE", num_args = 0..=1, conflicts_with = "check")]
+        save: Option<Option<PathBuf>>,
+        /// Compare the settings with this file, as `--save` wrote it; in a game's folder, its
+        /// `settings.vdf`. An install folder of anything but letters and digits is a difference.
+        #[arg(long, value_name = "FILE", num_args = 0..=1)]
+        check: Option<Option<PathBuf>>,
         /// The build account, if not the one the last login remembered.
         #[arg(long, env = ACCOUNT)]
         account: Option<String>,
@@ -276,18 +277,19 @@ pub enum Command {
     /// exits 2 naming every leaderboard missing on either side and every setting that differs.
     /// With `--create` too, those in the files that Steam lacks are made first, as the files have
     /// them. Steam keeps an existing leaderboard's settings and scores, so none is ever changed,
-    /// made again or deleted.
+    /// made again or deleted. In a game's folder, `--check` with no files, or `--create` alone,
+    /// reads the godot-kit records in `mods/base/data` holding leaderboards.
     Leaderboards {
-        /// The app, by its ID or its app build script.
-        app: String,
+        /// The app, by its ID or its app build script; in a game's folder, its own.
+        app: Option<String>,
         /// JSON files of the leaderboards the app should have, each with its `name`, `sort`,
         /// `display`, `trusted_writes` and `friends_only`; or lists of godot-kit's records, those
         /// typed `leaderboard` read the same way by the name in `steam`. Each leaderboard is in
         /// one file only.
-        #[arg(long, value_name = "FILE", num_args = 1..)]
-        check: Vec<PathBuf>,
+        #[arg(long, value_name = "FILE", num_args = 0..)]
+        check: Option<Vec<PathBuf>>,
         /// Make the file's leaderboards that Steam lacks, before checking.
-        #[arg(long, requires = "check")]
+        #[arg(long)]
         create: bool,
     },
     /// Upload an app's rich presence localisation.
@@ -296,13 +298,15 @@ pub enum Command {
     /// the publisher key as `builds` finds it. Each language's tokens on Steam are replaced by the
     /// file's, so a token taken out of the file is gone from Steam after the upload. Files are
     /// checked first: a token that does not start with `#`, a token twice, or a text referring to
-    /// tokens that none starts as, and nothing is sent while one is wrong.
+    /// tokens that none starts as, and nothing is sent while one is wrong. With neither the app
+    /// nor files, in a game's folder, sends every `rich_presence_<language>.vdf` beside its build
+    /// scripts, refused unless the tree is pushed, as for `upload`.
     #[command(name = "rich-presence")]
     RichPresence {
-        /// The app, by its ID or its app build script.
-        app: String,
-        /// The rich presence files, such as `steam/rich_presence_english.vdf`.
-        #[arg(required = true)]
+        /// The app, by its ID or its app build script; in a game's folder, its own.
+        app: Option<String>,
+        /// The rich presence files, such as `steam/rich_presence_english.vdf`; in a game's folder,
+        /// every one beside its build scripts.
         files: Vec<PathBuf>,
         /// Check the files and show what would be sent, without sending anything.
         #[arg(long)]
@@ -399,7 +403,8 @@ pub enum Command {
 /// What `achievements` writes for Steamworks' achievement editor, from what, and where.
 #[derive(Debug, Args)]
 pub struct Writing {
-    /// Write the achievement editor's files from these, as `--check` reads them. An achievement
+    /// Write the achievement editor's files from these, as `--check` reads them; in a game's
+    /// folder, with none, from its own, into `steam/achievements`. An achievement
     /// may also give its `set`, whether it is `archived`, its `permission`, the `stat` its
     /// progress bar counts and the value it unlocks `at`, and its `icon` and `icon_locked`, PNG
     /// files in the godot-kit mod the records are in or beside the file; a set gives its `setid` and
@@ -410,11 +415,10 @@ pub struct Writing {
     #[arg(
         long,
         value_name = "FILE",
-        num_args = 1..,
-        conflicts_with_all = ["check", "json"],
-        requires = "out"
+        num_args = 0..,
+        conflicts_with_all = ["check", "json"]
     )]
-    pub write: Vec<PathBuf>,
+    pub write: Option<Vec<PathBuf>>,
     /// The folder `--write` writes into, made if missing. Files of the kinds it writes for the app
     /// that it no longer would are removed; others, `steam-icons.json` among them, are left
     /// alone. With `--check`, the folder whose `steam-icons.json` the icons are checked against.
@@ -429,16 +433,44 @@ pub struct Writing {
     /// would write it, Steam lacks an achievement or icon of the files, Steam has an icon for an
     /// achievement the files give none, or an icon Steam serves is not its file: more than one
     /// pixel in a thousand more than 64 off in a channel, out of 255, where its JPEG leaves each
-    /// pixel well within that.
-    #[arg(long, requires = "write", conflicts_with = "unchanged")]
+    /// pixel well within that. In a game's folder it needs no `--write`.
+    #[arg(long, conflicts_with_all = ["unchanged", "check", "json"])]
     pub imported: bool,
+}
+
+/// What `upload` uploads, and how.
+#[derive(Debug, Args)]
+pub struct Upload {
+    /// The app build script, such as `steam/app_build.vdf`; in a game's folder, its own.
+    pub script: Option<PathBuf>,
+    /// The version being shipped, which with the commit becomes the build's description; in a
+    /// game's folder, `project.godot`'s.
+    #[arg(long)]
+    pub version: Option<String>,
+    /// Valve's dry run: the whole build is computed and logged, and nothing is uploaded.
+    #[arg(long)]
+    pub preview: bool,
+    /// While Steam shows the app unreleased, also set the build live on the default branch,
+    /// through Steam's partner Web API with the publisher key as `builds` finds it. Once it is
+    /// released, its default branch is set live in Steamworks, and the build goes up without it.
+    /// In a game's folder an upload always does.
+    #[arg(long, conflicts_with = "preview")]
+    pub default: bool,
+    /// The build account, if not the one the last login remembered.
+    #[arg(long, env = ACCOUNT)]
+    pub account: Option<String>,
+    /// Once steamcmd has run, print what came of it on standard output as one line of JSON:
+    /// `outcome`, `app`, `build_id`, `branch`, `live`, `default` and `description`. Everything
+    /// else goes to standard error.
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// The build `promote` sets live, and where.
 #[derive(Debug, Args)]
 pub struct Promote {
-    /// The app, by its ID or its app build script.
-    pub app: String,
+    /// The app, by its ID or its app build script; in a game's folder, its own.
+    pub app: Option<String>,
     /// The build, by its build ID.
     #[arg(long)]
     pub build: u64,
@@ -455,7 +487,7 @@ pub struct Promote {
 #[derive(Debug, Args)]
 pub struct Workshop {
     /// The item script, such as `workshop/item.vdf`.
-    #[arg(required_unless_present = "app", conflicts_with = "app")]
+    #[arg(conflicts_with_all = ["app", "name", "visibility"])]
     pub script: Option<PathBuf>,
     #[command(flatten)]
     pub item: WorkshopItem,
@@ -482,8 +514,9 @@ pub struct WorkshopItem {
     /// the item an earlier one made. steamship writes it, and makes it if missing.
     #[arg(long, value_name = "FILE", requires = "app")]
     pub items: Option<PathBuf>,
-    /// The item's name in the `--items` file, such as `example`.
-    #[arg(long, requires = "app")]
+    /// The item's name in the `--items` file, such as `example`; in a game's folder, the one
+    /// example mod to upload.
+    #[arg(long)]
     pub name: Option<String>,
     /// The folder uploaded as the item's content.
     #[arg(long, value_name = "FOLDER", requires = "app")]
@@ -502,7 +535,7 @@ pub struct WorkshopItem {
     pub change_note: Option<String>,
     /// Who may see the item: `public`, `friends-only`, `private` or `unlisted`. Needed to make
     /// one, since steamship never chooses; left out, an item already made keeps what it has.
-    #[arg(long, value_parser = workshop::visibility, requires = "app")]
+    #[arg(long, value_parser = workshop::visibility)]
     pub visibility: Option<workshop::Visibility>,
 }
 

@@ -658,6 +658,13 @@ fn every_malformed_script_is_refused_with_what_is_wrong() {
         ),
         (
             format!(
+                r#""AppBuild" {{ "AppID" "0" "ContentRoot" "../content" "Depots" {{ "1" {{ {MAPPING} }} }} }}"#
+            ),
+            None,
+            "\"AppID\" is 0, which Steamworks never gives: put in the ID it shows for it",
+        ),
+        (
+            format!(
                 r#""AppBuild" {{ "AppID" "1" "ContentRoot" "../content" "Depots" {{ "x" {{ {MAPPING} }} }} }}"#
             ),
             None,

@@ -8,6 +8,7 @@ it into `target/site`, and each release publishes that from its tag through
 | -------------- | ------------------------------- |
 | `install.md`   | `install.html`                  |
 | `uploading.md` | `uploading.html`                |
+| `games.md`     | `games.html`                    |
 | `ci.md`        | `ci.html`                       |
 | `theme/`       | the template, stylesheet, icon  |
 
