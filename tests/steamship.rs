@@ -7637,6 +7637,154 @@ fn a_games_example_mods_are_its_workshop_items_and_one_without_any_is_refused() 
     );
 }
 
+#[test]
+fn a_games_script_may_set_only_the_games_branch_live() {
+    let (_temp, root) = pushed_game(None);
+    let beta = r#""AppBuild" { "AppID" "1000050" "ContentRoot" "../export/" "SetLive" "beta" "Depots" { "1000051" "depot.vdf" } }"#;
+    fs::write(root.join("steam").join("app_build.vdf"), beta).unwrap();
+    pushed(&root, "Live on beta");
+    for args in [["check"].as_slice(), ["upload"].as_slice()] {
+        let (code, stdout, stderr) = in_game(&root, args);
+        assert_eq!(code, Some(2_i32), "{args:?}: {stdout}{stderr}");
+        assert!(
+            failure(&stderr).contains(
+                " sets beta live, and a game's build goes live on testing alone, and on the \
+                 default branch too while Steam shows the game unreleased"
+            ),
+            "{args:?}: {stderr}"
+        );
+    }
+
+    fs::write(root.join("steamship.toml"), "branch = \"beta\"\n").unwrap();
+    pushed(&root, "The game's branch is beta");
+    let (code, stdout, stderr) = in_game(&root, &["upload"]);
+    assert_eq!(code, Some(2_i32), "no build account here: {stdout}{stderr}");
+    assert!(!stderr.contains("sets beta live"), "{stderr}");
+    assert!(stdout.contains("  build     "), "past the script: {stdout}");
+}
+
+/// A program that prints how many processors it may run on.
+#[cfg(windows)]
+const COUNTING: [&str; 4] = [
+    "powershell",
+    "-NoProfile",
+    "-Command",
+    "[Convert]::ToString([int64][Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity, 2).Replace('0', '').Length",
+];
+#[cfg(target_os = "linux")]
+const COUNTING: [&str; 1] = ["nproc"];
+
+/// The `cores` line an upload in a game held to `cores` shows, and how many processors its build
+/// found it could run on, which the build prints.
+#[cfg(any(windows, target_os = "linux"))]
+fn shipped_on(cores: usize) -> (String, usize) {
+    let (_temp, root) = pushed_game(Some(&format!("cores = {cores}\nbuild = {COUNTING:?}\n")));
+    let (_code, stdout, stderr) = in_game(&root, &["upload"]);
+    let shown = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("  cores     "))
+        .unwrap_or_default()
+        .to_owned();
+    let found: Option<usize> = stderr.lines().find_map(|line| line.trim().parse().ok());
+    assert!(
+        found.is_some(),
+        "the build printed no count: {stdout}{stderr}"
+    );
+    (shown, found.unwrap_or_default())
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn shipping_a_game_holds_the_build_and_steamcmd_to_its_cores() {
+    let (program, args) = COUNTING.split_first().unwrap();
+    let counted = run::output(run::command(program).args(args)).unwrap();
+    let machine: usize = String::from_utf8_lossy(&counted.stdout)
+        .trim()
+        .parse()
+        .unwrap();
+    let (unheld, every) = shipped_on(4096);
+    assert_eq!(every, machine, "{unheld}");
+    assert_eq!(
+        unheld,
+        format!("all {every}, within the 4096 steamcmd and the build may run on")
+    );
+    let (held, found) = shipped_on(1);
+    assert_eq!(found, 1, "{held}");
+    if every > 1 {
+        assert_eq!(
+            held,
+            format!("1 of {every}, the most steamcmd and the build run on")
+        );
+    } else {
+        assert_eq!(
+            held,
+            "all 1, within the 1 steamcmd and the build may run on"
+        );
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+#[test]
+fn shipping_a_game_on_macos_says_its_cores_are_not_held() {
+    let (_temp, root) = pushed_game(Some("cores = 1\n"));
+    let (_code, stdout, stderr) = in_game(&root, &["upload"]);
+    assert!(
+        stdout.contains("\n  cores     every one, as macOS holds no program to fewer\n"),
+        "{stdout}{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_games_workshop_run_gives_its_visibility_only_to_the_items_it_makes() {
+    let (_temp, root) = pushed_game(None);
+    let fresh = root.join("modding").join("fresh");
+    fs::create_dir_all(&fresh).unwrap();
+    fs::write(
+        fresh.join("manifest.json"),
+        r#"{"name": "Fresh Harbour", "version": "1.0.0", "description": "A mod not yet made."}"#,
+    )
+    .unwrap();
+    fs::write(fresh.join("preview.png"), icon_png(256, 40)).unwrap();
+    fs::write(
+        root.join("steam").join("workshop_items.json"),
+        r#"{"app": 1000050, "items": {"example": 5674}}"#,
+    )
+    .unwrap();
+    pushed(&root, "A second example mod");
+    // As `publishing` does, keeping each script as it was sent before giving a new item its ID.
+    let home = faked_with(
+        "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
+         cp \"$script\" \"$script.sent\"\n\
+         grep -q publishedfileid \"$script\" || \
+         printf '\"workshopitem\"\\n{\\n\"appid\" \"1000050\"\\n\"publishedfileid\" \"777\"\\n}\\n' > \"$script\"\n\
+         printf '%s\\r\\n' 'Success.'\n",
+    );
+    saved_login(home.path());
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--visibility", "private"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let copy = |name: &str| {
+        fs::read_to_string(
+            home.path()
+                .join(format!("workshop/1000050/{name}/workshop_item.vdf.sent")),
+        )
+        .unwrap()
+    };
+    let published = copy("example");
+    assert!(
+        published.contains("\"publishedfileid\"\t\t\"5674\"") && !published.contains("visibility"),
+        "a published item keeps the visibility it has: {published}"
+    );
+    let made = copy("fresh");
+    assert!(made.contains("\"visibility\"\t\t\"2\""), "{made}");
+}
+
 /// A steamcmd for Tidal Mill Inn, still unreleased, that prints the app's info when asked for it,
 /// and otherwise has Valve build the upload as `BuildID` 4242, adding a line to `builds` in the
 /// home, or finish the preview the script asks for.

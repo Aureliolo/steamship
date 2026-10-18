@@ -13,7 +13,7 @@ use std::path::{Component, Path, PathBuf};
 use serde_json::Value;
 use toml::de::Error as TomlError;
 
-use crate::{run, workshop};
+use crate::{run, webapi, workshop};
 
 /// The file a game names its own layout in, at its root.
 pub const FILE: &str = "steamship.toml";
@@ -21,11 +21,21 @@ pub const FILE: &str = "steamship.toml";
 /// Where a game keeps its app build script when its `steamship.toml` names none.
 const SCRIPT: &str = "steam/app_build.vdf";
 
+/// The branch a game's build goes live on when its `steamship.toml` names none: the default branch
+/// is the publisher's to set, once the game is released.
+const BRANCH: &str = "testing";
+
+/// The most processors steamcmd and a game's build run on when `steamship.toml` says no other, so
+/// that shipping leaves the rest of the machine to whoever works on it.
+const CORES: usize = 4;
+
 /// Every setting `steamship.toml` takes at its top, and under `[workshop]`.
-const SETTINGS: [&str; 7] = [
+const SETTINGS: [&str; 9] = [
     "steamship",
     "script",
+    "branch",
     "build",
+    "cores",
     "records",
     "locale",
     "import",
@@ -79,9 +89,13 @@ pub struct Project {
     pub pin: Option<String>,
     /// The app build script.
     pub script: PathBuf,
+    /// The one branch the script may set live.
+    pub branch: String,
     /// The program and arguments that build the game into the folders its depots ship; empty
     /// when the content is built some other way.
     pub build: Vec<String>,
+    /// The most processors steamcmd and the build run on.
+    pub cores: usize,
     /// The folders and files of records: games-kit's, or steamship's own.
     pub records: Vec<Given>,
     /// The folder of every language's gettext catalogue.
@@ -150,7 +164,9 @@ impl Project {
             root: root.to_path_buf(),
             configured: false,
             pin: None,
+            branch: BRANCH.to_owned(),
             build: Vec::new(),
+            cores: CORES,
             records: vec![Given::laid_out(under(root, "mods/base/data"))],
             locale: Given::laid_out(under(root, "game/locale")),
             import: scripts.join("achievements"),
@@ -191,6 +207,28 @@ impl Project {
                 );
             }
         }
+        if let Some(value) = table.get("branch") {
+            let branch = text_of(value, "branch")?;
+            if branch.trim().is_empty() || webapi::is_default(branch) {
+                return Err(format!(
+                    "`branch` is \"{branch}\": name the branch the game's build goes live on, \
+                     such as \"{BRANCH}\"; the default branch is the publisher's to set"
+                ));
+            }
+            branch.clone_into(&mut project.branch);
+        }
+        if let Some(value) = table.get("cores") {
+            project.cores = value
+                .as_integer()
+                .and_then(|cores| usize::try_from(cores).ok())
+                .filter(|cores| *cores > 0)
+                .ok_or_else(|| {
+                    format!(
+                        "`cores` is the most processors steamcmd and the build run on: give a \
+                         whole number of 1 or more, such as {CORES}"
+                    )
+                })?;
+        }
         if let Some(value) = table.get("records") {
             project.records = paths(root, value, "records")?;
         }
@@ -230,6 +268,31 @@ impl Project {
                 self.root.join(FILE).display()
             )),
             _ => Ok(()),
+        }
+    }
+
+    /// Refuses an app build script that sets another branch live than the game's, or none.
+    ///
+    /// # Errors
+    ///
+    /// When `set_live`, the script's `SetLive`, is not the game's branch.
+    pub fn live_on(&self, set_live: Option<&str>) -> Result<(), String> {
+        let how = format!(
+            "a game's build goes live on {} alone, and on the default branch too while Steam shows \
+             the game unreleased: make the script's \"SetLive\" \"{}\", or name another branch as \
+             `branch` in {FILE}",
+            self.branch, self.branch
+        );
+        match set_live {
+            Some(branch) if branch == self.branch => Ok(()),
+            Some(branch) => Err(format!(
+                "{} sets {branch} live, and {how}",
+                self.script.display()
+            )),
+            None => Err(format!(
+                "{} sets no branch live, and {how}",
+                self.script.display()
+            )),
         }
     }
 
@@ -665,6 +728,33 @@ mod tests {
         assert_eq!(project.items, Path::new("game/steam/workshop_items.json"));
         assert_eq!(project.build, Vec::<String>::new());
         assert_eq!(project.pin, None);
+        assert_eq!(project.branch, "testing");
+        assert_eq!(project.cores, 4);
+    }
+
+    #[test]
+    fn a_script_may_set_the_games_branch_live_alone() {
+        let laid_out = Project::laid_out(
+            Path::new("game"),
+            Path::new("game/steam/app_build.vdf").to_path_buf(),
+        );
+        assert_eq!(laid_out.live_on(Some("testing")), Ok(()));
+        let how = "a game's build goes live on testing alone, and on the default branch too while \
+                   Steam shows the game unreleased: make the script's \"SetLive\" \"testing\", or \
+                   name another branch as `branch` in steamship.toml";
+        let script = Path::new("game/steam/app_build.vdf").display().to_string();
+        assert_eq!(
+            laid_out.live_on(Some("beta")),
+            Err(format!("{script} sets beta live, and {how}"))
+        );
+        assert_eq!(
+            laid_out.live_on(None),
+            Err(format!("{script} sets no branch live, and {how}"))
+        );
+        let elsewhere = configured("branch = \"beta\"\ncores = 2").unwrap();
+        assert_eq!(elsewhere.live_on(Some("beta")), Ok(()));
+        assert!(elsewhere.live_on(Some("testing")).is_err());
+        assert_eq!(elsewhere.cores, 2);
     }
 
     #[test]
@@ -712,8 +802,28 @@ mod tests {
         for (text, said) in [
             (
                 "builds = []",
-                "`builds` is no setting steamship takes; it takes `steamship`, `script`, `build`, \
-                 `records`, `locale`, `import`, `workshop`",
+                "`builds` is no setting steamship takes; it takes `steamship`, `script`, \
+                 `branch`, `build`, `cores`, `records`, `locale`, `import`, `workshop`",
+            ),
+            (
+                "branch = \"default\"",
+                "`branch` is \"default\": name the branch the game's build goes live on, such as \
+                 \"testing\"; the default branch is the publisher's to set",
+            ),
+            (
+                "branch = \" \"",
+                "`branch` is \" \": name the branch the game's build goes live on, such as \
+                 \"testing\"; the default branch is the publisher's to set",
+            ),
+            (
+                "cores = 0",
+                "`cores` is the most processors steamcmd and the build run on: give a whole \
+                 number of 1 or more, such as 4",
+            ),
+            (
+                "cores = \"4\"",
+                "`cores` is the most processors steamcmd and the build run on: give a whole \
+                 number of 1 or more, such as 4",
             ),
             (
                 "[workshop]\nmod = \"x\"",
