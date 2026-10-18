@@ -124,11 +124,13 @@ pub enum Command {
     /// the branch it was set live on.
     ///
     /// Without a script, in a game's folder, ships the game: refused unless its tree holds
-    /// nothing uncommitted and origin's default branch is at the same commit; then built with its
-    /// `build` command, checked against the settings snapshot `steam/settings.vdf`, its
-    /// achievements, leaderboards and rich presence, and uploaded as the version `project.godot`
-    /// gives, live on the default branch too while the app is unreleased. Once it is live, the
-    /// branch's description becomes the version.
+    /// nothing uncommitted, origin's default branch is at the same commit, and its script sets the
+    /// game's branch live, `testing` unless `steamship.toml` names another; then built with its
+    /// `build` command, steamcmd and the build held to 4 processors or the file's `cores`,
+    /// checked against the settings snapshot `steam/settings.vdf`, its achievements, leaderboards
+    /// and rich presence, and uploaded as the version `project.godot` gives, live on the default
+    /// branch too while the app is unreleased. Once it is live, the branch's description becomes
+    /// the version.
     Upload(Upload),
     /// Upload a Workshop item, then print its ID.
     ///
@@ -534,7 +536,8 @@ pub struct WorkshopItem {
     #[arg(long, value_name = "TEXT", requires = "app")]
     pub change_note: Option<String>,
     /// Who may see the item: `public`, `friends-only`, `private` or `unlisted`. Needed to make
-    /// one, since steamship never chooses; left out, an item already made keeps what it has.
+    /// one, since steamship never chooses; left out, an item already made keeps what it has. In
+    /// a game's folder it is given to the items being made alone.
     #[arg(long, value_parser = workshop::visibility)]
     pub visibility: Option<workshop::Visibility>,
 }

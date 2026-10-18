@@ -523,6 +523,44 @@ pub fn user_id() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+/// Holds steamship's thread, and every program it starts from here on, which inherit it, to the
+/// first `cores` of the processors it may run on; gives how many it is held to, of how many.
+///
+/// # Errors
+///
+/// When the system will not say which processors steamship may run on, or not hold it to some.
+#[cfg(target_os = "linux")]
+pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
+    let size = std::mem::size_of::<libc::cpu_set_t>();
+    let mut allowed = MaybeUninit::<libc::cpu_set_t>::zeroed();
+    // SAFETY: `allowed` is `size` bytes the call writes the calling thread's set of processors
+    // into, zeroed first so that it is a set whatever the call leaves.
+    if unsafe { libc::sched_getaffinity(0, size, allowed.as_mut_ptr()) } != 0_i32 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: an all-zero cpu_set_t is the empty set, and the call above wrote it or nothing.
+    let allowed = unsafe { allowed.assume_init() };
+    let every = usize::try_from(libc::CPU_SETSIZE).unwrap_or_default();
+    let processors: Vec<usize> = (0..every)
+        // SAFETY: each processor asked about is below CPU_SETSIZE, the set's own size.
+        .filter(|&processor| unsafe { libc::CPU_ISSET(processor, &allowed) })
+        .collect();
+    let held = run::held(&processors, cores);
+    if held.len() < processors.len() {
+        // SAFETY: an all-zero cpu_set_t is the empty set.
+        let mut chosen = unsafe { MaybeUninit::<libc::cpu_set_t>::zeroed().assume_init() };
+        for &processor in held {
+            // SAFETY: each processor was read from a set of the same size, so is below it.
+            unsafe { libc::CPU_SET(processor, &mut chosen) };
+        }
+        // SAFETY: `chosen` is a whole cpu_set_t of `size` bytes, only read by the call.
+        if unsafe { libc::sched_setaffinity(0, size, &raw const chosen) } != 0_i32 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok((held.len(), processors.len()))
+}
+
 #[cfg(test)]
 mod tests {
     use std::mem;

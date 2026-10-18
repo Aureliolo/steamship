@@ -220,14 +220,18 @@ fn script_named(game: &Project) -> String {
     game.script.display().to_string()
 }
 
-/// The game's app build script, read, every problem in it shown.
+/// The game's app build script, read, every problem in it shown, and refused unless it sets the
+/// game's branch live.
 fn game_script(game: &Project) -> Result<scripts::AppScript, ExitCode> {
-    scripts::load(&game.script).map_err(|problems| {
+    let script = scripts::load(&game.script).map_err(|problems| {
         for problem in &problems {
             show::failure("refused", &problem.to_string(), None);
         }
         ExitCode::from(REFUSED)
-    })
+    })?;
+    game.live_on(script.set_live.as_deref())
+        .map_err(|why| fail(&why, REFUSED))?;
+    Ok(script)
 }
 
 /// The game's files `achievements` checks or writes from: the records holding achievements,
@@ -253,6 +257,7 @@ fn shipped_from(game: &Project) -> Result<(), ExitCode> {
             game.root.display().to_string()
         },
     );
+    show::field("cores", &held_to(game.cores)?);
     let spinner = Spinner::start("commit", "asking origin for its default branch", false);
     match project::pushed(&game.root) {
         Ok(pushed) => {
@@ -267,6 +272,24 @@ fn shipped_from(game: &Project) -> Result<(), ExitCode> {
             spinner.failed("not pushed");
             Err(fail(&why, REFUSED))
         }
+    }
+}
+
+/// Holds steamship, and so steamcmd and the build it starts, to `cores` processors, and says what
+/// came of it.
+fn held_to(cores: usize) -> Result<String, ExitCode> {
+    match run::hold_to(cores) {
+        Ok(Some((held, of))) if held < of => Ok(format!(
+            "{held} of {of}, the most steamcmd and the build run on"
+        )),
+        Ok(Some((_, of))) => Ok(format!(
+            "all {of}, within the {cores} steamcmd and the build may run on"
+        )),
+        Ok(None) => Ok("every one, as macOS holds no program to fewer".to_owned()),
+        Err(error) => Err(fail(
+            &format!("steamship could not hold itself to {cores} processors: {error}"),
+            FAILED,
+        )),
     }
 }
 
@@ -661,7 +684,19 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     }
     shipped_from(&game)?;
     let app = script_named(&game);
+    // A file that cannot be read is named by the upload itself; until then no item counts as made.
+    let made = fs::read_to_string(&game.items)
+        .ok()
+        .and_then(|text| workshop::Record::read(&text).ok())
+        .map(|record| record.items)
+        .unwrap_or_default();
     for each in chosen {
+        // Visibility is chosen once, for an item being made: a published item keeps whatever it
+        // was given on Steam since.
+        let visibility = request
+            .item
+            .visibility
+            .filter(|_| !made.contains_key(&each.name));
         let item = cli::Workshop {
             script: None,
             item: cli::WorkshopItem {
@@ -673,7 +708,7 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
                 title: Some(each.title),
                 description: Some(each.description),
                 change_note: Some(format!("Version {}", each.version)),
-                visibility: request.item.visibility,
+                visibility,
             },
             account: request.account.clone(),
             new: request.new,

@@ -7637,6 +7637,96 @@ fn a_games_example_mods_are_its_workshop_items_and_one_without_any_is_refused() 
     );
 }
 
+#[test]
+fn a_games_script_may_set_only_the_games_branch_live() {
+    let (_temp, root) = pushed_game(None);
+    let beta = r#""AppBuild" { "AppID" "5440760" "ContentRoot" "../export/" "SetLive" "beta" "Depots" { "5440761" "depot.vdf" } }"#;
+    fs::write(root.join("steam").join("app_build.vdf"), beta).unwrap();
+    pushed(&root, "Live on beta");
+    for args in [["check"].as_slice(), ["upload"].as_slice()] {
+        let (code, stdout, stderr) = in_game(&root, args);
+        assert_eq!(code, Some(2_i32), "{args:?}: {stdout}{stderr}");
+        assert!(
+            failure(&stderr).contains(
+                " sets beta live, and a game's build goes live on testing alone, and on the \
+                 default branch too while Steam shows the game unreleased"
+            ),
+            "{args:?}: {stderr}"
+        );
+    }
+
+    fs::write(root.join("steamship.toml"), "branch = \"beta\"\n").unwrap();
+    pushed(&root, "The game's branch is beta");
+    let (code, stdout, stderr) = in_game(&root, &["upload"]);
+    assert_eq!(code, Some(2_i32), "no build account here: {stdout}{stderr}");
+    assert!(!stderr.contains("sets beta live"), "{stderr}");
+    assert!(stdout.contains("  build     "), "past the script: {stdout}");
+}
+
+#[test]
+fn shipping_a_game_holds_steamcmd_and_the_build_to_its_processors() {
+    let (_temp, root) = pushed_game(Some("cores = 1\n"));
+    let (_code, stdout, stderr) = in_game(&root, &["upload"]);
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("  cores     "))
+        .unwrap_or_default();
+    #[cfg(any(windows, target_os = "linux"))]
+    assert!(
+        line.starts_with("  cores     1 of ")
+            && line.ends_with(", the most steamcmd and the build run on")
+            || line == "  cores     all 1, within the 1 steamcmd and the build may run on",
+        "{stdout}{stderr}"
+    );
+    #[cfg(not(any(windows, target_os = "linux")))]
+    assert_eq!(
+        line, "  cores     every one, as macOS holds no program to fewer",
+        "{stdout}{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_games_workshop_run_gives_its_visibility_only_to_the_items_it_makes() {
+    let (_temp, root) = pushed_game(None);
+    let fresh = root.join("modding").join("fresh");
+    fs::create_dir_all(&fresh).unwrap();
+    fs::write(
+        fresh.join("manifest.json"),
+        r#"{"name": "Fresh Harbour", "version": "1.0.0", "description": "A mod not yet made."}"#,
+    )
+    .unwrap();
+    fs::write(fresh.join("preview.png"), icon_png(256, 40)).unwrap();
+    fs::write(
+        root.join("steam").join("workshop_items.json"),
+        r#"{"app": 5440760, "items": {"example": 5674}}"#,
+    )
+    .unwrap();
+    pushed(&root, "A second example mod");
+    let home = publishing("Success.", 0);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--visibility", "private"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let copy = |name: &str| {
+        fs::read_to_string(
+            home.path()
+                .join(format!("workshop/5440760/{name}/workshop_item.vdf")),
+        )
+        .unwrap()
+    };
+    let published = copy("example");
+    assert!(
+        published.contains("\"publishedfileid\"\t\t\"5674\"") && !published.contains("visibility"),
+        "a published item keeps the visibility it has: {published}"
+    );
+    let made = copy("fresh");
+    assert!(made.contains("\"visibility\"\t\t\"2\""), "{made}");
+}
+
 /// A steamcmd for Tall Tales Inn, still unreleased, that prints the app's info when asked for it,
 /// and otherwise has Valve build the upload as `BuildID` 4242, adding a line to `builds` in the
 /// home, or finish the preview the script asks for.
