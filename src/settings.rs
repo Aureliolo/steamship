@@ -159,6 +159,21 @@ pub fn snapshot(app: u32, settings: &Block) -> Result<String, String> {
     ))
 }
 
+/// Why the install folder `settings` names is refused, if it is: a folder of anything but ASCII
+/// letters and digits is one a path, a shell or an installer on some system takes otherwise.
+#[must_use]
+pub fn install_folder(settings: &Block) -> Option<String> {
+    let folder = settings.block("config")?.text("installdir")?;
+    let plain = !folder.is_empty() && folder.chars().all(|each| each.is_ascii_alphanumeric());
+    (!plain).then(|| {
+        format!(
+            "the install folder is \"{folder}\", and steamship takes letters and digits alone: \
+             change it in Steamworks under Installation, General Installation, then save the \
+             settings again"
+        )
+    })
+}
+
 /// Reads a snapshot's `text`, which must be `app`'s.
 ///
 /// # Errors
@@ -355,6 +370,39 @@ mod tests {
                 cloud(&vdf::parse(text).unwrap()),
                 "Steam Cloud not set up in Steamworks",
                 "{text}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_install_folder_of_anything_but_letters_and_digits_is_refused() {
+        let folder = |name: &str| {
+            install_folder(
+                &vdf::parse(&format!("\"config\" {{ \"installdir\" \"{name}\" }}")).unwrap(),
+            )
+        };
+        assert_eq!(folder("TidalMillInn"), None);
+        assert_eq!(folder("FGM2"), None);
+        assert_eq!(
+            install_folder(&from_console(CONSOLE, 1_000_010).unwrap()),
+            None
+        );
+        assert_eq!(install_folder(&vdf::parse("\"ufs\" { }").unwrap()), None);
+        for name in [
+            "Tidal Mill Inn",
+            "Tidal-Mill",
+            "Brewhouse_2",
+            "Inn\u{e9}",
+            "",
+        ] {
+            assert_eq!(
+                folder(name),
+                Some(format!(
+                    "the install folder is \"{name}\", and steamship takes letters and digits \
+                     alone: change it in Steamworks under Installation, General Installation, \
+                     then save the settings again"
+                )),
+                "{name}"
             );
         }
     }

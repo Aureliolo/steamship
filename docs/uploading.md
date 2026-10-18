@@ -84,6 +84,9 @@ steamship upload steam/app_build.vdf --version 1.4.0 --preview
 steamship upload steam/app_build.vdf --version 1.4.0
 ```
 
+In a game's folder, `steamship upload` alone takes the script and version from the game, and
+ships only a pushed commit, built and checked first; [Shipping a game](games.md) has the rest.
+
 The build's description is the version and the Git commit the app script's own repository is
 at, whatever folder steamship runs in: a script in a worktree names that worktree's commit. Build
 output (logs, manifests, the chunk cache) goes to steamship's own folder for the app, never into
@@ -152,8 +155,9 @@ that is missing or empty, a `previewfile` that is missing or larger than the 1 M
 `visibility` other than 0 (public), 1 (friends only), 2 (private) or 3 (unlisted), and a title,
 description or change note longer than Steam takes. Paths are relative to the script.
 
-A script with no `publishedfileid`, or `0`, makes a new item: steamship prints its ID and the
-line to add to the script, so that later uploads update the same item. Your script is never
+A script with no `publishedfileid`, or `0`, makes a new item, and needs a `previewfile`: Steam
+makes an item without one too, silently, with its grey default picture. steamship prints its ID
+and the line to add to the script, so that later uploads update the same item. Your script is never
 rewritten. In CI nobody adds that line, so every run would make another item: there, a script
 with no `publishedfileid` is refused unless `--new` is given.
 
@@ -166,11 +170,11 @@ steamship workshop --app 1000070 --items steam/workshop_items.json --name exampl
   --description "What the mod shows." --change-note "1.0.0" --visibility private
 ```
 
-`--app`, `--items`, `--name`, `--content` and `--title` are needed; `--preview`,
-`--description` and `--change-note` may be left out. They are checked as a script's are.
-`--visibility` is `public`, `friends-only`, `private` or `unlisted`. It is needed to make an
-item, since steamship never chooses who sees one; left out, an item already made keeps what it
-has on Steam.
+`--app`, `--items`, `--name`, `--content` and `--title` are needed; `--description` and
+`--change-note` may be left out. They are checked as a script's are. `--preview` is needed to
+make an item, as a script's `previewfile` is. `--visibility` is `public`, `friends-only`,
+`private` or `unlisted`. It is needed to make an item, since steamship never chooses who sees
+one. Left out, either keeps what an item already made has on Steam.
 
 `--items` names a file kept with the game that holds the ID of each item made, by the name
 `--name` gives it, of letters, digits, `-`, `_` and `.`, not first. When the file has no item
