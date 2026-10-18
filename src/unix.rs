@@ -571,10 +571,9 @@ pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
 /// When it cannot be read.
 pub fn changed(path: &Path) -> io::Result<SystemTime> {
     let metadata = fs::metadata(path)?;
-    let seconds = u64::try_from(metadata.ctime())
-        .map_err(|error| {
-            io::Error::other(format!("{} changed before 1970: {error}", path.display()))
-        })?;
+    let seconds = u64::try_from(metadata.ctime()).map_err(|error| {
+        io::Error::other(format!("{} changed before 1970: {error}", path.display()))
+    })?;
     let nanoseconds = u32::try_from(metadata.ctime_nsec()).unwrap_or_default();
     SystemTime::UNIX_EPOCH
         .checked_add(Duration::new(seconds, nanoseconds))
