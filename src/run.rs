@@ -123,6 +123,38 @@ pub fn told() -> Option<&'static str> {
     native::told()
 }
 
+/// The processors of `allowed` a program held to `cores` runs on: the first ones, or every one
+/// when there are no more than that.
+#[must_use]
+pub fn held(allowed: &[usize], cores: usize) -> &[usize] {
+    allowed.get(..cores).unwrap_or(allowed)
+}
+
+/// Holds steamship, and every program it starts from here on, to `cores` processors.
+///
+/// Gives how many it is held to, of how many it may run on, or nothing where the system holds no
+/// program to some, as macOS does.
+///
+/// # Errors
+///
+/// When the system will not say which processors steamship may run on, or not hold it to some.
+#[cfg_attr(
+    not(any(windows, target_os = "linux")),
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "only where the system holds no program to some processors is there nothing to call"
+    )
+)]
+pub fn hold_to(cores: usize) -> io::Result<Option<(usize, usize)>> {
+    #[cfg(any(windows, target_os = "linux"))]
+    return native::hold_to(cores).map(Some);
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _: usize = cores;
+        Ok(None)
+    }
+}
+
 /// Ends steamship as what told it to stop would have, once all it has written is out; when
 /// nothing did, returns.
 pub fn end_as_told() {
@@ -168,6 +200,26 @@ mod tests {
     use std::time::Instant;
     #[cfg(windows)]
     use windows_sys::Win32::System::Threading::DETACHED_PROCESS;
+
+    #[test]
+    fn a_program_held_to_some_processors_runs_on_the_first_it_may() {
+        assert_eq!(held(&[0, 2, 3, 5, 7], 3), [0, 2, 3]);
+        assert_eq!(held(&[1, 2], 4), [1, 2]);
+        assert_eq!(held(&[1, 2], 2), [1, 2]);
+    }
+
+    #[test]
+    fn holding_steamship_to_more_processors_than_it_has_leaves_it_every_one() {
+        // More than any machine has, so that the tests themselves keep every processor.
+        let found = hold_to(usize::MAX).unwrap();
+        #[cfg(any(windows, target_os = "linux"))]
+        assert!(
+            found.is_some_and(|(held, of)| held == of && of > 0),
+            "{found:?}"
+        );
+        #[cfg(not(any(windows, target_os = "linux")))]
+        assert_eq!(found, None);
+    }
 
     /// A shell, what makes it run the one line that follows, a line that starts a grandchild
     /// holding the output open for a minute and then waits a minute itself, and one that starts
