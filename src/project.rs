@@ -6,14 +6,21 @@
 //! `modding/`, and the version in `project.godot`. `steamship.toml` names whatever a game keeps
 //! elsewhere, the command that builds it, and the one steamship it ships with.
 
-use std::fs;
+use std::collections::BTreeSet;
+use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
+use std::{env, process};
 
 use serde_json::Value;
 use toml::de::Error as TomlError;
 
-use crate::{run, webapi, workshop};
+#[cfg(unix)]
+use crate::unix as native;
+#[cfg(windows)]
+use crate::windows as native;
+use crate::{check, run, show, webapi, workshop};
 
 /// The file a game names its own layout in, at its root.
 pub const FILE: &str = "steamship.toml";
@@ -627,6 +634,75 @@ pub fn pushed(root: &Path) -> Result<Pushed, String> {
     Ok(Pushed { commit, branch })
 }
 
+/// This moment as the file system tells a file's change time, read back from a file made for it.
+///
+/// That clock is coarser than [`SystemTime::now`], and a file a build writes straight after could
+/// otherwise look older than the build.
+///
+/// # Errors
+///
+/// When no file can be made in the temporary folder, or its time read.
+pub fn written_now() -> io::Result<SystemTime> {
+    let marker = env::temp_dir().join(format!("steamship-build-{}", process::id()));
+    drop(
+        OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&marker)?,
+    );
+    let now = native::changed(&marker);
+    // A marker left behind holds nothing and is made again by the next build.
+    drop(fs::remove_file(&marker));
+    now
+}
+
+/// Every file the depots of the app build script at `script` upload that last changed before
+/// `since`, as one a build had written since would not.
+#[must_use]
+pub fn unwritten(script: &Path, since: SystemTime) -> BTreeSet<PathBuf> {
+    check::check(script)
+        .depots
+        .into_iter()
+        .flat_map(|depot| depot.files)
+        .filter(|file| native::changed(file).is_ok_and(|changed| changed < since))
+        .collect()
+}
+
+/// Why the `unwritten` files of the game at `root`, which its `build` left as they were, do not
+/// go up: the first ten named, relative to the game, and how many more there are.
+#[must_use]
+pub fn left_over(unwritten: &BTreeSet<PathBuf>, root: &Path, build: &str) -> String {
+    let shown: Vec<String> = unwritten
+        .iter()
+        .take(10)
+        .map(|file| {
+            file.strip_prefix(root)
+                .unwrap_or(file)
+                .display()
+                .to_string()
+        })
+        .collect();
+    let more = unwritten.len().saturating_sub(shown.len());
+    let others = if more > 0 {
+        format!(" and {more} more")
+    } else {
+        String::new()
+    };
+    let (was, is) = if unwritten.len() == 1 {
+        ("was", "is")
+    } else {
+        ("were", "are")
+    };
+    format!(
+        "{} the depots upload {was} not written by {build}, so {is} left over from an earlier \
+         build: {}{others}. Have the build empty the folders it writes first, or remove what it \
+         left",
+        show::counted(unwritten.len(), "file"),
+        shown.join(", "),
+    )
+}
+
 /// Refuses a tree at `root` holding anything its commit does not, untracked files among it; what
 /// Git ignores, such as the build, is left out.
 ///
@@ -711,6 +787,7 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     fn configured(text: &str) -> Result<Project, String> {
         Project::configured(Path::new("game"), text)
@@ -902,6 +979,72 @@ mod tests {
         );
         assert_eq!(remote_head("abc123\tHEAD\n"), None);
         assert_eq!(remote_head(""), None);
+    }
+
+    #[test]
+    fn a_file_left_over_by_a_build_is_named_with_how_many_more_there_are() {
+        let root = Path::new("game");
+        let one: BTreeSet<PathBuf> = [root.join("export").join("old.pck")].into();
+        assert_eq!(
+            left_over(&one, root, "python build.py"),
+            format!(
+                "1 file the depots upload was not written by python build.py, so is left over \
+                 from an earlier build: {}. Have the build empty the folders it writes first, or \
+                 remove what it left",
+                Path::new("export").join("old.pck").display()
+            )
+        );
+        let eleven: BTreeSet<PathBuf> = (10_u8..21)
+            .map(|each| root.join(format!("{each}.txt")))
+            .collect();
+        assert_eq!(
+            left_over(&eleven, root, "make"),
+            "11 files the depots upload were not written by make, so are left over from an \
+             earlier build: 10.txt, 11.txt, 12.txt, 13.txt, 14.txt, 15.txt, 16.txt, 17.txt, \
+             18.txt, 19.txt and 1 more. Have the build empty the folders it writes first, or \
+             remove what it left"
+        );
+        let ten: BTreeSet<PathBuf> = eleven.into_iter().take(10).collect();
+        assert!(left_over(&ten, root, "make").contains(
+            ": 10.txt, 11.txt, 12.txt, 13.txt, 14.txt, \
+                                                   15.txt, 16.txt, 17.txt, 18.txt, 19.txt. Have"
+        ),);
+    }
+
+    #[test]
+    fn a_file_the_depots_map_is_unwritten_only_when_it_changed_before_the_build() {
+        let temp = tempfile::tempdir().unwrap();
+        let steam = temp.path().join("steam");
+        fs::create_dir_all(&steam).unwrap();
+        fs::create_dir_all(temp.path().join("export")).unwrap();
+        fs::write(
+            steam.join("app_build.vdf"),
+            r#""AppBuild" { "AppID" "5440760" "ContentRoot" "../export/" "Depots" { "5440761" "depot.vdf" } }"#,
+        )
+        .unwrap();
+        fs::write(
+            steam.join("depot.vdf"),
+            r#""DepotBuild" { "DepotID" "5440761" "FileMapping" { "LocalPath" "*" "DepotPath" "." } }"#,
+        )
+        .unwrap();
+        let game = temp.path().join("export").join("game.pck");
+        fs::write(&game, "built").unwrap();
+        let changed = native::changed(&game).unwrap();
+        let script = steam.join("app_build.vdf");
+        assert_eq!(unwritten(&script, changed), BTreeSet::new());
+        // Windows counts time in tenths of a microsecond, and drops anything less.
+        let later = changed.checked_add(Duration::from_micros(1)).unwrap();
+        assert_eq!(unwritten(&script, later), [game].into());
+    }
+
+    #[test]
+    fn a_marker_made_now_is_no_older_than_a_file_made_before_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let before = temp.path().join("before");
+        fs::write(&before, "").unwrap();
+        let now = written_now().unwrap();
+        assert!(native::changed(&before).unwrap() <= now);
+        assert!(now <= SystemTime::now());
     }
 
     #[test]

@@ -126,8 +126,9 @@ pub enum Command {
     /// Without a script, in a game's folder, ships the game: refused unless its tree holds
     /// nothing uncommitted, origin's default branch is at the same commit, and its script sets the
     /// game's branch live, `testing` unless `steamship.toml` names another; then built with its
-    /// `build` command, steamcmd and the build held to 4 processors or the file's `cores`,
-    /// checked against the settings snapshot `steam/settings.vdf`, its achievements, leaderboards
+    /// `build` command, steamcmd and the build held to 4 processors or the file's `cores`, and
+    /// refused if a file its depots map was not written by the build; then checked against the
+    /// settings snapshot `steam/settings.vdf`, its achievements, leaderboards
     /// and rich presence, and uploaded as the version `project.godot` gives, live on the default
     /// branch too while the app is unreleased. Once it is live, the branch's description becomes
     /// the version.

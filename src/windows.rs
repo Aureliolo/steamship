@@ -22,7 +22,7 @@ use std::slice;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use windows_sys::Win32::Foundation::{
     ERROR_NOT_FOUND, ERROR_SUCCESS, GENERIC_ALL, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT,
@@ -42,7 +42,10 @@ use windows_sys::Win32::Security::{
     GetTokenInformation, InitializeAcl, OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
     PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows_sys::Win32::Storage::FileSystem::{FILE_ALL_ACCESS, WRITE_DAC};
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_ALL_ACCESS, FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
+    FileBasicInfo, GetFileInformationByHandleEx, WRITE_DAC,
+};
 use windows_sys::Win32::System::Console::{
     CONSOLE_MODE, COORD, ClosePseudoConsole, CreatePseudoConsole, ENABLE_ECHO_INPUT,
     ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, GetConsoleMode, GetStdHandle, HPCON, ReadConsoleW,
@@ -197,6 +200,53 @@ pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
         return Err(io::Error::last_os_error());
     }
     Ok((held.len(), processors.len()))
+}
+
+/// The seconds from 1601, where Windows counts a file's times from, to 1970.
+const FROM_1601: u64 = 11_644_473_600;
+
+/// When the file or folder at `path`, or what Windows keeps of it, last changed: set again by
+/// every write, copy and rename, which a build can leave its last-written time set back past.
+///
+/// # Errors
+///
+/// When it cannot be opened to read its times.
+pub fn changed(path: &Path) -> io::Result<SystemTime> {
+    let file = OpenOptions::new()
+        .access_mode(FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)?;
+    let mut info = MaybeUninit::<FILE_BASIC_INFO>::zeroed();
+    let size = u32::try_from(size_of::<FILE_BASIC_INFO>()).unwrap_or(u32::MAX);
+    // SAFETY: the handle is open for the call's length, and `info` is `size` bytes it writes.
+    let read = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            info.as_mut_ptr().cast(),
+            size,
+        )
+    };
+    if read == 0_i32 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: the call succeeded, so it wrote the whole of `info`.
+    let ticks = unsafe { info.assume_init() }.ChangeTime;
+    // Ticks are a hundred nanoseconds each, which in nanoseconds a u64 holds to the year 2185.
+    let since_1601 = u64::try_from(ticks)
+        .ok()
+        .and_then(|ticks| ticks.checked_mul(100))
+        .map(Duration::from_nanos);
+    SystemTime::UNIX_EPOCH
+        .checked_sub(Duration::from_secs(FROM_1601))
+        .zip(since_1601)
+        .and_then(|(start, since)| start.checked_add(since))
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "{} changed past what a clock holds",
+                path.display()
+            ))
+        })
 }
 
 /// No dialogue for a crash, for a disk that is not there, or for a file that cannot be opened.

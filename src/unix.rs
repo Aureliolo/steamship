@@ -10,7 +10,9 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read as _, Seek as _, SeekFrom};
 use std::mem::MaybeUninit;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
-use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _, symlink as make_symlink};
+use std::os::unix::fs::{
+    MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _, symlink as make_symlink,
+};
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::panic;
 use std::path::Path;
@@ -18,7 +20,7 @@ use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Once};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use std::{ptr, slice, str};
 
 use crate::run::{self, Finished};
@@ -559,6 +561,28 @@ pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
         return Err(io::Error::last_os_error());
     }
     Ok((held.len(), processors.len()))
+}
+
+/// When the file or folder at `path`, or its inode, last changed: set again by every write, copy
+/// and rename, which a build can leave its modification time set back past.
+///
+/// # Errors
+///
+/// When it cannot be read.
+pub fn changed(path: &Path) -> io::Result<SystemTime> {
+    let metadata = fs::metadata(path)?;
+    let seconds = u64::try_from(metadata.ctime()).map_err(|error| {
+        io::Error::other(format!("{} changed before 1970: {error}", path.display()))
+    })?;
+    let nanoseconds = u32::try_from(metadata.ctime_nsec()).unwrap_or_default();
+    SystemTime::UNIX_EPOCH
+        .checked_add(Duration::new(seconds, nanoseconds))
+        .ok_or_else(|| {
+            io::Error::other(format!(
+                "{} changed past what a clock holds",
+                path.display()
+            ))
+        })
 }
 
 #[cfg(test)]
