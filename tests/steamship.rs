@@ -7015,6 +7015,7 @@ fn pushed_game(toml: Option<&str>) -> (tempfile::TempDir, PathBuf) {
         br#"{"id": "example", "name": "Example Harbour", "version": "1.0.0", "description": "Every feature a mod has."}"#,
     );
     put(".gitignore", b"export/\n");
+    put("export/game.txt", b"the game, as its build leaves it");
     if let Some(toml) = toml {
         put("steamship.toml", toml.as_bytes());
     }
@@ -7051,14 +7052,31 @@ fn pushed(root: &Path, message: &str) {
 
 /// `steamship` with `args` in the game at `root`, with its own home.
 fn in_game(root: &Path, args: &[&str]) -> (Option<i32>, String, String) {
+    in_game_with(root, args, &[])
+}
+
+/// [`in_game`] with `variables` set too.
+fn in_game_with(
+    root: &Path,
+    args: &[&str],
+    variables: &[(&str, &str)],
+) -> (Option<i32>, String, String) {
     let home = root.parent().unwrap().join("home");
     fs::create_dir_all(&home).unwrap();
-    steamship_in(
-        root,
-        args,
-        Some(&home),
-        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
-    )
+    let mut set = vec![("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    set.extend_from_slice(variables);
+    steamship_in(root, args, Some(&home), &set)
+}
+
+/// The leaderboard [`LEADERBOARDS`] answers with, as a godot-kit record.
+const INN_BOARDS: &str = r#"[{"type": "leaderboard", "id": "base:gold", "steam": "gold",
+    "name": "Gold", "sort": "descending", "display": "numeric", "upload": "keep_best",
+    "details": 1, "trusted_writes": true}]"#;
+
+/// A stand-in for the Web API refusing each of `count` requests, for a command whose part before
+/// Steam is what is tested.
+fn refusing_web_api(count: usize) -> String {
+    web_api(vec![("403 Forbidden", "{}"); count]).0
 }
 
 #[test]
@@ -7173,6 +7191,21 @@ fn an_upload_in_a_game_ships_only_its_pushed_commit_against_its_settings_snapsho
     .unwrap();
     pushed(&root, "A spaced install folder");
     refused("the install folder is \"Tall Tales\", and steamship takes");
+
+    fs::write(
+        root.join("steam").join("settings.vdf"),
+        "\"5440760\"\n{\n\t\"config\"\n\t{\n\t\t\"installdir\"\t\t\"TallTalesInn\"\n\t}\n}\n",
+    )
+    .unwrap();
+    pushed(&root, "The install folder as it should be");
+    let (unbuilt, stdout, stderr) = in_game(&root, &["upload", "--version", "0.3.2-rc"]);
+    assert!(stdout.contains("  version   0.3.2-rc\n"), "{stdout}");
+    assert!(
+        stdout
+            .contains("  build     none named in steamship.toml, so the content goes up as it is"),
+        "{stdout}"
+    );
+    assert_eq!(unbuilt, Some(2_i32), "no build account: {stderr}");
 }
 
 #[test]
@@ -7252,5 +7285,395 @@ fn outside_a_game_a_command_needing_one_says_to_name_the_app() {
              and its files, or run steamship in the game's folder"
         ),
         "{stderr}"
+    );
+    for args in [
+        ["settings", "--check"].as_slice(),
+        ["leaderboards", "--check"].as_slice(),
+        ["rich-presence"].as_slice(),
+        ["promote", "--build", "7", "--branch", "testing"].as_slice(),
+        ["check"].as_slice(),
+    ] {
+        let (refused, said, why) = steamship_in(
+            empty.path(),
+            args,
+            Some(empty.path()),
+            &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+        );
+        assert_eq!(refused, Some(2_i32), "{args:?}: {said}{why}");
+        assert!(
+            failure(&why).starts_with("there is no game in "),
+            "{args:?}: {why}"
+        );
+    }
+}
+
+#[test]
+fn an_upload_naming_its_script_needs_the_version_it_goes_up_as() {
+    let (_temp, root) = pushed_game(None);
+    let (code, stdout, stderr) = in_game(&root, &["upload", "steam/app_build.vdf"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "give the version steam/app_build.vdf goes up as with --version, or run steamship upload \
+         with no script in the game's folder, which takes project.godot's"
+    );
+}
+
+#[test]
+fn a_game_whose_script_names_app_0_is_refused_by_check_and_upload() {
+    let (_temp, root) = pushed_game(None);
+    fs::write(
+        root.join("steam").join("app_build.vdf"),
+        r#""AppBuild" { "AppID" "0" "ContentRoot" "../export/" "SetLive" "testing" "Depots" { "5440761" "depot.vdf" } }"#,
+    )
+    .unwrap();
+    pushed(&root, "No app");
+    for args in [["check"].as_slice(), ["upload"].as_slice()] {
+        let (code, stdout, stderr) = in_game(&root, args);
+        assert_eq!(code, Some(2_i32), "{args:?}: {stdout}{stderr}");
+        assert!(
+            stderr.contains("\"AppID\" is 0, which Steamworks never gives"),
+            "{args:?}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn an_upload_in_a_game_asks_origin_and_refuses_when_origin_cannot_say_or_git_is_missing() {
+    let (temp, root) = pushed_game(None);
+    let nowhere = tempfile::tempdir().unwrap();
+    let (missing, stdout, stderr) = in_game_with(
+        &root,
+        &["upload"],
+        &[("PATH", nowhere.path().to_str().unwrap())],
+    );
+    assert_eq!(missing, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "Git is not installed, or not on the PATH, and steamship ships only a pushed commit"
+    );
+
+    git(
+        temp.path(),
+        &[
+            "init",
+            "--quiet",
+            "--bare",
+            "--initial-branch=main",
+            "empty.git",
+        ],
+    );
+    let empty = temp.path().join("empty.git");
+    git(
+        &root,
+        &["remote", "set-url", "origin", &empty.to_string_lossy()],
+    );
+    let (headless, said, why) = in_game(&root, &["upload"]);
+    assert_eq!(headless, Some(2_i32), "{said}{why}");
+    assert_eq!(
+        failure(&why),
+        "origin names no default branch, which is the one a game is shipped from"
+    );
+
+    git(&root, &["remote", "remove", "origin"]);
+    let (unasked, shown, reason) = in_game(&root, &["upload"]);
+    assert_eq!(unasked, Some(2_i32), "{shown}{reason}");
+    assert!(
+        failure(&reason).starts_with("git ls-remote --symref origin HEAD failed in "),
+        "{reason}"
+    );
+}
+
+#[test]
+fn an_upload_in_a_game_says_when_its_build_cannot_be_started() {
+    let (_temp, root) = pushed_game(Some("build = [\"steamship-no-such-builder\"]\n"));
+    let (code, stdout, stderr) = in_game(&root, &["upload"]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).starts_with("steamship-no-such-builder could not be started: "),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_game_check_compares_what_the_game_holds_with_steam_and_lists_its_builds() {
+    let (_temp, root) = pushed_game(None);
+    fs::remove_file(root.join("steam").join("settings.vdf")).unwrap();
+    fs::write(
+        root.join("mods")
+            .join("base")
+            .join("data")
+            .join("boards.json"),
+        INN_BOARDS,
+    )
+    .unwrap();
+    let host = refusing_web_api(12);
+    let (code, stdout, stderr) = in_game_with(
+        &root,
+        &["check"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_ne!(
+        code,
+        Some(0_i32),
+        "Steam refused every question: {stdout}{stderr}"
+    );
+    for section in [
+        "steamship check\n",
+        "steamship achievements\n",
+        "steamship leaderboards\n",
+        "steamship rich-presence, preview\n",
+        "steamship builds\n",
+    ] {
+        assert!(stdout.contains(section), "{section} in {stdout}{stderr}");
+    }
+}
+
+#[test]
+fn a_games_own_records_are_what_achievements_reads_when_it_is_named_no_files() {
+    let (_temp, root) = pushed_game(None);
+    let outside = tempfile::tempdir().unwrap();
+    let records = outside.path().join("achievements.json");
+    fs::write(&records, INN_RECORDS).unwrap();
+    let (unwritten, stdout, stderr) = steamship(
+        &["achievements", "480", "--write", &records.to_string_lossy()],
+        Some(outside.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(unwritten, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "--write needs --out, the folder it writes into"
+    );
+
+    let import = root.join("steam").join("achievements");
+    fs::create_dir_all(&import).unwrap();
+    fs::write(import.join("steam-icons.json"), "{}").unwrap();
+    let host = refusing_web_api(8);
+    let (asked, said, why) = in_game_with(
+        &root,
+        &["achievements", "--check"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_ne!(asked, Some(0_i32), "{said}{why}");
+    assert!(said.contains("achievements.json, 2 achievements"), "{said}");
+
+    fs::remove_dir_all(root.join("mods")).unwrap();
+    let (none, shown, reason) = in_game(&root, &["achievements", "--check"]);
+    assert_eq!(none, Some(2_i32), "{shown}{reason}");
+    assert_eq!(
+        failure(&reason),
+        "--check names no files, and the game holds no achievement records for it to read"
+    );
+}
+
+#[test]
+fn a_games_leaderboard_records_are_checked_and_one_without_any_is_refused() {
+    let (_temp, root) = pushed_game(None);
+    let (none, stdout, stderr) = in_game(&root, &["leaderboards", "--create"]);
+    assert_eq!(none, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "the game holds no leaderboard records to check or make"
+    );
+
+    fs::write(
+        root.join("mods")
+            .join("base")
+            .join("data")
+            .join("boards.json"),
+        INN_BOARDS,
+    )
+    .unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", LEADERBOARDS)]);
+    let (code, said, why) = in_game_with(
+        &root,
+        &["leaderboards", "--check"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{said}{why}");
+    assert!(said.contains("boards.json, 1 leaderboard\n"), "{said}");
+    assert!(
+        said.contains("Steam's leaderboards match the file"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_games_rich_presence_is_sent_from_its_pushed_tree_and_one_without_any_is_refused() {
+    let (_temp, root) = pushed_game(None);
+    let (host, requests) = web_api(vec![("200 OK\r\nX-eresult: 1", r#"{"response": {}}"#)]);
+    let (code, stdout, stderr) = in_game_with(
+        &root,
+        &["rich-presence"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("as origin's main has it"), "{stdout}");
+    assert!(
+        stdout.contains("app 5440760: rich presence replaced for english"),
+        "{stdout}"
+    );
+    let sent = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        sent.starts_with("POST /IProductInfoService/SetRichPresenceLocalization/v1/ "),
+        "{sent}"
+    );
+
+    fs::remove_file(root.join("steam").join("rich_presence_english.vdf")).unwrap();
+    let (none, said, why) = in_game(&root, &["rich-presence", "--preview"]);
+    assert_eq!(none, Some(2_i32), "{said}{why}");
+    let refused = failure(&why);
+    assert!(
+        refused.starts_with("the game holds no rich_presence_<language>.vdf beside ")
+            && refused.ends_with(
+                &Path::new("steam")
+                    .join("app_build.vdf")
+                    .display()
+                    .to_string()
+            ),
+        "{why}"
+    );
+}
+
+#[test]
+fn a_games_builds_settings_and_promotion_are_asked_for_its_own_app() {
+    let (_temp, root) = pushed_game(None);
+    let (host, requests) = web_api(vec![("200 OK", BETAS), ("200 OK", BUILDS)]);
+    let (code, stdout, stderr) = in_game_with(
+        &root,
+        &["builds"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let asked = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(asked.contains("appid=5440760"), "{asked}");
+
+    let refusing = refusing_web_api(4);
+    let (promoted, said, why) = in_game_with(
+        &root,
+        &["promote", "--build", "7", "--branch", "testing"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &refusing)],
+    );
+    assert_ne!(promoted, Some(0_i32), "Steam refused it: {said}{why}");
+    assert!(!why.contains("there is no game"), "{why}");
+
+    for args in [
+        ["settings"].as_slice(),
+        ["settings", "--save"].as_slice(),
+        ["settings", "--check"].as_slice(),
+    ] {
+        let (asked_for, shown, reason) = in_game(&root, args);
+        assert_ne!(asked_for, Some(0_i32), "no steamcmd here: {shown}{reason}");
+        assert!(!reason.contains("there is no game"), "{args:?}: {reason}");
+    }
+}
+
+#[test]
+fn a_games_example_mods_are_its_workshop_items_and_one_without_any_is_refused() {
+    let (_temp, root) = pushed_game(None);
+    let (code, stdout, stderr) = in_game(&root, &["workshop", "--visibility", "public"]);
+    assert_ne!(code, Some(0_i32), "no steamcmd here: {stdout}{stderr}");
+    assert!(
+        stdout.contains("as origin's main has it"),
+        "{stdout}{stderr}"
+    );
+
+    fs::remove_dir_all(root.join("modding")).unwrap();
+    pushed(&root, "No example mods");
+    let (none, said, why) = in_game(&root, &["workshop", "--json"]);
+    assert_eq!(none, Some(2_i32), "{said}{why}");
+    assert!(
+        failure(&why).starts_with("the game has no example mod: no folder in "),
+        "{why}"
+    );
+}
+
+/// A steamcmd for Tall Tales Inn, still unreleased, that prints the app's info when asked for it,
+/// and otherwise has Valve build the upload as `BuildID` 4242, adding a line to `builds` in the
+/// home.
+#[cfg(unix)]
+const INN_STEAMCMD: &str = "#!/bin/sh\n\
+    case \" $* \" in *' +app_info_print '*)\n\
+    echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+    echo 'AppID : 5440760, change number : 5/5, last change : Tue Sep 29 20:07:48 2026 '\n\
+    printf '\"5440760\"\\n{\\n\\t\"common\"\\n\\t{\\n\\t\\t\"name\"\\t\\t\"Tall Tales Inn\"\\n'\n\
+    printf '\\t\\t\"ReleaseState\"\\t\\t\"unavailable\"\\n\\t}\\n'\n\
+    printf '\\t\"config\"\\n\\t{\\n\\t\\t\"installdir\"\\t\\t\"TallTalesInn\"\\n\\t}\\n}\\n'\n\
+    echo 'Unloading Steam API...OK'\n\
+    exit 0;;\n\
+    esac\n\
+    echo built >> \"$HOME/builds\"\n\
+    output=\"$HOME/apps/5440760/output\"\n\
+    mkdir -p \"$output\"\n\
+    echo 'Successfully finished AppID 5440760 build (BuildID 4242).' > \"$output/app_build_5440760.log\"\n\
+    echo 'Logging in user build_bot to Steam Public...OK'\n";
+
+#[cfg(unix)]
+#[test]
+fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described() {
+    let (_temp, root) = pushed_game(Some("build = [\"git\", \"--version\"]\n"));
+    fs::remove_file(
+        root.join("mods")
+            .join("base")
+            .join("data")
+            .join("achievements.json"),
+    )
+    .unwrap();
+    let home = faked_with(INN_STEAMCMD);
+    saved_login(home.path());
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+
+    let (saved, said, why) =
+        steamship_in(&root, &["settings", "--save"], Some(home.path()), &quiet);
+    assert_eq!(saved, Some(0_i32), "{said}{why}");
+    pushed(&root, "The settings as Steam has them");
+    let (checked, shown, reason) =
+        steamship_in(&root, &["settings", "--check"], Some(home.path()), &quiet);
+    assert_eq!(checked, Some(0_i32), "{shown}{reason}");
+    assert!(shown.contains("Steam's settings match the file"), "{shown}");
+
+    let (host, requests) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(4242)),
+        ("200 OK", SET_LIVE),
+        ("200 OK", DESCRIBED),
+        ("200 OK", UPDATED),
+        ("200 OK", BETAS),
+        ("200 OK", BUILDS),
+    ]);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["upload"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    for line in [
+        "  version   0.3.1\n",
+        "  build     \u{2713} built in ",
+        "app 5440760: BuildID 4242, set live on testing and default",
+        "app 5440760: testing described as \"0.3.1\"",
+        "steamship builds\n",
+    ] {
+        assert!(stdout.contains(line), "{line} in {stdout}{stderr}");
+    }
+    assert_eq!(
+        fs::read_to_string(home.path().join("builds")).unwrap(),
+        "built\n"
+    );
+    let asked: Vec<String> =
+        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(5)
+            .collect();
+    let describing = asked.last().unwrap();
+    assert!(
+        describing.starts_with("POST /ISteamApps/UpdateAppBranchDescription/v1/ ")
+            && describing.ends_with("appid=5440760&betakey=testing&description=0.3.1"),
+        "{asked:?}"
     );
 }

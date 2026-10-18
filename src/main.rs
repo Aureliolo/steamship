@@ -212,10 +212,7 @@ fn game() -> Result<Project, ExitCode> {
 
 /// The app as `app` names it, or else as the game the current folder is in: its build script.
 fn app_or_game(app: Option<String>) -> Result<String, ExitCode> {
-    match app {
-        Some(app) => Ok(app),
-        None => Ok(script_named(&game()?)),
-    }
+    app.map_or_else(|| game().map(|found| script_named(&found)), Ok)
 }
 
 /// The game's app build script, as an app is named on the command line.
@@ -500,12 +497,13 @@ fn achievements_in(
             REFUSED,
         ));
     }
-    let app = match (app, &game) {
-        (Some(app), _) => app,
-        (None, Some(game)) => script_named(game),
-        (None, None) => return Err(fail(&"name the app", REFUSED)),
-    };
-    try_achievements(&app, &files, &writing, json)
+    try_achievements(&app_given_or(app, game.as_ref()), &files, &writing, json)
+}
+
+/// The app as `app` names it, or else as the game's build script does; `game` is there whenever
+/// `app` is not.
+fn app_given_or(app: Option<String>, game: Option<&Project>) -> String {
+    app.or_else(|| game.map(script_named)).unwrap_or_default()
 }
 
 /// The snapshot `--save` or `--check` names: a file, or the game's own when it names none.
@@ -541,12 +539,12 @@ fn settings_in(
     };
     let save = save.and_then(path);
     let check = check.and_then(path);
-    let app = match (app, &game) {
-        (Some(app), _) => app,
-        (None, Some(game)) => script_named(game),
-        (None, None) => return Err(fail(&"name the app", REFUSED)),
-    };
-    try_settings(&app, save.as_deref(), check.as_deref(), account)
+    try_settings(
+        &app_given_or(app, game.as_ref()),
+        save.as_deref(),
+        check.as_deref(),
+        account,
+    )
 }
 
 /// `leaderboards` with whatever is not given taken from the game.
@@ -569,12 +567,7 @@ fn leaderboards_in(
             ));
         }
     }
-    let app = match (app, &game) {
-        (Some(app), _) => app,
-        (None, Some(game)) => script_named(game),
-        (None, None) => return Err(fail(&"name the app", REFUSED)),
-    };
-    try_leaderboards(&app, &files, create)
+    try_leaderboards(&app_given_or(app, game.as_ref()), &files, create)
 }
 
 /// `rich-presence` with whatever is not given taken from the game: every language's file, sent
@@ -600,12 +593,7 @@ fn rich_presence_in(
             shipped_from(game)?;
         }
     }
-    let app = match (app, &game) {
-        (Some(app), _) => app,
-        (None, Some(game)) => script_named(game),
-        (None, None) => return Err(fail(&"name the app", REFUSED)),
-    };
-    try_rich_presence(&app, &files, preview)
+    try_rich_presence(&app_given_or(app, game.as_ref()), &files, preview)
 }
 
 /// `workshop` in a game: each example mod, or the one `--name` names, from a pushed tree.

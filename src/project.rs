@@ -847,6 +847,12 @@ mod tests {
     }
 
     #[test]
+    fn a_record_file_that_cannot_be_read_is_kept_for_the_command_to_say_why() {
+        assert!(holds(Path::new("no-such-records.json"), ACHIEVEMENTS));
+        assert!(holds(Path::new("no-such-records.json"), LEADERBOARDS));
+    }
+
+    #[test]
     fn steamships_own_files_named_in_the_file_are_given_by_the_list_they_hold() {
         let (_folder, project) = game(
             &[
@@ -1008,6 +1014,12 @@ mod tests {
                 .ends_with("names no config/version under [application]: set the game's version there, or give it with --version")
         );
         fs::remove_file(folder.path().join("project.godot")).unwrap();
+        fs::create_dir_all(folder.path().join("project.godot")).unwrap();
+        assert!(project.version().unwrap_err().starts_with(&format!(
+            "{}: ",
+            folder.path().join("project.godot").display()
+        )));
+        fs::remove_dir(folder.path().join("project.godot")).unwrap();
         assert_eq!(
             project.version(),
             Err(format!(
