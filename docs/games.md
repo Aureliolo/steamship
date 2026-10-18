@@ -52,6 +52,12 @@ footer = "The game's own example mod, dedicated to the public domain under CC0 1
   every command, so that a game is never shipped by one it was not checked against.
 - `build`: the program and its arguments that build the game into the folders its depots ship,
   run in the game's folder. Without it, the content goes up as it is.
+- `branch`: the one branch the app build script may set live, if not `testing`. The default
+  branch is never named here: steamship sets it through the Web API while the game is
+  unreleased, and the publisher sets it once it is released.
+- `cores`: the most processors steamcmd and the build run on, if not 4, so that shipping leaves
+  the rest of the machine to whoever works on it. Windows and Linux hold them to it; macOS
+  holds no program to fewer than all.
 - `script`: the app build script, if not `steam/app_build.vdf`. The settings snapshot, rich
   presence, import and items file are then looked for beside it.
 - `records`: folders and files of records, if not `mods/base/data`.
@@ -72,8 +78,10 @@ that fails:
 1. The tree is refused while it holds anything its commit does not, untracked files among it, or
    while origin's default branch is at another commit: what goes up is a pushed commit.
 2. The version is `project.godot`'s, unless `--version` gives another.
-3. The settings snapshot has to be there, and its install folder letters and digits alone.
-4. The `build` command runs, and the tree is refused again if it changed it.
+3. The app build script has to set the game's branch live, and no other. The settings snapshot
+   has to be there, and its install folder letters and digits alone.
+4. The `build` command runs, held to `cores` processors as steamcmd is, and the tree is refused
+   again if it changed it.
 5. Steam's settings are compared with the snapshot, and the achievements, stats, leaderboards and
    rich presence with the game's files, each that the game has.
 6. The build is uploaded, and set live on its branch and, while Steam shows the game unreleased,
@@ -81,7 +89,8 @@ that fails:
 7. The branch's description becomes the version, and the branches and last builds are shown.
 
 `--preview` stops after Valve's dry run, with nothing uploaded. `steamship check` with no script
-runs the comparisons alone, after checking the scripts, and needs no login.
+runs the comparisons alone, after checking the scripts and the branch they set live, and needs
+no login.
 
 ## The other commands
 
@@ -98,7 +107,8 @@ Each command run in a game takes from it whatever is not given:
   pushed tree only; `--preview` checks them and sends nothing.
 - `steamship workshop` uploads every example mod, or the one `--name` names, from a pushed tree
   only. Its title, description and version come from its `manifest.json`, and its preview is
-  the `preview.png` beside it, which every example mod needs. A new item needs `--visibility`.
+  the `preview.png` beside it, which every example mod needs. A new item needs `--visibility`,
+  which is given to the items being made alone: one already published keeps its own.
 - `steamship achievements` alone lists the game's achievements and stats on Steam, with the
   share of players who have each achievement and each aggregated stat's total.
 - `steamship builds` and `steamship promote` take the game's app.

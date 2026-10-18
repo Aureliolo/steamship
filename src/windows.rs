@@ -63,10 +63,11 @@ use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
     DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
-    GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-    OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-    PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
-    STARTUPINFOEXW, STARTUPINFOW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
+    GetExitCodeProcess, GetProcessAffinityMask, INFINITE, InitializeProcThreadAttributeList,
+    LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ResumeThread,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, SetProcessAffinityMask, TerminateProcess,
+    UpdateProcThreadAttribute, WaitForSingleObject,
 };
 use zeroize::{Zeroize as _, Zeroizing};
 
@@ -167,6 +168,35 @@ pub const fn end_as_told() {}
 pub fn silence_error_dialogues() {
     // SAFETY: changes one process-wide flag and returns the previous one; no memory is involved.
     let _: u32 = unsafe { SetErrorMode(NO_DIALOGUES) };
+}
+
+/// Holds steamship, and every program it starts from here on, which inherit it, to the first
+/// `cores` of the processors it may run on; gives how many it is held to, of how many.
+///
+/// # Errors
+///
+/// When Windows will not say which processors steamship may run on, or not hold it to some.
+pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
+    let mut allowed: usize = 0;
+    let mut system: usize = 0;
+    // SAFETY: returns a pseudo handle to the process itself, which needs no closing.
+    let process = unsafe { GetCurrentProcess() };
+    // SAFETY: the call only writes the two masks it is given.
+    let read = unsafe { GetProcessAffinityMask(process, &raw mut allowed, &raw mut system) };
+    if read == 0_i32 {
+        return Err(io::Error::last_os_error());
+    }
+    let processors: Vec<usize> = (0..usize::BITS)
+        .filter(|bit| allowed & (1 << bit) != 0)
+        .filter_map(|bit| usize::try_from(bit).ok())
+        .collect();
+    let held = run::held(&processors, cores);
+    let mask: usize = held.iter().map(|bit| 1_usize << bit).sum();
+    // SAFETY: the mask holds processors the process may already run on, as Windows asks.
+    if unsafe { SetProcessAffinityMask(process, mask) } == 0_i32 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((held.len(), processors.len()))
 }
 
 /// No dialogue for a crash, for a disk that is not there, or for a file that cannot be opened.
