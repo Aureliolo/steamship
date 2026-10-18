@@ -633,9 +633,8 @@ fn check_saved_login(
 ) -> Result<upload::Login, ExitCode> {
     let (held, home, manifest) = ready()?;
     restore(packed, &home)?;
-    match packed.map(ci::Login::packed_on) {
-        Some(Some(day)) => show::field("login", &format!("from {}, packed {day}", ci::VARIABLE)),
-        Some(None) => show::field("login", &format!("from {}", ci::VARIABLE)),
+    match packed.and_then(ci::Login::packed_on) {
+        Some(day) => show::field("login", &format!("from {}, packed {day}", ci::VARIABLE)),
         None => show::field("login", "saved"),
     }
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
@@ -672,7 +671,7 @@ fn check_saved_login(
 /// Says Steam refused the login, and how to log in again: for one handed over in
 /// `STEAMSHIP_LOGIN`, with the day it was packed, since the token in it may simply have expired.
 fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCode {
-    match packed {
+    match packed.and_then(ci::Login::packed_on) {
         None => {
             let again = Hint {
                 before: "log the build account in again with ",
@@ -681,22 +680,20 @@ fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCode {
             };
             show::failure("not logged in", reason, Some(again));
         }
-        Some(packed) => {
-            let from = packed.packed_on().map_or_else(
-                || {
-                    format!(
-                        "the login in {} was packed by an earlier steamship",
-                        ci::VARIABLE
-                    )
-                },
-                |day| format!("the login in {} was packed on {day}", ci::VARIABLE),
-            );
+        Some(day) => {
             let again = Hint {
                 before: "log in again with ",
                 command: "steamship login",
                 after: ", then run steamship ci to pack the new login",
             };
-            show::failure("not logged in", &format!("{reason}; {from}"), Some(again));
+            show::failure(
+                "not logged in",
+                &format!(
+                    "{reason}; the login in {} was packed on {day}",
+                    ci::VARIABLE
+                ),
+                Some(again),
+            );
         }
     }
     ExitCode::from(LOGIN)

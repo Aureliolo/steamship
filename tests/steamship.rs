@@ -1233,7 +1233,10 @@ fn a_login_handed_over_that_is_not_one_is_refused_without_repeating_it() {
     let (code, stdout, stderr) = steamship(
         &["status"],
         Some(home.path()),
-        &[("STEAMSHIP_LOGIN", "steamship-login-1:secret_name:zz")],
+        &[(
+            "STEAMSHIP_LOGIN",
+            "steamship-login-2:2026-09-28:secret_name:zz",
+        )],
     );
     assert_eq!(code, Some(2_i32), "{stdout}");
     assert_eq!(
@@ -1255,7 +1258,7 @@ fn a_login_handed_over_that_is_not_text_is_refused() {
             .env("STEAMSHIP_HOME", home.path())
             .env(
                 "STEAMSHIP_LOGIN",
-                OsStr::from_bytes(b"steamship-login-1:\xff"),
+                OsStr::from_bytes(b"steamship-login-2:\xff"),
             ),
     )
     .unwrap();
@@ -1858,35 +1861,26 @@ fn a_login_handed_over_that_steam_refuses_says_when_it_was_packed_and_how_to_pac
         "Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)",
         5,
     );
-    let packed = packed_login();
-    let digits = packed.rsplit(':').next().unwrap().to_owned();
-    for (login, said) in [
-        (
-            packed,
-            "the login in STEAMSHIP_LOGIN was packed on 2026-09-28",
+    let (code, stdout, stderr) = steamship(
+        &["status"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_LOGIN", &packed_login()),
+            ("STEAMSHIP_ACCOUNT", ""),
+        ],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "not logged in: Expired Login Auth Code; the login in STEAMSHIP_LOGIN was packed on \
+         2026-09-28"
+    );
+    assert!(
+        stderr.ends_with(
+            "log in again with steamship login, then run steamship ci to pack the new login\n"
         ),
-        (
-            format!("steamship-login-1:build_bot:{digits}"),
-            "the login in STEAMSHIP_LOGIN was packed by an earlier steamship",
-        ),
-    ] {
-        let (code, stdout, stderr) = steamship(
-            &["status"],
-            Some(home.path()),
-            &[("STEAMSHIP_LOGIN", &login), ("STEAMSHIP_ACCOUNT", "")],
-        );
-        assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
-        assert_eq!(
-            failure(&stderr),
-            format!("not logged in: Expired Login Auth Code; {said}")
-        );
-        assert!(
-            stderr.ends_with(
-                "log in again with steamship login, then run steamship ci to pack the new login\n"
-            ),
-            "{stderr}"
-        );
-    }
+        "{stderr}"
+    );
 }
 
 #[cfg(unix)]
