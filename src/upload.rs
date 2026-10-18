@@ -387,8 +387,8 @@ pub fn create_first(branches: &[webapi::Branch]) -> &'static str {
         .iter()
         .any(|found| webapi::is_default(&found.name) && found.build_id == 0);
     if fresh {
-        "set a build live on its default branch, then create it, both in Steamworks under \
-         SteamPipe, Builds"
+        "set a build live on its default branch, as steamship promote --branch default does while \
+         the app is unreleased, then create it in Steamworks under SteamPipe, Builds"
     } else {
         "create it in Steamworks under SteamPipe, Builds first"
     }
@@ -895,8 +895,8 @@ mod tests {
         assert_eq!(
             no_branch(5, "testing", &[branch("public", 0)]),
             "\"SetLive\" names \"testing\", but app 5 has no branch by that name; set a build \
-             live on its default branch, then create it, both in Steamworks under SteamPipe, \
-             Builds"
+             live on its default branch, as steamship promote --branch default does while the \
+             app is unreleased, then create it in Steamworks under SteamPipe, Builds"
         );
         for live in [
             vec![branch("public", 9)],
