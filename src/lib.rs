@@ -31,6 +31,7 @@ pub mod picture;
 pub mod platform;
 pub mod po;
 pub mod presence;
+pub mod project;
 pub mod redact;
 pub mod release;
 pub mod run;
