@@ -3,7 +3,7 @@
 //! `screenshot_03.jpg`.
 //!
 //! The sizes are Valve's, from Steamworks' documentation of store, library, community and event
-//! assets.
+//! assets, and from the Workshop's Branding page.
 
 use std::fs;
 use std::io;
@@ -63,7 +63,7 @@ const fn asset(name: &'static str, stem: &'static str, size: Size, formats: Form
 }
 
 /// Every asset, in the order Steamworks lists them.
-const ASSETS: [Asset; 15] = [
+const ASSETS: [Asset; 16] = [
     asset(
         "header capsule",
         "header_capsule",
@@ -148,6 +148,13 @@ const ASSETS: [Asset; 15] = [
         "event_header",
         Size::Exact(1920, 622),
         Formats::Picture,
+    ),
+    // The Workshop's Branding page asks for "948x203px JPG", as its Photoshop template is.
+    asset(
+        "Workshop branding image",
+        "workshop_header",
+        Size::Exact(948, 203),
+        Formats::Jpeg,
     ),
 ];
 
@@ -348,6 +355,7 @@ mod tests {
             ("shortcut_icon", of(Format::Ico, 256, 256)),
             ("shortcut_icon", png(256, 256, true)),
             ("app_icon", of(Format::Jpeg, 184, 184)),
+            ("workshop_header", of(Format::Jpeg, 948, 203)),
         ] {
             assert_eq!(
                 problems(asset_named(stem), &picture),
@@ -413,6 +421,14 @@ mod tests {
                 "shortcut_icon",
                 of(Format::Jpeg, 256, 256),
                 vec!["the shortcut icon must be an icon or a PNG, not a JPEG"],
+            ),
+            (
+                "workshop_header",
+                png(948, 204, false),
+                vec![
+                    "the Workshop branding image must be a JPEG, not a PNG",
+                    "the Workshop branding image must be 948x203, and it is 948x204",
+                ],
             ),
         ] {
             assert_eq!(problems(asset_named(stem), &picture), said, "{stem}");
