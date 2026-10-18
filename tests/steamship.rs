@@ -7439,6 +7439,45 @@ fn a_game_check_compares_what_the_game_holds_with_steam_and_lists_its_builds() {
 }
 
 #[test]
+fn a_game_check_names_each_comparison_the_game_gives_nothing_for() {
+    let (_temp, root) = pushed_game(None);
+    fs::remove_dir_all(root.join("mods")).unwrap();
+    fs::remove_file(root.join("steam").join("rich_presence_english.vdf")).unwrap();
+    let host = refusing_web_api(4);
+    let (_code, stdout, stderr) = in_game_with(
+        &root,
+        &["check"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    // The folder's tail alone, as macOS gives the child its temporary folder through /private.
+    let data = Path::new("inn").join("mods").join("base").join("data");
+    let script = Path::new("inn").join("steam").join("app_build.vdf");
+    for (start, end) in [
+        (
+            "steamship achievements\n  unchecked no achievement, stat or set records in ",
+            format!(
+                "{}: name the game's in steamship.toml's records",
+                data.display()
+            ),
+        ),
+        (
+            "steamship leaderboards\n  unchecked no leaderboard records in ",
+            data.display().to_string(),
+        ),
+        (
+            "steamship rich-presence\n  unchecked no rich_presence_<language>.vdf beside ",
+            script.display().to_string(),
+        ),
+    ] {
+        let line = stdout
+            .split_once(start)
+            .and_then(|(_, after)| after.lines().next())
+            .unwrap_or_default();
+        assert!(line.ends_with(&end), "{start}…{end} in {stdout}{stderr}");
+    }
+}
+
+#[test]
 fn a_games_own_records_are_what_achievements_reads_when_it_is_named_no_files() {
     let (_temp, root) = pushed_game(None);
     let outside = tempfile::tempdir().unwrap();

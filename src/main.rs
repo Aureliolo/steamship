@@ -306,9 +306,25 @@ fn first_failure(codes: impl IntoIterator<Item = ExitCode>) -> ExitCode {
 /// game has, every one whatever the others found.
 fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> {
     let refused = |why: String| fail(&why, REFUSED);
+    let records = || {
+        game.records
+            .iter()
+            .map(|given| given.path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     let mut codes = Vec::new();
     let achievements = game_achievements(game)?;
-    if !achievements.is_empty() {
+    if achievements.is_empty() {
+        unchecked(
+            "achievements",
+            &format!(
+                "no achievement, stat or set records in {}: name the game's in {}'s records",
+                records(),
+                project::FILE
+            ),
+        );
+    } else {
         let receipt = game.import.join(editor::RECEIPT).is_file();
         let writing = Writing {
             write: None,
@@ -324,14 +340,34 @@ fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> {
         )));
     }
     let boards = game.records(project::LEADERBOARDS).map_err(refused)?;
-    if !boards.is_empty() {
+    if boards.is_empty() {
+        unchecked(
+            "leaderboards",
+            &format!("no leaderboard records in {}", records()),
+        );
+    } else {
         codes.push(either(try_leaderboards(app, &boards, false)));
     }
     let presence = game.presence().map_err(refused)?;
-    if !presence.is_empty() {
+    if presence.is_empty() {
+        unchecked(
+            "rich-presence",
+            &format!(
+                "no rich_presence_<language>.vdf beside {}",
+                game.script.display()
+            ),
+        );
+    } else {
         codes.push(either(try_rich_presence(app, &presence, true)));
     }
     Ok(first_failure(codes))
+}
+
+/// Says that the game gave `command` nothing to compare, so that a comparison left out is never
+/// taken for one that passed.
+fn unchecked(command: &str, why: &str) {
+    show::title(command);
+    show::field("unchecked", why);
 }
 
 /// `check` in a game: its scripts, then its records and rich presence against Steam's, and its
