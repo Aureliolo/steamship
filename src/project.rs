@@ -102,8 +102,8 @@ pub struct Mod {
     /// Its folder's name, which is its name in the items file.
     pub name: String,
     pub folder: PathBuf,
-    /// `preview.png` in its folder, when it has one.
-    pub preview: Option<PathBuf>,
+    /// `preview.png` in its folder.
+    pub preview: PathBuf,
     pub title: String,
     pub description: String,
     pub version: String,
@@ -377,10 +377,17 @@ impl Project {
                 None => own,
             };
             let preview = folder.join("preview.png");
+            if !preview.is_file() {
+                return Err(format!(
+                    "{} is missing: each example mod needs its preview.png, as Steam gives an item \
+                     without one its grey default picture",
+                    preview.display()
+                ));
+            }
             found.push(Mod {
                 name,
-                preview: preview.is_file().then_some(preview),
                 folder,
+                preview,
                 title,
                 description,
                 version,
@@ -935,6 +942,7 @@ mod tests {
                     "modding/plain/manifest.json",
                     r#"{"name": "Plain", "description": "Shows little.", "version": "2"}"#,
                 ),
+                ("modding/plain/preview.png", "picture"),
                 ("modding/notes/readme.md", "no manifest, no item"),
             ],
             Some("[workshop]\nfooter = \"Free to copy.\"\n"),
@@ -946,7 +954,7 @@ mod tests {
                 Mod {
                     name: "example".to_owned(),
                     folder: modding.join("example"),
-                    preview: Some(modding.join("example").join("preview.png")),
+                    preview: modding.join("example").join("preview.png"),
                     title: "Example".to_owned(),
                     description: "Shows it all.\n\nFree to copy.".to_owned(),
                     version: "1.0.0".to_owned(),
@@ -954,12 +962,22 @@ mod tests {
                 Mod {
                     name: "plain".to_owned(),
                     folder: modding.join("plain"),
-                    preview: None,
+                    preview: modding.join("plain").join("preview.png"),
                     title: "Plain".to_owned(),
                     description: "Shows little.\n\nFree to copy.".to_owned(),
                     version: "2".to_owned(),
                 },
             ]
+        );
+
+        fs::remove_file(modding.join("plain").join("preview.png")).unwrap();
+        assert_eq!(
+            project.mods(),
+            Err(format!(
+                "{} is missing: each example mod needs its preview.png, as Steam gives an item \
+                 without one its grey default picture",
+                modding.join("plain").join("preview.png").display()
+            ))
         );
     }
 

@@ -143,7 +143,7 @@ pub enum Command {
     /// With neither, in a game's folder, uploads each of its example mods, a folder in
     /// `modding/` holding a godot-kit `manifest.json`, or the one `--name` names: refused unless
     /// the tree is pushed, as for `upload`. Its title, description and version come from the
-    /// manifest, its preview is the `preview.png` beside it, and each item's ID is kept in
+    /// manifest, its preview is the `preview.png` each mod needs beside it, and each item's ID is kept in
     /// `steam/workshop_items.json`.
     Workshop(Workshop),
     /// Show an app's branches and last builds.

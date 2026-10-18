@@ -23,6 +23,9 @@ const TITLE: usize = 128;
 /// The longest description or change note Steam takes, in bytes.
 const TEXT: usize = 8000;
 
+/// Why a new item is refused without a preview: Steam makes it anyway, and says nothing.
+const GREY: &str = ", as Steam gives an item made without one its grey default picture";
+
 /// The largest preview image Steam takes, in bytes.
 const PREVIEW: u64 = 1024 * 1024;
 
@@ -82,11 +85,15 @@ pub fn check(path: &Path) -> Result<Item, Vec<Problem>> {
             0
         })
     });
-    if let Some(problem) = item
-        .text("previewfile")
-        .and_then(|preview| unpreviewable(&scripts::resolve(&folder, preview), "previewfile"))
-    {
-        refuse(problem);
+    match item.text("previewfile") {
+        Some(preview) => {
+            if let Some(problem) = unpreviewable(&scripts::resolve(&folder, preview), "previewfile")
+            {
+                refuse(problem);
+            }
+        }
+        None if published.is_none() => refuse(format!("a new item needs a \"previewfile\"{GREY}")),
+        None => {}
     }
     match item.text("visibility").map(str::parse::<u8>) {
         None | Some(Ok(0..=3)) => {}
@@ -326,6 +333,9 @@ pub fn check_fields(fields: &Fields) -> Result<Item, Vec<String>> {
         .and_then(|preview| unpreviewable(preview, "--preview"))
     {
         problems.push(problem);
+    }
+    if fields.published.is_none() && fields.preview.is_none() {
+        problems.push(format!("a new item needs --preview{GREY}"));
     }
     if fields.published.is_none() && fields.visibility.is_none() {
         problems
@@ -592,7 +602,7 @@ mod tests {
     #[test]
     fn app_zero_is_no_app() {
         let folder = sound();
-        let script = folder.script(r#""appid" "0" "contentfolder" "hat""#);
+        let script = folder.script(r#""appid" "0" "contentfolder" "hat" "publishedfileid" "5674""#);
         assert_eq!(
             messages(&check(&script).unwrap_err()),
             ["\"appid\" is not an app's ID"]
@@ -641,6 +651,18 @@ mod tests {
                 "\"changenote\" is longer than the 8000 bytes Steam takes".to_owned(),
             ]
         );
+    }
+
+    #[test]
+    fn a_new_items_script_needs_a_preview_and_an_updates_does_not() {
+        let folder = sound();
+        let new = folder.script(r#""appid" "1" "contentfolder" "hat""#);
+        assert_eq!(
+            messages(&check(&new).unwrap_err()),
+            [format!("a new item needs a \"previewfile\"{GREY}").as_str()]
+        );
+        let update = folder.script(r#""appid" "1" "contentfolder" "hat" "publishedfileid" "5674""#);
+        assert_eq!(check(&update).map(|item| item.published), Ok(Some(5674)));
     }
 
     #[test]
@@ -803,6 +825,24 @@ mod tests {
             change_note: None,
             visibility: None,
             ..fields(&folder)
+        };
+        assert_eq!(check_fields(&updated).unwrap().published, Some(5674));
+    }
+
+    #[test]
+    fn a_new_item_is_refused_without_a_preview_and_an_update_keeps_the_one_it_has() {
+        let folder = sound();
+        let unpictured = Fields {
+            preview: None,
+            ..fields(&folder)
+        };
+        assert_eq!(
+            check_fields(&unpictured).unwrap_err(),
+            [format!("a new item needs --preview{GREY}")]
+        );
+        let updated = Fields {
+            published: Some(5674),
+            ..unpictured
         };
         assert_eq!(check_fields(&updated).unwrap().published, Some(5674));
     }

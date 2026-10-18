@@ -633,7 +633,7 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
                 items: Some(game.items.clone()),
                 name: Some(each.name),
                 content: Some(each.folder),
-                preview: each.preview,
+                preview: Some(each.preview),
                 title: Some(each.title),
                 description: Some(each.description),
                 change_note: Some(format!("Version {}", each.version)),

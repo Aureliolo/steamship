@@ -3068,6 +3068,8 @@ fn by_fields(folder: &Path, items: &Path, extra: &[&str]) -> Vec<String> {
         folder.join("hat").to_str().unwrap(),
         "--title",
         "A green hat",
+        "--preview",
+        folder.join("hat.png").to_str().unwrap(),
     ]
     .map(str::to_owned)
     .into();
@@ -3082,13 +3084,10 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci
     let (temp, script) = workshop_item("");
     let folder = script.parent().unwrap();
     let items = temp.path().join("my game (x86)/steam/workshop_items.json");
-    let preview = folder.join("hat.png");
     let made = by_fields(
         folder,
         &items,
         &[
-            "--preview",
-            preview.to_str().unwrap(),
             "--description",
             "Green.",
             "--change-note",
@@ -7014,6 +7013,7 @@ fn pushed_game(toml: Option<&str>) -> (tempfile::TempDir, PathBuf) {
         "modding/example/manifest.json",
         br#"{"id": "example", "name": "Example Harbour", "version": "1.0.0", "description": "Every feature a mod has."}"#,
     );
+    put("modding/example/preview.png", &icon_png(256, 90));
     put(".gitignore", b"export/\n");
     put("export/game.txt", b"the game, as its build leaves it");
     if let Some(toml) = toml {

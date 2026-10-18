@@ -97,6 +97,6 @@ Each command run in a game takes from it whatever is not given:
 - `steamship rich-presence` with neither the app nor files sends every language's file, from a
   pushed tree only; `--preview` checks them and sends nothing.
 - `steamship workshop` uploads every example mod, or the one `--name` names, from a pushed tree
-  only. Its title, description and version come from its `manifest.json`, its preview is the
-  `preview.png` beside it, and a new item needs `--visibility`.
+  only. Its title, description and version come from its `manifest.json`, and its preview is
+  the `preview.png` beside it, which every example mod needs. A new item needs `--visibility`.
 - `steamship builds` and `steamship promote` take the game's app.
