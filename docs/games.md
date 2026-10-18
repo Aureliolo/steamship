@@ -81,9 +81,10 @@ that fails:
 3. The app build script has to set the game's branch live, and no other. The settings snapshot
    has to be there, and its install folder letters and digits alone.
 4. The `build` command runs, held to `cores` processors as steamcmd is, and the tree is refused
-   again if it changed it. So is every file the depots map that the build did not write, such as
-   an export left over from an earlier build: its change time, which every write, copy and
-   rename sets, is older than the build.
+   again if it changed it. So is every file the depots map that the build did not write, make or
+   rename, such as an export left over from an earlier build. On Windows a copy keeps its
+   source's times and is told only by when it was made, so a build that copies over a file
+   already there should empty the folder first.
 5. Steam's settings are compared with the snapshot, and the achievements, stats, leaderboards and
    rich presence with the game's files, each that the game has.
 6. The build is uploaded, and set live on its branch and, while Steam shows the game unreleased,
