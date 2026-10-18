@@ -360,6 +360,7 @@ JPEG and icon in it, each named for the asset it is, against Valve's sizes and f
 | `app_icon` | 184x184 | JPEG |
 | `event_cover` | 800x450 | PNG or JPEG |
 | `event_header` | 1920x622 | PNG or JPEG |
+| `workshop_header`, the Workshop's branding image | 948x203 | JPEG |
 
 Names match regardless of case, and screenshots are any names starting with `screenshot`,
 such as `screenshot_01.jpg`. Other files in the folder are left alone.
