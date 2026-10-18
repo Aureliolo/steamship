@@ -7286,10 +7286,17 @@ fn outside_a_game_a_command_needing_one_says_to_name_the_app() {
         ),
         "{stderr}"
     );
+    // An app named does not stand for a file not named: the game's own is still looked for.
     for args in [
+        ["settings"].as_slice(),
         ["settings", "--check"].as_slice(),
+        ["settings", "480", "--check"].as_slice(),
+        ["settings", "480", "--save"].as_slice(),
+        ["achievements", "480", "--check"].as_slice(),
         ["leaderboards", "--check"].as_slice(),
+        ["leaderboards", "480", "--check"].as_slice(),
         ["rich-presence"].as_slice(),
+        ["rich-presence", "480"].as_slice(),
         ["promote", "--build", "7", "--branch", "testing"].as_slice(),
         ["check"].as_slice(),
     ] {
@@ -7378,9 +7385,11 @@ fn an_upload_in_a_game_asks_origin_and_refuses_when_origin_cannot_say_or_git_is_
     git(&root, &["remote", "remove", "origin"]);
     let (unasked, shown, reason) = in_game(&root, &["upload"]);
     assert_eq!(unasked, Some(2_i32), "{shown}{reason}");
+    let unasked_why = failure(&reason);
     assert!(
-        failure(&reason).starts_with("git ls-remote --symref origin HEAD failed in "),
-        "{reason}"
+        unasked_why.starts_with("git ls-remote --symref origin HEAD failed in ")
+            && unasked_why.ends_with(": fatal: 'origin' does not appear to be a git repository"),
+        "Git's own first line: {reason}"
     );
 }
 
@@ -7675,5 +7684,24 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
         describing.starts_with("POST /ISteamApps/UpdateAppBranchDescription/v1/ ")
             && describing.ends_with("appid=5440760&betakey=testing&description=0.3.1"),
         "{asked:?}"
+    );
+
+    let (again, _again_asked) = web_api(vec![("200 OK", BETAS); 4]);
+    let (previewed, shown_preview, preview_why) = steamship_in(
+        &root,
+        &["upload", "--preview"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            (STAND_IN, &again),
+        ],
+    );
+    assert_eq!(previewed, Some(0_i32), "{shown_preview}{preview_why}");
+    assert!(
+        shown_preview.contains("\u{2713} nothing was uploaded, as asked\n")
+            && !shown_preview.contains("steamship branch")
+            && !shown_preview.contains("steamship builds"),
+        "a preview ends with Valve's dry run: {shown_preview}"
     );
 }

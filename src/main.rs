@@ -480,9 +480,11 @@ fn achievements_in(
     if let Some(game) = &game {
         if own_check {
             files = own(game, "--check")?;
-            if writing.out.is_none() && game.import.join(editor::RECEIPT).is_file() {
-                writing.out = Some(game.import.clone());
-            }
+            let receipt = game.import.join(editor::RECEIPT);
+            writing.out = writing
+                .out
+                .take()
+                .or_else(|| receipt.is_file().then(|| game.import.clone()));
         }
         if own_write {
             writing.write = Some(own(game, "--write")?);

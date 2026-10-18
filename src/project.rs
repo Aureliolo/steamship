@@ -1030,6 +1030,16 @@ mod tests {
     }
 
     #[test]
+    fn a_path_in_the_file_is_joined_part_by_part_whichever_slash_it_was_written_with() {
+        let root = Path::new("game");
+        let expected = root.join("mods").join("base");
+        assert_eq!(under(root, "mods/base"), expected);
+        assert_eq!(under(root, "mods\\base"), expected);
+        assert_eq!(under(root, "./mods//base/"), expected);
+        assert_eq!(under(root, "."), root);
+    }
+
+    #[test]
     fn a_game_is_found_from_any_folder_inside_it_its_file_before_its_layout() {
         let (folder, _) = game(
             &[("steam/app_build.vdf", ""), ("mods/base/data/a.json", "[]")],
