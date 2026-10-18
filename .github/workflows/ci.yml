@@ -71,7 +71,9 @@ jobs:
         if: '!cancelled()'
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
+      # Run whenever the tests do, so a failed lint does not leave them without a keyring.
       - name: Install the test prerequisites
+        if: '!cancelled()'
         uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
 
       - name: Test

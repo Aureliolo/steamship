@@ -531,7 +531,7 @@ pub fn user_id() -> u32 {
 /// When the system will not say which processors steamship may run on, or not hold it to some.
 #[cfg(target_os = "linux")]
 pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
-    let size = std::mem::size_of::<libc::cpu_set_t>();
+    let size = size_of::<libc::cpu_set_t>();
     let mut allowed = MaybeUninit::<libc::cpu_set_t>::zeroed();
     // SAFETY: `allowed` is `size` bytes the call writes the calling thread's set of processors
     // into, zeroed first so that it is a set whatever the call leaves.
@@ -551,7 +551,9 @@ pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
         let mut chosen = unsafe { MaybeUninit::<libc::cpu_set_t>::zeroed().assume_init() };
         for &processor in held {
             // SAFETY: each processor was read from a set of the same size, so is below it.
-            unsafe { libc::CPU_SET(processor, &mut chosen) };
+            unsafe {
+                libc::CPU_SET(processor, &mut chosen);
+            }
         }
         // SAFETY: `chosen` is a whole cpu_set_t of `size` bytes, only read by the call.
         if unsafe { libc::sched_setaffinity(0, size, &raw const chosen) } != 0_i32 {
