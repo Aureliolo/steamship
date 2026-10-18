@@ -138,6 +138,13 @@ pub fn held(allowed: &[usize], cores: usize) -> &[usize] {
 /// # Errors
 ///
 /// When the system will not say which processors steamship may run on, or not hold it to some.
+#[cfg_attr(
+    not(any(windows, target_os = "linux")),
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "only where the system holds no program to some processors is there nothing to call"
+    )
+)]
 pub fn hold_to(cores: usize) -> io::Result<Option<(usize, usize)>> {
     #[cfg(any(windows, target_os = "linux"))]
     return native::hold_to(cores).map(Some);
