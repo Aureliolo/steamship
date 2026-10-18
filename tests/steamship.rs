@@ -7703,7 +7703,16 @@ fn a_games_workshop_run_gives_its_visibility_only_to_the_items_it_makes() {
     )
     .unwrap();
     pushed(&root, "A second example mod");
-    let home = publishing("Success.", 0);
+    // As `publishing` does, keeping each script as it was sent before giving a new item its ID.
+    let home = faked_with(
+        "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
+         cp \"$script\" \"$script.sent\"\n\
+         grep -q publishedfileid \"$script\" || \
+         printf '\"workshopitem\"\\n{\\n\"appid\" \"5440760\"\\n\"publishedfileid\" \"777\"\\n}\\n' > \"$script\"\n\
+         printf '%s\\r\\n' 'Success.'\n",
+    );
+    saved_login(home.path());
     let (code, stdout, stderr) = steamship_in(
         &root,
         &["workshop", "--visibility", "private"],
@@ -7714,7 +7723,7 @@ fn a_games_workshop_run_gives_its_visibility_only_to_the_items_it_makes() {
     let copy = |name: &str| {
         fs::read_to_string(
             home.path()
-                .join(format!("workshop/5440760/{name}/workshop_item.vdf")),
+                .join(format!("workshop/5440760/{name}/workshop_item.vdf.sent")),
         )
         .unwrap()
     };
