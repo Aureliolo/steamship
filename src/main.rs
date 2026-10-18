@@ -478,6 +478,12 @@ fn built(game: &Project) -> Result<(), ExitCode> {
     };
     let named = game.build.join(" ");
     show::field("build", &format!("running {named}"));
+    let since = project::written_now().map_err(|error| {
+        fail(
+            &format!("steamship could not mark when the build starts: {error}"),
+            FAILED,
+        )
+    })?;
     let started = SystemTime::now();
     let finished = run::spawn(
         run::command(program)
@@ -505,6 +511,13 @@ fn built(game: &Project) -> Result<(), ExitCode> {
         }
     }
     project::unchanged(&game.root).map_err(|why| fail(&why, REFUSED))?;
+    let unwritten = project::unwritten(&game.script, since);
+    if !unwritten.is_empty() {
+        return Err(fail(
+            &project::left_over(&unwritten, &game.root, &named),
+            REFUSED,
+        ));
+    }
     show::done("build", &format!("built in {took}"));
     Ok(())
 }
