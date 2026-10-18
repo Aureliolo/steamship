@@ -191,12 +191,10 @@ pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
         .filter_map(|bit| usize::try_from(bit).ok())
         .collect();
     let held = run::held(&processors, cores);
-    if held.len() < processors.len() {
-        let mask = held.iter().fold(0_usize, |mask, bit| mask | (1 << bit));
-        // SAFETY: the mask holds processors the process may already run on, as Windows asks.
-        if unsafe { SetProcessAffinityMask(process, mask) } == 0_i32 {
-            return Err(io::Error::last_os_error());
-        }
+    let mask = held.iter().fold(0_usize, |mask, bit| mask | (1 << bit));
+    // SAFETY: the mask holds processors the process may already run on, as Windows asks.
+    if unsafe { SetProcessAffinityMask(process, mask) } == 0_i32 {
+        return Err(io::Error::last_os_error());
     }
     Ok((held.len(), processors.len()))
 }

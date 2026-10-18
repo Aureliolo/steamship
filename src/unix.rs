@@ -546,19 +546,17 @@ pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
         .filter(|&processor| unsafe { libc::CPU_ISSET(processor, &allowed) })
         .collect();
     let held = run::held(&processors, cores);
-    if held.len() < processors.len() {
-        // SAFETY: an all-zero cpu_set_t is the empty set.
-        let mut chosen = unsafe { MaybeUninit::<libc::cpu_set_t>::zeroed().assume_init() };
-        for &processor in held {
-            // SAFETY: each processor was read from a set of the same size, so is below it.
-            unsafe {
-                libc::CPU_SET(processor, &mut chosen);
-            }
+    // SAFETY: an all-zero cpu_set_t is the empty set.
+    let mut chosen = unsafe { MaybeUninit::<libc::cpu_set_t>::zeroed().assume_init() };
+    for &processor in held {
+        // SAFETY: each processor was read from a set of the same size, so is below it.
+        unsafe {
+            libc::CPU_SET(processor, &mut chosen);
         }
-        // SAFETY: `chosen` is a whole cpu_set_t of `size` bytes, only read by the call.
-        if unsafe { libc::sched_setaffinity(0, size, &raw const chosen) } != 0_i32 {
-            return Err(io::Error::last_os_error());
-        }
+    }
+    // SAFETY: `chosen` is a whole cpu_set_t of `size` bytes, only read by the call.
+    if unsafe { libc::sched_setaffinity(0, size, &raw const chosen) } != 0_i32 {
+        return Err(io::Error::last_os_error());
     }
     Ok((held.len(), processors.len()))
 }

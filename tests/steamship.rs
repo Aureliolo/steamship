@@ -7663,24 +7663,59 @@ fn a_games_script_may_set_only_the_games_branch_live() {
     assert!(stdout.contains("  build     "), "past the script: {stdout}");
 }
 
+/// The `cores` line an upload in a game held to `cores` shows, and how many processors its build
+/// found it could run on, which the build prints.
+#[cfg(any(windows, target_os = "linux"))]
+fn shipped_on(cores: usize) -> (String, usize) {
+    #[cfg(windows)]
+    const COUNTED: &str = r#"["powershell", "-NoProfile", "-Command", "[Convert]::ToString([int64][Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity, 2).Replace('0', '').Length"]"#;
+    #[cfg(target_os = "linux")]
+    const COUNTED: &str = r#"["nproc"]"#;
+    let (_temp, root) = pushed_game(Some(&format!("cores = {cores}\nbuild = {COUNTED}\n")));
+    let (_code, stdout, stderr) = in_game(&root, &["upload"]);
+    let shown = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("  cores     "))
+        .unwrap_or_default()
+        .to_owned();
+    let found: Option<usize> = stderr.lines().find_map(|line| line.trim().parse().ok());
+    assert!(
+        found.is_some(),
+        "the build printed no count: {stdout}{stderr}"
+    );
+    (shown, found.unwrap_or_default())
+}
+
+#[cfg(any(windows, target_os = "linux"))]
 #[test]
-fn shipping_a_game_holds_steamcmd_and_the_build_to_its_processors() {
+fn shipping_a_game_holds_the_build_and_steamcmd_to_its_cores() {
+    let (unheld, every) = shipped_on(4096);
+    assert_eq!(
+        unheld,
+        format!("all {every}, within the 4096 steamcmd and the build may run on")
+    );
+    let (held, found) = shipped_on(1);
+    assert_eq!(found, 1, "{held}");
+    if every > 1 {
+        assert_eq!(
+            held,
+            format!("1 of {every}, the most steamcmd and the build run on")
+        );
+    } else {
+        assert_eq!(
+            held,
+            "all 1, within the 1 steamcmd and the build may run on"
+        );
+    }
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+#[test]
+fn shipping_a_game_on_macos_says_its_cores_are_not_held() {
     let (_temp, root) = pushed_game(Some("cores = 1\n"));
     let (_code, stdout, stderr) = in_game(&root, &["upload"]);
-    let line = stdout
-        .lines()
-        .find(|line| line.starts_with("  cores     "))
-        .unwrap_or_default();
-    #[cfg(any(windows, target_os = "linux"))]
     assert!(
-        line.starts_with("  cores     1 of ")
-            && line.ends_with(", the most steamcmd and the build run on")
-            || line == "  cores     all 1, within the 1 steamcmd and the build may run on",
-        "{stdout}{stderr}"
-    );
-    #[cfg(not(any(windows, target_os = "linux")))]
-    assert_eq!(
-        line, "  cores     every one, as macOS holds no program to fewer",
+        stdout.contains("\n  cores     every one, as macOS holds no program to fewer\n"),
         "{stdout}{stderr}"
     );
 }
