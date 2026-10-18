@@ -787,6 +787,7 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread;
     use std::time::Duration;
 
     fn configured(text: &str) -> Result<Project, String> {
@@ -1035,6 +1036,20 @@ mod tests {
         // Windows counts time in tenths of a microsecond, and drops anything less.
         let later = changed.checked_add(Duration::from_micros(1)).unwrap();
         assert_eq!(unwritten(&script, later), [game].into());
+    }
+
+    #[test]
+    fn a_file_a_build_copies_with_its_times_kept_counts_as_written() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source.pck");
+        fs::write(&source, "built long ago").unwrap();
+        // Past the coarsest clock a file's times are kept by.
+        thread::sleep(Duration::from_millis(50));
+        let since = written_now().unwrap();
+        let copy = temp.path().join("copy.pck");
+        let _: u64 = fs::copy(&source, &copy).unwrap();
+        assert!(native::changed(&source).unwrap() < since);
+        assert!(native::changed(&copy).unwrap() >= since);
     }
 
     #[test]

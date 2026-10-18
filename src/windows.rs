@@ -205,8 +205,11 @@ pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
 /// The seconds from 1601, where Windows counts a file's times from, to 1970.
 const FROM_1601: u64 = 11_644_473_600;
 
-/// When the file or folder at `path`, or what Windows keeps of it, last changed: set again by
-/// every write, copy and rename, which a build can leave its last-written time set back past.
+/// When the file or folder at `path` was last written, made or renamed: the later of its change
+/// time and its creation time.
+///
+/// A copy, as Python's `shutil.copy2` makes one, keeps its source's change time as well as its
+/// last-written time, so a file a build copied shows only in when it was made.
 ///
 /// # Errors
 ///
@@ -231,7 +234,8 @@ pub fn changed(path: &Path) -> io::Result<SystemTime> {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: the call succeeded, so it wrote the whole of `info`.
-    let ticks = unsafe { info.assume_init() }.ChangeTime;
+    let times = unsafe { info.assume_init() };
+    let ticks = times.ChangeTime.max(times.CreationTime);
     // Ticks are a hundred nanoseconds each, which in nanoseconds a u64 holds to the year 2185.
     let since_1601 = u64::try_from(ticks)
         .ok()
