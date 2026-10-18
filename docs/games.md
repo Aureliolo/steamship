@@ -109,4 +109,6 @@ Each command run in a game takes from it whatever is not given:
   only. Its title, description and version come from its `manifest.json`, and its preview is
   the `preview.png` beside it, which every example mod needs. A new item needs `--visibility`,
   which is given to the items being made alone: one already published keeps its own.
+- `steamship achievements` alone lists the game's achievements and stats on Steam, with the
+  share of players who have each achievement and each aggregated stat's total.
 - `steamship builds` and `steamship promote` take the game's app.
