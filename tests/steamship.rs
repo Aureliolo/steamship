@@ -7600,7 +7600,7 @@ fn a_games_example_mods_are_its_workshop_items_and_one_without_any_is_refused() 
 
 /// A steamcmd for Tall Tales Inn, still unreleased, that prints the app's info when asked for it,
 /// and otherwise has Valve build the upload as `BuildID` 4242, adding a line to `builds` in the
-/// home.
+/// home, or finish the preview the script asks for.
 #[cfg(unix)]
 const INN_STEAMCMD: &str = "#!/bin/sh\n\
     case \" $* \" in *' +app_info_print '*)\n\
@@ -7612,10 +7612,13 @@ const INN_STEAMCMD: &str = "#!/bin/sh\n\
     echo 'Unloading Steam API...OK'\n\
     exit 0;;\n\
     esac\n\
-    echo built >> \"$HOME/builds\"\n\
+    for arg in \"$@\"; do [ \"$previous\" = +run_app_build ] && script=\"$arg\"; previous=\"$arg\"; done\n\
+    finished='build (BuildID 4242).'\n\
+    if grep -q '\"Preview\"[[:space:]]*\"1\"' \"$script\"; then finished='build preview.'; \
+    else echo built >> \"$HOME/builds\"; fi\n\
     output=\"$HOME/apps/5440760/output\"\n\
     mkdir -p \"$output\"\n\
-    echo 'Successfully finished AppID 5440760 build (BuildID 4242).' > \"$output/app_build_5440760.log\"\n\
+    echo \"Successfully finished AppID 5440760 $finished\" > \"$output/app_build_5440760.log\"\n\
     echo 'Logging in user build_bot to Steam Public...OK'\n";
 
 #[cfg(unix)]
