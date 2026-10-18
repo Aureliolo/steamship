@@ -143,8 +143,8 @@ pub enum Command {
     /// With neither, in a game's folder, uploads each of its example mods, a folder in
     /// `modding/` holding a godot-kit `manifest.json`, or the one `--name` names: refused unless
     /// the tree is pushed, as for `upload`. Its title, description and version come from the
-    /// manifest, its preview is the `preview.png` each mod needs beside it, and each item's ID is kept in
-    /// `steam/workshop_items.json`.
+    /// manifest, its preview is the `preview.png` each mod needs beside it, and each item's ID is
+    /// kept in `steam/workshop_items.json`.
     Workshop(Workshop),
     /// Show an app's branches and last builds.
     ///
@@ -165,14 +165,15 @@ pub enum Command {
     /// Show an app's achievements and stats, check them against files, or write their import.
     ///
     /// Lists the achievements and stats Steam holds for the app, in English, through Steam's
-    /// partner Web API with the publisher key as `builds` finds it. With `--check`, compares them
-    /// with the files, read together, by API name, and exits 2 naming every achievement missing
-    /// on either side, every display name, description or hidden flag that differs, and every
-    /// icon Steam has none of; and the same of the stats, their display names, defaults and
-    /// whether Steam adds them up over all players, when a file lists them. With a
-    /// localisation or gettext catalogues among the files, it asks Steam for the achievements in
-    /// each of their languages as well, and names every name or description that differs or that
-    /// Steam lacks in one. Nothing on Steam is changed.
+    /// partner Web API with the publisher key as `builds` finds it, with the share of players who
+    /// have each achievement and each aggregated stat's total over all players. With `--check`,
+    /// compares them with the files, read together, by API name, and exits 2 naming every
+    /// achievement missing on either side, every display name, description or hidden flag that
+    /// differs, and every icon Steam has none of; and the same of the stats, their display
+    /// names, defaults and whether Steam adds them up over all players, when a file lists them.
+    /// With a localisation or gettext catalogues among the files, it asks Steam for the
+    /// achievements in each of their languages as well, and names every name or description that
+    /// differs or that Steam lacks in one. Nothing on Steam is changed.
     ///
     /// With `--write`, writes the files the achievement editor takes under Bulk Import/Export into
     /// the `--out` folder instead, from the same kind of files, with nothing asked of Steam: the
