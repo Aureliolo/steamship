@@ -252,9 +252,7 @@ mod tests {
         }
         assert!(!page.contains("id=\"help\""), "clap's own help is left out");
         assert!(
-            page.contains(
-                "<pre><code>steamship upload [OPTIONS] --version &lt;VERSION&gt; &lt;SCRIPT&gt;</code></pre>"
-            ),
+            page.contains("<pre><code>steamship upload [OPTIONS] [SCRIPT]</code></pre>"),
             "{page}"
         );
         assert!(
@@ -270,13 +268,15 @@ mod tests {
             "{page}"
         );
         assert!(
-            page.contains("<dt><code>--version &lt;VERSION&gt;</code> <span class=\"tag\">required</span></dt>"),
+            page.contains(
+                "<dt><code>--build &lt;BUILD&gt;</code> <span class=\"tag\">required</span></dt>"
+            ),
             "{page}"
         );
         assert!(page.contains("<dt><code>--preview</code></dt>"), "{page}");
         assert!(
             page.contains(
-                "<dt><code>&lt;SCRIPT&gt;</code> <span class=\"tag\">required</span></dt>"
+                "<dt><code>&lt;SHELL&gt;</code> <span class=\"tag\">required</span></dt>"
             ),
             "{page}"
         );

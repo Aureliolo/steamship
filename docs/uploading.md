@@ -84,6 +84,9 @@ steamship upload steam/app_build.vdf --version 1.4.0 --preview
 steamship upload steam/app_build.vdf --version 1.4.0
 ```
 
+In a game's folder, `steamship upload` alone takes the script and version from the game, and
+ships only a pushed commit, built and checked first; [Shipping a game](games.md) has the rest.
+
 The build's description is the version and the Git commit the app script's own repository is
 at, whatever folder steamship runs in: a script in a worktree names that worktree's commit. Build
 output (logs, manifests, the chunk cache) goes to steamship's own folder for the app, never into

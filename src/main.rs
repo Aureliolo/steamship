@@ -17,6 +17,7 @@ use steamship::install::{self, Outcome, State};
 use steamship::login::{self, Ending, Person};
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
+use steamship::project::{self, Project};
 use steamship::redact::Redactor;
 use steamship::show::{self, Hint, Spinner};
 use steamship::typing::{self, Echo};
@@ -69,9 +70,10 @@ fn run(command: Command) -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Check {
-            script,
+            script: Some(script),
             scripts_only,
         } => run_check(&script, scripts_only),
+        Command::Check { script: None, .. } => either(try_game_check()),
         Command::Assets { folder } => run_assets(&folder),
         Command::Ci {
             script,
@@ -92,13 +94,15 @@ fn run(command: Command) -> ExitCode {
             depots,
             folder,
         } => run_init(app, depots, &folder),
-        Command::Builds { app, count, json } => either(try_builds(&app, count, json)),
+        Command::Builds { app, count, json } => {
+            either(app_or_game(app).and_then(|app| try_builds(&app, count, json)))
+        }
         Command::Achievements {
             app,
             check,
             writing,
             json,
-        } => either(try_achievements(&app, &check, &writing, json)),
+        } => either(achievements_in(app, check, writing, json)),
         Command::DrmWrap {
             app,
             executable,
@@ -117,49 +121,544 @@ fn run(command: Command) -> ExitCode {
             save,
             check,
             account,
-        } => either(try_settings(
-            &app,
-            save.as_deref(),
-            check.as_deref(),
+        } => either(settings_in(
+            app,
+            save.map(Snapshot::given),
+            check.map(Snapshot::given),
             named(account.as_deref()),
         )),
-        Command::Leaderboards { app, check, create } => {
-            either(try_leaderboards(&app, &check, create))
-        }
+        Command::Leaderboards { app, check, create } => either(leaderboards_in(app, check, create)),
         Command::RichPresence {
             app,
             files,
             preview,
-        } => either(try_rich_presence(&app, &files, preview)),
-        Command::Promote(request) => either(try_promote(&request)),
+        } => either(rich_presence_in(app, files, preview)),
+        Command::Promote(request) => either(promote_in(request)),
         Command::Branch {
             app,
             branch,
             description,
         } => either(try_branch(&app, &branch, &description)),
-        Command::Workshop(request) => either(try_workshop(&request)),
+        Command::Workshop(request) => {
+            either(if request.script.is_none() && request.item.app.is_none() {
+                try_game_workshop(&request)
+            } else {
+                try_workshop(&request)
+            })
+        }
         Command::Login {
             web_api_key: true, ..
         } => either(try_key_login()),
         Command::Login { account, .. } => either(try_login(named(account.as_deref()))),
         Command::Logout => run_logout(),
         Command::Status { account } => either(try_status(named(account.as_deref()))),
-        Command::Upload {
+        Command::Upload(request) => upload_in(&request),
+    }
+}
+
+/// `upload` of the script given, or of the game when there is none.
+fn upload_in(request: &cli::Upload) -> ExitCode {
+    let shipping = Shipping {
+        version: request.version.as_deref(),
+        preview: request.preview,
+        account: named(request.account.as_deref()),
+        json: request.json,
+    };
+    let default = request.default;
+    match (request.script.as_deref(), shipping.version) {
+        (Some(script), Some(version)) => run_upload(&Upload {
             script,
             version,
-            preview,
+            preview: shipping.preview,
             default,
-            account,
-            json,
-        } => run_upload(&Upload {
-            script: &script,
-            version: &version,
-            preview,
-            default,
-            account: named(account.as_deref()),
-            json,
+            account: shipping.account,
+            json: shipping.json,
         }),
+        (Some(script), None) => fail(
+            &format!(
+                "give the version {} goes up as with --version, or run steamship upload with no \
+                 script in the game's folder, which takes project.godot's",
+                script.display()
+            ),
+            REFUSED,
+        ),
+        (None, _) => either(try_game_upload(&shipping)),
     }
+}
+
+/// The game the current folder is in: refused when there is none, its `steamship.toml` says what
+/// steamship does not take, or it pins another steamship.
+fn game() -> Result<Project, ExitCode> {
+    let here = env::current_dir()
+        .map_err(|error| fail(&format!("the current folder: {error}"), FAILED))?;
+    let found = Project::find(&here)
+        .map_err(|why| fail(&why, REFUSED))?
+        .ok_or_else(|| {
+            fail(
+                &format!(
+                    "there is no game in {}: no {} or steam/app_build.vdf in it or a folder \
+                     above, so name the app and its files, or run steamship in the game's folder",
+                    here.display(),
+                    project::FILE
+                ),
+                REFUSED,
+            )
+        })?;
+    found
+        .pinned(env!("CARGO_PKG_VERSION"))
+        .map_err(|why| fail(&why, REFUSED))?;
+    Ok(found)
+}
+
+/// The app as `app` names it, or else as the game the current folder is in: its build script.
+fn app_or_game(app: Option<String>) -> Result<String, ExitCode> {
+    match app {
+        Some(app) => Ok(app),
+        None => Ok(script_named(&game()?)),
+    }
+}
+
+/// The game's app build script, as an app is named on the command line.
+fn script_named(game: &Project) -> String {
+    game.script.display().to_string()
+}
+
+/// The game's app build script, read, every problem in it shown.
+fn game_script(game: &Project) -> Result<scripts::AppScript, ExitCode> {
+    scripts::load(&game.script).map_err(|problems| {
+        for problem in &problems {
+            show::failure("refused", &problem.to_string(), None);
+        }
+        ExitCode::from(REFUSED)
+    })
+}
+
+/// The game's files `achievements` checks or writes from: the records holding achievements,
+/// stats or sets, and every catalogue beside them.
+fn game_achievements(game: &Project) -> Result<Vec<PathBuf>, ExitCode> {
+    let refused = |why: String| fail(&why, REFUSED);
+    let mut files = game.records(project::ACHIEVEMENTS).map_err(refused)?;
+    if !files.is_empty() {
+        files.extend(game.catalogues().map_err(refused)?);
+    }
+    Ok(files)
+}
+
+/// Shows the game, and refuses it unless its tree holds nothing uncommitted and origin's default
+/// branch is at its commit.
+fn shipped_from(game: &Project) -> Result<(), ExitCode> {
+    show::title("game");
+    show::field(
+        "folder",
+        &if game.configured {
+            format!("{}, as {} lays it out", game.root.display(), project::FILE)
+        } else {
+            game.root.display().to_string()
+        },
+    );
+    let spinner = Spinner::start("commit", "asking origin for its default branch", false);
+    match project::pushed(&game.root) {
+        Ok(pushed) => {
+            spinner.done(&format!(
+                "{}, as origin's {} has it, with nothing uncommitted",
+                project::short(&pushed.commit),
+                pushed.branch
+            ));
+            Ok(())
+        }
+        Err(why) => {
+            spinner.failed("not pushed");
+            Err(fail(&why, REFUSED))
+        }
+    }
+}
+
+/// Refuses the game's settings snapshot when its install folder is not letters and digits alone,
+/// and when there is none and one is `needed`.
+fn snapshot_sound(game: &Project, app: u32, needed: bool) -> Result<(), ExitCode> {
+    let path = game.snapshot();
+    if !path.is_file() {
+        if needed {
+            return Err(fail(
+                &format!(
+                    "{} is missing: run steamship settings --save in the game and commit it, so a \
+                     build goes up only against the settings it was made for",
+                    path.display()
+                ),
+                REFUSED,
+            ));
+        }
+        return Ok(());
+    }
+    let snapshot = settings_file(&path, app)?;
+    if let Some(why) = settings::install_folder(&snapshot) {
+        return Err(fail(&format!("{}: {why}", path.display()), REFUSED));
+    }
+    Ok(())
+}
+
+/// The first code of `codes` that is not success, or success.
+fn first_failure(codes: impl IntoIterator<Item = ExitCode>) -> ExitCode {
+    codes
+        .into_iter()
+        .find(|code| *code != ExitCode::SUCCESS)
+        .unwrap_or(ExitCode::SUCCESS)
+}
+
+/// Compares the game's achievements, leaderboards and rich presence with Steam's, each that the
+/// game has, every one whatever the others found.
+fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> {
+    let refused = |why: String| fail(&why, REFUSED);
+    let mut codes = Vec::new();
+    let achievements = game_achievements(game)?;
+    if !achievements.is_empty() {
+        let receipt = game.import.join(editor::RECEIPT).is_file();
+        let writing = Writing {
+            write: None,
+            out: receipt.then(|| game.import.clone()),
+            unchanged: false,
+            imported: false,
+        };
+        codes.push(either(try_achievements(
+            app,
+            &achievements,
+            &writing,
+            false,
+        )));
+    }
+    let boards = game.records(project::LEADERBOARDS).map_err(refused)?;
+    if !boards.is_empty() {
+        codes.push(either(try_leaderboards(app, &boards, false)));
+    }
+    let presence = game.presence().map_err(refused)?;
+    if !presence.is_empty() {
+        codes.push(either(try_rich_presence(app, &presence, true)));
+    }
+    Ok(first_failure(codes))
+}
+
+/// `check` in a game: its scripts, then its records and rich presence against Steam's, and its
+/// branches.
+fn try_game_check() -> Result<ExitCode, ExitCode> {
+    let game = game()?;
+    let checked = run_check(&game.script, true);
+    if checked != ExitCode::SUCCESS {
+        return Ok(checked);
+    }
+    let script = game_script(&game)?;
+    snapshot_sound(&game, script.app_id, false)?;
+    let app = script_named(&game);
+    let compared = compared(&game, &app)?;
+    let builds = either(try_builds(&app, 10, false));
+    Ok(first_failure([compared, builds]))
+}
+
+/// How `upload` ships a game.
+struct Shipping<'command> {
+    version: Option<&'command str>,
+    preview: bool,
+    account: Option<&'command str>,
+    json: bool,
+}
+
+/// `upload` in a game: the pushed commit, built, checked against Steam, uploaded, and its branch
+/// described.
+fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
+    if shipping.json {
+        show::divert();
+    }
+    let game = game()?;
+    shipped_from(&game)?;
+    let version = match shipping.version {
+        Some(version) => version.to_owned(),
+        None => game.version().map_err(|why| fail(&why, REFUSED))?,
+    };
+    show::field("version", &version);
+    let script = game_script(&game)?;
+    snapshot_sound(&game, script.app_id, true)?;
+    built(&game)?;
+    let app = script_named(&game);
+    let snapshot = game.snapshot();
+    let steps = [
+        either(try_settings(&app, None, Some(&snapshot), shipping.account)),
+        compared(&game, &app)?,
+    ];
+    let compared = first_failure(steps);
+    if compared != ExitCode::SUCCESS {
+        return Ok(compared);
+    }
+    let uploaded = run_upload(&Upload {
+        script: &game.script,
+        version: &version,
+        preview: shipping.preview,
+        default: !shipping.preview,
+        account: shipping.account,
+        json: shipping.json,
+    });
+    if uploaded != ExitCode::SUCCESS || shipping.preview {
+        return Ok(uploaded);
+    }
+    if let Some(branch) = &script.set_live {
+        let described = either(try_branch(&app, branch, &version));
+        if described != ExitCode::SUCCESS {
+            return Ok(described);
+        }
+    }
+    Ok(either(try_builds(&app, 10, false)))
+}
+
+/// Runs the game's `build` command in its folder, its output shown as it comes, and refuses when
+/// it fails or leaves the tree changed.
+fn built(game: &Project) -> Result<(), ExitCode> {
+    let Some((program, args)) = game.build.split_first() else {
+        show::field(
+            "build",
+            &format!(
+                "none named in {}, so the content goes up as it is",
+                project::FILE
+            ),
+        );
+        return Ok(());
+    };
+    let named = game.build.join(" ");
+    show::field("build", &format!("running {named}"));
+    let started = SystemTime::now();
+    let finished = run::spawn(
+        run::command(program)
+            .args(args)
+            .current_dir(&game.root)
+            .stdin(process::Stdio::null())
+            // Standard output is kept for what steamship itself answers, such as --json's line.
+            .stdout(io::stderr()),
+    )
+    .and_then(|mut child| child.wait());
+    let took = show::took(started.elapsed().unwrap_or_default());
+    match finished {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            return Err(fail(
+                &format!("{named} failed after {took} ({status}), so nothing goes up"),
+                FAILED,
+            ));
+        }
+        Err(error) => {
+            return Err(fail(
+                &format!("{program} could not be started: {error}"),
+                FAILED,
+            ));
+        }
+    }
+    project::unchanged(&game.root).map_err(|why| fail(&why, REFUSED))?;
+    show::done("build", &format!("built in {took}"));
+    Ok(())
+}
+
+/// `achievements` with whatever is not given taken from the game.
+fn achievements_in(
+    app: Option<String>,
+    check: Option<Vec<PathBuf>>,
+    mut writing: Writing,
+    json: bool,
+) -> Result<ExitCode, ExitCode> {
+    let own_check = check.as_ref().is_some_and(Vec::is_empty);
+    let own_write = writing.write.as_ref().is_some_and(Vec::is_empty)
+        || (writing.imported && writing.write.is_none());
+    let game = (app.is_none() || own_check || own_write)
+        .then(game)
+        .transpose()?;
+    let own = |found: &Project, flag: &str| {
+        let files = game_achievements(found)?;
+        if files.is_empty() {
+            return Err(fail(
+                &format!(
+                    "{flag} names no files, and the game holds no achievement records for it to \
+                     read"
+                ),
+                REFUSED,
+            ));
+        }
+        Ok(files)
+    };
+    let mut files = check.unwrap_or_default();
+    if let Some(game) = &game {
+        if own_check {
+            files = own(game, "--check")?;
+            if writing.out.is_none() && game.import.join(editor::RECEIPT).is_file() {
+                writing.out = Some(game.import.clone());
+            }
+        }
+        if own_write {
+            writing.write = Some(own(game, "--write")?);
+            if writing.out.is_none() {
+                writing.out = Some(game.import.clone());
+            }
+        }
+    }
+    if writing.write.is_some() && writing.out.is_none() {
+        return Err(fail(
+            &"--write needs --out, the folder it writes into",
+            REFUSED,
+        ));
+    }
+    let app = match (app, &game) {
+        (Some(app), _) => app,
+        (None, Some(game)) => script_named(game),
+        (None, None) => return Err(fail(&"name the app", REFUSED)),
+    };
+    try_achievements(&app, &files, &writing, json)
+}
+
+/// The snapshot `--save` or `--check` names: a file, or the game's own when it names none.
+enum Snapshot {
+    File(PathBuf),
+    Game,
+}
+
+impl Snapshot {
+    fn given(path: Option<PathBuf>) -> Self {
+        path.map_or(Self::Game, Self::File)
+    }
+}
+
+/// `promote` of the app named, or else the game's.
+fn promote_in(mut request: cli::Promote) -> Result<ExitCode, ExitCode> {
+    request.app = Some(app_or_game(request.app.take())?);
+    try_promote(&request)
+}
+
+/// `settings` with whatever is not given taken from the game.
+fn settings_in(
+    app: Option<String>,
+    save: Option<Snapshot>,
+    check: Option<Snapshot>,
+    account: Option<&str>,
+) -> Result<ExitCode, ExitCode> {
+    let own = matches!(save, Some(Snapshot::Game)) || matches!(check, Some(Snapshot::Game));
+    let game = (app.is_none() || own).then(game).transpose()?;
+    let path = |given: Snapshot| match given {
+        Snapshot::File(path) => Some(path),
+        Snapshot::Game => game.as_ref().map(Project::snapshot),
+    };
+    let save = save.and_then(path);
+    let check = check.and_then(path);
+    let app = match (app, &game) {
+        (Some(app), _) => app,
+        (None, Some(game)) => script_named(game),
+        (None, None) => return Err(fail(&"name the app", REFUSED)),
+    };
+    try_settings(&app, save.as_deref(), check.as_deref(), account)
+}
+
+/// `leaderboards` with whatever is not given taken from the game.
+fn leaderboards_in(
+    app: Option<String>,
+    check: Option<Vec<PathBuf>>,
+    create: bool,
+) -> Result<ExitCode, ExitCode> {
+    let own = check.as_ref().is_none_or(Vec::is_empty) && (check.is_some() || create);
+    let game = (app.is_none() || own).then(game).transpose()?;
+    let mut files = check.unwrap_or_default();
+    if let Some(game) = game.as_ref().filter(|_| own) {
+        files = game
+            .records(project::LEADERBOARDS)
+            .map_err(|why| fail(&why, REFUSED))?;
+        if files.is_empty() {
+            return Err(fail(
+                &"the game holds no leaderboard records to check or make",
+                REFUSED,
+            ));
+        }
+    }
+    let app = match (app, &game) {
+        (Some(app), _) => app,
+        (None, Some(game)) => script_named(game),
+        (None, None) => return Err(fail(&"name the app", REFUSED)),
+    };
+    try_leaderboards(&app, &files, create)
+}
+
+/// `rich-presence` with whatever is not given taken from the game: every language's file, sent
+/// only from a pushed tree.
+fn rich_presence_in(
+    app: Option<String>,
+    mut files: Vec<PathBuf>,
+    preview: bool,
+) -> Result<ExitCode, ExitCode> {
+    let game = (app.is_none() || files.is_empty()).then(game).transpose()?;
+    if let Some(game) = game.as_ref().filter(|_| files.is_empty()) {
+        files = game.presence().map_err(|why| fail(&why, REFUSED))?;
+        if files.is_empty() {
+            return Err(fail(
+                &format!(
+                    "the game holds no rich_presence_<language>.vdf beside {}",
+                    game.script.display()
+                ),
+                REFUSED,
+            ));
+        }
+        if !preview {
+            shipped_from(game)?;
+        }
+    }
+    let app = match (app, &game) {
+        (Some(app), _) => app,
+        (None, Some(game)) => script_named(game),
+        (None, None) => return Err(fail(&"name the app", REFUSED)),
+    };
+    try_rich_presence(&app, &files, preview)
+}
+
+/// `workshop` in a game: each example mod, or the one `--name` names, from a pushed tree.
+fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
+    let game = game()?;
+    let mods = game.mods().map_err(|why| fail(&why, REFUSED))?;
+    let chosen: Vec<project::Mod> = match &request.item.name {
+        Some(name) => mods.into_iter().filter(|each| each.name == *name).collect(),
+        None => mods,
+    };
+    if chosen.is_empty() {
+        return Err(fail(
+            &request.item.name.as_ref().map_or_else(
+                || {
+                    format!(
+                        "the game has no example mod: no folder in {} holds a manifest.json",
+                        game.mods.path.display()
+                    )
+                },
+                |name| format!("the game has no example mod named {name}"),
+            ),
+            REFUSED,
+        ));
+    }
+    if request.json {
+        show::divert();
+    }
+    shipped_from(&game)?;
+    let app = script_named(&game);
+    for each in chosen {
+        let item = cli::Workshop {
+            script: None,
+            item: cli::WorkshopItem {
+                app: Some(app.clone()),
+                items: Some(game.items.clone()),
+                name: Some(each.name),
+                content: Some(each.folder),
+                preview: each.preview,
+                title: Some(each.title),
+                description: Some(each.description),
+                change_note: Some(format!("Version {}", each.version)),
+                visibility: request.item.visibility,
+            },
+            account: request.account.clone(),
+            new: request.new,
+            json: request.json,
+        };
+        let uploaded = either(try_workshop(&item));
+        if uploaded != ExitCode::SUCCESS {
+            return Ok(uploaded);
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The code a command exits with, whether it finished or stopped early.
@@ -1941,7 +2440,7 @@ fn try_achievements(
     writing: &Writing,
     json: bool,
 ) -> Result<ExitCode, ExitCode> {
-    if let Some(out) = writing.out.as_deref().filter(|_| !writing.write.is_empty()) {
+    if let Some(out) = writing.out.as_deref().filter(|_| writing.write.is_some()) {
         return try_achievements_write(app, out, writing);
     }
     if json {
@@ -2262,7 +2761,8 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
         "achievements, write"
     });
     let app_id = app_named(app)?;
-    let listed = achievements_files(&writing.write, app_id, false)?.unwrap_or_default();
+    let sources = writing.write.as_deref().unwrap_or_default();
+    let listed = achievements_files(sources, app_id, false)?.unwrap_or_default();
     let mut package: Vec<(String, Vec<u8>)> = editor::tables(app_id, &listed)
         .into_iter()
         .map(|table| (table.name, table.text.into_bytes()))
@@ -2990,7 +3490,11 @@ fn try_settings(
     };
     let shown = asked_settings(&account, app_id, packed.as_ref())?;
     let written = settings::snapshot(app_id, &shown).map_err(|why| fail(&why, FAILED))?;
+    let folder = settings::install_folder(&shown).map(|why| format!("app {app_id}: {why}"));
     if let Some(path) = save {
+        if let Some(why) = &folder {
+            return Err(fail(why, REFUSED));
+        }
         fs::write(path, &written)
             .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
         show::success(
@@ -3001,15 +3505,21 @@ fn try_settings(
     }
     let Some(wanted) = wanted else {
         anstream::print!("{written}");
+        if let Some(why) = &folder {
+            show::note(why);
+        }
         return Ok(ExitCode::SUCCESS);
     };
     let drift = settings::compare(&wanted, &shown);
-    if drift.is_empty() {
+    if drift.is_empty() && folder.is_none() {
         show::success("Steam's settings match the file", "");
         return Ok(ExitCode::SUCCESS);
     }
     for difference in &drift {
         show::failure(&difference.to_string(), "", None);
+    }
+    if let Some(why) = &folder {
+        show::failure(why, "", None);
     }
     show::aside(
         "change the app in Steamworks, or `steamship settings --save` the file again if the \
@@ -3165,7 +3675,7 @@ fn try_branch(app: &str, branch: &str, description: &str) -> Result<ExitCode, Ex
 
 fn try_promote(request: &cli::Promote) -> Result<ExitCode, ExitCode> {
     show::title("promote");
-    let app_id = app_named(&request.app)?;
+    let app_id = app_named(request.app.as_deref().unwrap_or_default())?;
     let build = request.build;
     let default = webapi::is_default(&request.branch);
     let (branch, key) = if default {

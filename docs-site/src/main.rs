@@ -50,7 +50,7 @@ struct Page {
     summary: &'static str,
 }
 
-const PAGES: [Page; 5] = [
+const PAGES: [Page; 6] = [
     Page {
         source: Source::Home,
         name: "index",
@@ -72,6 +72,13 @@ const PAGES: [Page; 5] = [
         title: "Uploading",
         nav: "Uploading",
         summary: "Logging in, checking scripts, uploading builds and Workshop items, and branches.",
+    },
+    Page {
+        source: Source::File("games.md"),
+        name: "games",
+        title: "Shipping a game",
+        nav: "Games",
+        summary: "Commands run in a game's folder, its layout, and its steamship.toml.",
     },
     Page {
         source: Source::File("ci.md"),

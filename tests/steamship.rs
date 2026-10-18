@@ -3299,7 +3299,7 @@ fn an_item_given_by_its_fields_is_refused_before_steam_when_it_cannot_be_kept_or
             vec!["workshop", "--app", "480", "--name", "example"],
             "the following required arguments were not provided",
         ),
-        (vec!["workshop"], "<SCRIPT>"),
+        (vec!["workshop"], "there is no game in "),
     ] {
         let (code, _, stderr) = steamship(&args, Some(home.path()), &[]);
         assert_eq!(code, Some(2_i32), "{args:?}: {stderr}");
@@ -4821,10 +4821,7 @@ fn a_receipts_flags_are_refused_where_they_mean_nothing() {
             .as_slice(),
             "cannot be used with",
         ),
-        (
-            ["--imported"].as_slice(),
-            "the following required arguments were not provided",
-        ),
+        (["--imported"].as_slice(), "there is no game in "),
     ] {
         let mut all = vec!["achievements", "5440760"];
         all.extend(args);
@@ -5984,7 +5981,7 @@ fn a_leaderboards_file_that_is_not_one_is_refused_before_steam_and_create_needs_
         &set,
     );
     assert_eq!(code, Some(2_i32), "{stderr}");
-    assert!(stderr.contains("--check <FILE>"), "{stderr}");
+    assert!(stderr.contains("there is no game in "), "{stderr}");
 }
 
 /// `GetAppBetas` as Steam answered for Fantasy Guild Manager.
@@ -6967,4 +6964,293 @@ fn artwork_is_checked_against_valves_sizes_with_nothing_sent() {
     let (none, _, said) = steamship(&["assets", &empty.path().to_string_lossy()], None, &quiet);
     assert_eq!(none, Some(2_i32), "{said}");
     assert!(said.contains("holds no PNG, JPEG or icon"), "{said}");
+}
+
+/// A game laid out as godot-kit lays one out, with `toml` as its `steamship.toml` when given,
+/// committed and pushed to an origin of its own beside it; and the game's folder.
+fn pushed_game(toml: Option<&str>) -> (tempfile::TempDir, PathBuf) {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("inn");
+    let put = |relative: &str, contents: &[u8]| {
+        let path = root.join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    };
+    put(
+        "project.godot",
+        b"[application]\nconfig/name=\"Inn\"\nconfig/version=\"0.3.1\"\n",
+    );
+    put(
+        "steam/app_build.vdf",
+        br#""AppBuild" { "AppID" "5440760" "ContentRoot" "../export/" "SetLive" "testing" "Depots" { "5440761" "depot.vdf" } }"#,
+    );
+    put(
+        "steam/depot.vdf",
+        br#""DepotBuild" { "DepotID" "5440761" "FileMapping" { "LocalPath" "*" "DepotPath" "." "Recursive" "1" } }"#,
+    );
+    put(
+        "steam/settings.vdf",
+        b"\"5440760\"\n{\n\t\"config\"\n\t{\n\t\t\"installdir\"\t\t\"TallTalesInn\"\n\t}\n}\n",
+    );
+    put(
+        "steam/rich_presence_english.vdf",
+        b"\"lang\"\n{\n\t\"Language\"\t\"english\"\n\t\"Tokens\"\n\t{\n\t\t\"#menu\"\t\"At the menu\"\n\t}\n}\n",
+    );
+    put("mods/base/manifest.json", b"{}");
+    put("mods/base/data/achievements.json", INN_RECORDS.as_bytes());
+    put("mods/base/data/options.json", br#"{"volume": 1}"#);
+    for (icon, size, shade) in [
+        ("five_floors", 256, 200),
+        ("first_cellar", 256, 120),
+        ("first_cellar_locked", 64, 60),
+    ] {
+        put(
+            &format!("mods/base/icons/{icon}.png"),
+            &icon_png(size, shade),
+        );
+    }
+    put("game/locale/de.po", INN_GERMAN.as_bytes());
+    put(
+        "modding/example/manifest.json",
+        br#"{"id": "example", "name": "Example Harbour", "version": "1.0.0", "description": "Every feature a mod has."}"#,
+    );
+    put(".gitignore", b"export/\n");
+    if let Some(toml) = toml {
+        put("steamship.toml", toml.as_bytes());
+    }
+    git(
+        temp.path(),
+        &[
+            "init",
+            "--quiet",
+            "--bare",
+            "--initial-branch=main",
+            "origin.git",
+        ],
+    );
+    git(&root, &["init", "--quiet", "--initial-branch=main"]);
+    git(
+        &root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            &temp.path().join("origin.git").to_string_lossy(),
+        ],
+    );
+    pushed(&root, "The game");
+    (temp, root)
+}
+
+/// Commits everything in the game at `root` and pushes it to its origin.
+fn pushed(root: &Path, message: &str) {
+    git(root, &["add", "--all"]);
+    git(root, &["commit", "--quiet", "--allow-empty", "-m", message]);
+    git(root, &["push", "--quiet", "origin", "main"]);
+}
+
+/// `steamship` with `args` in the game at `root`, with its own home.
+fn in_game(root: &Path, args: &[&str]) -> (Option<i32>, String, String) {
+    let home = root.parent().unwrap().join("home");
+    fs::create_dir_all(&home).unwrap();
+    steamship_in(
+        root,
+        args,
+        Some(&home),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    )
+}
+
+#[test]
+fn a_game_writes_its_achievement_import_from_its_own_records_and_catalogues() {
+    let (_temp, root) = pushed_game(None);
+    let (code, stdout, stderr) = in_game(&root, &["achievements", "--write"]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let out = root.join("steam").join("achievements");
+    assert!(
+        out.join("5440760-achievements-definitions.csv").is_file(),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("achievements.json, 2 achievements and 1 stat"),
+        "the records file alone of the base mod's data: {stdout}"
+    );
+    assert!(stdout.contains("de.po"), "{stdout}");
+
+    let (same, unchanged, why_not) = in_game(&root, &["achievements", "--write", "--unchanged"]);
+    assert_eq!(same, Some(0_i32), "{unchanged}{why_not}");
+
+    let inner = root.join("mods").join("base");
+    let (from_inside, said, why) = steamship_in(
+        &inner,
+        &["achievements", "--write", "--unchanged"],
+        Some(&root.parent().unwrap().join("home")),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(
+        from_inside,
+        Some(0_i32),
+        "found from a folder inside it: {said}{why}"
+    );
+}
+
+#[test]
+fn a_games_rich_presence_is_read_beside_its_scripts() {
+    let (_temp, root) = pushed_game(None);
+    let (code, stdout, stderr) = in_game(&root, &["rich-presence", "--preview"]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("  english   1 token, from "), "{stdout}");
+    assert!(stdout.contains("nothing was sent"), "{stdout}");
+}
+
+#[test]
+fn a_game_pinning_another_steamship_is_refused_by_every_command_run_in_it() {
+    let (_temp, root) = pushed_game(Some("steamship = \"0.0.1\"\n"));
+    for args in [
+        ["builds"].as_slice(),
+        ["check"].as_slice(),
+        ["upload"].as_slice(),
+        ["achievements", "--write"].as_slice(),
+    ] {
+        let (code, stdout, stderr) = in_game(&root, args);
+        assert_eq!(code, Some(2_i32), "{args:?}: {stdout}{stderr}");
+        assert!(
+            failure(&stderr).ends_with(&format!(
+                "pins steamship 0.0.1, and this is {}: install 0.0.1, or change the pin",
+                env!("CARGO_PKG_VERSION")
+            )),
+            "{args:?}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_steamship_toml_saying_what_steamship_does_not_take_is_refused_naming_the_file() {
+    let (_temp, root) = pushed_game(Some("[workshop]\nmod = \"examples\"\n"));
+    let (code, stdout, stderr) = in_game(&root, &["builds"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    // Ends with, as macOS gives the child its temporary folder through /private.
+    assert!(
+        failure(&stderr).ends_with(&format!(
+            "{}: `workshop.mod` is no setting steamship takes; it takes `workshop.mods`, \
+             `workshop.items`, `workshop.footer`",
+            Path::new("inn").join("steamship.toml").display()
+        )),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_upload_in_a_game_ships_only_its_pushed_commit_against_its_settings_snapshot() {
+    let (_temp, root) = pushed_game(None);
+    let refused = |said: &str| {
+        let (exit, stdout, stderr) = in_game(&root, &["upload"]);
+        assert_eq!(exit, Some(2_i32), "{said}: {stdout}{stderr}");
+        assert!(failure(&stderr).contains(said), "{said}: {stderr}");
+    };
+
+    fs::write(root.join("stray.txt"), "not committed").unwrap();
+    fs::write(root.join(".gitignore"), "export/\nchanged/\n").unwrap();
+    refused("the game's folder holds what its commit does not (.gitignore, stray.txt)");
+    fs::remove_file(root.join("stray.txt")).unwrap();
+    git(&root, &["checkout", "--quiet", "--", ".gitignore"]);
+
+    git(
+        &root,
+        &["commit", "--quiet", "--allow-empty", "-m", "Not pushed"],
+    );
+    refused(", and origin's main at ");
+    git(&root, &["push", "--quiet", "origin", "main"]);
+
+    fs::remove_file(root.join("steam").join("settings.vdf")).unwrap();
+    pushed(&root, "No snapshot");
+    refused("settings.vdf is missing: run steamship settings --save in the game and commit it");
+
+    fs::write(
+        root.join("steam").join("settings.vdf"),
+        "\"5440760\"\n{\n\t\"config\"\n\t{\n\t\t\"installdir\"\t\t\"Tall Tales\"\n\t}\n}\n",
+    )
+    .unwrap();
+    pushed(&root, "A spaced install folder");
+    refused("the install folder is \"Tall Tales\", and steamship takes");
+}
+
+#[test]
+fn an_upload_in_a_game_refuses_a_build_that_fails() {
+    let failing = "build = [\"git\", \"rev-parse\", \"--verify\", \"--quiet\", \"none\"]\n";
+    let (_temp, root) = pushed_game(Some(failing));
+    let (code, stdout, stderr) = in_game(&root, &["upload"]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).starts_with("git rev-parse --verify --quiet none failed after "),
+        "{stderr}"
+    );
+    assert!(stdout.contains("  version   0.3.1\n"), "{stdout}");
+}
+
+#[test]
+fn an_upload_in_a_game_refuses_a_build_that_changes_the_tree() {
+    let leaving = "build = [\"git\", \"init\", \"--quiet\", \"made\"]\n";
+    let (_temp, root) = pushed_game(Some(leaving));
+    let (code, stdout, stderr) = in_game(&root, &["upload"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).starts_with("the game's folder holds what its commit does not (made/)"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_upload_in_a_game_builds_it_then_checks_its_settings_with_steam() {
+    let (_temp, root) = pushed_game(Some("build = [\"git\", \"--version\"]\n"));
+    let (built, stdout, stderr) = in_game(&root, &["upload", "--preview"]);
+    assert!(
+        stdout.contains("  build     \u{2713} built in "),
+        "{stdout}{stderr}"
+    );
+    assert!(stdout.contains("steamship settings"), "{stdout}");
+    assert_eq!(
+        built,
+        Some(2_i32),
+        "no build account to ask Steam with: {stderr}"
+    );
+    assert!(
+        stderr.contains("name the build account with --account or STEAMSHIP_ACCOUNT"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_games_workshop_items_go_up_only_from_a_pushed_tree() {
+    let (_temp, root) = pushed_game(None);
+    let (code, stdout, stderr) = in_game(&root, &["workshop", "--name", "elsewhere"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "the game has no example mod named elsewhere"
+    );
+
+    fs::write(root.join("modding").join("example").join("new.txt"), "x").unwrap();
+    let (unpushed, said, why) = in_game(&root, &["workshop"]);
+    assert_eq!(unpushed, Some(2_i32), "{said}{why}");
+    assert!(failure(&why).contains("(modding/example/new.txt)"), "{why}");
+}
+
+#[test]
+fn outside_a_game_a_command_needing_one_says_to_name_the_app() {
+    let empty = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = steamship_in(
+        empty.path(),
+        &["builds"],
+        Some(empty.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).ends_with(
+            ": no steamship.toml or steam/app_build.vdf in it or a folder above, so name the app \
+             and its files, or run steamship in the game's folder"
+        ),
+        "{stderr}"
+    );
 }

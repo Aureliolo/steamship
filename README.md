@@ -56,12 +56,15 @@ steamship upload steam/app_build.vdf --version 1.4.0
 `steam/app_build.vdf` and its depot scripts are Valve's own format; if you already upload with
 steamcmd, you already have them, and `steamship init <app id>` writes a starting set if not.
 `--preview` is Valve's dry run: the whole build is computed and nothing is uploaded.
-`steamship ci` sets up the same upload from GitHub Actions.
+`steamship ci` sets up the same upload from GitHub Actions. In a game's folder every command
+finds the game's files itself, and `steamship upload` alone builds, checks and ships its pushed
+commit.
 
 ## Documentation
 
 **<https://aureliolo.github.io/steamship>**:
 [uploading](https://aureliolo.github.io/steamship/uploading.html),
+[shipping a game](https://aureliolo.github.io/steamship/games.html),
 [uploading from CI](https://aureliolo.github.io/steamship/ci.html) and every
 [command](https://aureliolo.github.io/steamship/commands.html). Security issues go through
 [SECURITY.md](.github/SECURITY.md).
