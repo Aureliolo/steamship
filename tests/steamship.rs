@@ -674,29 +674,46 @@ fn an_upload_asked_for_default_too_is_set_live_there_while_steam_shows_the_app_u
 
 #[cfg(unix)]
 #[test]
-fn an_upload_asked_for_default_too_is_refused_before_it_is_built_once_steam_shows_the_app_released()
-{
+fn an_upload_asked_for_default_too_once_steam_shows_the_app_released_goes_to_its_branch_alone() {
     let home = faked_with(&released_as("released"));
     saved_login(home.path());
     let (_project, script) = project(true);
-    let (host, _requests) = web_api(vec![("200 OK", BETAS)]);
+    // Only what the upload asks of Steam either way: a third request would fail the run.
+    let (host, requests) = web_api(vec![("200 OK", BETAS), ("200 OK", testing_live(4242))]);
     let (code, stdout, stderr) = upload(
         &script,
         home.path(),
-        &["--version", "1.4.0", "--default"],
+        &["--version", "1.4.0", "--default", "--json"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
-    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     assert!(
-        stdout.contains("released, as Steam shows it (released)"),
+        stdout.contains("\"default\":false")
+            && stdout.contains("\"live\":true")
+            && stdout.contains("\"outcome\":\"uploaded\""),
         "{stdout}"
     );
-    assert_eq!(
-        failure(&stderr),
-        "app 1000 is released, so its default branch is set live in Steamworks, where Valve asks \
-         for a Steam Mobile confirmation"
+    assert!(
+        stderr.contains("released, as Steam shows it (released)")
+            && stderr.contains(
+                "app 1000 is released, so its default branch is set live in Steamworks, where \
+                 Valve asks for a Steam Mobile confirmation; the build goes up without it"
+            )
+            && stderr.contains("app 1000: BuildID 4242, set live on testing")
+            && !stderr.contains("and default"),
+        "{stderr}"
     );
-    assert!(!home.path().join("builds").exists(), "nothing was built");
+    assert!(home.path().join("builds").exists(), "the build went up");
+    let asked: Vec<String> =
+        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(2)
+            .collect();
+    assert!(
+        asked
+            .iter()
+            .all(|request| !request.contains("SetAppBuildLive")),
+        "{asked:?}"
+    );
 }
 
 #[cfg(unix)]

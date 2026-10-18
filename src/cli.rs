@@ -128,9 +128,10 @@ pub enum Command {
         /// Valve's dry run: the whole build is computed and logged, and nothing is uploaded.
         #[arg(long)]
         preview: bool,
-        /// Also set the build live on the default branch, through Steam's partner Web API with
-        /// the publisher key as `builds` finds it. Refused unless Steam shows the app unreleased;
-        /// once it is released, its default branch is set live in Steamworks.
+        /// While Steam shows the app unreleased, also set the build live on the default branch,
+        /// through Steam's partner Web API with the publisher key as `builds` finds it. Once it
+        /// is released, its default branch is set live in Steamworks, and the build goes up
+        /// without it.
         #[arg(long, conflicts_with = "preview")]
         default: bool,
         /// The build account, if not the one the last login remembered.

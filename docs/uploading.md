@@ -250,12 +250,14 @@ through the Web API, with the key as for `promote`.
 
 Before anything is sent, steamship asks steamcmd, logged in as the build account, for the app's
 release state, and goes on only while Steam shows it `unavailable` (no store page yet) or
-`prerelease` (coming soon). Once the game is released, both are refused: its default branch is
-the one players get, and Valve asks for a Steam Mobile confirmation, so it is set live in
-Steamworks. steamship never sends the SteamID that confirmation needs, so Valve refuses too.
+`prerelease` (coming soon). Once the game is released, its default branch is the one players
+get, and Valve asks for a Steam Mobile confirmation, so it is set live in Steamworks. Then
+`upload --default` says so and uploads to the script's branch alone, so a game's tools can pass
+`--default` on every upload from before launch to after it; `promote --branch default` is
+refused. steamship never sends the SteamID that confirmation needs, so Valve refuses too.
 
 With `--json`, `default` says whether the build is live on the default branch, and `outcome`
-is `not-live` when it was asked for and Steam did not set it.
+is `not-live` when the app is unreleased and Steam did not set it there.
 
 For a script that runs steamship, `builds --json` prints the branches and builds on standard
 output as one line of JSON, here spread out, and sends everything meant for a person to
