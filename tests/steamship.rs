@@ -7015,7 +7015,7 @@ fn pushed_game(toml: Option<&str>) -> (tempfile::TempDir, PathBuf) {
     );
     put("modding/example/preview.png", &icon_png(256, 90));
     put(".gitignore", b"export/\n");
-    put("export/game.txt", b"the game, as its build leaves it");
+    put("export/game.txt", b"[game]\n\tbuilt = before\n");
     if let Some(toml) = toml {
         put("steamship.toml", toml.as_bytes());
     }
@@ -7233,9 +7233,49 @@ fn an_upload_in_a_game_refuses_a_build_that_changes_the_tree() {
     );
 }
 
+/// A build, as `steamship.toml` names it, that writes the game's one file of content again.
+const BUILDING: &str =
+    "build = [\"git\", \"config\", \"--file\", \"export/game.txt\", \"game.built\", \"now\"]\n";
+
+#[test]
+fn an_upload_in_a_game_refuses_a_file_its_build_did_not_write() {
+    let (_temp, root) = pushed_game(Some("build = [\"git\", \"--version\"]\n"));
+    let (code, stdout, stderr) = in_game(&root, &["upload"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    let stale = Path::new("export").join("game.txt");
+    assert_eq!(
+        failure(&stderr),
+        format!(
+            "1 file the depots upload was not written by git --version, so is left over from an \
+             earlier build: {}. Have the build empty the folders it writes first, or remove what \
+             it left",
+            stale.display()
+        )
+    );
+
+    fs::write(root.join("export").join("notes.txt"), "kept by hand").unwrap();
+    fs::write(root.join("export").join("old.txt"), "an earlier export").unwrap();
+    fs::write(root.join("steamship.toml"), BUILDING).unwrap();
+    pushed(&root, "A build that writes the game");
+    // Older than the build by more than any file system's clock is coarse, as an export from an
+    // earlier build is.
+    thread::sleep(Duration::from_millis(50));
+    let (rebuilt, said, why) = in_game(&root, &["upload"]);
+    assert_eq!(rebuilt, Some(2_i32), "{said}{why}");
+    assert!(
+        failure(&why).starts_with(&format!(
+            "2 files the depots upload were not written by git config --file export/game.txt \
+             game.built now, so are left over from an earlier build: {}, {}. ",
+            Path::new("export").join("notes.txt").display(),
+            Path::new("export").join("old.txt").display(),
+        )),
+        "{why}"
+    );
+}
+
 #[test]
 fn an_upload_in_a_game_builds_it_then_checks_its_settings_with_steam() {
-    let (_temp, root) = pushed_game(Some("build = [\"git\", \"--version\"]\n"));
+    let (_temp, root) = pushed_game(Some(BUILDING));
     let (built, stdout, stderr) = in_game(&root, &["upload", "--preview"]);
     assert!(
         stdout.contains("  build     \u{2713} built in "),
@@ -7811,7 +7851,7 @@ const INN_STEAMCMD: &str = "#!/bin/sh\n\
 #[cfg(unix)]
 #[test]
 fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described() {
-    let (_temp, root) = pushed_game(Some("build = [\"git\", \"--version\"]\n"));
+    let (_temp, root) = pushed_game(Some(BUILDING));
     fs::remove_file(
         root.join("mods")
             .join("base")
