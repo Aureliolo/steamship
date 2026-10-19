@@ -88,6 +88,15 @@ pub fn steam_language(locale: &str) -> Option<&'static str> {
         .map(|(_, language)| *language)
 }
 
+/// Steam's own name for a language, its API language code, when `name` is one regardless of case.
+#[must_use]
+pub fn steam_language_named(name: &str) -> Option<&'static str> {
+    LANGUAGES
+        .iter()
+        .map(|(_, language)| *language)
+        .find(|language| language.eq_ignore_ascii_case(name))
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Part {
     Context,

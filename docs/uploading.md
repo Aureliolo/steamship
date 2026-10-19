@@ -384,6 +384,14 @@ exits 2 naming each one that is wrong, each named for no asset, and too few scre
 Names match regardless of case, and screenshots are any names starting with `screenshot`,
 such as `screenshot_01.jpg`. Other files in the folder are left alone.
 
+Steamworks takes the store page's and the library's artwork in each language, and reads the
+language from the end of the file's name, in Steam's own name for it (its API language code):
+`header_capsule_koreana.png`, `library_logo_schinese.png`, `screenshot_03_brazilian.jpg`.
+`assets` reads names the same way, and checks a language's artwork against the same sizes. The
+five screenshots it counts are those without a language; a language's own come beside them.
+Steamworks reads no language from the names of the icons, event images, bundle header and
+Workshop branding image, so one named for a language is refused.
+
 The shortcut, app, Mac and Linux icons go up under Installation, Client Images. A Windows icon
 is as large as its largest image, so a shortcut icon must hold one of 256x256. The Linux icons
 are one zip, `linux_icons.zip`, of a PNG for each size the game's icon comes in; their names and
