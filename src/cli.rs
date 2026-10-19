@@ -221,10 +221,11 @@ pub enum Command {
     /// Check artwork and icons against Valve's sizes, before they are uploaded.
     ///
     /// Reads every PNG, JPEG, icon and zip in the folder, each named for the asset it is
-    /// (`header_capsule.png`, `library_logo.png`, `screenshot_01.jpg`, `linux_icons.zip`), and
-    /// exits 2 naming every one that is not the size or format Steamworks takes, is named for no
-    /// asset, or cannot be read, every file in the Linux icons that is not a square PNG, and too
-    /// few screenshots. Nothing is sent anywhere.
+    /// (`header_capsule.png`, `library_logo.png`, `screenshot_01.jpg`, `linux_icons.zip`), or
+    /// with Steam's name for a language after it as Steamworks reads one
+    /// (`header_capsule_koreana.png`). Exits 2 naming every one that is not the size or format
+    /// Steamworks takes, is named for no asset, or cannot be read, every file in the Linux icons
+    /// that is not a square PNG, and too few screenshots. Nothing is sent anywhere.
     Assets {
         /// The folder the artwork is kept in, such as `steam/store`.
         folder: PathBuf,
