@@ -6,19 +6,19 @@ class Steamship < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/Aureliolo/steamship/releases/download/v0.9.34/steamship-0.9.34-aarch64-apple-darwin.tar.gz"
-      sha256 "d530d894d0b121a06e6ea001333771496323b499a4a35da094bd651ba17e00c2"
+      url "https://github.com/Aureliolo/steamship/releases/download/v0.9.35/steamship-0.9.35-aarch64-apple-darwin.tar.gz"
+      sha256 "39dea51ac8a5b59945e2f0941f687509a99717f1f4cbb32afe8f0b0f2307a2d8"
     end
     on_intel do
-      url "https://github.com/Aureliolo/steamship/releases/download/v0.9.34/steamship-0.9.34-x86_64-apple-darwin.tar.gz"
-      sha256 "5051ab46eeec37658162ec0ceafbe00f789174e5eb1077b750d9322424119732"
+      url "https://github.com/Aureliolo/steamship/releases/download/v0.9.35/steamship-0.9.35-x86_64-apple-darwin.tar.gz"
+      sha256 "286397156c2ea392655cf80b2c4ae771a6b21e9c341de418958e41cc63502eeb"
     end
   end
 
   on_linux do
     on_intel do
-      url "https://github.com/Aureliolo/steamship/releases/download/v0.9.34/steamship-0.9.34-x86_64-linux-musl.tar.gz"
-      sha256 "59a90cce50c17318cf936c30e1556a823b084c30365179e33ed88d0d8b47a426"
+      url "https://github.com/Aureliolo/steamship/releases/download/v0.9.35/steamship-0.9.35-x86_64-linux-musl.tar.gz"
+      sha256 "11e0b193184afa7cbae9859bed086df65c354f7e105ad7c5def89bf90a006a72"
     end
   end
 
