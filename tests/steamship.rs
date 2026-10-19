@@ -42,6 +42,8 @@ use steamship::webapi::STAND_IN;
 use steamship::windows::Terminal;
 #[cfg(unix)]
 use steamship::{ci, steamcmd};
+use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 /// The `steamship` built for these tests, which on Linux finds this process's own Secret Service
 /// and never the session's.
@@ -239,7 +241,7 @@ fn help_lists_every_command_with_one_short_line() {
         "  builds         Show an app's branches and last builds\n",
         "  achievements   Show an app's achievements and stats, check them against files, or write \
          their import\n",
-        "  assets         Check store and library artwork against Valve's sizes, before it is \
+        "  assets         Check artwork and icons against Valve's sizes, before they are \
          uploaded\n",
         "  drm-wrap       Wrap a Windows executable in Steam DRM, before it is uploaded\n",
         "  settings       Show an app's settings in Steamworks, or check them against a snapshot\n",
@@ -7119,7 +7121,60 @@ fn artwork_is_checked_against_valves_sizes_with_nothing_sent() {
     let empty = tempfile::tempdir().unwrap();
     let (none, _, said) = steamship(&["assets", &empty.path().to_string_lossy()], None, &quiet);
     assert_eq!(none, Some(2_i32), "{said}");
-    assert!(said.contains("holds no PNG, JPEG or icon"), "{said}");
+    assert!(said.contains("holds no PNG, JPEG, icon or zip"), "{said}");
+}
+
+#[test]
+fn the_mac_and_linux_icons_are_checked_with_every_wrong_file_in_the_zip_named() {
+    let folder = tempfile::tempdir().unwrap();
+    let zipped = |entries: &[(&str, Vec<u8>)]| {
+        let mut zip = ZipWriter::new(io::Cursor::new(Vec::new()));
+        for (name, contents) in entries {
+            zip.start_file(*name, SimpleFileOptions::default()).unwrap();
+            zip.write_all(contents).unwrap();
+        }
+        fs::write(
+            folder.path().join("linux_icons.zip"),
+            zip.finish().unwrap().into_inner(),
+        )
+        .unwrap();
+    };
+    zipped(&[
+        ("icons/16.png", png_header(16, 16)),
+        ("icons/32.png", png_header(32, 32)),
+    ]);
+    // An Apple icon of one 128x128 image, with a byte of it.
+    fs::write(
+        folder.path().join("mac_icon.icns"),
+        b"icns\x00\x00\x00\x11it32\x00\x00\x00\x09\x00",
+    )
+    .unwrap();
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let path = folder.path().to_string_lossy().into_owned();
+
+    let (code, stdout, stderr) = steamship(&["assets", &path], None, &quiet);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  linux_icons.zip Linux icons, 2 PNGs from 16x16 to 32x32\n")
+            && stdout.contains("  mac_icon.icns   Mac icon, 128x128 Apple icon\n"),
+        "{stdout}"
+    );
+
+    zipped(&[
+        ("icons/16.png", png_header(16, 16)),
+        ("icons/32.png", png_header(32, 30)),
+        ("icons/notes.txt", b"drawn by hand".to_vec()),
+    ]);
+    let (wrong, _, why) = steamship(&["assets", &path], None, &quiet);
+    assert_eq!(wrong, Some(2_i32), "{why}");
+    assert!(
+        why.contains("linux_icons.zip: the Linux icons must be square, and icons/32.png is 32x30")
+            && why.contains(
+                "linux_icons.zip: the Linux icons must be PNGs, and icons/notes.txt is not a PNG, \
+             a JPEG, a Windows icon or an Apple icon"
+            ),
+        "{why}"
+    );
 }
 
 /// A game laid out as godot-kit lays one out, with `toml` as its `steamship.toml` when given,

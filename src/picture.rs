@@ -1,5 +1,5 @@
-//! What a picture file is and how large, from its header alone: PNG, JPEG and Windows icons,
-//! the formats Steamworks takes artwork in.
+//! What a picture file is and how large, from its header alone: PNG, JPEG, and Windows and Apple
+//! icons, the formats Steamworks takes artwork in.
 //!
 //! Nothing is decoded; only the few bytes that say the size are read, so a hostile file can
 //! cost no more than walking its headers.
@@ -16,6 +16,21 @@ pub enum Format {
     Jpeg,
     /// A Windows icon; its size is its largest image's.
     Ico,
+    /// An Apple icon, ICNS; its size is its largest image's.
+    Icns,
+}
+
+impl Format {
+    /// The format as a sentence says it after "is" or "not": "a PNG", "an Apple icon".
+    #[must_use]
+    pub const fn with_article(self) -> &'static str {
+        match self {
+            Self::Png { .. } => "a PNG",
+            Self::Jpeg => "a JPEG",
+            Self::Ico => "a Windows icon",
+            Self::Icns => "an Apple icon",
+        }
+    }
 }
 
 impl fmt::Display for Format {
@@ -23,7 +38,8 @@ impl fmt::Display for Format {
         formatter.write_str(match self {
             Self::Png { .. } => "PNG",
             Self::Jpeg => "JPEG",
-            Self::Ico => "icon",
+            Self::Ico => "Windows icon",
+            Self::Icns => "Apple icon",
         })
     }
 }
@@ -42,18 +58,19 @@ const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
 ///
 /// # Errors
 ///
-/// When they are none of the three formats, or their header is cut short or says no size.
+/// When they are none of the four formats, or their header is cut short or says no size.
 pub fn read(bytes: &[u8]) -> Result<Picture, String> {
     type Reader = fn(&[u8]) -> Result<Picture, String>;
-    let formats: [(&[u8], Reader); 3] = [
+    let formats: [(&[u8], Reader); 4] = [
         (PNG_SIGNATURE, png),
         (b"\xff\xd8", jpeg),
         (b"\x00\x00\x01\x00", ico),
+        (b"icns", icns),
     ];
     formats
         .iter()
         .find_map(|(start, reader)| bytes.strip_prefix(*start).map(reader))
-        .unwrap_or_else(|| Err("is not a PNG, a JPEG or an icon".to_owned()))
+        .unwrap_or_else(|| Err("is not a PNG, a JPEG, a Windows icon or an Apple icon".to_owned()))
 }
 
 fn be32(bytes: &[u8], at: usize) -> Option<u32> {
@@ -138,7 +155,7 @@ fn jpeg(mut rest: &[u8]) -> Result<Picture, String> {
 /// A Windows icon after its first four bytes: the count of images, then an entry for each, in
 /// which a size of 0 stands for 256.
 fn ico(rest: &[u8]) -> Result<Picture, String> {
-    let cut = || "is an icon cut short".to_owned();
+    let cut = || "is a Windows icon cut short".to_owned();
     let [low, high, ..] = *rest else {
         return Err(cut());
     };
@@ -150,13 +167,79 @@ fn ico(rest: &[u8]) -> Result<Picture, String> {
         .iter()
         .map(|&[width, height, ..]| (side(width), side(height)))
         .max_by_key(|&(width, height)| u64::from(width).saturating_mul(u64::from(height)))
-        .ok_or_else(|| "is an icon with no images".to_owned())?;
+        .ok_or_else(|| "is a Windows icon with no images".to_owned())?;
     sized(Format::Ico, width, height)
+}
+
+/// The side in pixels of each kind of image an Apple icon can hold, by its type. Masks, the table
+/// of contents and the version say no size of their own.
+const ICNS_SIDES: [(&[u8; 4], u32); 30] = [
+    (b"ics#", 16),
+    (b"ics4", 16),
+    (b"ics8", 16),
+    (b"is32", 16),
+    (b"icp4", 16),
+    (b"ic04", 16),
+    (b"icsb", 18),
+    (b"sb24", 24),
+    (b"ICN#", 32),
+    (b"icl4", 32),
+    (b"icl8", 32),
+    (b"il32", 32),
+    (b"icp5", 32),
+    (b"ic05", 32),
+    (b"ic11", 32),
+    (b"icsB", 36),
+    (b"ich#", 48),
+    (b"ich4", 48),
+    (b"ich8", 48),
+    (b"ih32", 48),
+    (b"SB24", 48),
+    (b"icp6", 64),
+    (b"ic12", 64),
+    (b"it32", 128),
+    (b"ic07", 128),
+    (b"ic08", 256),
+    (b"ic13", 256),
+    (b"ic09", 512),
+    (b"ic14", 512),
+    (b"ic10", 1024),
+];
+
+/// An Apple icon after its type: its whole length, then elements that each start with their type
+/// and their length, both lengths counting the eight bytes that say them.
+fn icns(rest: &[u8]) -> Result<Picture, String> {
+    let cut = || "is an Apple icon cut short".to_owned();
+    let length = be32(rest, 0)
+        .and_then(|length| usize::try_from(length).ok())
+        .ok_or_else(cut)?;
+    let mut elements = rest
+        .get(4..length.checked_sub(4).ok_or_else(cut)?)
+        .ok_or_else(cut)?;
+    let mut largest = None;
+    while !elements.is_empty() {
+        let kind = elements.get(..4).ok_or_else(cut)?;
+        let element = be32(elements, 4)
+            .and_then(|element| usize::try_from(element).ok())
+            .ok_or_else(cut)?;
+        if element < 8 {
+            return Err("is an Apple icon whose elements cannot be read".to_owned());
+        }
+        if let Some(&(_, side)) = ICNS_SIDES.iter().find(|(known, _)| *known == kind) {
+            largest = largest.max(Some(side));
+        }
+        elements = elements.get(element..).ok_or_else(cut)?;
+    }
+    let side = largest.ok_or_else(|| "is an Apple icon with no images".to_owned())?;
+    sized(Format::Icns, side, side)
 }
 
 fn sized(format: Format, width: u32, height: u32) -> Result<Picture, String> {
     if width == 0 || height == 0 {
-        return Err(format!("is a {format} that says it has no size"));
+        return Err(format!(
+            "is {} that says it has no size",
+            format.with_article()
+        ));
     }
     Ok(Picture {
         format,
@@ -167,6 +250,8 @@ fn sized(format: Format, width: u32, height: u32) -> Result<Picture, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::iter;
+
     use super::*;
 
     fn chunk(kind: &[u8], data: &[u8]) -> Vec<u8> {
@@ -274,11 +359,65 @@ mod tests {
         );
     }
 
+    /// An Apple icon of elements of these types and lengths, each filled with zeros.
+    fn icns_of(elements: &[(&[u8; 4], u32)]) -> Vec<u8> {
+        let mut body = Vec::new();
+        for &(kind, length) in elements {
+            body.extend_from_slice(kind);
+            body.extend_from_slice(&length.to_be_bytes());
+            let filled = usize::try_from(length.checked_sub(8).unwrap()).unwrap();
+            body.extend(iter::repeat_n(0, filled));
+        }
+        let mut file = b"icns".to_vec();
+        let whole = body.len().checked_add(8).unwrap();
+        file.extend_from_slice(&u32::try_from(whole).unwrap().to_be_bytes());
+        file.extend(body);
+        file
+    }
+
+    #[test]
+    fn an_apple_icon_is_as_large_as_its_largest_image_whatever_else_it_holds() {
+        // The kinds of element Steam's own Mac icon for app 203160 holds, the largest image not
+        // last.
+        let icon = icns_of(&[
+            (b"TOC ", 80),
+            (b"is32", 782),
+            (b"s8mk", 264),
+            (b"il32", 3096),
+            (b"l8mk", 1032),
+            (b"it32", 4549),
+            (b"t8mk", 1639),
+            (b"ic08", 1129),
+            (b"ic10", 1240),
+            (b"ic09", 3809),
+            (b"icnV", 12),
+        ]);
+        assert_eq!(
+            read(&icon).unwrap(),
+            Picture {
+                format: Format::Icns,
+                width: 1024,
+                height: 1024
+            }
+        );
+        assert_eq!(
+            read(&icns_of(&[(b"it32", 9), (b"t8mk", 8)])).unwrap(),
+            Picture {
+                format: Format::Icns,
+                width: 128,
+                height: 128
+            }
+        );
+    }
+
     #[test]
     fn what_is_no_picture_or_is_cut_short_says_so() {
         let whole = png_with(10, 10, 6, &[]);
         for (bytes, why) in [
-            (b"GIF89a".to_vec(), "is not a PNG, a JPEG or an icon"),
+            (
+                b"GIF89a".to_vec(),
+                "is not a PNG, a JPEG, a Windows icon or an Apple icon",
+            ),
             (
                 whole.iter().take(20).copied().collect(),
                 "is a PNG cut short",
@@ -297,10 +436,44 @@ mod tests {
                 b"\xff\xd8\x00".to_vec(),
                 "is a JPEG whose segments cannot be read",
             ),
-            (b"\x00\x00\x01\x00\x02\x00".to_vec(), "is an icon cut short"),
+            (
+                b"\x00\x00\x01\x00\x02\x00".to_vec(),
+                "is a Windows icon cut short",
+            ),
             (
                 b"\x00\x00\x01\x00\x00\x00".to_vec(),
-                "is an icon with no images",
+                "is a Windows icon with no images",
+            ),
+            (b"icns\x00\x00".to_vec(), "is an Apple icon cut short"),
+            (icns_of(&[]), "is an Apple icon with no images"),
+            (
+                icns_of(&[(b"TOC ", 8), (b"icnV", 12)]),
+                "is an Apple icon with no images",
+            ),
+            // A whole length too short to count its own eight bytes.
+            (
+                b"icns\x00\x00\x00\x07".to_vec(),
+                "is an Apple icon cut short",
+            ),
+            (
+                b"icns\x00\x00\x00\x03".to_vec(),
+                "is an Apple icon cut short",
+            ),
+            (
+                b"icns\x00\x00\x00\x10\x00\x00\x00\x00".to_vec(),
+                "is an Apple icon cut short",
+            ),
+            (
+                b"icns\x00\x00\x00\x0dis32\x00".to_vec(),
+                "is an Apple icon cut short",
+            ),
+            (
+                b"icns\x00\x00\x00\x10is32\x00\x00\x00\x07".to_vec(),
+                "is an Apple icon whose elements cannot be read",
+            ),
+            (
+                b"icns\x00\x00\x00\x10is32\x00\x00\x00\x09".to_vec(),
+                "is an Apple icon cut short",
             ),
         ] {
             assert_eq!(read(&bytes).unwrap_err(), why, "{bytes:?}");
