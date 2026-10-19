@@ -9,10 +9,12 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use steamship::check::{Report, check, scripts_only};
-use steamship::run;
 use steamship::scripts::Problem;
+use steamship::{redist, run, vdf};
 
 pub mod common;
+
+use common::pe::{settings_ticking, windows_library};
 
 struct Project {
     _temp: tempfile::TempDir,
@@ -343,47 +345,23 @@ fn a_shipped_steam_appid_txt_is_refused() {
     );
 }
 
-/// A 64-bit Windows library importing `dlls`, laid out as a linker lays one out: the headers, then
-/// one section holding the import table and the names it points to.
-fn windows_library(dlls: &[&str]) -> Vec<u8> {
-    fn put(bytes: &mut Vec<u8>, at: usize, value: &[u8]) {
-        bytes.resize(at, 0);
-        bytes.extend_from_slice(value);
-    }
-    let mut bytes = Vec::new();
-    put(&mut bytes, 0, b"MZ");
-    put(&mut bytes, 0x3C, &64_u32.to_le_bytes());
-    put(&mut bytes, 64, b"PE\0\0");
-    put(&mut bytes, 68, &0x8664_u16.to_le_bytes());
-    put(&mut bytes, 70, &1_u16.to_le_bytes());
-    put(&mut bytes, 84, &240_u16.to_le_bytes());
-    put(&mut bytes, 88, &0x20B_u16.to_le_bytes());
-    put(&mut bytes, 196, &16_u32.to_le_bytes());
-    put(&mut bytes, 208, &0x1000_u32.to_le_bytes());
-    put(&mut bytes, 340, &0x1000_u32.to_le_bytes());
-    put(&mut bytes, 344, &0x1000_u32.to_le_bytes());
-    put(&mut bytes, 348, &0x200_u32.to_le_bytes());
-    put(&mut bytes, 0x200, &[]);
-    let descriptors = dlls.len().checked_add(1).unwrap().checked_mul(20).unwrap();
-    let mut names = Vec::new();
-    for dll in dlls {
-        let name = descriptors.checked_add(names.len()).unwrap();
-        let address = 0x1000_u32
-            .checked_add(u32::try_from(name).unwrap())
-            .unwrap();
-        bytes.extend_from_slice(&[0; 12]);
-        bytes.extend_from_slice(&address.to_le_bytes());
-        bytes.extend_from_slice(&[0; 4]);
-        names.extend_from_slice(dll.as_bytes());
-        names.push(0);
-    }
-    bytes.extend_from_slice(&[0; 20]);
-    bytes.extend(names);
-    bytes
+/// App 1000's settings ticking each depot of app 228980 in `ticked`.
+fn ticking(ticked: &[&str]) -> vdf::Block {
+    let document = vdf::parse(&settings_ticking(ticked)).unwrap();
+    document.block("1000").unwrap().clone()
 }
 
-#[test]
-fn a_windows_file_importing_what_only_a_common_redistributable_installs_is_refused() {
+fn texts(problems: &[Problem]) -> Vec<String> {
+    problems
+        .iter()
+        .map(|problem| problem.message.clone())
+        .collect()
+}
+
+/// A build whose Windows depot ships `game.dll`, importing what Windows has, what the depot ships
+/// and what Visual C++ 2015 to 2022 and DirectX's June 2010 redistributable install, each named
+/// the ways a linker can, and answers where.
+fn needing_redistributables() -> (Project, PathBuf, PathBuf) {
     let (project, app) = Project::shipping("");
     let library = project.file(
         "export/windows/plugins/game.dll",
@@ -401,41 +379,133 @@ fn a_windows_file_importing_what_only_a_common_redistributable_installs_is_refus
         "export/windows/STEAM_API64.DLL",
         &windows_library(&["advapi32.dll"]),
     );
+    (project, app, library)
+}
+
+#[test]
+fn a_dll_a_redistributable_installs_is_not_checked_while_what_the_app_ticks_is_not_known() {
+    let (_project, app, library) = needing_redistributables();
     let report = check(&app);
+    assert_eq!(messages(&report), Vec::<String>::new());
+    let judged = redist::judged(&report, None);
+    assert_eq!(texts(&judged.refused), Vec::<String>::new());
     assert_eq!(
-        messages(&report),
+        texts(&judged.unchecked),
         [
-            "imports VCRUNTIME140.dll, which Windows does not have and depot 1001 does not ship, \
-             so the game would need a Steamworks Common Redistributable; link its library in \
-             statically, use one Windows has, or ship the DLL in the depot",
-            "imports XINPUT1_3, which Windows does not have and depot 1001 does not ship, so the \
-             game would need a Steamworks Common Redistributable; link its library in \
-             statically, use one Windows has, or ship the DLL in the depot",
+            "imports VCRUNTIME140.dll, which VC 2015 Redist, VC 2017 Redist, VC 2019 Redist or \
+             VC 2022 Redist installs",
+            "imports XINPUT1_3, which DirectX Jun 2010 Redist installs",
         ]
     );
-    assert!(
-        report
-            .problems
-            .iter()
-            .all(|problem| fs::canonicalize(&problem.file).unwrap()
-                == fs::canonicalize(&library).unwrap())
+    assert!(judged.unchecked.iter().all(|problem| {
+        fs::canonicalize(&problem.file).unwrap() == fs::canonicalize(&library).unwrap()
+    }));
+}
+
+#[test]
+fn a_dll_a_redistributable_installs_is_refused_when_the_app_ticks_none_that_does() {
+    let (_project, app, _library) = needing_redistributables();
+    let judged = redist::judged(&check(&app), Some(&ticking(&["228983"])));
+    assert_eq!(
+        texts(&judged.refused),
+        [
+            "imports VCRUNTIME140.dll, which VC 2015 Redist, VC 2017 Redist, VC 2019 Redist or \
+             VC 2022 Redist installs, and app 1000 ticks none in Steamworks; tick one under \
+             Installation, Redistributables, ship the DLL in a depot, or link its library in \
+             statically",
+            "imports XINPUT1_3, which DirectX Jun 2010 Redist installs, and app 1000 ticks none \
+             in Steamworks; tick one under Installation, Redistributables, ship the DLL in a \
+             depot, or link its library in statically",
+        ]
+    );
+    assert_eq!(texts(&judged.unchecked), Vec::<String>::new());
+}
+
+#[test]
+fn a_dll_a_redistributable_the_app_ticks_installs_passes() {
+    let (_project, app, _library) = needing_redistributables();
+    let judged = redist::judged(&check(&app), Some(&ticking(&["228989", "228990"])));
+    assert_eq!(judged.refused, Vec::new());
+    assert_eq!(judged.unchecked, Vec::new());
+    assert_eq!(
+        judged.ticked.into_iter().collect::<Vec<_>>(),
+        ["DirectX Jun 2010 Redist", "VC 2022 Redist"]
     );
 }
 
 #[test]
-fn a_dll_counts_as_shipped_only_in_the_depot_of_the_file_importing_it() {
+fn a_dll_nothing_installs_is_refused_whatever_the_app_ticks() {
+    let (project, app) = Project::shipping("");
+    project.put(
+        "export/windows/game.exe",
+        &windows_library(&["kernel32.dll", "fmod.dll"]),
+    );
+    let refused = "imports fmod.dll, which neither Windows, the build's depots nor a Steamworks \
+                   Common Redistributable has; ship it in a depot, or link its library in \
+                   statically";
+    let report = check(&app);
+    assert_eq!(texts(&redist::judged(&report, None).refused), [refused]);
+    assert_eq!(
+        texts(&redist::judged(&report, Some(&ticking(&["228989"]))).refused),
+        [refused]
+    );
+}
+
+#[test]
+fn a_dll_counts_as_shipped_by_any_depot_that_installs_on_windows() {
     let (project, app) = Project::shipping("");
     project.put(
         "export/windows/game.dll",
         &windows_library(&["kernel32.dll", "steam_api64.dll"]),
     );
     project.put("export/linux/steam_api64.dll", b"not for Windows");
+    let report = check(&app);
     assert_eq!(
-        messages(&check(&app)),
+        redist::judged(&report, None),
+        redist::Judged::default(),
+        "with no settings, depot 1002 may install on Windows"
+    );
+    assert_eq!(
+        texts(&redist::judged(&report, Some(&ticking(&[]))).refused),
         [
-            "imports steam_api64.dll, which Windows does not have and depot 1001 does not ship, \
-             so the game would need a Steamworks Common Redistributable; link its library in \
-             statically, use one Windows has, or ship the DLL in the depot"
+            "imports steam_api64.dll, which neither Windows, the build's depots nor a Steamworks \
+             Common Redistributable has; ship it in a depot, or link its library in statically"
+        ],
+        "depot 1002 is for Linux alone"
+    );
+}
+
+#[test]
+fn a_linux_depot_s_windows_files_are_not_judged() {
+    let (project, app) = Project::shipping("");
+    project.put(
+        "export/linux/tool.exe",
+        &windows_library(&["vcruntime140.dll"]),
+    );
+    let report = check(&app);
+    assert_eq!(
+        redist::judged(&report, Some(&ticking(&[]))),
+        redist::Judged::default()
+    );
+    assert_eq!(redist::judged(&report, None).unchecked.len(), 1);
+}
+
+#[test]
+fn a_dll_an_install_script_may_install_is_not_checked() {
+    let (project, app) = Project::shipping("");
+    project.put("export/linux/installscript.vdf", b"\"InstallScript\" {}");
+    with_linux_depot(&project, r#""InstallScript" "linux\installscript.vdf""#);
+    project.put(
+        "export/windows/game.dll",
+        &windows_library(&["kernel32.dll", "fmod.dll"]),
+    );
+    let judged = redist::judged(&check(&app), None);
+    assert_eq!(judged.refused, Vec::new());
+    assert_eq!(
+        texts(&judged.unchecked),
+        [
+            "imports fmod.dll, which neither Windows, the build's depots nor a Steamworks \
+             Common Redistributable has, unless an install script of the build installs it"
         ]
     );
 }
@@ -471,8 +541,8 @@ fn a_dotnet_program_on_a_runtime_installed_apart_is_refused() {
     project.put("export/linux/Bare.runtimeconfig.json", b"{}");
     let mut found = messages(&check(&app));
     found.sort();
-    let apart = "runs on a .NET runtime the player would have to install, which on Windows takes a \
-                 Steamworks Common Redistributable; publish the program self-contained";
+    let apart = "runs on a .NET runtime installed apart from it, which neither Windows nor a \
+                 Steamworks Common Redistributable installs; publish the program self-contained";
     assert_eq!(
         found,
         [

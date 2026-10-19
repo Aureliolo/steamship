@@ -34,6 +34,7 @@ pub mod po;
 pub mod presence;
 pub mod project;
 pub mod redact;
+pub mod redist;
 pub mod release;
 pub mod run;
 pub mod scripts;
