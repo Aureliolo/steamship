@@ -223,7 +223,8 @@ pub enum Command {
     /// Reads every PNG, JPEG, icon and zip in the folder, each named for the asset it is
     /// (`header_capsule.png`, `library_logo.png`, `screenshot_01.jpg`, `linux_icons.zip`), or
     /// with Steam's name for a language after it as Steamworks reads one
-    /// (`header_capsule_koreana.png`). Exits 2 naming every one that is not the size or format
+    /// (`header_capsule_koreana.png`), and in each folder inside it named for a language (`de`,
+    /// `koreana`) as that language's. Exits 2 naming every one that is not the size or format
     /// Steamworks takes, is named for no asset, or cannot be read, every file in the Linux icons
     /// that is not a square PNG, and too few screenshots. Nothing is sent anywhere.
     Assets {

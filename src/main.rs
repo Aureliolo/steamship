@@ -3388,26 +3388,32 @@ fn try_rich_presence(app: &str, files: &[PathBuf], preview: bool) -> Result<Exit
 fn run_assets(folder: &Path) -> ExitCode {
     show::title("assets");
     show::field("folder", &folder.display().to_string());
-    let checked = match assets::check(folder) {
-        Ok(checked) => checked,
+    let store = match assets::check(folder) {
+        Ok(store) => store,
         Err(error) => return fail(&format!("{}: {error}", folder.display()), REFUSED),
     };
+    if !store.unchecked.is_empty() {
+        show::field(
+            "skipped",
+            &format!("{}, named for no language", store.unchecked.join(", ")),
+        );
+    }
+    let checked = store.files;
     if checked.is_empty() {
         return fail(
-            &format!("{}: holds no PNG, JPEG, icon or zip", folder.display()),
+            &format!(
+                "{}: holds no PNG, JPEG, icon or zip, nor a folder for a language with one",
+                folder.display()
+            ),
             REFUSED,
         );
     }
     let mut taken = Vec::new();
     let mut refused = Vec::new();
     for file in &checked {
-        let name = file
-            .path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+        let name = &file.name;
         match &file.found {
-            Ok(found) => taken.push((name, found.clone())),
+            Ok(found) => taken.push((name.clone(), found.clone())),
             Err(problems) => {
                 refused.extend(problems.iter().map(|problem| format!("{name}: {problem}")));
             }
