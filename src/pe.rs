@@ -10,9 +10,9 @@ const DOS_MAGIC: [u8; 2] = *b"MZ";
 const PE_MAGIC: [u8; 4] = *b"PE\0\0";
 const PE32: u16 = 0x10B;
 const PE32_PLUS: u16 = 0x20B;
-/// The signature and file header, then the longest optional header: PE32+ with all 16 data
-/// directories.
-const HEADERS: u64 = 24 + 240;
+/// The signature and file header, 24 bytes, then the longest optional header, 240: PE32+ with all
+/// 16 data directories.
+const HEADERS: u64 = 264;
 const SECTION: u8 = 40;
 const DESCRIPTOR: u64 = 20;
 /// Far more DLLs than any file imports, so that a table with no end is not read for ever.
