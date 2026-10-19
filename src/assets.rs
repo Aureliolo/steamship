@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use zip::ZipArchive;
 
 use crate::picture::{self, Format, Picture};
+use crate::po;
 
 /// How large an asset must be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +54,9 @@ pub struct Asset {
     stem: &'static str,
     size: Size,
     formats: Formats,
+    /// Whether Steamworks reads a language from the end of the file's name, as the page it takes
+    /// the store page's and the library's artwork on says it does.
+    per_language: bool,
 }
 
 impl Asset {
@@ -60,6 +64,14 @@ impl Asset {
     #[must_use]
     pub const fn name(&self) -> &'static str {
         self.name
+    }
+
+    /// The same asset, of which Steamworks takes one for every language.
+    const fn for_every_language(self) -> Self {
+        Self {
+            per_language: false,
+            ..self
+        }
     }
 }
 
@@ -69,6 +81,7 @@ const fn asset(name: &'static str, stem: &'static str, size: Size, formats: Form
         stem,
         size,
         formats,
+        per_language: true,
     }
 }
 
@@ -115,7 +128,8 @@ const ASSETS: [Asset; 18] = [
         "bundle_header",
         Size::Exact(707, 232),
         Formats::Picture,
-    ),
+    )
+    .for_every_language(),
     asset(
         "library capsule",
         "library_capsule",
@@ -145,29 +159,33 @@ const ASSETS: [Asset; 18] = [
         "shortcut_icon",
         Size::Shortcut,
         Formats::IconOrPng,
-    ),
-    asset("app icon", "app_icon", Size::Exact(184, 184), Formats::Jpeg),
-    asset("Mac icon", "mac_icon", Size::Any, Formats::AppleIcon),
-    asset("Linux icons", "linux_icons", Size::Any, Formats::PngZip),
+    )
+    .for_every_language(),
+    asset("app icon", "app_icon", Size::Exact(184, 184), Formats::Jpeg).for_every_language(),
+    asset("Mac icon", "mac_icon", Size::Any, Formats::AppleIcon).for_every_language(),
+    asset("Linux icons", "linux_icons", Size::Any, Formats::PngZip).for_every_language(),
     asset(
         "event cover",
         "event_cover",
         Size::Exact(800, 450),
         Formats::Picture,
-    ),
+    )
+    .for_every_language(),
     asset(
         "event header",
         "event_header",
         Size::Exact(1920, 622),
         Formats::Picture,
-    ),
+    )
+    .for_every_language(),
     // The Workshop's Branding page asks for "948x203px JPG", as its Photoshop template is.
     asset(
         "Workshop branding image",
         "workshop_header",
         Size::Exact(948, 203),
         Formats::Jpeg,
-    ),
+    )
+    .for_every_language(),
 ];
 
 /// Steamworks' least number of screenshots for a store page.
@@ -180,17 +198,27 @@ const LOOKED_AT: [&str; 6] = ["png", "jpg", "jpeg", "ico", "icns", "zip"];
 /// chunks, and a zip's entry can unpack to far more than the zip holds.
 const ZIPPED_LIMIT: u64 = 0x0040_0000;
 
-/// The asset a file named `stem` (its name without the extension) is kept as.
+/// The asset a file named `stem`, its name without the extension, is kept as, and its language.
+///
+/// A name ending in Steam's name for a language, `header_capsule_koreana`, is that language's, as
+/// Steamworks reads it.
 #[must_use]
-pub fn named(stem: &str) -> Option<&'static Asset> {
+pub fn named(stem: &str) -> Option<(&'static Asset, Option<&'static str>)> {
     let stem = stem.to_ascii_lowercase();
-    ASSETS.iter().find(|asset| {
-        if asset.size == Size::Widescreen {
-            stem.starts_with(asset.stem)
-        } else {
-            stem == asset.stem
-        }
-    })
+    let (base, language) = stem
+        .rsplit_once('_')
+        .and_then(|(base, last)| Some((base, Some(po::steam_language_named(last)?))))
+        .unwrap_or((&stem, None));
+    ASSETS
+        .iter()
+        .find(|asset| {
+            if asset.size == Size::Widescreen {
+                base.starts_with(asset.stem)
+            } else {
+                base == asset.stem
+            }
+        })
+        .map(|asset| (asset, language))
 }
 
 /// Every way `picture` is not what `asset` must be.
@@ -294,7 +322,16 @@ fn checked(path: PathBuf) -> Checked {
                     .to_owned(),
             ]
         })
-        .and_then(|asset| {
+        .and_then(|(asset, language)| {
+            if let Some(language) = language
+                && !asset.per_language
+            {
+                return Err(vec![format!(
+                    "Steamworks reads a language from the name only of the store page's and the \
+                     library's artwork, not the {}'s: name it {}, without _{language}",
+                    asset.name, asset.stem
+                )]);
+            }
             let bytes = fs::read(&path).map_err(|error| vec![error.to_string()])?;
             let held = if asset.formats == Formats::PngZip {
                 linux_icons(&bytes)?
@@ -306,7 +343,10 @@ fn checked(path: PathBuf) -> Checked {
                 }
                 format!("{}x{} {}", picture.width, picture.height, picture.format)
             };
-            Ok(format!("{}, {held}", asset.name))
+            let language = language
+                .map(|language| format!(" for {language}"))
+                .unwrap_or_default();
+            Ok(format!("{}{language}, {held}", asset.name))
         });
     Checked { path, found }
 }
@@ -387,13 +427,16 @@ fn from_macos(name: &str) -> bool {
 /// How many screenshots `checked` holds, when that is some but fewer than Steamworks needs.
 #[must_use]
 pub fn too_few_screenshots(checked: &[Checked]) -> Option<usize> {
+    // A language's own screenshots are optional, beside the store page's.
     let screenshots = checked
         .iter()
         .filter(|file| {
             file.path
                 .file_stem()
                 .and_then(|stem| named(&stem.to_string_lossy()))
-                .is_some_and(|asset| asset.size == Size::Widescreen)
+                .is_some_and(|(asset, language)| {
+                    asset.size == Size::Widescreen && language.is_none()
+                })
         })
         .count();
     (1..SCREENSHOTS)
@@ -425,7 +468,7 @@ mod tests {
     }
 
     fn asset_named(stem: &str) -> &'static Asset {
-        named(stem).unwrap()
+        named(stem).unwrap().0
     }
 
     #[test]
@@ -435,6 +478,27 @@ mod tests {
         assert_eq!(asset_named("screenshot").name, "screenshot");
         assert_eq!(named("header_capsule_old"), None);
         assert_eq!(named("capsule"), None);
+    }
+
+    #[test]
+    fn a_name_ending_in_steams_name_for_a_language_is_that_language_s() {
+        for (stem, asset, language) in [
+            ("header_capsule_koreana", "header capsule", Some("koreana")),
+            ("Library_Logo_SChinese", "library logo", Some("schinese")),
+            (
+                "screenshot_3_market_brazilian",
+                "screenshot",
+                Some("brazilian"),
+            ),
+            ("screenshot_latam", "screenshot", Some("latam")),
+            ("screenshot_3_market", "screenshot", None),
+            ("mac_icon_french", "Mac icon", Some("french")),
+        ] {
+            let (found, said) = named(stem).unwrap();
+            assert_eq!((found.name, said), (asset, language), "{stem}");
+        }
+        assert_eq!(named("header_capsule_klingon"), None);
+        assert_eq!(named("capsule_french"), None);
     }
 
     #[test]
@@ -726,6 +790,8 @@ mod tests {
         )
         .unwrap();
         fs::write(folder.path().join("mac_icon.icns"), "not an icon").unwrap();
+        fs::write(folder.path().join("header_capsule_french.png"), &header).unwrap();
+        fs::write(folder.path().join("app_icon_french.jpg"), "never read").unwrap();
 
         let checked = check(folder.path()).unwrap();
         let said: Vec<(String, Result<String, Vec<String>>)> = checked
@@ -745,6 +811,15 @@ mod tests {
             said,
             [
                 (
+                    "app_icon_french.jpg".to_owned(),
+                    Err(vec![
+                        "Steamworks reads a language from the name only of the store page's and \
+                         the library's artwork, not the app icon's: name it app_icon, without \
+                         _french"
+                            .to_owned()
+                    ])
+                ),
+                (
                     "capsule.png".to_owned(),
                     Err(vec![
                         "is named for no asset: name it header_capsule, screenshot_01, \
@@ -755,6 +830,10 @@ mod tests {
                 (
                     "header_capsule.png".to_owned(),
                     Ok("header capsule, 920x430 PNG".to_owned())
+                ),
+                (
+                    "header_capsule_french.png".to_owned(),
+                    Ok("header capsule for french, 920x430 PNG".to_owned())
                 ),
                 (
                     "library_header.PNG".to_owned(),
@@ -798,5 +877,11 @@ mod tests {
         let enough: Vec<Checked> = (1..=5).map(screenshot).collect();
         assert_eq!(too_few_screenshots(&enough), None);
         assert_eq!(too_few_screenshots(&[]), None);
+        let mut localised = some;
+        localised.extend((1..=5_u8).map(|number| Checked {
+            path: PathBuf::from(format!("screenshot_{number}_german.png")),
+            found: Err(Vec::new()),
+        }));
+        assert_eq!(too_few_screenshots(&localised), Some(4));
     }
 }
