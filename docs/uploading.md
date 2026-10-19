@@ -59,7 +59,11 @@ steamship check steam/app_build.vdf
 - an `InstallScript` that is not a file in the content, or that the depot does not map;
 - a `steam_appid.txt` in the content, and the folders Unity names as not to ship;
 - a Linux or macOS program, or a script starting with `#!`, without its executable bit, where
-  the file system has one.
+  the file system has one;
+- a Windows program or library importing a DLL that every edition of Windows 10 and later lacks
+  and its own depot does not ship, such as `VCRUNTIME140.dll` or `XINPUT1_3.dll`, and a .NET
+  program whose `runtimeconfig.json` names a runtime to be installed apart from it: either would
+  need a Steamworks Common Redistributable to run.
 
 It also counts the debug symbols each depot ships (`.pdb`, `.dSYM`, `.debug`) without refusing
 them, since some teams ship them on purpose.

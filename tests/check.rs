@@ -343,6 +343,147 @@ fn a_shipped_steam_appid_txt_is_refused() {
     );
 }
 
+/// A 64-bit Windows library importing `dlls`, laid out as a linker lays one out: the headers, then
+/// one section holding the import table and the names it points to.
+fn windows_library(dlls: &[&str]) -> Vec<u8> {
+    fn put(bytes: &mut Vec<u8>, at: usize, value: &[u8]) {
+        bytes.resize(at, 0);
+        bytes.extend_from_slice(value);
+    }
+    let mut bytes = Vec::new();
+    put(&mut bytes, 0, b"MZ");
+    put(&mut bytes, 0x3C, &64_u32.to_le_bytes());
+    put(&mut bytes, 64, b"PE\0\0");
+    put(&mut bytes, 68, &0x8664_u16.to_le_bytes());
+    put(&mut bytes, 70, &1_u16.to_le_bytes());
+    put(&mut bytes, 84, &240_u16.to_le_bytes());
+    put(&mut bytes, 88, &0x20B_u16.to_le_bytes());
+    put(&mut bytes, 196, &16_u32.to_le_bytes());
+    put(&mut bytes, 208, &0x1000_u32.to_le_bytes());
+    put(&mut bytes, 340, &0x1000_u32.to_le_bytes());
+    put(&mut bytes, 344, &0x1000_u32.to_le_bytes());
+    put(&mut bytes, 348, &0x200_u32.to_le_bytes());
+    put(&mut bytes, 0x200, &[]);
+    let descriptors = dlls.len().checked_add(1).unwrap().checked_mul(20).unwrap();
+    let mut names = Vec::new();
+    for dll in dlls {
+        let name = descriptors.checked_add(names.len()).unwrap();
+        let address = 0x1000_u32
+            .checked_add(u32::try_from(name).unwrap())
+            .unwrap();
+        bytes.extend_from_slice(&[0; 12]);
+        bytes.extend_from_slice(&address.to_le_bytes());
+        bytes.extend_from_slice(&[0; 4]);
+        names.extend_from_slice(dll.as_bytes());
+        names.push(0);
+    }
+    bytes.extend_from_slice(&[0; 20]);
+    bytes.extend(names);
+    bytes
+}
+
+#[test]
+fn a_windows_file_importing_what_only_a_common_redistributable_installs_is_refused() {
+    let (project, app) = Project::shipping("");
+    let library = project.file(
+        "export/windows/plugins/game.dll",
+        &windows_library(&[
+            "KERNEL32.dll",
+            "api-ms-win-crt-runtime-l1-1-0.dll",
+            "steam_api64.dll",
+            "VCRUNTIME140.dll",
+            "vcruntime140.dll",
+            "XINPUT1_3",
+            "winspool.drv",
+        ]),
+    );
+    project.put(
+        "export/windows/STEAM_API64.DLL",
+        &windows_library(&["advapi32.dll"]),
+    );
+    let report = check(&app);
+    assert_eq!(
+        messages(&report),
+        [
+            "imports VCRUNTIME140.dll, which Windows does not have and depot 1001 does not ship, \
+             so the game would need a Steamworks Common Redistributable; link its library in \
+             statically, use one Windows has, or ship the DLL in the depot",
+            "imports XINPUT1_3, which Windows does not have and depot 1001 does not ship, so the \
+             game would need a Steamworks Common Redistributable; link its library in \
+             statically, use one Windows has, or ship the DLL in the depot",
+        ]
+    );
+    assert!(
+        report
+            .problems
+            .iter()
+            .all(|problem| fs::canonicalize(&problem.file).unwrap()
+                == fs::canonicalize(&library).unwrap())
+    );
+}
+
+#[test]
+fn a_dll_counts_as_shipped_only_in_the_depot_of_the_file_importing_it() {
+    let (project, app) = Project::shipping("");
+    project.put(
+        "export/windows/game.dll",
+        &windows_library(&["kernel32.dll", "steam_api64.dll"]),
+    );
+    project.put("export/linux/steam_api64.dll", b"not for Windows");
+    assert_eq!(
+        messages(&check(&app)),
+        [
+            "imports steam_api64.dll, which Windows does not have and depot 1001 does not ship, \
+             so the game would need a Steamworks Common Redistributable; link its library in \
+             statically, use one Windows has, or ship the DLL in the depot"
+        ]
+    );
+}
+
+#[test]
+fn a_windows_file_whose_imports_cannot_be_read_is_refused() {
+    let (project, app) = Project::shipping("");
+    let mut cut = windows_library(&["kernel32.dll"]);
+    cut.truncate(80);
+    project.put("export/windows/game.dll", &cut);
+    assert_eq!(
+        messages(&check(&app)),
+        ["cannot be read as a Windows program or library: its headers are cut short"]
+    );
+}
+
+#[test]
+fn a_dotnet_program_on_a_runtime_installed_apart_is_refused() {
+    let (project, app) = Project::shipping("");
+    project.put(
+        "export/windows/Tool.runtimeconfig.json",
+        br#"{"runtimeOptions": {"tfm": "net8.0", "framework": {"name": "Microsoft.NETCore.App", "version": "8.0.0"}}}"#,
+    );
+    project.put(
+        "export/windows/Editor.RuntimeConfig.json",
+        br#"{"runtimeOptions": {"tfm": "net8.0", "frameworks": [{"name": "Microsoft.NETCore.App", "version": "8.0.0"}, {"name": "Microsoft.WindowsDesktop.App", "version": "8.0.0"}]}}"#,
+    );
+    project.put(
+        "export/windows/Game.runtimeconfig.json",
+        br#"{"runtimeOptions": {"tfm": "net8.0", "includedFrameworks": [{"name": "Microsoft.NETCore.App", "version": "8.0.11"}]}}"#,
+    );
+    project.put("export/linux/Broken.runtimeconfig.json", b"{");
+    project.put("export/linux/Bare.runtimeconfig.json", b"{}");
+    let mut found = messages(&check(&app));
+    found.sort();
+    let apart = "runs on a .NET runtime the player would have to install, which on Windows takes a \
+                 Steamworks Common Redistributable; publish the program self-contained";
+    assert_eq!(
+        found,
+        [
+            "cannot be read as .NET's runtime settings: EOF while parsing an object at line 1 \
+             column 1",
+            apart,
+            apart,
+        ]
+    );
+}
+
 #[test]
 fn a_mapping_that_matches_nothing_is_refused() {
     let (project, app) = Project::shipping("");
