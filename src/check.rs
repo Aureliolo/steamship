@@ -2,14 +2,14 @@
 //! somewhere it should not go.
 
 use std::collections::BTreeSet;
-use std::fs;
+use std::fs::{self, File};
 use std::io;
 use std::path::{Path, PathBuf, is_separator};
 
-use crate::pattern;
 use crate::scripts::{self, AppScript, DepotScript, FileMapping, Problem};
 #[cfg(unix)]
 use crate::unix;
+use crate::{pattern, pe};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
@@ -36,6 +36,102 @@ const DO_NOT_SHIP: [&str; 2] = [
     "*_BurstDebugInformation_DoNotShip",
     "*_BackUpThisFolder_ButDontShipItWithYourGame",
 ];
+
+/// The DLLs every edition of Windows 10 and later has, so that a game needs no installer for them,
+/// and `vulkan-1.dll` and `opencl.dll`, which every graphics driver installs. Media Foundation is
+/// left out, as the N editions lack it.
+const WINDOWS_DLLS: [&str; 87] = [
+    "advapi32.dll",
+    "avrt.dll",
+    "bcrypt.dll",
+    "bcryptprimitives.dll",
+    "cfgmgr32.dll",
+    "combase.dll",
+    "comctl32.dll",
+    "comdlg32.dll",
+    "credui.dll",
+    "crypt32.dll",
+    "d2d1.dll",
+    "d3d9.dll",
+    "d3d10.dll",
+    "d3d10_1.dll",
+    "d3d11.dll",
+    "d3d12.dll",
+    "d3dcompiler_47.dll",
+    "dbghelp.dll",
+    "dcomp.dll",
+    "dinput8.dll",
+    "dnsapi.dll",
+    "dsound.dll",
+    "dwmapi.dll",
+    "dwrite.dll",
+    "dxgi.dll",
+    "dxva2.dll",
+    "gdi32.dll",
+    "gdiplus.dll",
+    "glu32.dll",
+    "hid.dll",
+    "imm32.dll",
+    "iphlpapi.dll",
+    "kernel32.dll",
+    "kernelbase.dll",
+    "ksuser.dll",
+    "mpr.dll",
+    "msacm32.dll",
+    "mscoree.dll",
+    "msctf.dll",
+    "msimg32.dll",
+    "msvcp_win.dll",
+    "msvcrt.dll",
+    "mswsock.dll",
+    "ncrypt.dll",
+    "netapi32.dll",
+    "normaliz.dll",
+    "ntdll.dll",
+    "ole32.dll",
+    "oleacc.dll",
+    "oleaut32.dll",
+    "opencl.dll",
+    "opengl32.dll",
+    "powrprof.dll",
+    "propsys.dll",
+    "psapi.dll",
+    "rpcrt4.dll",
+    "sechost.dll",
+    "secur32.dll",
+    "setupapi.dll",
+    "shcore.dll",
+    "shell32.dll",
+    "shlwapi.dll",
+    "sspicli.dll",
+    "ucrtbase.dll",
+    "uiautomationcore.dll",
+    "urlmon.dll",
+    "user32.dll",
+    "userenv.dll",
+    "usp10.dll",
+    "uxtheme.dll",
+    "version.dll",
+    "vulkan-1.dll",
+    "windowscodecs.dll",
+    "winhttp.dll",
+    "wininet.dll",
+    "winmm.dll",
+    "winspool.drv",
+    "wintrust.dll",
+    "winusb.dll",
+    "wldap32.dll",
+    "ws2_32.dll",
+    "wsock32.dll",
+    "wtsapi32.dll",
+    "xaudio2_8.dll",
+    "xaudio2_9.dll",
+    "xinput1_4.dll",
+    "xinput9_1_0.dll",
+];
+
+/// Windows' API sets, which name no file: Windows itself says which DLL answers each.
+const API_SETS: [&str; 2] = ["api-ms-win-", "ext-ms-win-"];
 
 /// Checks the app script at `path`, its depot scripts, and the content they map.
 #[must_use]
@@ -209,6 +305,7 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
     for file in &mapped {
         content_problems(depot.depot_id, file, problems);
     }
+    redistributables(depot.depot_id, &mapped, problems);
     for folder in not_to_ship(root, &mapped) {
         problems.push(Problem::new(
             &folder,
@@ -348,5 +445,79 @@ fn content_problems(depot_id: u32, file: &Path, problems: &mut Vec<Problem>) {
     #[cfg(unix)]
     if let Some(message) = unix::missing_executable_bit(file) {
         problems.push(Problem::new(file, message));
+    }
+    if name.to_ascii_lowercase().ends_with(".runtimeconfig.json")
+        && let Some(message) = runtime_installed_apart(file)
+    {
+        problems.push(Problem::new(file, message));
+    }
+}
+
+/// A problem for each DLL a Windows program or library in depot `depot_id` imports that neither
+/// Windows has nor the depot ships, which only a Steamworks Common Redistributable would install.
+fn redistributables(depot_id: u32, files: &BTreeSet<PathBuf>, problems: &mut Vec<Problem>) {
+    let shipped: BTreeSet<String> = files
+        .iter()
+        .filter_map(|file| file.file_name())
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .collect();
+    for file in files {
+        let imports = match File::open(file).and_then(|mut opened| pe::imports(&mut opened)) {
+            Ok(Some(imports)) => imports,
+            Ok(None) => continue,
+            Err(error) => {
+                problems.push(Problem::new(
+                    file,
+                    format!("cannot be read as a Windows program or library: {error}"),
+                ));
+                continue;
+            }
+        };
+        let mut named = BTreeSet::new();
+        for dll in imports {
+            let mut name = dll.to_ascii_lowercase();
+            // Windows looks for a name without an extension as a DLL.
+            if !name.contains('.') {
+                name.push_str(".dll");
+            }
+            if WINDOWS_DLLS.contains(&name.as_str())
+                || API_SETS.iter().any(|set| name.starts_with(set))
+                || shipped.contains(&name)
+                || !named.insert(name)
+            {
+                continue;
+            }
+            problems.push(Problem::new(
+                file,
+                format!(
+                    "imports {dll}, which Windows does not have and depot {depot_id} does not \
+                     ship, so the game would need a Steamworks Common Redistributable; link its \
+                     library in statically, use one Windows has, or ship the DLL in the depot"
+                ),
+            ));
+        }
+    }
+}
+
+/// Why the .NET program whose runtime settings are at `file` cannot run on its own, if it cannot:
+/// it names a shared runtime to run on rather than shipping its own.
+fn runtime_installed_apart(file: &Path) -> Option<String> {
+    let settings = fs::read(file)
+        .map_err(|error| error.to_string())
+        .and_then(|bytes| {
+            serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| error.to_string())
+        });
+    match settings {
+        Ok(settings) => {
+            let options = settings.get("runtimeOptions")?;
+            (options.get("framework").is_some() || options.get("frameworks").is_some()).then(|| {
+                "runs on a .NET runtime the player would have to install, which on Windows takes \
+                 a Steamworks Common Redistributable; publish the program self-contained"
+                    .to_owned()
+            })
+        }
+        Err(error) => Some(format!(
+            "cannot be read as .NET's runtime settings: {error}"
+        )),
     }
 }
