@@ -2,7 +2,7 @@
 name = "steamship"
 version = "0.9.33"
 edition = "2024"
-rust-version = "1.99.0"
+rust-version = "1.99.1"
 description = "Uploads game builds to Steam with Valve's steamcmd, from your machine or CI: steamcmd pinned and verified, scripts checked before anything is sent, a clear result, and no password kept."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/Aureliolo/steamship"
@@ -38,14 +38,14 @@ serde_json = "1.0.154"
 toml = { version = "1.1.8", default-features = false, features = ["std", "parse", "serde"] }
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 # Valve's packages use only stored and deflated entries, so one pure-Rust decoder is all it needs.
-zip = { version = "9.0.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 # Wipes the typed password from memory once it has been passed to steamcmd.
 zeroize = "1.9.1"
 clap_complete = "4.6.11"
 
 [target.'cfg(unix)'.dependencies]
 # Already in the tree through ring and sha2; stopping a process group has no std API.
-libc = "0.2.190"
+libc = "0.2.191"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The Keychain, which keeps the Web API key; its API is Core Foundation's, which this wraps.
