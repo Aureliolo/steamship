@@ -51,6 +51,8 @@ NO_COLOR = "NO_COLOR"
 FeetTraveled = "FeetTraveled"
 # Windows' own security DLL, among those `check` knows every Windows has.
 secur32 = "secur32"
+# The plural of PNG, which typos would otherwise split into "PN" and "Gs".
+PNGs = "PNGs"
 
 [files]
 # Hidden paths too: the workflows' comments are prose like any other.

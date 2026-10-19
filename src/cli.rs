@@ -218,12 +218,13 @@ pub enum Command {
         #[arg(long, conflicts_with = "check")]
         json: bool,
     },
-    /// Check store and library artwork against Valve's sizes, before it is uploaded.
+    /// Check artwork and icons against Valve's sizes, before they are uploaded.
     ///
-    /// Reads every PNG, JPEG and icon in the folder, each named for the asset it is
-    /// (`header_capsule.png`, `library_logo.png`, `screenshot_01.jpg`), and exits 2 naming every
-    /// one that is not the size or format Steamworks takes, is named for no asset, or cannot be
-    /// read, and too few screenshots. Nothing is sent anywhere.
+    /// Reads every PNG, JPEG, icon and zip in the folder, each named for the asset it is
+    /// (`header_capsule.png`, `library_logo.png`, `screenshot_01.jpg`, `linux_icons.zip`), and
+    /// exits 2 naming every one that is not the size or format Steamworks takes, is named for no
+    /// asset, or cannot be read, every file in the Linux icons that is not a square PNG, and too
+    /// few screenshots. Nothing is sent anywhere.
     Assets {
         /// The folder the artwork is kept in, such as `steam/store`.
         folder: PathBuf,
