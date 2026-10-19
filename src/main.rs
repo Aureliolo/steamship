@@ -2854,11 +2854,11 @@ fn achievement_icons(listed: &achievements::Listed) -> Result<Vec<editor::Icon>,
                 || read.width < 64
             {
                 return Err(refused(&format!(
-                    "{}'s {} is a {} of {} by {} pixels, where the achievement editor takes a \
+                    "{}'s {} is {} of {} by {} pixels, where the achievement editor takes a \
                      square PNG of 64 pixels or more, 256 at best",
                     wanted.api_name,
                     if locked { "locked icon" } else { "icon" },
-                    read.format,
+                    read.format.with_article(),
                     read.width,
                     read.height
                 )));
@@ -3394,7 +3394,7 @@ fn run_assets(folder: &Path) -> ExitCode {
     };
     if checked.is_empty() {
         return fail(
-            &format!("{}: holds no PNG, JPEG or icon", folder.display()),
+            &format!("{}: holds no PNG, JPEG, icon or zip", folder.display()),
             REFUSED,
         );
     }
@@ -3407,21 +3407,10 @@ fn run_assets(folder: &Path) -> ExitCode {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         match &file.found {
-            Some((asset, picture)) if file.problems.is_empty() => taken.push((
-                name,
-                format!(
-                    "{}, {}x{} {}",
-                    asset.name(),
-                    picture.width,
-                    picture.height,
-                    picture.format
-                ),
-            )),
-            Some(_) | None => refused.extend(
-                file.problems
-                    .iter()
-                    .map(|problem| format!("{name}: {problem}")),
-            ),
+            Ok(found) => taken.push((name, found.clone())),
+            Err(problems) => {
+                refused.extend(problems.iter().map(|problem| format!("{name}: {problem}")));
+            }
         }
     }
     show::fields(&taken);

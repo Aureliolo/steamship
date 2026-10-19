@@ -349,7 +349,7 @@ manifests of each depot and the build live on each branch, and the store details
 app are left out, so the file changes only when the app's settings do. Nothing on Steam is
 changed.
 
-## Store and library artwork
+## Store, library and client artwork
 
 ```sh
 steamship assets steam/store
@@ -357,8 +357,8 @@ steamship assets steam/store
 
 Steamworks takes its artwork by hand, one upload at a time, and says only then that a picture
 is the wrong size. `assets` checks a folder of it first, without sending anything: every PNG,
-JPEG and icon in it, each named for the asset it is, against Valve's sizes and formats. It exits
-2 naming each one that is wrong, each named for no asset, and too few screenshots.
+JPEG, icon and zip in it, each named for the asset it is, against Valve's sizes and formats. It
+exits 2 naming each one that is wrong, each named for no asset, and too few screenshots.
 
 | File | Size | Format |
 | --- | --- | --- |
@@ -373,14 +373,22 @@ JPEG and icon in it, each named for the asset it is, against Valve's sizes and f
 | `library_header` | 920x430 | PNG |
 | `library_hero` | 3840x1240 | PNG |
 | `library_logo` | 1280 wide or 720 tall, no larger | PNG with transparency |
-| `shortcut_icon` | 256x256 | icon or PNG |
+| `shortcut_icon` | 256x256, or 512x512 as a PNG | Windows icon or PNG |
 | `app_icon` | 184x184 | JPEG |
+| `mac_icon` | any | Apple icon (ICNS) |
+| `linux_icons` | square PNGs, such as 16x16, 32x32 and 256x256 | zip |
 | `event_cover` | 800x450 | PNG or JPEG |
 | `event_header` | 1920x622 | PNG or JPEG |
 | `workshop_header`, the Workshop's branding image | 948x203 | JPEG |
 
 Names match regardless of case, and screenshots are any names starting with `screenshot`,
 such as `screenshot_01.jpg`. Other files in the folder are left alone.
+
+The shortcut, app, Mac and Linux icons go up under Installation, Client Images. A Windows icon
+is as large as its largest image, so a shortcut icon must hold one of 256x256. The Linux icons
+are one zip, `linux_icons.zip`, of a PNG for each size the game's icon comes in; their names and
+folders inside it are the game's own. `assets` names every file in it that is not a square PNG,
+and passes over what macOS adds when it makes a zip, such as the `__MACOSX` folder.
 
 ## Steam DRM
 
