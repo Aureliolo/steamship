@@ -178,7 +178,7 @@ const LOOKED_AT: [&str; 6] = ["png", "jpg", "jpeg", "ico", "icns", "zip"];
 
 /// The most of each file in the Linux icons' zip that is read. A PNG says its size in its first
 /// chunks, and a zip's entry can unpack to far more than the zip holds.
-const ZIPPED_LIMIT: u64 = 4 << 20;
+const ZIPPED_LIMIT: u64 = 0x0040_0000;
 
 /// The asset a file named `stem` (its name without the extension) is kept as.
 #[must_use]
@@ -375,14 +375,13 @@ pub fn linux_icons(bytes: &[u8]) -> Result<String, Vec<String>> {
     }
 }
 
-/// Whether `name`, a path in a zip, is what macOS adds to a zip it makes: Steam's own Linux icons
-/// for app 8930 hold a `__MACOSX` folder beside their PNG.
+/// Whether `name`, a path in a zip, is what macOS adds to a zip it makes: a `.DS_Store`, or a
+/// `._` file of a file's metadata, which its `__MACOSX` folder holds. Steam's own Linux icons for
+/// app 8930 hold one beside their PNG.
 fn from_macos(name: &str) -> bool {
-    name.starts_with("__MACOSX/")
-        || name
-            .rsplit('/')
-            .next()
-            .is_some_and(|file| file.starts_with('.'))
+    name.rsplit('/')
+        .next()
+        .is_some_and(|file| file.starts_with('.'))
 }
 
 /// How many screenshots `checked` holds, when that is some but fewer than Steamworks needs.
