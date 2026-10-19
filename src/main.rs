@@ -28,7 +28,7 @@ use steamship::update::{self, Installed};
 use steamship::windows::Terminal;
 use steamship::{
     achievements, assets, check, ci, conversation, download, drm, dump, editor, init, keychain,
-    leaderboards, likeness, magic, picture, po, presence, release, run, scripts, settings,
+    leaderboards, likeness, magic, picture, po, presence, redist, release, run, scripts, settings,
     steamcmd, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
@@ -1383,6 +1383,106 @@ fn checked(script: &Path, scripts_only: bool) -> Result<check::Report, ExitCode>
     Err(ExitCode::from(REFUSED))
 }
 
+/// The settings snapshot beside `script`, for `app`, when there is one; refused when it cannot be
+/// read.
+fn snapshot_beside(script: &Path, app: Option<u32>) -> Result<Option<vdf::Block>, ExitCode> {
+    let path = script
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(settings::SNAPSHOT);
+    match app {
+        Some(app) if path.is_file() => {
+            let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
+            let text = fs::read_to_string(&path).map_err(|error| refused(&error))?;
+            settings::read(&text, app)
+                .map(Some)
+                .map_err(|why| refused(&why))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Shows which of Steamworks' Common Redistributables the build's Windows files need, refusing
+/// what nothing gives them. `unknown` says that which the app ticks was not known.
+fn redistributables_shown(judged: &redist::Judged, unknown: bool) -> Result<(), ExitCode> {
+    if !judged.refused.is_empty() {
+        for problem in &judged.refused {
+            show::failure("refused", &problem.to_string(), None);
+        }
+        return Err(ExitCode::from(REFUSED));
+    }
+    if !judged.ticked.is_empty() {
+        let ticked: Vec<&str> = judged.ticked.iter().copied().collect();
+        show::done(
+            "redist",
+            &format!("{}, ticked in Steamworks", ticked.join(", ")),
+        );
+    }
+    if !judged.unchecked.is_empty() {
+        show::field(
+            "redist",
+            &format!(
+                "{}, not checked",
+                show::counted(judged.unchecked.len(), "DLL")
+            ),
+        );
+        for problem in &judged.unchecked {
+            show::aside(&problem.to_string());
+        }
+        if unknown {
+            show::aside(UNKNOWN_TICKS);
+        }
+    }
+    Ok(())
+}
+
+/// Refuses what nothing gives the Windows files of the build `found`, which no setting in
+/// Steamworks changes, and answers whether they need a redistributable, which only Steam can say
+/// the app ticks.
+fn needs_redistributable(found: &check::Report) -> Result<bool, ExitCode> {
+    let needs = redist::judged(found, None);
+    if !needs.refused.is_empty() {
+        redistributables_shown(&needs, true)?;
+    }
+    Ok(!needs.unchecked.is_empty())
+}
+
+/// Judges what the build `found` needs against the redistributables its app ticks, as Steam
+/// shows them to `account` through the steamcmd `ready` gave.
+fn ticked_on_steam(
+    found: &check::Report,
+    (held, home, manifest): (&install::Held, &Path, &Manifest),
+    account: &Account,
+    packed: Option<&ci::Login>,
+) -> Result<(), ExitCode> {
+    let app = found.app_id.unwrap_or_default();
+    let asked = app_info(
+        home,
+        account,
+        app,
+        packed,
+        "asking which redistributables the app ticks",
+    );
+    if asked.is_err() {
+        install::verify(held, manifest).map_err(|error| steamcmd_failed(&error))?;
+    }
+    let (console, spinner) = asked?;
+    match settings::from_console(&console, app) {
+        Ok(shown) => {
+            spinner.done("shown");
+            redistributables_shown(&redist::judged(found, Some(&shown)), false)
+        }
+        Err(why) => {
+            spinner.failed("none shown");
+            Err(fail(&why, FAILED))
+        }
+    }
+}
+
+/// How to have checked which redistributables an app ticks.
+const UNKNOWN_TICKS: &str = "upload asks Steam which redistributables the app ticks, and check \
+                             reads them from a settings snapshot beside the script";
+
 /// Why an unchecked `SetLive` branch matters, and how to have it checked.
 const UNCHECKED_BRANCH: &str = "a branch the app does not have leaves the build uploaded but not \
                                 live; steamship login --web-api-key keeps a key to check it with";
@@ -1480,13 +1580,17 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         (Some(packed), None) => packed.account().clone(),
         _ => account(request.account, false)?.0,
     };
-    drop(checked(request.script, false)?);
+    let found = checked(request.script, false)?;
+    let needing = needs_redistributable(&found)?;
     let description = upload::commit(request.script)
         .and_then(|commit| upload::description(request.version, &commit))
         .map_err(|error| fail(&error, REFUSED))?;
     show::field("build", &description);
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
+    if needing {
+        ticked_on_steam(&found, (&held, &home, &manifest), &account, packed.as_ref())?;
+    }
     let prepared = upload::prepare(&home, request.script, &description, request.preview)
         .map_err(|error| fail(&error, FAILED))?;
     // Asked for on every upload by a game's tools, the default branch is left once the game is
@@ -2040,7 +2144,16 @@ fn depot_logs(output: &Path) -> Vec<(String, PathBuf)> {
 fn run_check(script: &Path, scripts_only: bool) -> ExitCode {
     show::title("check");
     show::field("script", &script.display().to_string());
-    match checked(script, scripts_only) {
+    match checked(script, scripts_only).and_then(|report| {
+        if report.content {
+            let snapshot = snapshot_beside(script, report.app_id)?;
+            redistributables_shown(
+                &redist::judged(&report, snapshot.as_ref()),
+                snapshot.is_none(),
+            )?;
+        }
+        Ok(report)
+    }) {
         Ok(report) => {
             if !report.content {
                 show::field("content", "not checked (--scripts-only)");

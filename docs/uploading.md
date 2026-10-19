@@ -60,13 +60,21 @@ steamship check steam/app_build.vdf
 - a `steam_appid.txt` in the content, and the folders Unity names as not to ship;
 - a Linux or macOS program, or a script starting with `#!`, without its executable bit, where
   the file system has one;
-- a Windows program or library importing a DLL that every edition of Windows 10 and later lacks
-  and its own depot does not ship, such as `VCRUNTIME140.dll` or `XINPUT1_3.dll`, and a .NET
-  program whose `runtimeconfig.json` names a runtime to be installed apart from it: either would
-  need a Steamworks Common Redistributable to run.
+- a Windows program or library importing a DLL that neither Windows 10 and later, a depot that
+  installs on Windows, nor any Steamworks Common Redistributable has;
+- one importing a DLL that only a Common Redistributable installs, such as `VCRUNTIME140.dll` or
+  `XINPUT1_3.dll`, when the app does not tick it in Steamworks (Installation, Redistributables);
+- a .NET program whose `runtimeconfig.json` names a runtime to be installed apart from it, which
+  neither Windows nor a Common Redistributable installs.
 
 It also counts the debug symbols each depot ships (`.pdb`, `.dSYM`, `.debug`) without refusing
 them, since some teams ship them on purpose.
+
+Which redistributables the app ticks, and which depots install on Windows, `check` reads from a
+settings snapshot beside the script (see [settings in Steamworks](#settings-in-steamworks)).
+Without one it names each DLL a redistributable would install and says it was not checked;
+`upload` asks Steam. A DLL an `InstallScript` of the build may install is named rather than
+refused.
 
 Before the build exists, as in a checkout where only CI builds the game, `--scripts-only` checks
 the scripts alone: everything above except what needs the content, which it says was not
@@ -325,12 +333,13 @@ steamship settings 480 --check steam/settings.vdf
 ```
 
 A build runs only as Steamworks is set up for it: the install folder, each launch option's
-executable and system, the Linux runtime, each depot's system, and where Steam Cloud keeps
-saves. None of that is in the build scripts, and none of it can be changed but by hand in
-Steamworks. `settings` asks Steam for it through steamcmd with the saved login, as the build
-account sees the app (which works before the app is released), and shows it in Valve's own
-format. It also says whether Steam Cloud is set up, since an app with none has no Cloud section
-at all, and a snapshot without one would otherwise read the same either way.
+executable and system, the Linux runtime, each depot's system, the Common Redistributables the
+app ticks, and where Steam Cloud keeps saves. None of that is in the build scripts, and none of
+it can be changed but by hand in Steamworks. `settings` asks Steam for it through steamcmd with
+the saved login, as the build account sees the app (which works before the app is released),
+and shows it in Valve's own format. It also says whether Steam Cloud is set up, since an app
+with none has no Cloud section at all, and a snapshot without one would otherwise read the same
+either way.
 
 `--save` keeps it in a file beside your scripts, and `--check` exits 2 naming every setting
 that differs from that file, such as `config/launch/0/executable`. Run the check before a
