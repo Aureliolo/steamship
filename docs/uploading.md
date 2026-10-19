@@ -389,6 +389,13 @@ language from the end of the file's name, in Steam's own name for it (its API la
 `header_capsule_koreana.png`, `library_logo_schinese.png`, `screenshot_03_brazilian.jpg`.
 `assets` reads names the same way, and checks a language's artwork against the same sizes. The
 five screenshots it counts are those without a language; a language's own come beside them.
+
+A language's artwork can also be kept in a folder of its own inside the one checked, named in
+Steam's name for the language or a locale's: `german/` or `de/`, `brazilian/` or `pt_BR/`.
+`assets` checks every file in such a folder as that language's, whether or not its name ends in
+the language, and refuses one whose name says another. Steamworks reads the language only from
+the name, so a file without it is uploaded with its language chosen by hand. Every other folder
+is listed as skipped.
 Steamworks reads no language from the names of the icons, event images, bundle header and
 Workshop branding image, so one named for a language is refused.
 

@@ -7121,7 +7121,58 @@ fn artwork_is_checked_against_valves_sizes_with_nothing_sent() {
     let empty = tempfile::tempdir().unwrap();
     let (none, _, said) = steamship(&["assets", &empty.path().to_string_lossy()], None, &quiet);
     assert_eq!(none, Some(2_i32), "{said}");
-    assert!(said.contains("holds no PNG, JPEG, icon or zip"), "{said}");
+    assert!(
+        said.contains("holds no PNG, JPEG, icon or zip, nor a folder for a language with one"),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_store_folder_is_checked_with_its_folders_for_each_language_and_the_rest_named() {
+    let folder = tempfile::tempdir().unwrap();
+    for inner in ["de", "pt_BR", "achievements"] {
+        fs::create_dir_all(folder.path().join(inner)).unwrap();
+    }
+    fs::write(
+        folder.path().join("de/header_capsule.png"),
+        png_header(920, 430),
+    )
+    .unwrap();
+    fs::write(
+        folder.path().join("pt_BR/small_capsule.png"),
+        png_header(462, 174),
+    )
+    .unwrap();
+    fs::write(
+        folder.path().join("achievements/FIRST_POUR.png"),
+        png_header(64, 64),
+    )
+    .unwrap();
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let path = folder.path().to_string_lossy().into_owned();
+
+    let (code, stdout, stderr) = steamship(&["assets", &path], None, &quiet);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  skipped   achievements, named for no language\n")
+            && stdout
+                .contains("  de/header_capsule.png   header capsule for german, 920x430 PNG\n")
+            && stdout
+                .contains("  pt_BR/small_capsule.png small capsule for brazilian, 462x174 PNG\n"),
+        "{stdout}"
+    );
+
+    fs::write(
+        folder.path().join("de/small_capsule.png"),
+        png_header(460, 174),
+    )
+    .unwrap();
+    let (wrong, _, why) = steamship(&["assets", &path], None, &quiet);
+    assert_eq!(wrong, Some(2_i32), "{why}");
+    assert!(
+        why.contains("de/small_capsule.png: the small capsule must be 462x174, and it is 460x174"),
+        "{why}"
+    );
 }
 
 #[test]

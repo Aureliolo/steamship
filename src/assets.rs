@@ -282,39 +282,96 @@ pub fn problems(asset: &Asset, picture: &Picture) -> Vec<String> {
 /// A file in the folder, and what came of checking it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Checked {
-    pub path: PathBuf,
+    /// The file's name, after its folder's when it is in a language's: `de/header_capsule.png`.
+    pub name: String,
+    /// The asset it is kept as and the language it is for, when its name says.
+    pub kept_as: Option<(&'static Asset, Option<&'static str>)>,
     /// The asset it is and what it holds, as `assets` lists it, such as "header capsule, 920x430
     /// PNG"; or every way it is not what Steamworks takes.
     pub found: Result<String, Vec<String>>,
 }
 
-/// Checks every picture, icon and zip in `folder`, in the order of their names.
+/// A store folder, checked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Store {
+    /// Every picture, icon and zip in it and in its folders for a language, by their names.
+    pub files: Vec<Checked>,
+    /// The names of the folders in it that are named for no language, and of those in a
+    /// language's, which are not looked in.
+    pub unchecked: Vec<String>,
+}
+
+/// The language a folder named `name` holds the artwork of: Steam's name for it, `german`, or a
+/// locale's, `de` or `pt_BR`.
+fn folder_language(name: &str) -> Option<&'static str> {
+    po::steam_language_named(name).or_else(|| po::steam_language(name))
+}
+
+/// What is in `folder`: its files and its folders, by their names.
+fn listed(folder: &Path) -> io::Result<Vec<(String, PathBuf, bool)>> {
+    let mut listed = fs::read_dir(folder)?
+        .map(|entry| {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            Ok((name, entry.path(), entry.path().is_dir()))
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    listed.sort();
+    Ok(listed)
+}
+
+fn looked_at(path: &Path) -> bool {
+    path.is_file()
+        && path.extension().is_some_and(|extension| {
+            LOOKED_AT
+                .iter()
+                .any(|looked_at| extension.eq_ignore_ascii_case(looked_at))
+        })
+}
+
+/// Checks every picture, icon and zip in `folder`, and in each of its folders named for a
+/// language, as that language's.
 ///
 /// # Errors
 ///
-/// When the folder cannot be listed. A file that cannot be read is a problem of that file's.
-pub fn check(folder: &Path) -> io::Result<Vec<Checked>> {
-    let mut paths: Vec<PathBuf> = fs::read_dir(folder)?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<io::Result<_>>()?;
-    paths.retain(|path| {
-        path.is_file()
-            && path.extension().is_some_and(|extension| {
-                LOOKED_AT
-                    .iter()
-                    .any(|looked_at| extension.eq_ignore_ascii_case(looked_at))
-            })
-    });
-    paths.sort();
-    Ok(paths.into_iter().map(checked).collect())
+/// When the folder or one of a language cannot be listed. A file that cannot be read is a problem
+/// of that file's.
+pub fn check(folder: &Path) -> io::Result<Store> {
+    let mut files = Vec::new();
+    let mut unchecked = Vec::new();
+    for (name, path, is_folder) in listed(folder)? {
+        if !is_folder {
+            if looked_at(&path) {
+                files.push(checked(name, &path, None));
+            }
+            continue;
+        }
+        let Some(language) = folder_language(&name) else {
+            unchecked.push(name);
+            continue;
+        };
+        for (inner, inner_path, inner_is_folder) in listed(&path)? {
+            let named = format!("{name}/{inner}");
+            match (inner_is_folder, looked_at(&inner_path)) {
+                (true, _) => unchecked.push(named),
+                (false, true) => files.push(checked(named, &inner_path, Some((&name, language)))),
+                (false, false) => {}
+            }
+        }
+    }
+    Ok(Store { files, unchecked })
 }
 
-fn checked(path: PathBuf) -> Checked {
+/// Checks the file at `path`, shown as `name`, in a folder for a language when `folder` says which:
+/// the folder's name and Steam's name for its language.
+fn checked(name: String, path: &Path, folder: Option<(&str, &'static str)>) -> Checked {
     let stem = path
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let found = named(&stem)
+    let kept_as = named(&stem);
+    let of_folder = folder.map(|(_, language)| language);
+    let found = kept_as
         .ok_or_else(|| {
             vec![
                 "is named for no asset: name it header_capsule, screenshot_01, library_logo and \
@@ -322,8 +379,8 @@ fn checked(path: PathBuf) -> Checked {
                     .to_owned(),
             ]
         })
-        .and_then(|(asset, language)| {
-            if let Some(language) = language
+        .and_then(|(asset, from_name)| {
+            if let Some(language) = from_name
                 && !asset.per_language
             {
                 return Err(vec![format!(
@@ -332,7 +389,25 @@ fn checked(path: PathBuf) -> Checked {
                     asset.name, asset.stem
                 )]);
             }
-            let bytes = fs::read(&path).map_err(|error| vec![error.to_string()])?;
+            if let Some((folder, _)) = folder
+                && !asset.per_language
+            {
+                return Err(vec![format!(
+                    "Steamworks takes one {} for every language: keep it beside the folders for \
+                     a language, not in {folder}",
+                    asset.name
+                )]);
+            }
+            if let (Some((folder, _)), Some(of_folder), Some(of_name)) =
+                (folder, of_folder, from_name)
+                && of_folder != of_name
+            {
+                return Err(vec![format!(
+                    "is in {folder}, the folder for {of_folder}, and its name says {of_name}"
+                )]);
+            }
+            let language = from_name.or(of_folder);
+            let bytes = fs::read(path).map_err(|error| vec![error.to_string()])?;
             let held = if asset.formats == Formats::PngZip {
                 linux_icons(&bytes)?
             } else {
@@ -348,7 +423,11 @@ fn checked(path: PathBuf) -> Checked {
                 .unwrap_or_default();
             Ok(format!("{}{language}, {held}", asset.name))
         });
-    Checked { path, found }
+    Checked {
+        name,
+        kept_as: kept_as.map(|(asset, from_name)| (asset, from_name.or(of_folder))),
+        found,
+    }
 }
 
 /// What the Linux icons' zip `bytes` hold, such as "5 PNGs from 16x16 to 256x256", or every way
@@ -431,12 +510,9 @@ pub fn too_few_screenshots(checked: &[Checked]) -> Option<usize> {
     let screenshots = checked
         .iter()
         .filter(|file| {
-            file.path
-                .file_stem()
-                .and_then(|stem| named(&stem.to_string_lossy()))
-                .is_some_and(|(asset, language)| {
-                    asset.size == Size::Widescreen && language.is_none()
-                })
+            file.kept_as.is_some_and(|(asset, language)| {
+                asset.size == Size::Widescreen && language.is_none()
+            })
         })
         .count();
     (1..SCREENSHOTS)
@@ -793,19 +869,12 @@ mod tests {
         fs::write(folder.path().join("header_capsule_french.png"), &header).unwrap();
         fs::write(folder.path().join("app_icon_french.jpg"), "never read").unwrap();
 
-        let checked = check(folder.path()).unwrap();
+        let store = check(folder.path()).unwrap();
+        assert_eq!(store.unchecked, ["old.png"]);
+        let checked = store.files;
         let said: Vec<(String, Result<String, Vec<String>>)> = checked
             .iter()
-            .map(|file| {
-                (
-                    file.path
-                        .file_name()
-                        .unwrap()
-                        .to_string_lossy()
-                        .into_owned(),
-                    file.found.clone(),
-                )
-            })
+            .map(|file| (file.name.clone(), file.found.clone()))
             .collect();
         assert_eq!(
             said,
@@ -867,21 +936,98 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_for_a_language_is_checked_as_that_language_s_and_others_are_named() {
+        let folder = tempfile::tempdir().unwrap();
+        let header = png_file(920, 430);
+        for inner in ["de", "pt_BR", "german", "de/sketches", "achievements"] {
+            fs::create_dir_all(folder.path().join(inner)).unwrap();
+        }
+        let files: [(&str, &[u8]); 8] = [
+            ("de/header_capsule.png", &header),
+            ("de/header_capsule_french.png", &header),
+            ("de/app_icon.jpg", b"never read"),
+            ("de/screenshot_1.jpg", b"not a picture"),
+            ("de/notes.txt", b"left alone"),
+            ("german/header_capsule_german.png", &header),
+            ("pt_BR/library_header.png", &header),
+            ("achievements/FIRST_POUR.png", &header),
+        ];
+        for (name, contents) in files {
+            fs::write(folder.path().join(name), contents).unwrap();
+        }
+
+        let store = check(folder.path()).unwrap();
+        assert_eq!(store.unchecked, ["achievements", "de/sketches"]);
+        let said: Vec<(&str, Result<&str, Vec<&str>>)> = store
+            .files
+            .iter()
+            .map(|file| {
+                (
+                    file.name.as_str(),
+                    file.found
+                        .as_deref()
+                        .map_err(|problems| problems.iter().map(String::as_str).collect()),
+                )
+            })
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (
+                    "de/app_icon.jpg",
+                    Err(vec![
+                        "Steamworks takes one app icon for every language: keep it beside the \
+                         folders for a language, not in de"
+                    ])
+                ),
+                (
+                    "de/header_capsule.png",
+                    Ok("header capsule for german, 920x430 PNG")
+                ),
+                (
+                    "de/header_capsule_french.png",
+                    Err(vec![
+                        "is in de, the folder for german, and its name says french"
+                    ])
+                ),
+                (
+                    "de/screenshot_1.jpg",
+                    Err(vec![
+                        "is not a PNG, a JPEG, a Windows icon or an Apple icon"
+                    ])
+                ),
+                (
+                    "german/header_capsule_german.png",
+                    Ok("header capsule for german, 920x430 PNG")
+                ),
+                (
+                    "pt_BR/library_header.png",
+                    Ok("library header for brazilian, 920x430 PNG")
+                ),
+            ]
+        );
+        assert_eq!(too_few_screenshots(&store.files), None);
+    }
+
+    #[test]
     fn screenshots_are_too_few_only_when_there_are_some_but_not_five() {
-        let screenshot = |number: usize| Checked {
-            path: PathBuf::from(format!("screenshot_{number}.png")),
+        let screenshot = |stem: String| Checked {
+            kept_as: named(&stem),
+            name: format!("{stem}.png"),
             found: Err(Vec::new()),
         };
-        let some: Vec<Checked> = (1..=4).map(screenshot).collect();
+        let some: Vec<Checked> = (1..=4_u8)
+            .map(|number| screenshot(format!("screenshot_{number}")))
+            .collect();
         assert_eq!(too_few_screenshots(&some), Some(4));
-        let enough: Vec<Checked> = (1..=5).map(screenshot).collect();
+        let enough: Vec<Checked> = (1..=5_u8)
+            .map(|number| screenshot(format!("screenshot_{number}")))
+            .collect();
         assert_eq!(too_few_screenshots(&enough), None);
         assert_eq!(too_few_screenshots(&[]), None);
         let mut localised = some;
-        localised.extend((1..=5_u8).map(|number| Checked {
-            path: PathBuf::from(format!("screenshot_{number}_german.png")),
-            found: Err(Vec::new()),
-        }));
+        localised
+            .extend((1..=5_u8).map(|number| screenshot(format!("screenshot_{number}_german"))));
         assert_eq!(too_few_screenshots(&localised), Some(4));
     }
 }
