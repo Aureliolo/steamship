@@ -3996,18 +3996,21 @@ const TICKING_ON_STEAM: &str = "#!/bin/sh\n\
 #[cfg(unix)]
 #[test]
 fn upload_asks_steam_which_redistributables_the_app_ticks_when_the_build_needs_one() {
-    let dlls = ["kernel32.dll", "vcruntime140.dll"];
-
     let home = faked_with(TICKING_ON_STEAM);
-    fs::write(home.path().join("app_info"), settings_ticking(&[])).unwrap();
-    let (_none, script) = shipping_dll(&dlls, None);
-    let (host, _requests) = web_api(vec![("200 OK", BETAS)]);
-    let (refused, said, why) = upload(
-        &script,
-        home.path(),
-        &["--version", "1.4.0"],
-        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
-    );
+    // Steam is asked whether the branch exists, and once a build is up whether it is live.
+    let uploaded = |ticked: &[&str], answers: Vec<(&'static str, &'static str)>| {
+        fs::write(home.path().join("app_info"), settings_ticking(ticked)).unwrap();
+        let (_project, script) = shipping_dll(&["kernel32.dll", "vcruntime140.dll"], None);
+        let (host, _requests) = web_api(answers);
+        upload(
+            &script,
+            home.path(),
+            &["--version", "1.4.0"],
+            &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+        )
+    };
+
+    let (refused, said, why) = uploaded(&[], vec![("200 OK", BETAS)]);
     assert_eq!(refused, Some(2_i32), "{said}{why}");
     assert!(
         why.contains(&format!(
@@ -4017,19 +4020,14 @@ fn upload_asks_steam_which_redistributables_the_app_ticks_when_the_build_needs_o
     );
     assert!(!home.path().join("builds").exists(), "nothing went up");
 
-    fs::write(home.path().join("app_info"), settings_ticking(&["228988"])).unwrap();
-    let (_ticking, script) = shipping_dll(&dlls, None);
-    let (host, _requests) = web_api(vec![("200 OK", BETAS), ("200 OK", testing_live(4242))]);
-    let (code, said, why) = upload(
-        &script,
-        home.path(),
-        &["--version", "1.4.0"],
-        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    let (code, shown, _) = uploaded(
+        &["228988"],
+        vec![("200 OK", BETAS), ("200 OK", testing_live(4242))],
     );
-    assert_eq!(code, Some(0_i32), "{said}{why}");
+    assert_eq!(code, Some(0_i32), "{shown}");
     assert!(
-        said.contains("  redist    \u{2713} VC 2019 Redist, ticked in Steamworks\n"),
-        "{said}"
+        shown.contains("  redist    \u{2713} VC 2019 Redist, ticked in Steamworks\n"),
+        "{shown}"
     );
     assert!(home.path().join("builds").exists(), "the build went up");
 }
