@@ -10,6 +10,9 @@ use std::fmt;
 
 use crate::vdf::{self, Block, Pair, Value};
 
+/// The snapshot's name, beside the build scripts.
+pub const SNAPSHOT: &str = "settings.vdf";
+
 /// The keys of `common` kept: what the app is, and the systems it runs on.
 const COMMON: [&str; 5] = ["name", "type", "oslist", "osarch", "osextended"];
 

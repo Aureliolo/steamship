@@ -10,6 +10,8 @@
 
 pub mod common;
 
+use common::pe::{settings_ticking, windows_library};
+
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write};
@@ -3873,6 +3875,163 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
         ),
         "{warned}"
     );
+}
+
+/// [`project`], committed with `content/game.dll` importing `dlls`, and `snapshot` as the
+/// settings snapshot beside the script when given.
+fn shipping_dll(dlls: &[&str], snapshot: Option<&str>) -> (tempfile::TempDir, PathBuf) {
+    let (temp, script) = project(false);
+    let root = script.parent().unwrap().parent().unwrap().to_path_buf();
+    fs::write(root.join("content/game.dll"), windows_library(dlls)).unwrap();
+    if let Some(snapshot) = snapshot {
+        fs::write(script.with_file_name("settings.vdf"), snapshot).unwrap();
+    }
+    git(&root, &["init", "--quiet"]);
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "--quiet", "-m", "scripts"]);
+    (temp, script)
+}
+
+const NEEDS_VC: &str = "game.dll: imports vcruntime140.dll, which VC 2015 Redist, VC 2017 \
+                        Redist, VC 2019 Redist or VC 2022 Redist installs";
+
+#[test]
+fn check_names_what_a_redistributable_installs_and_says_whether_the_app_ticks_it_was_not_checked() {
+    let home = tempfile::tempdir().unwrap();
+    let (_project, script) = shipping_dll(&["kernel32.dll", "vcruntime140.dll"], None);
+    let script = script.to_string_lossy().into_owned();
+    let (code, said, _) = steamship(
+        &["check", &script],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(0_i32), "{said}");
+    for line in [
+        "  redist    1 DLL, not checked\n",
+        NEEDS_VC,
+        "upload asks Steam which redistributables the app ticks, and check reads them from a \
+         settings snapshot beside the script",
+    ] {
+        assert!(said.contains(line), "{line:?} in {said}");
+    }
+}
+
+#[test]
+fn check_reads_which_redistributables_the_app_ticks_from_the_snapshot_beside_the_script() {
+    let home = tempfile::tempdir().unwrap();
+    let checked = |snapshot: &str| {
+        let (_project, script) =
+            shipping_dll(&["kernel32.dll", "vcruntime140.dll"], Some(snapshot));
+        steamship(
+            &["check", &script.to_string_lossy()],
+            Some(home.path()),
+            &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+        )
+    };
+
+    let (passed, said, _) = checked(&settings_ticking(&["228989"]));
+    assert_eq!(passed, Some(0_i32), "{said}");
+    assert!(
+        said.contains("  redist    \u{2713} VC 2022 Redist, ticked in Steamworks\n"),
+        "{said}"
+    );
+
+    let (refused, _, why) = checked(&settings_ticking(&[]));
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert!(
+        why.contains(&format!(
+            "{NEEDS_VC}, and app 1000 ticks none in Steamworks; tick one under Installation, \
+             Redistributables, ship the DLL in a depot, or link its library in statically"
+        )),
+        "{why}"
+    );
+
+    let (unreadable, _, broken) = checked("\"1000\" {");
+    assert_eq!(unreadable, Some(2_i32), "{broken}");
+    assert!(broken.contains("settings.vdf: "), "{broken}");
+}
+
+#[test]
+fn upload_refuses_a_dll_nothing_installs_before_it_logs_in() {
+    let home = tempfile::tempdir().unwrap();
+    let (_project, script) = shipping_dll(&["kernel32.dll", "fmod.dll"], None);
+    let (code, said, why) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(2_i32), "{said}{why}");
+    assert!(
+        why.contains(
+            "game.dll: imports fmod.dll, which neither Windows, the build's depots nor a \
+             Steamworks Common Redistributable has; ship it in a depot, or link its library in \
+             statically"
+        ),
+        "{why}"
+    );
+    assert!(
+        !home.path().join(install::FOLDER).exists(),
+        "steamcmd was never installed to log in with"
+    );
+}
+
+/// A steamcmd that, asked for app 1000's info, prints what the home's `app_info` file holds as
+/// the settings, and otherwise has Valve build the upload as [`released_as`] does.
+#[cfg(unix)]
+const TICKING_ON_STEAM: &str = "#!/bin/sh\n\
+    case \" $* \" in *' +app_info_print '*)\n\
+    echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+    echo 'AppID : 1000, change number : 5/5, last change : Tue Sep 29 20:07:48 2026 '\n\
+    cat \"$HOME/app_info\"\n\
+    echo 'Unloading Steam API...OK'\n\
+    exit 0;;\n\
+    esac\n\
+    echo built >> \"$HOME/builds\"\n\
+    output=\"$HOME/apps/1000/output\"\n\
+    mkdir -p \"$output\"\n\
+    echo 'Successfully finished AppID 1000 build (BuildID 4242).' > \"$output/app_build_1000.log\"\n\
+    echo 'Logging in user build_bot to Steam Public...OK'\n";
+
+#[cfg(unix)]
+#[test]
+fn upload_asks_steam_which_redistributables_the_app_ticks_when_the_build_needs_one() {
+    let dlls = ["kernel32.dll", "vcruntime140.dll"];
+
+    let home = faked_with(TICKING_ON_STEAM);
+    fs::write(home.path().join("app_info"), settings_ticking(&[])).unwrap();
+    let (_none, script) = shipping_dll(&dlls, None);
+    let (host, _requests) = web_api(vec![("200 OK", BETAS)]);
+    let (refused, said, why) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(refused, Some(2_i32), "{said}{why}");
+    assert!(
+        why.contains(&format!(
+            "{NEEDS_VC}, and app 1000 ticks none in Steamworks"
+        )),
+        "{why}"
+    );
+    assert!(!home.path().join("builds").exists(), "nothing went up");
+
+    fs::write(home.path().join("app_info"), settings_ticking(&["228988"])).unwrap();
+    let (_ticking, script) = shipping_dll(&dlls, None);
+    let (host, _requests) = web_api(vec![("200 OK", BETAS), ("200 OK", testing_live(4242))]);
+    let (code, said, why) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{said}{why}");
+    assert!(
+        said.contains("  redist    \u{2713} VC 2019 Redist, ticked in Steamworks\n"),
+        "{said}"
+    );
+    assert!(home.path().join("builds").exists(), "the build went up");
 }
 
 #[test]
