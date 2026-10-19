@@ -20,7 +20,7 @@ use toml::de::Error as TomlError;
 use crate::unix as native;
 #[cfg(windows)]
 use crate::windows as native;
-use crate::{check, run, show, webapi, workshop};
+use crate::{check, run, settings, show, webapi, workshop};
 
 /// The file a game names its own layout in, at its root.
 pub const FILE: &str = "steamship.toml";
@@ -312,7 +312,7 @@ impl Project {
     /// The snapshot of the app's settings in Steamworks, beside the build scripts.
     #[must_use]
     pub fn snapshot(&self) -> PathBuf {
-        self.scripts().join("settings.vdf")
+        self.scripts().join(settings::SNAPSHOT)
     }
 
     /// The version the game ships as, from `project.godot`'s `config/version`.
