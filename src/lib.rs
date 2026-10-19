@@ -27,6 +27,7 @@ pub mod macos;
 pub mod magic;
 pub mod manifest;
 pub mod pattern;
+pub mod pe;
 pub mod picture;
 pub mod platform;
 pub mod po;

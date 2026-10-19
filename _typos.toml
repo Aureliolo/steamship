@@ -49,6 +49,8 @@ AnsiColor = "AnsiColor"
 NO_COLOR = "NO_COLOR"
 # A stat of Spacewar, Valve's example app, which Steam's answers in the tests name.
 FeetTraveled = "FeetTraveled"
+# Windows' own security DLL, among those `check` knows every Windows has.
+secur32 = "secur32"
 
 [files]
 # Hidden paths too: the workflows' comments are prose like any other.
