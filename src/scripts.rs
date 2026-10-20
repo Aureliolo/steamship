@@ -65,6 +65,20 @@ pub struct FileMapping {
     pub recursive: bool,
 }
 
+/// The app the app script at `path` names, or none while it names none Steamworks gave, as before
+/// the app exists, or cannot be read.
+#[must_use]
+pub fn app_named(path: &Path) -> Option<u32> {
+    read(path)
+        .ok()?
+        .block("AppBuild")?
+        .text("AppID")?
+        .trim()
+        .parse()
+        .ok()
+        .filter(|app| *app != 0)
+}
+
 /// Reads the app script at `path` and every depot script it names.
 ///
 /// # Errors
@@ -389,6 +403,30 @@ mod tests {
                 .to_string_lossy()
                 .ends_with(MAIN_SEPARATOR)
         );
+    }
+
+    #[test]
+    fn the_app_a_script_names_is_read_alone_and_none_while_it_names_none_steam_gave() {
+        let folder = tempfile::tempdir().unwrap();
+        let named = |text: &str| {
+            let path = folder.path().join("app_build.vdf");
+            fs::write(&path, text).unwrap();
+            app_named(&path)
+        };
+        assert_eq!(
+            named(r#""AppBuild" { "AppID" " 480 " "Depots" { "0" "depot.vdf" } }"#),
+            Some(480)
+        );
+        for text in [
+            r#""AppBuild" { "AppID" "0" }"#,
+            r#""AppBuild" { "AppID" "Spacewar" }"#,
+            r#""AppBuild" { "Desc" "no app" }"#,
+            r#""DepotBuild" { "AppID" "480" }"#,
+            "\"AppBuild\" {",
+        ] {
+            assert_eq!(named(text), None, "{text}");
+        }
+        assert_eq!(app_named(&folder.path().join("missing.vdf")), None);
     }
 
     #[test]
