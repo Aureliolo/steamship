@@ -150,8 +150,9 @@ steamship builds --demo --json     # the demo's branches and last builds
 ```
 
 So that neither ever goes up into the other, both the game's upload and the demo's are refused
-while the two scripts name the same app or share a depot. The demo's check and upload are refused
-too while
+while the two scripts name the same app or share a depot. A demo script steamship cannot read,
+such as one kept at an `AppID` of 0 until the demo's app exists, holds back only the demo's
+commands, not the full game's. The demo's check and upload are refused too while
 its snapshot shows an app not typed Demo, or with another base game than the one the game's
 script names. For the demo and the game alike, a depot the script uploads that is not among the
 app's own is refused, and so is a system the app's depots install on that no launch option runs

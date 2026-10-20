@@ -8526,6 +8526,25 @@ fn a_demo_goes_up_as_its_own_app_typed_demo_under_the_full_game_and_never_into_i
     fs::create_dir_all(&demo).unwrap();
     fs::write(
         demo.join("app_build.vdf"),
+        r#""AppBuild" { "AppID" "0" "ContentRoot" "../../export/" "SetLive" "testing" "Depots" { "0" "../depot.vdf" } }"#,
+    )
+    .unwrap();
+    pushed(&root, "A demo whose app is still to be made");
+    let (unmade, placeholder, refusal) = in_game(&root, &["check", "--demo"]);
+    assert_eq!(unmade, Some(2_i32), "{placeholder}{refusal}");
+    assert!(
+        refusal.contains("\"AppID\" is 0, which Steamworks never gives"),
+        "{refusal}"
+    );
+    let (full, shipping, accountless) = in_game(&root, &["upload"]);
+    assert!(
+        shipping.contains("  build     none named in steamship.toml"),
+        "the full game ships: {shipping}{accountless}"
+    );
+    assert_eq!(full, Some(2_i32), "no build account: {accountless}");
+
+    fs::write(
+        demo.join("app_build.vdf"),
         r#""AppBuild" { "AppID" "1000050" "ContentRoot" "../../export/" "SetLive" "testing" "Depots" { "1000051" "../depot.vdf" } }"#,
     )
     .unwrap();

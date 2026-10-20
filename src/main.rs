@@ -384,6 +384,10 @@ fn snapshot_sound(
 
 /// Refuses a game and its demo that share an app or a depot, so that neither's build can go up
 /// into the other's; nothing when the game has no demo.
+///
+/// The full game is shipped whatever is wrong with the demo's script, such as an app ID of 0
+/// held in place until the demo's app exists: steamship cannot upload that script, so it cannot
+/// take the full game's place. The demo's own check and upload refuse it.
 fn apart(game: &Project) -> Result<(), ExitCode> {
     let (full_path, demo_path) = match (&game.full, &game.demo) {
         (Some(full), _) => (full.clone(), game.script.clone()),
@@ -396,7 +400,15 @@ fn apart(game: &Project) -> Result<(), ExitCode> {
             refusals(&problems)
         })
     };
-    let (full, demo) = (load(&full_path)?, load(&demo_path)?);
+    let demo = if game.full.is_some() {
+        load(&demo_path)?
+    } else {
+        match scripts::load(&demo_path) {
+            Ok(demo) => demo,
+            Err(_) => return Ok(()),
+        }
+    };
+    let full = load(&full_path)?;
     let mut wrong = Vec::new();
     if full.app_id == demo.app_id {
         wrong.push(format!(
