@@ -63,7 +63,8 @@ steamship check steam/app_build.vdf
 - a Windows program or library importing a DLL that neither Windows 10 and later, a depot that
   installs on Windows, nor any Steamworks Common Redistributable has;
 - one importing a DLL that only a Common Redistributable installs, such as `VCRUNTIME140.dll` or
-  `XINPUT1_3.dll`, when the app does not tick it in Steamworks (Installation, Redistributables);
+  `XINPUT1_3.dll`, when the app does not tick it in Steamworks (Installation, Redistributables),
+  or delay-loading one, which the program looks for when it first calls into it;
 - a .NET program whose `runtimeconfig.json` names a runtime to be installed apart from it, which
   neither Windows nor a Common Redistributable installs.
 
@@ -74,7 +75,17 @@ Which redistributables the app ticks, and which depots install on Windows, `chec
 settings snapshot beside the script (see [settings in Steamworks](#settings-in-steamworks)).
 Without one it names each DLL a redistributable would install and says it was not checked;
 `upload` asks Steam. A DLL an `InstallScript` of the build may install is named rather than
-refused.
+refused, and so is one delay-loaded that nothing installs, since a program delay-loads a DLL such
+as a graphics driver's to run where it is missing.
+
+A build's folder can be checked on its own as soon as it is built, before any script maps it, as
+a build tool does after exporting each platform. The files in it, and in every folder in it, are
+checked as a depot's are; in a game's folder, its Windows files are judged against the
+redistributables the game's settings snapshot ticks.
+
+```sh
+steamship check export/windows
+```
 
 Before the build exists, as in a checkout where only CI builds the game, `--scripts-only` checks
 the scripts alone: everything above except what needs the content, which it says was not

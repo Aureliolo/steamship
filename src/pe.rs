@@ -1,8 +1,9 @@
 //! Just enough of the PE format to list the DLLs a Windows program or library imports.
 //!
-//! Windows has to find every one of them before the file runs, in Windows itself or beside the
-//! file. Only the import table is read: a DLL loaded later, delayed or by name, is one the file
-//! can start without.
+//! Windows has to find every DLL of the import table before the file runs, in Windows itself or
+//! beside the file. One of the delay-load table is looked for when the file first calls into it,
+//! so the file starts without it and fails only then, unless it is written to do without. A DLL
+//! loaded by name is in neither table, and is one the file has to find for itself.
 
 use std::io::{self, Read, Seek, SeekFrom};
 
@@ -14,20 +15,51 @@ const PE32_PLUS: u16 = 0x20B;
 /// 16 data directories.
 const HEADERS: u64 = 264;
 const SECTION: u8 = 40;
-const DESCRIPTOR: u64 = 20;
 /// Far more DLLs than any file imports, so that a table with no end is not read for ever.
 const DESCRIPTOR_LIMIT: usize = 4096;
 /// A DLL's name is a file's, which no path on Windows is longer than.
 const NAME_LIMIT: u64 = 260;
 
-/// The DLLs `file` imports, spelt as it names them, or `None` when it is not a Windows program or
-/// library.
+/// The DLLs a Windows program or library names, each spelt as it names it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Imports {
+    /// Those Windows loads before the file runs.
+    pub loaded: Vec<String>,
+    /// Those Windows loads when the file first calls into one.
+    pub delayed: Vec<String>,
+}
+
+/// One of the two tables of the DLLs a file imports.
+struct Table {
+    /// Its entry's place among the data directories.
+    directory: u8,
+    /// How long each of its entries is, and where in one the DLL's name is.
+    descriptor: u8,
+    name_at: usize,
+    called: &'static str,
+}
+
+const LOADED: Table = Table {
+    directory: 1,
+    descriptor: 20,
+    name_at: 12,
+    called: "import table",
+};
+
+const DELAYED: Table = Table {
+    directory: 13,
+    descriptor: 32,
+    name_at: 4,
+    called: "delay-load table",
+};
+
+/// The DLLs `file` imports, or `None` when it is not a Windows program or library.
 ///
 /// # Errors
 ///
 /// When reading fails, or, as `InvalidData`, when the file says it is a Windows program or library
-/// but its import table cannot be read.
-pub fn imports<File>(file: &mut File) -> io::Result<Option<Vec<String>>>
+/// but a table of its imports cannot be read.
+pub fn imports<File>(file: &mut File) -> io::Result<Option<Imports>>
 where
     File: Read + Seek,
 {
@@ -50,23 +82,39 @@ where
     ) else {
         return Err(invalid("its headers are cut short"));
     };
-    // From the signature: where the count of data directories is, where the import table's entry
-    // is, and how long the optional header has to be to hold that entry.
-    let (count_at, entry_at, needed) = match kind {
-        PE32 => (116, 128, 112),
-        PE32_PLUS => (132, 144, 128),
+    // From the signature: where the count of data directories is, where they start, and where a
+    // 32-bit file says the address it is loaded at, which Visual C++ 6 wrote into the delay-load
+    // table's addresses.
+    let (count_at, directories, base) = match kind {
+        PE32 => (116, 120, u32_at(&headers, 52)),
+        PE32_PLUS => (132, 136, Some(0)),
         _ => {
             return Err(invalid(
                 "its optional header is of a kind Windows does not load",
             ));
         }
     };
-    let (Some(count), Some(table)) = (u32_at(&headers, count_at), u32_at(&headers, entry_at))
-    else {
+    let (Some(count), Some(base)) = (u32_at(&headers, count_at), base) else {
         return Err(invalid("its optional header is cut short"));
     };
-    if count < 2 || optional < needed || table == 0 {
-        return Ok(Some(Vec::new()));
+    // A table's address, or `None` when the optional header holds no entry for it or the entry is
+    // empty.
+    let entry = |table: &Table| {
+        let entry_at = usize::from(table.directory)
+            .saturating_mul(8)
+            .saturating_add(directories);
+        if count <= u32::from(table.directory)
+            || usize::from(optional).saturating_add(24) < entry_at.saturating_add(8)
+        {
+            return Ok(None);
+        }
+        u32_at(&headers, entry_at)
+            .map(|address| (address != 0).then_some(address))
+            .ok_or_else(|| invalid("its optional header is cut short"))
+    };
+    let tables = [(&LOADED, entry(&LOADED)?), (&DELAYED, entry(&DELAYED)?)];
+    if tables.iter().all(|(_, address)| address.is_none()) {
+        return Ok(Some(Imports::default()));
     }
     let sections_at = u64::from(at)
         .saturating_add(24)
@@ -80,28 +128,64 @@ where
     if found.len() < usize::from(sections) {
         return Err(invalid("its section table is cut short"));
     }
-    let offset = |address: u32| {
-        found
+    let mut imports = Imports::default();
+    for (table, address) in tables {
+        let Some(address) = address else {
+            continue;
+        };
+        let names = named(file, &found, table, address, base)?;
+        if table.directory == DELAYED.directory {
+            imports.delayed = names;
+        } else {
+            imports.loaded = names;
+        }
+    }
+    Ok(Some(imports))
+}
+
+/// The DLLs `table`, at `address`, names. A 32-bit file's delay-load entry whose first bit is
+/// clear gives addresses in memory, from `base`, as Visual C++ 6 wrote them.
+fn named<File>(
+    file: &mut File,
+    sections: &[Section],
+    table: &Table,
+    address: u32,
+    base: u32,
+) -> io::Result<Vec<String>>
+where
+    File: Read + Seek,
+{
+    let outside = || invalid(&format!("its {} points outside its sections", table.called));
+    let offset = |into: u32| {
+        sections
             .iter()
-            .find_map(|section| section.offset(address))
-            .ok_or_else(|| invalid("its import table points outside its sections"))
+            .find_map(|section| section.offset(into))
+            .ok_or_else(outside)
     };
-    let _: u64 = file.seek(SeekFrom::Start(offset(table)?))?;
+    let _: u64 = file.seek(SeekFrom::Start(offset(address)?))?;
     let mut names = Vec::new();
     loop {
-        let descriptor = read_up_to(file, DESCRIPTOR)?;
-        let Some(name) = u32_at(&descriptor, 12).filter(|_| descriptor.len() == 20) else {
-            return Err(invalid("its import table is cut short"));
+        let descriptor = read_up_to(file, table.descriptor.into())?;
+        let Some(name) = u32_at(&descriptor, table.name_at)
+            .filter(|_| descriptor.len() == usize::from(table.descriptor))
+        else {
+            return Err(invalid(&format!("its {} is cut short", table.called)));
         };
         if name == 0 {
             break;
         }
         if names.len() == DESCRIPTOR_LIMIT {
-            return Err(invalid("its import table has no end"));
+            return Err(invalid(&format!("its {} has no end", table.called)));
         }
-        names.push(name);
+        let in_memory = table.directory == DELAYED.directory
+            && u32_at(&descriptor, 0).is_some_and(|attributes| attributes & 1 == 0);
+        names.push(if in_memory {
+            name.checked_sub(base).ok_or_else(outside)?
+        } else {
+            name
+        });
     }
-    let mut imports = Vec::with_capacity(names.len());
+    let mut dlls = Vec::with_capacity(names.len());
     for name in names {
         let _: u64 = file.seek(SeekFrom::Start(offset(name)?))?;
         let mut bytes = read_up_to(file, NAME_LIMIT)?;
@@ -109,9 +193,9 @@ where
             return Err(invalid("it names a DLL without ending the name"));
         };
         bytes.truncate(end);
-        imports.push(String::from_utf8_lossy(&bytes).into_owned());
+        dlls.push(String::from_utf8_lossy(&bytes).into_owned());
     }
-    Ok(Some(imports))
+    Ok(dlls)
 }
 
 /// Where a section's bytes are, in memory and in the file.
@@ -231,7 +315,43 @@ mod tests {
     }
 
     fn read(bytes: Vec<u8>) -> Option<Vec<String>> {
-        imports(&mut Cursor::new(bytes)).unwrap()
+        imports(&mut Cursor::new(bytes))
+            .unwrap()
+            .map(|found| found.loaded)
+    }
+
+    /// Where the delay-load table starts in the file, and in memory, past the import table.
+    const DELAY_TABLE: usize = 0x0A00;
+    const DELAY_ADDRESS: u32 = 0x1800;
+
+    /// `bytes`, a file `pe` made with the optional header `kind`, with a delay-load table naming
+    /// `dlls` and each entry's first bit as `attributes` says, its addresses given from `base`.
+    fn delaying(bytes: Vec<u8>, kind: u16, dlls: &[&str], attributes: u32, base: u32) -> Vec<u8> {
+        let entry_at = if kind == PE32 { 64 + 224 } else { 64 + 240 };
+        let mut bytes = altered(bytes, entry_at, &DELAY_ADDRESS.to_le_bytes());
+        let descriptors = dlls.len().checked_add(1).unwrap().checked_mul(32).unwrap();
+        let mut table = Vec::new();
+        let mut names = Vec::new();
+        for dll in dlls {
+            let name = descriptors.checked_add(names.len()).unwrap();
+            let address = DELAY_ADDRESS
+                .checked_add(u32::try_from(name).unwrap())
+                .and_then(|address| address.checked_add(base))
+                .unwrap();
+            table.extend_from_slice(&attributes.to_le_bytes());
+            table.extend_from_slice(&address.to_le_bytes());
+            table.extend_from_slice(&[0; 24]);
+            names.extend_from_slice(dll.as_bytes());
+            names.push(0);
+        }
+        table.extend_from_slice(&[0; 32]);
+        table.extend(names);
+        put(&mut bytes, DELAY_TABLE, &table);
+        bytes
+    }
+
+    fn delayed(bytes: Vec<u8>) -> Imports {
+        imports(&mut Cursor::new(bytes)).unwrap().unwrap()
     }
 
     fn refused(bytes: Vec<u8>) -> String {
@@ -264,6 +384,98 @@ mod tests {
         assert_eq!(
             read(pe(PE32, 224, 16, &["msvcrt.dll"])),
             Some(vec!["msvcrt.dll".to_owned()])
+        );
+    }
+
+    #[test]
+    fn the_dlls_a_file_delay_loads_are_listed_apart_from_those_it_imports() {
+        let both = delaying(
+            pe64(&["KERNEL32.dll"]),
+            PE32_PLUS,
+            &["VCRUNTIME140.dll", "nvapi64.dll"],
+            1,
+            0,
+        );
+        assert_eq!(
+            delayed(both),
+            Imports {
+                loaded: vec!["KERNEL32.dll".to_owned()],
+                delayed: vec!["VCRUNTIME140.dll".to_owned(), "nvapi64.dll".to_owned()],
+            }
+        );
+        let alone = altered(
+            delaying(pe64(&["KERNEL32.dll"]), PE32_PLUS, &["d3d12.dll"], 1, 0),
+            208,
+            &0_u32.to_le_bytes(),
+        );
+        assert_eq!(
+            delayed(alone),
+            Imports {
+                loaded: Vec::new(),
+                delayed: vec!["d3d12.dll".to_owned()],
+            },
+            "a delay-load table with no import table"
+        );
+    }
+
+    #[test]
+    fn a_32_bit_file_s_delay_loads_are_read_from_either_kind_of_address() {
+        let file = |attributes: u32, base: u32| {
+            let bytes = altered(
+                pe(PE32, 224, 16, &["msvcrt.dll"]),
+                116,
+                &0x0040_0000_u32.to_le_bytes(),
+            );
+            delaying(bytes, PE32, &["xinput1_4.dll"], attributes, base)
+        };
+        let xinput = vec!["xinput1_4.dll".to_owned()];
+        assert_eq!(delayed(file(1, 0)).delayed, xinput, "from the base");
+        assert_eq!(
+            delayed(file(0, 0x0040_0000)).delayed,
+            xinput,
+            "in memory, as Visual C++ 6 wrote them"
+        );
+        assert_eq!(
+            refused(file(0, 0)),
+            "its delay-load table points outside its sections",
+            "an address in memory below the base"
+        );
+    }
+
+    #[test]
+    fn a_delay_load_table_is_read_only_where_the_optional_header_holds_its_entry() {
+        let file = |optional: u16, count: u32| {
+            delaying(
+                pe(PE32_PLUS, optional, count, &["user32.dll"]),
+                PE32_PLUS,
+                &["d3d12.dll"],
+                1,
+                0,
+            )
+        };
+        let d3d12 = vec!["d3d12.dll".to_owned()];
+        assert_eq!(delayed(file(224, 14)).delayed, d3d12, "just held");
+        assert_eq!(delayed(file(223, 16)).delayed, Vec::<String>::new());
+        assert_eq!(delayed(file(240, 13)).delayed, Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_delay_load_table_that_cannot_be_read_is_refused() {
+        let file = || delaying(pe64(&["user32.dll"]), PE32_PLUS, &["d3d12.dll"], 1, 0);
+        let mut cut = file();
+        cut.truncate(DELAY_TABLE + 40);
+        assert_eq!(refused(cut), "its delay-load table is cut short");
+        assert_eq!(
+            refused(altered(file(), 304, &(ADDRESS + LENGTH).to_le_bytes())),
+            "its delay-load table points outside its sections"
+        );
+        let mut unended = file();
+        let _last: Option<u8> = unended.pop();
+        assert_eq!(refused(unended), "it names a DLL without ending the name");
+        let many = vec!["a.dll"; 4097];
+        assert_eq!(
+            refused(delaying(pe64(&[]), PE32_PLUS, &many, 1, 0)),
+            "its delay-load table has no end"
         );
     }
 

@@ -44,6 +44,48 @@ pub fn windows_library(dlls: &[&str]) -> Vec<u8> {
     bytes
 }
 
+/// A 64-bit Windows library importing `dlls` as [`windows_library`] does, and delay-loading
+/// `delayed`, whose table is further into the same section.
+///
+/// # Panics
+///
+/// When the names are too many or too long for the section.
+#[must_use]
+pub fn windows_library_delaying(dlls: &[&str], delayed: &[&str]) -> Vec<u8> {
+    let mut bytes = windows_library(dlls);
+    assert!(
+        bytes.len() <= 0xA00,
+        "the import table runs into the delay-load table"
+    );
+    drop(bytes.splice(304..308, 0x1800_u32.to_le_bytes()));
+    bytes.resize(0xA00, 0);
+    let descriptors = delayed
+        .len()
+        .checked_add(1)
+        .unwrap()
+        .checked_mul(32)
+        .unwrap();
+    let mut names = Vec::new();
+    for dll in delayed {
+        let name = descriptors.checked_add(names.len()).unwrap();
+        let address = 0x1800_u32
+            .checked_add(u32::try_from(name).unwrap())
+            .unwrap();
+        bytes.extend_from_slice(&1_u32.to_le_bytes());
+        bytes.extend_from_slice(&address.to_le_bytes());
+        bytes.extend_from_slice(&[0; 24]);
+        names.extend_from_slice(dll.as_bytes());
+        names.push(0);
+    }
+    bytes.extend_from_slice(&[0; 32]);
+    bytes.extend(names);
+    assert!(
+        bytes.len() <= 0x1200,
+        "the delay-load table runs out of the section"
+    );
+    bytes
+}
+
 /// A redistributable an app ticks, depot `DEPOT` of app 228980, among the app's depots.
 const TICKED: &str = "\t\t\"DEPOT\"\n\t\t{\n\t\t\t\"config\"\n\t\t\t{\n\t\t\t\t\"oslist\"\t\t\
                       \"windows\"\n\t\t\t}\n\t\t\t\"depotfromapp\"\t\t\"228980\"\n\t\t\t\
