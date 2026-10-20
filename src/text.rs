@@ -621,6 +621,8 @@ msgstr "Die Heckenhexe"
             r#"[
                 {"type": "caster", "id": "base:hedge", "name": "The Hedge Witch"},
                 {"type": "caster", "id": "base:nameless"},
+                {"type": "caster", "id": "base:blank", "name": ""},
+                {"type": "caster", "name": "No ID"},
                 {"type": "note", "id": "base:c", "name": "C"}
             ]"#,
         )

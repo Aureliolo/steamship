@@ -7436,6 +7436,11 @@ fn a_game_writes_its_text_in_every_language_and_then_finds_it_unchanged() {
     )
     .unwrap();
     fs::write(steam.join("rich_presence_french.vdf"), "left over").unwrap();
+    fs::write(
+        steam.join("store_english.json"),
+        r#"{"blocks": [{"kind": "short", "text": "An inn."}]}"#,
+    )
+    .unwrap();
 
     let (untranslated, _, refusals) = in_game(&root, &["text"]);
     assert_eq!(untranslated, Some(2_i32), "{refusals}");
@@ -7469,14 +7474,27 @@ fn a_game_writes_its_text_in_every_language_and_then_finds_it_unchanged() {
 
     let (code, wrote, why) = in_game(&root, &["text"]);
     assert_eq!(code, Some(0_i32), "{why}");
+    let told = format!("{wrote}{why}");
     for line in [
         "  wrote     rich_presence_german.vdf\n",
         "  wrote     workshop/german.json\n",
         "  removed   rich_presence_french.vdf\n",
-        "  next      steamship rich-presence sends the rich presence files\n",
+        " holds the 3 files of the game's text in 2 languages\n",
+        "store_english.json names no itemid, the store page's own, so no store upload is written",
     ] {
-        assert!(wrote.contains(line), "{line:?} in {wrote}");
+        assert!(told.contains(line), "{line:?} in {told}");
     }
+    assert_eq!(
+        wrote
+            .lines()
+            .filter(|line| line.starts_with("  next"))
+            .collect::<Vec<_>>(),
+        [
+            "  next      enter each file in workshop on the Workshop's Steamworks page, one \
+             language to a save",
+            "  next      steamship rich-presence sends the rich presence files",
+        ]
+    );
     assert_eq!(
         fs::read_to_string(steam.join("rich_presence_german.vdf")).unwrap(),
         "\"lang\"\n{\n\t\"Language\"\t\t\"german\"\n\t\"Tokens\"\n\t{\n\
@@ -7500,6 +7518,24 @@ fn a_game_writes_its_text_in_every_language_and_then_finds_it_unchanged() {
         unchanged.contains("are as the files make them"),
         "{unchanged}"
     );
+}
+
+#[test]
+fn a_game_with_no_english_for_steam_s_text_is_told_so_and_has_nothing_written() {
+    let (_temp, root) = pushed_game(None);
+    fs::remove_file(root.join("steam/rich_presence_english.vdf")).unwrap();
+    let (code, said, why) = in_game(&root, &["text"]);
+    assert_eq!(code, Some(0_i32), "{why}");
+    let all = format!("{said}{why}");
+    for line in [
+        "there is no store_english.json, workshop_english.json, presence_english.json or \
+         rich_presence_english.vdf beside the build scripts, so there is no English to write \
+         from",
+        " holds the 0 files of the game's text in 2 languages\n",
+    ] {
+        assert!(all.contains(line), "{line:?} in {all}");
+    }
+    assert!(!all.contains("  next"), "{all}");
 }
 
 #[test]
