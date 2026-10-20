@@ -691,7 +691,7 @@ fn names(id: &str, named: &str) -> bool {
     reason = "a stat that counts in whole steps holds whole numbers, which an f64 adds exactly"
 )]
 fn first_step(default: f64, at: f64) -> bool {
-    (at - default - 1.0_f64).abs() < f64::EPSILON
+    (at - default).total_cmp(&1.0_f64).is_eq()
 }
 
 /// Makes each achievement's set and progress stat in `whole` their IDs on Steam, refusing what
