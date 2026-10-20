@@ -7521,6 +7521,71 @@ fn a_game_writes_its_text_in_every_language_and_then_finds_it_unchanged() {
 }
 
 #[test]
+fn a_game_s_rich_presence_names_each_of_its_records_of_a_type_in_every_language() {
+    let (_temp, root) = pushed_game(None);
+    fs::write(
+        root.join("steam/presence_english.json"),
+        r##"{"#Status": "{#Caster_%caster%} plays", "#Caster_": {"records": "caster"}}"##,
+    )
+    .unwrap();
+    fs::write(
+        root.join("mods/base/data/casters.json"),
+        r#"[{"type": "caster", "id": "base:hedge", "name": "The Hedge Witch"}]"#,
+    )
+    .unwrap();
+    let locale = root.join("game/locale/de.po");
+    let mut german = fs::read_to_string(&locale).unwrap();
+    german.push_str(
+        "\nmsgctxt \"rich presence\"\nmsgid \"{#Caster_{caster}} plays\"\n\
+         msgstr \"{#Caster_{caster}} spielt\"\n\n\
+         msgctxt \"caster.name\"\nmsgid \"base:hedge\"\nmsgstr \"Die Heckenhexe\"\n",
+    );
+    fs::write(&locale, german).unwrap();
+    let (code, said, why) = in_game(&root, &["text"]);
+    assert_eq!(code, Some(0_i32), "{why}");
+    assert!(
+        said.contains("  wrote     rich_presence_english.vdf\n"),
+        "{said}"
+    );
+    assert!(
+        fs::read_to_string(root.join("steam/rich_presence_english.vdf"))
+            .unwrap()
+            .contains("\t\t\"#Caster_hedge\"\t\t\"The Hedge Witch\"\n")
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("steam/rich_presence_german.vdf")).unwrap(),
+        "\"lang\"\n{\n\t\"Language\"\t\t\"german\"\n\t\"Tokens\"\n\t{\n\
+         \t\t\"#Caster_hedge\"\t\t\"Die Heckenhexe\"\n\
+         \t\t\"#Status\"\t\t\"{#Caster_%caster%} spielt\"\n\t}\n}\n"
+    );
+
+    fs::write(root.join("mods/base/data/casters.json"), "[").unwrap();
+    let (unread, _, refusal) = in_game(&root, &["text"]);
+    assert_eq!(unread, Some(2_i32));
+    assert!(refusal.contains("casters.json: "), "{refusal}");
+}
+
+#[test]
+fn a_file_of_steam_s_text_that_cannot_be_read_is_named() {
+    let (_temp, root) = pushed_game(None);
+    fs::create_dir_all(root.join("steam/workshop_english.json")).unwrap();
+    let (code, _, why) = in_game(&root, &["text"]);
+    assert_eq!(code, Some(1_i32), "{why}");
+    assert!(why.contains("workshop_english.json: "), "{why}");
+
+    fs::remove_dir(root.join("steam/workshop_english.json")).unwrap();
+    fs::remove_file(root.join("steam/rich_presence_english.vdf")).unwrap();
+    fs::write(
+        root.join("steam/store"),
+        "a file where the store's folder goes",
+    )
+    .unwrap();
+    let (kept, _, refusal) = in_game(&root, &["text"]);
+    assert_eq!(kept, Some(1_i32), "{refusal}");
+    assert!(refusal.contains("store: "), "{refusal}");
+}
+
+#[test]
 fn a_game_with_no_english_for_steam_s_text_is_told_so_and_has_nothing_written() {
     let (_temp, root) = pushed_game(None);
     fs::remove_file(root.join("steam/rich_presence_english.vdf")).unwrap();
