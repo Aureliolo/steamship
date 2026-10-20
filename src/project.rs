@@ -348,6 +348,19 @@ impl Project {
     ///
     /// When `steamship.toml` names records that are not there.
     pub fn records(&self, kind: Records) -> Result<Vec<PathBuf>, String> {
+        Ok(self
+            .record_files()?
+            .into_iter()
+            .filter(|file| holds(file, kind))
+            .collect())
+    }
+
+    /// Every record file: each JSON file in a records folder, and each file named.
+    ///
+    /// # Errors
+    ///
+    /// When `steamship.toml` names records that are not there.
+    pub fn record_files(&self) -> Result<Vec<PathBuf>, String> {
         let mut found = Vec::new();
         for given in &self.records {
             let files = if given.path.is_dir() {
@@ -363,7 +376,7 @@ impl Project {
             } else {
                 Vec::new()
             };
-            found.extend(files.into_iter().filter(|file| holds(file, kind)));
+            found.extend(files);
         }
         Ok(found)
     }
