@@ -28,8 +28,8 @@ use steamship::update::{self, Installed};
 use steamship::windows::Terminal;
 use steamship::{
     achievements, assets, check, ci, conversation, download, drm, dump, editor, init, keychain,
-    leaderboards, likeness, magic, picture, po, presence, redist, release, run, scripts, settings,
-    steamcmd, storefront, text, upload, vdf, webapi, workshop,
+    leaderboards, likeness, magic, picture, po, presence, presets, redist, release, run, scripts,
+    settings, steamcmd, storefront, text, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -70,14 +70,10 @@ fn run(command: Command) -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Check {
-            script: Some(folder),
+            script,
             scripts_only,
-        } if folder.is_dir() => run_check_folder(&folder, scripts_only),
-        Command::Check {
-            script: Some(script),
-            scripts_only,
-        } => run_check(&script, scripts_only),
-        Command::Check { script: None, .. } => either(try_game_check()),
+            demo,
+        } => check_in(script.as_deref(), scripts_only, demo),
         Command::Assets { folder } => run_assets(&folder),
         Command::Ci {
             script,
@@ -98,9 +94,12 @@ fn run(command: Command) -> ExitCode {
             depots,
             folder,
         } => run_init(app, depots, &folder),
-        Command::Builds { app, count, json } => {
-            either(app_or_game(app).and_then(|app| try_builds(&app, count, json)))
-        }
+        Command::Builds {
+            app,
+            demo,
+            count,
+            json,
+        } => either(app_or_game(app, demo).and_then(|app| try_builds(&app, count, json))),
         Command::Achievements {
             app,
             check,
@@ -122,11 +121,13 @@ fn run(command: Command) -> ExitCode {
         )),
         Command::Settings {
             app,
+            demo,
             save,
             check,
             account,
         } => either(settings_in(
             app,
+            demo,
             save.map(Snapshot::given),
             check.map(Snapshot::given),
             named(account.as_deref()),
@@ -134,9 +135,10 @@ fn run(command: Command) -> ExitCode {
         Command::Leaderboards { app, check, create } => either(leaderboards_in(app, check, create)),
         Command::RichPresence {
             app,
+            demo,
             files,
             preview,
-        } => either(rich_presence_in(app, files, preview)),
+        } => either(rich_presence_in(app, demo, files, preview)),
         Command::Text { steam: true, .. } => either(try_text_on_steam()),
         Command::Text { unchanged, .. } => either(try_text(unchanged)),
         Command::Promote(request) => either(promote_in(request)),
@@ -162,6 +164,16 @@ fn run(command: Command) -> ExitCode {
     }
 }
 
+/// `check` of the build's folder or the script given, or of the game, or its demo, when there is
+/// neither.
+fn check_in(script: Option<&Path>, scripts_only: bool, demo: bool) -> ExitCode {
+    match script {
+        Some(folder) if folder.is_dir() => run_check_folder(folder, scripts_only),
+        Some(script) => run_check(script, scripts_only),
+        None => either(try_game_check(demo)),
+    }
+}
+
 /// `upload` of the script given, or of the game when there is none.
 fn upload_in(request: &cli::Upload) -> ExitCode {
     let shipping = Shipping {
@@ -169,6 +181,7 @@ fn upload_in(request: &cli::Upload) -> ExitCode {
         preview: request.preview,
         account: named(request.account.as_deref()),
         json: request.json,
+        demo: request.demo,
     };
     let default = request.default;
     match (request.script.as_deref(), shipping.version) {
@@ -216,9 +229,20 @@ fn game() -> Result<Project, ExitCode> {
     Ok(found)
 }
 
-/// The app as `app` names it, or else as the game the current folder is in: its build script.
-fn app_or_game(app: Option<String>) -> Result<String, ExitCode> {
-    app.map_or_else(|| game().map(|found| script_named(&found)), Ok)
+/// The game the current folder is in, or with `demo` that game seen as its demo.
+fn game_as(demo: bool) -> Result<Project, ExitCode> {
+    let found = game()?;
+    if demo {
+        found.demo().map_err(|why| fail(&why, REFUSED))
+    } else {
+        Ok(found)
+    }
+}
+
+/// The app as `app` names it, or else as the game the current folder is in, or with `demo` its
+/// demo: its build script.
+fn app_or_game(app: Option<String>, demo: bool) -> Result<String, ExitCode> {
+    app.map_or_else(|| game_as(demo).map(|found| script_named(&found)), Ok)
 }
 
 /// The game's app build script, as an app is named on the command line.
@@ -299,9 +323,17 @@ fn held_to(cores: usize) -> Result<String, ExitCode> {
     }
 }
 
-/// Refuses the game's settings snapshot when its install folder is not letters and digits alone,
-/// and when there is none and one is `needed`.
-fn snapshot_sound(game: &Project, app: u32, needed: bool) -> Result<(), ExitCode> {
+/// Refuses the game's settings snapshot when it shows `script`'s app unfit for it: an install
+/// folder of anything but letters and digits, a depot of the script's not among the app's own, a
+/// system the app's depots install on that no launch option runs on, or, for a demo, an app not
+/// typed Demo with the full game as its base game. Refused too when there is none and one is
+/// `needed`.
+fn snapshot_sound(
+    game: &Project,
+    script: &scripts::AppScript,
+    needed: bool,
+) -> Result<(), ExitCode> {
+    let app = script.app_id;
     let path = game.snapshot();
     if !path.is_file() {
         if needed {
@@ -317,10 +349,135 @@ fn snapshot_sound(game: &Project, app: u32, needed: bool) -> Result<(), ExitCode
         return Ok(());
     }
     let snapshot = settings_file(&path, app)?;
-    if let Some(why) = settings::install_folder(&snapshot) {
-        return Err(fail(&format!("{}: {why}", path.display()), REFUSED));
+    let mut wrong: Vec<String> = settings::install_folder(&snapshot).into_iter().collect();
+    let depots: Vec<u32> = script.depots.iter().map(|depot| depot.depot_id).collect();
+    wrong.extend(settings::foreign(&snapshot, &depots).into_iter().map(|depot| {
+        format!(
+            "{} uploads depot {depot}, which is not among app {app}'s own depots: a depot goes up \
+             in the app it was made under; if it is new, publish it in Steamworks and save the \
+             settings again",
+            game.script.display()
+        )
+    }));
+    wrong.extend(settings::unlaunched(&snapshot).into_iter().map(|system| {
+        format!(
+            "app {app} has a depot for {system}, and no launch option runs on {system}: \
+                     add one under Installation, General Installation in Steamworks, then save \
+                     the settings again"
+        )
+    }));
+    if let Some(full) = &game.full {
+        let full = scripts::load(full).map_err(|problems| {
+            let problems: Vec<String> = problems.iter().map(ToString::to_string).collect();
+            refusals(&problems)
+        })?;
+        wrong.extend(settings::demo_of(&snapshot, app, full.app_id));
     }
-    Ok(())
+    if wrong.is_empty() {
+        return Ok(());
+    }
+    for why in &wrong {
+        show::failure(&format!("{}: {why}", path.display()), "", None);
+    }
+    Err(ExitCode::from(REFUSED))
+}
+
+/// Refuses a game and its demo that share an app or a depot, so that neither's build can go up
+/// into the other's; nothing when the game has no demo.
+///
+/// The full game is shipped whatever is wrong with the demo's script, such as an app ID of 0
+/// held in place until the demo's app exists: steamship cannot upload that script, so it cannot
+/// take the full game's place. The demo's own check and upload refuse it.
+fn apart(game: &Project) -> Result<(), ExitCode> {
+    let (full_path, demo_path) = match (&game.full, &game.demo) {
+        (Some(full), _) => (full.clone(), game.script.clone()),
+        (None, Some(demo)) => (game.script.clone(), demo.script.clone()),
+        (None, None) => return Ok(()),
+    };
+    let load = |path: &Path| {
+        scripts::load(path).map_err(|problems| {
+            let problems: Vec<String> = problems.iter().map(ToString::to_string).collect();
+            refusals(&problems)
+        })
+    };
+    let demo = if game.full.is_some() {
+        load(&demo_path)?
+    } else {
+        match scripts::load(&demo_path) {
+            Ok(demo) => demo,
+            Err(_) => return Ok(()),
+        }
+    };
+    let full = load(&full_path)?;
+    let mut wrong = Vec::new();
+    if full.app_id == demo.app_id {
+        wrong.push(format!(
+            "{} names app {}, the full game's own in {}: a demo is its own app, so put the \
+             demo's ID in it",
+            demo_path.display(),
+            demo.app_id,
+            full_path.display()
+        ));
+    }
+    for depot in &demo.depots {
+        if full
+            .depots
+            .iter()
+            .any(|other| other.depot_id == depot.depot_id)
+        {
+            wrong.push(format!(
+                "depot {} is in both {} and {}: a demo ships depots of its own",
+                depot.depot_id,
+                demo_path.display(),
+                full_path.display()
+            ));
+        }
+    }
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(refusals(&wrong))
+    }
+}
+
+/// Refuses `script`'s depots shipping an export that the game's Godot presets make for the other
+/// of the full game and its demo: one with the demo's feature in the full game's, or one without
+/// it in the demo's.
+fn exports_apart(game: &Project, script: &scripts::AppScript) -> Result<(), ExitCode> {
+    let presets = presets::read(&game.root).map_err(|why| fail(&why, FAILED))?;
+    let demo = game.full.is_some();
+    let mut wrong = Vec::new();
+    for preset in presets
+        .iter()
+        .filter(|preset| preset.features.contains(&game.feature) != demo)
+    {
+        for depot in script
+            .depots
+            .iter()
+            .filter(|depot| check::ships(depot, &preset.export))
+        {
+            let (whose, made) = if demo {
+                ("the demo's", "without")
+            } else {
+                ("the full game's", "with")
+            };
+            wrong.push(format!(
+                "{} ships {} into depot {}, {whose}, and the export preset \"{}\" in {} makes it \
+                 {made} the `{}` feature: map only the folders {whose} presets export to",
+                depot.path.display(),
+                preset.export.display(),
+                depot.depot_id,
+                preset.name,
+                presets::FILE,
+                game.feature
+            ));
+        }
+    }
+    if wrong.is_empty() {
+        Ok(())
+    } else {
+        Err(refusals(&wrong))
+    }
 }
 
 /// The first code of `codes` that is not success, or success.
@@ -343,6 +500,12 @@ fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> {
             .join(", ")
     };
     let mut codes = Vec::new();
+    if game.full.is_some() {
+        let why = "the game's records are the full game's, so the demo's are not compared";
+        unchecked("achievements", why);
+        unchecked("leaderboards", why);
+        return compared_presence(game, app, codes);
+    }
     let achievements = game_achievements(game)?;
     if achievements.is_empty() {
         unchecked(
@@ -377,13 +540,22 @@ fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> {
     } else {
         codes.push(either(try_leaderboards(app, &boards, false)));
     }
-    let presence = game.presence().map_err(refused)?;
+    compared_presence(game, app, codes)
+}
+
+/// The first failure of `codes` and the comparison of the game's rich presence with Steam's.
+fn compared_presence(
+    game: &Project,
+    app: &str,
+    mut codes: Vec<ExitCode>,
+) -> Result<ExitCode, ExitCode> {
+    let presence = game.presence().map_err(|why| fail(&why, REFUSED))?;
     if presence.is_empty() {
         unchecked(
             "rich-presence",
             &format!(
                 "no rich_presence_<language>.vdf beside {}",
-                game.script.display()
+                game.full.as_ref().unwrap_or(&game.script).display()
             ),
         );
     } else {
@@ -401,14 +573,16 @@ fn unchecked(command: &str, why: &str) {
 
 /// `check` in a game: its scripts, then its records and rich presence against Steam's, and its
 /// branches.
-fn try_game_check() -> Result<ExitCode, ExitCode> {
-    let game = game()?;
+fn try_game_check(demo: bool) -> Result<ExitCode, ExitCode> {
+    let game = game_as(demo)?;
     let checked = run_check(&game.script, true);
     if checked != ExitCode::SUCCESS {
         return Ok(checked);
     }
     let script = game_script(&game)?;
-    snapshot_sound(&game, script.app_id, false)?;
+    apart(&game)?;
+    exports_apart(&game, &script)?;
+    snapshot_sound(&game, &script, false)?;
     let app = script_named(&game);
     let compared = compared(&game, &app)?;
     let builds = either(try_builds(&app, 10, false));
@@ -421,6 +595,7 @@ struct Shipping<'command> {
     preview: bool,
     account: Option<&'command str>,
     json: bool,
+    demo: bool,
 }
 
 /// `upload` in a game: the pushed commit, built, checked against Steam, uploaded, and its branch
@@ -429,7 +604,7 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     if shipping.json {
         show::divert();
     }
-    let game = game()?;
+    let game = game_as(shipping.demo)?;
     shipped_from(&game)?;
     let version = match shipping.version {
         Some(version) => version.to_owned(),
@@ -437,7 +612,9 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     };
     show::field("version", &version);
     let script = game_script(&game)?;
-    snapshot_sound(&game, script.app_id, true)?;
+    apart(&game)?;
+    exports_apart(&game, &script)?;
+    snapshot_sound(&game, &script, true)?;
     built(&game)?;
     let app = script_named(&game);
     let snapshot = game.snapshot();
@@ -476,7 +653,12 @@ fn built(game: &Project) -> Result<(), ExitCode> {
         show::field(
             "build",
             &format!(
-                "none named in {}, so the content goes up as it is",
+                "none named {}in {}, so the content goes up as it is",
+                if game.full.is_some() {
+                    "under [demo] "
+                } else {
+                    ""
+                },
                 project::FILE
             ),
         );
@@ -642,19 +824,20 @@ impl Snapshot {
 
 /// `promote` of the app named, or else the game's.
 fn promote_in(mut request: cli::Promote) -> Result<ExitCode, ExitCode> {
-    request.app = Some(app_or_game(request.app.take())?);
+    request.app = Some(app_or_game(request.app.take(), request.demo)?);
     try_promote(&request)
 }
 
 /// `settings` with whatever is not given taken from the game.
 fn settings_in(
     app: Option<String>,
+    demo: bool,
     save: Option<Snapshot>,
     check: Option<Snapshot>,
     account: Option<&str>,
 ) -> Result<ExitCode, ExitCode> {
     let own = matches!(save, Some(Snapshot::Game)) || matches!(check, Some(Snapshot::Game));
-    let game = (app.is_none() || own).then(game).transpose()?;
+    let game = (app.is_none() || own).then(|| game_as(demo)).transpose()?;
     let path = |given: Snapshot| match given {
         Snapshot::File(path) => Some(path),
         Snapshot::Game => game.as_ref().map(Project::snapshot),
@@ -696,10 +879,13 @@ fn leaderboards_in(
 /// only from a pushed tree.
 fn rich_presence_in(
     app: Option<String>,
+    demo: bool,
     mut files: Vec<PathBuf>,
     preview: bool,
 ) -> Result<ExitCode, ExitCode> {
-    let game = (app.is_none() || files.is_empty()).then(game).transpose()?;
+    let game = (app.is_none() || files.is_empty())
+        .then(|| game_as(demo))
+        .transpose()?;
     if let Some(game) = game.as_ref().filter(|_| files.is_empty()) {
         files = game.presence().map_err(|why| fail(&why, REFUSED))?;
         if files.is_empty() {
