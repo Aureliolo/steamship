@@ -18,6 +18,9 @@ Everything a person reads counts: messages, help text, docs, comments, commit me
 - A message says what happened and what to do next, naming the file, app or branch it is about.
 - Never print, log or write in plain text a password, a Steam Guard code, a login token or a Web
   API key, nor anything that holds one.
+- Nothing private goes into the repository or onto its GitHub pages: no name, Steam ID or content
+  of a game that is not public, no private repository's name, and no local path, machine or
+  account. Fixtures and examples use sample names and IDs, such as Spacewar's 480.
 
 ## Code
 

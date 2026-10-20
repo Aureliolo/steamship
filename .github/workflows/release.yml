@@ -161,10 +161,14 @@ jobs:
               '## Changes' \
               ''
             if [[ -n "${previous}" ]]; then
-              gh api "repos/${GH_REPO}/compare/${previous}...${GITHUB_REF_NAME}" \
-                --jq '.commits[].commit.message | split("\n")[0]
-                  | select(test("^(Release v[0-9]|Package v[0-9].* for Homebrew and Scoop)") | not)
-                  | "- " + .'
+              # Counted from when the last release's commit reached main, not by comparing tags,
+              # so the notes hold whether or not that tag is an ancestor of this one.
+              since="$(gh api "repos/${GH_REPO}/commits/${previous}" --jq '.commit.committer.date')"
+              gh api --paginate "repos/${GH_REPO}/commits?sha=${GITHUB_REF_NAME}&since=${since}&per_page=100" \
+                --jq '.[].commit.message | split("\n")[0]' \
+                | tac \
+                | { grep -Ev '^(Release v[0-9]|Package v[0-9].* for Homebrew and Scoop)' || true; } \
+                | sed 's/^/- /'
             else
               echo '- The first release.'
             fi
