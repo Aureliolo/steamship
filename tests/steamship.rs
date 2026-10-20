@@ -34,6 +34,7 @@ use steamship::keychain;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
 use steamship::run;
+use steamship::scripts::Problem;
 use steamship::terminal::{Event, Reader};
 #[cfg(unix)]
 use steamship::unix::Terminal;
@@ -3951,6 +3952,85 @@ fn check_reads_which_redistributables_the_app_ticks_from_the_snapshot_beside_the
     let (unreadable, _, broken) = checked("\"1000\" {");
     assert_eq!(unreadable, Some(2_i32), "{broken}");
     assert!(broken.contains("settings.vdf: "), "{broken}");
+}
+
+/// `steamship check` on the build folder of a game whose `game.dll` needs Visual C++ and whose
+/// snapshot is `snapshot`, run in `folder`, or else in the game's own; with the folder's path.
+fn folder_checked(
+    snapshot: &str,
+    folder: Option<&Path>,
+    extra: &[&str],
+) -> ((Option<i32>, String, String), PathBuf) {
+    let home = tempfile::tempdir().unwrap();
+    let (_project, script) = shipping_dll(&["kernel32.dll", "vcruntime140.dll"], Some(snapshot));
+    let root = script.parent().unwrap().parent().unwrap().to_path_buf();
+    let content = root.join("content");
+    let mut args = vec!["check", content.to_str().unwrap()];
+    args.extend(extra);
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let ran = steamship_in(folder.unwrap_or(&root), &args, Some(home.path()), &quiet);
+    (ran, content)
+}
+
+#[test]
+fn check_takes_a_build_s_folder_alone_naming_what_a_redistributable_installs() {
+    let elsewhere = tempfile::tempdir().unwrap();
+    let ((code, said, why), content) =
+        folder_checked(&settings_ticking(&[]), Some(elsewhere.path()), &[]);
+    assert_eq!(code, Some(0_i32), "{why}");
+    assert_eq!(
+        said,
+        format!(
+            "steamship check\n  \
+             folder    {}\n  \
+             build     \u{2713} 2 files, 1 for Windows, checked\n  \
+             redist    1 DLL, not checked\n    \
+             {}\n    \
+             upload asks Steam which redistributables the app ticks, and check reads them from \
+             a settings snapshot beside the script\n  \
+             \u{2713} nothing refused\n",
+            content.display(),
+            Problem::new(
+                &content.join("game.dll"),
+                "imports vcruntime140.dll, which VC 2015 Redist, VC 2017 Redist, VC 2019 Redist \
+                 or VC 2022 Redist installs"
+            ),
+        ),
+        "outside a game, which redistributables are ticked is not known"
+    );
+    let ((scripts, _, refusal), folder) = folder_checked(
+        &settings_ticking(&[]),
+        Some(elsewhere.path()),
+        &["--scripts-only"],
+    );
+    assert_eq!(scripts, Some(2_i32));
+    assert!(
+        refusal.contains(&format!(
+            "{} is a build's folder, which holds no scripts; give --scripts-only the app build \
+             script",
+            folder.display()
+        )),
+        "{refusal}"
+    );
+}
+
+#[test]
+fn check_judges_a_build_s_folder_in_a_game_by_the_redistributables_its_snapshot_ticks() {
+    let ((refused, _, why), _) = folder_checked(&settings_ticking(&[]), None, &[]);
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert!(
+        why.contains(&format!(
+            "{NEEDS_VC}, and app 1000 ticks none in Steamworks; tick one under Installation, \
+             Redistributables, ship the DLL in a depot, or link its library in statically"
+        )),
+        "{why}"
+    );
+    let ((passed, said, _), _) = folder_checked(&settings_ticking(&["228989"]), None, &[]);
+    assert_eq!(passed, Some(0_i32), "{said}");
+    assert!(
+        said.contains("  redist    \u{2713} VC 2022 Redist, ticked in Steamworks\n"),
+        "{said}"
+    );
 }
 
 #[test]

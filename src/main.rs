@@ -70,6 +70,10 @@ fn run(command: Command) -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Check {
+            script: Some(folder),
+            scripts_only,
+        } if folder.is_dir() => run_check_folder(&folder, scripts_only),
+        Command::Check {
             script: Some(script),
             scripts_only,
         } => run_check(&script, scripts_only),
@@ -2177,6 +2181,71 @@ fn run_check(script: &Path, scripts_only: bool) -> ExitCode {
         }
         Err(code) => code,
     }
+}
+
+fn run_check_folder(folder: &Path, scripts_only: bool) -> ExitCode {
+    show::title("check");
+    show::field("folder", &folder.display().to_string());
+    either(try_check_folder(folder, scripts_only))
+}
+
+/// Checks the build in `folder` on its own, as soon as it is built. In a game's folder its
+/// Windows files are judged against the redistributables its settings snapshot ticks.
+fn try_check_folder(folder: &Path, scripts_only: bool) -> Result<ExitCode, ExitCode> {
+    if scripts_only {
+        return Err(fail(
+            &format!(
+                "{} is a build's folder, which holds no scripts; give --scripts-only the app \
+                 build script",
+                folder.display()
+            ),
+            REFUSED,
+        ));
+    }
+    let here = env::current_dir()
+        .map_err(|error| fail(&format!("the current folder: {error}"), FAILED))?;
+    let (app, snapshot) = match Project::find(&here).map_err(|why| fail(&why, REFUSED))? {
+        Some(game) => {
+            game.pinned(env!("CARGO_PKG_VERSION"))
+                .map_err(|why| fail(&why, REFUSED))?;
+            let script = game_script(&game)?;
+            let path = game.snapshot();
+            let snapshot = if path.is_file() {
+                Some(settings_file(&path, script.app_id)?)
+            } else {
+                None
+            };
+            (Some(script.app_id), snapshot)
+        }
+        None => (None, None),
+    };
+    let report = check::folder(folder, app);
+    if !report.problems.is_empty() {
+        for problem in &report.problems {
+            show::failure("refused", &problem.to_string(), None);
+        }
+        return Err(ExitCode::from(REFUSED));
+    }
+    for build in &report.depots {
+        let symbols = match build.debug_symbols {
+            0 => String::new(),
+            count => format!(", {count} of them debug symbols"),
+        };
+        show::done(
+            "build",
+            &format!(
+                "{}{symbols}, {} for Windows, checked",
+                show::counted(build.files.len(), "file"),
+                build.windows.len()
+            ),
+        );
+    }
+    redistributables_shown(
+        &redist::judged(&report, snapshot.as_ref()),
+        snapshot.is_none(),
+    )?;
+    show::success("nothing refused", "");
+    Ok(ExitCode::SUCCESS)
 }
 
 /// The key set in `STEAMSHIP_WEB_API_KEY`, where an empty one is none, as for the account.

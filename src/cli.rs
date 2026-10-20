@@ -110,8 +110,14 @@ pub enum Command {
     /// then, as Steam shows them, its achievements, leaderboards, rich presence and branches,
     /// naming every difference from the game's files; the content is checked by `upload`, once
     /// it is built.
+    ///
+    /// Given a build's folder, checks the files in it alone, as soon as it is built and before
+    /// any script maps it: among them every DLL its Windows programs and libraries load, at the
+    /// start or when first called, that neither Windows nor the folder has. In a game's folder,
+    /// one a Common Redistributable installs is refused unless the settings snapshot ticks it.
     Check {
-        /// The app build script, such as `steam/app_build.vdf`; in a game's folder, its own.
+        /// The app build script, such as `steam/app_build.vdf`, or a build's folder, such as
+        /// `export/windows`; in a game's folder, its own script.
         script: Option<PathBuf>,
         /// Check the scripts alone, not the content they map, as before the build exists;
         /// `upload` still checks both.
