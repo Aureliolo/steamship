@@ -115,3 +115,55 @@ Each command run in a game takes from it whatever is not given:
 - `steamship achievements` alone lists the game's achievements and stats on Steam, with the
   share of players who have each achievement and each aggregated stat's total.
 - `steamship builds` and `steamship promote` take the game's app.
+- `steamship check export/windows` checks a build's folder as soon as it is built, judging its
+  Windows files against the redistributables the snapshot ticks.
+
+## Text in every language
+
+`steamship text` writes what Steam shows of the game in every language its catalogues are in,
+from English kept by hand beside the build scripts. `--unchanged` writes nothing and exits 2
+naming each file that differs, is missing or is left over, so a gate can run it.
+
+| English | Written beside the scripts | Where it goes |
+| --- | --- | --- |
+| `store_english.json` | `store/<language>.json` | the store page's Localization tab, every file in one upload |
+| its `disclosure` | `ai_disclosure.json` | the content survey's Generative AI section, one box a language |
+| `workshop_english.json` | `workshop/<language>.json` | the Workshop's Steamworks page, one language to a save |
+| `presence_english.json` | `rich_presence_<language>.vdf` | `steamship rich-presence` |
+
+`store_english.json` holds the store page's `itemid`, which its Localization tab's export names
+and which is not the app's, the `disclosure`, and the page's text as `blocks`, each with its
+`kind`:
+
+```json
+{
+  "itemid": "1346058",
+  "disclosure": "Made with AI assistance for coding.",
+  "blocks": [
+    { "kind": "short", "text": "The short description." },
+    { "kind": "heading", "text": "A heading in About This Game" },
+    { "kind": "paragraph", "text": "A paragraph." },
+    { "kind": "image", "image": "about_score" },
+    { "kind": "item", "text": "One item of a list" },
+    { "kind": "field", "field": "app[content][legal]", "text": "The legal line." }
+  ]
+}
+```
+
+An image is named as the Description tab's custom images name it, the same in every language.
+Items in a row make one list. A `field` is any other text Steam shows in the player's language,
+such as a system requirement, by its name on the form. Until the `itemid` is set no store upload
+is written, since one naming no item cannot go up.
+
+`workshop_english.json` holds the Workshop page's `title` and `description`.
+`presence_english.json` holds each rich presence token and its English line. A name ending in
+`_` with `{"records": "caster"}` makes a token for each of the game's records of that type with a
+name: `#Caster_hedge` for `base:hedge`, its line the record's name. Without
+`presence_english.json`, a `rich_presence_english.vdf` kept by hand is the English, and is left
+as it is.
+
+Each catalogue translates the English under the context `store page`, `steam workshop` or `rich
+presence`, with the English line as the `msgid`; a rich presence line's fields are written
+`{field}` there, not Steam's `%field%`. A record's name is translated as godot-kit's are, under
+`caster.name` and the record's ID. Anything a catalogue does not translate, or marks fuzzy, is
+refused and nothing is written. A file of these kinds that would no longer be written is removed.

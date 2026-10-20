@@ -44,6 +44,7 @@ pub mod settings;
 pub mod show;
 pub mod steamcmd;
 pub mod terminal;
+pub mod text;
 pub mod typing;
 #[cfg(unix)]
 pub mod unix;

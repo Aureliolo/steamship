@@ -325,6 +325,26 @@ pub enum Command {
         #[arg(long)]
         preview: bool,
     },
+    /// Write a game's store, Workshop and rich presence text in every language it speaks.
+    ///
+    /// In a game's folder, translates the English kept beside its build scripts with every
+    /// gettext catalogue in its locale folder, and writes beside the scripts:
+    /// `store/<language>.json`, which the store page's Localization tab uploads, every language at
+    /// once, from `store_english.json` once it names the page's `itemid`; `ai_disclosure.json`,
+    /// the statement of how AI was used by language, from its `disclosure`, for the content
+    /// survey; `workshop/<language>.json`, the Workshop page's title and description, from
+    /// `workshop_english.json`; and `rich_presence_<language>.vdf`, which `rich-presence` sends,
+    /// from `presence_english.json` or else a `rich_presence_english.vdf` kept by hand.
+    ///
+    /// A catalogue translates the English under the context `store page`, `steam workshop` or
+    /// `rich presence`; anything it does not translate, or marks fuzzy, is refused and nothing is
+    /// written. A file of these kinds that would no longer be written is removed.
+    Text {
+        /// Write nothing, and exit 2 naming each file that differs from what would be written, is
+        /// missing, or is left over.
+        #[arg(long)]
+        unchanged: bool,
+    },
     /// Set an uploaded build live on a branch.
     ///
     /// Sets a build live on a branch without uploading it again, through Steam's partner Web
