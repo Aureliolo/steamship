@@ -127,6 +127,7 @@ naming each file that differs, is missing or is left over, so a gate can run it.
 | English | Written beside the scripts | Where it goes |
 | --- | --- | --- |
 | `store_english.json` | `store/<language>.json` | the store page's Localization tab, every file in one upload |
+| its recommended system requirements | `basic_info.json` | the store page's Basic Info form, one language at a time |
 | its `disclosure` | `ai_disclosure.json` | the content survey's Generative AI section, one box a language |
 | `workshop_english.json` | `workshop/<language>.json` | the Workshop's Steamworks page, one language to a save |
 | `presence_english.json` | `rich_presence_<language>.vdf` | `steamship rich-presence` |
@@ -154,6 +155,19 @@ An image is named as the Description tab's custom images name it, the same in ev
 Items in a row make one list. A `field` is any other text Steam shows in the player's language,
 such as a system requirement, by its name on the form. Until the `itemid` is set no store upload
 is written, since one naming no item cannot go up.
+
+A system requirement's field is named for its platform, its tier and its part, as
+`app[content][sysreqs][windows][min][osversion]`. The Localization tab takes the minimum ones,
+`[min]`, and drops every recommended one, `[rec]`, without saying so, and its export leaves them
+out too. So the recommended ones go into `basic_info.json` instead, each under its name on the
+Basic Info form, which ends in the language, as `app[content][sysreqs][windows][rec][osversion][german]`.
+
+Once the store page is public, Coming Soon included, `steamship text --steam` reads it in each
+language and exits 2 naming every requirement, minimum or recommended, that it does not show as
+the files give it. Before then Steam shows them only on the Basic Info form. The store page
+rewords memory, storage, the DirectX version and VR support in its own words, so those are named
+as not compared; the operating system, processor, graphics, sound card and notes are compared
+word for word.
 
 `workshop_english.json` holds the Workshop page's `title` and `description`.
 `presence_english.json` holds each rich presence token and its English line. A name ending in
