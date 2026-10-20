@@ -7915,10 +7915,11 @@ fn a_game_whose_script_names_app_0_is_refused_by_check_and_upload() {
         "the build is checked before the app exists: {why}"
     );
     assert!(
-        said.contains(&format!(
-            "  app       not named yet in {}\n",
-            root.join("steam").join("app_build.vdf").display()
-        )),
+        said.lines().any(|line| line
+            .strip_prefix("  app       not named yet in ")
+            .is_some_and(
+                |script| Path::new(script).ends_with(Path::new("steam").join("app_build.vdf"))
+            )),
         "{said}"
     );
     assert!(said.contains("  \u{2713} nothing refused\n"), "{said}");
