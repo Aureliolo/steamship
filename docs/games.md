@@ -118,6 +118,57 @@ Each command run in a game takes from it whatever is not given:
 - `steamship check export/windows` checks a build's folder as soon as it is built, judging its
   Windows files against the redistributables the snapshot ticks.
 
+## A demo
+
+Steam keeps a demo as an app of its own, typed Demo in General Application Settings with the full
+game as its base game, and with depots and builds of its own. A game ships its demo from the same
+folder and commit, by its own app build script at `steam/demo/app_build.vdf`, or as
+`steamship.toml` names it:
+
+```toml
+[demo]
+script = "steam/demo/app_build.vdf"
+build = ["python", "tools/build.py", "--demo"]
+branch = "testing"
+```
+
+- `demo.script`: the demo's app build script, if not `steam/demo/app_build.vdf`. Its settings
+  snapshot is the `settings.vdf` beside it.
+- `demo.build`: the program and its arguments that build the demo. Without it, the demo's
+  content goes up as it is.
+- `demo.branch`: the one branch the demo's script may set live, if not the game's.
+- `demo.feature`: the custom feature of the Godot export presets that make the demo, if not
+  `demo`. The game tells it is the demo with `OS.has_feature("demo")`.
+
+`check`, `upload`, `builds`, `settings`, `rich-presence` and `promote` take `--demo` to work on
+the demo in place of the full game, each as it does for the game:
+
+```sh
+steamship settings --save --demo   # the demo's snapshot, in steam/demo/settings.vdf
+steamship upload --demo            # the pushed commit, built as the demo, uploaded and set live
+steamship builds --demo --json     # the demo's branches and last builds
+```
+
+So that neither ever goes up into the other, both the game's upload and the demo's are refused
+while the two scripts name the same app or share a depot. The demo's check and upload are refused
+too while
+its snapshot shows an app not typed Demo, or with another base game than the one the game's
+script names. For the demo and the game alike, a depot the script uploads that is not among the
+app's own is refused, and so is a system the app's depots install on that no launch option runs
+on.
+
+When the game has Godot's `export_presets.cfg`, each preset's `export_path` is matched against
+the depots' mappings as steamcmd matches files, whether or not the export is there yet. The full
+game's depots are refused while they ship an export made with the demo's feature, and the
+demo's while they ship one made without it, so a game whose depot maps all of `export/` has to
+keep the demo's exports out of it, such as by mapping `windows/*` alone.
+
+The demo's rich presence is the game's, sent from the files beside the game's script. Its
+achievements and leaderboards are left out of `check --demo`, since a demo is best without
+them and the game's records are the full game's. `steamship init` makes the demo's scripts with
+the demo's app and depots and `--folder steam/demo`, and `steamship drm-wrap` wraps its
+executable with the demo's script, so that it runs under the demo's app.
+
 ## Text in every language
 
 `steamship text` writes what Steam shows of the game in every language its catalogues are in,

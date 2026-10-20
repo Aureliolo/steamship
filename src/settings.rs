@@ -13,8 +13,15 @@ use crate::vdf::{self, Block, Pair, Value};
 /// The snapshot's name, beside the build scripts.
 pub const SNAPSHOT: &str = "settings.vdf";
 
-/// The keys of `common` kept: what the app is, and the systems it runs on.
-const COMMON: [&str; 5] = ["name", "type", "oslist", "osarch", "osextended"];
+/// The keys of `common` kept: what the app is, the app a demo or DLC belongs to, and the systems
+/// it runs on.
+const COMMON: [&str; 6] = ["name", "type", "parent", "oslist", "osarch", "osextended"];
+
+/// A demo's type, as `app_info_print` shows it.
+const DEMO: &str = "Demo";
+
+/// The types of app a player launches, whose every system needs a launch option.
+const LAUNCHED: [&str; 2] = ["Game", DEMO];
 
 /// The sections kept whole: how the app installs and launches, and its Steam Cloud.
 const WHOLE: [&str; 2] = ["config", "ufs"];
@@ -177,6 +184,130 @@ pub fn install_folder(settings: &Block) -> Option<String> {
     })
 }
 
+/// Why `settings`, app `app`'s, are refused as the demo of the full game `full`: a demo is an app
+/// typed Demo whose base game is the full game.
+#[must_use]
+pub fn demo_of(settings: &Block, app: u32, full: u32) -> Vec<String> {
+    let common = settings.block("common");
+    let then = "under General Application Settings in Steamworks, then save the settings again";
+    let mut wrong = Vec::new();
+    match common.and_then(|common| common.text("type")) {
+        Some(kind) if kind.eq_ignore_ascii_case(DEMO) => {}
+        Some(kind) => wrong.push(format!(
+            "app {app} is typed {kind}, not {DEMO}: set its type to {DEMO} {then}"
+        )),
+        None => wrong.push(format!(
+            "app {app}'s settings give it no type: set it to {DEMO} {then}"
+        )),
+    }
+    match common.and_then(|common| common.text("parent")) {
+        Some(parent) if parent == full.to_string() => {}
+        Some(parent) => wrong.push(format!(
+            "app {app}'s base game is app {parent}, not the full game, app {full}: change it {then}"
+        )),
+        None => wrong.push(format!(
+            "app {app}'s settings name no base game: enter the full game, app {full}, {then}"
+        )),
+    }
+    wrong
+}
+
+/// Each system an app the player launches has a depot of its own for, and no launch option runs
+/// on, by its name in `oslist`; none for an app of another type, such as a tool.
+#[must_use]
+pub fn unlaunched(settings: &Block) -> Vec<String> {
+    let played = settings
+        .block("common")
+        .and_then(|common| common.text("type"))
+        .is_some_and(|kind| LAUNCHED.iter().any(|each| kind.eq_ignore_ascii_case(each)));
+    if !played {
+        return Vec::new();
+    }
+    let mut systems: Vec<String> = Vec::new();
+    for (_, depot) in own_depots(settings) {
+        for system in systems_of(depot.block("config")) {
+            if !systems.contains(&system) {
+                systems.push(system);
+            }
+        }
+    }
+    let options: Vec<&Block> = settings
+        .block("config")
+        .and_then(|config| config.block("launch"))
+        .map(|launch| {
+            launch
+                .pairs
+                .iter()
+                .filter_map(|pair| match &pair.value {
+                    Value::Block(option) => Some(option),
+                    Value::Text(_) => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // A launch option that names no system runs on every one.
+    if options
+        .iter()
+        .any(|option| systems_of(option.block("config")).is_empty())
+    {
+        return Vec::new();
+    }
+    systems.retain(|system| {
+        !options
+            .iter()
+            .any(|option| systems_of(option.block("config")).contains(system))
+    });
+    systems
+}
+
+/// The depots of `depots`, an app build script's, that `settings` do not show as the app's own;
+/// none when they show no depot of its own at all, as before any is published.
+#[must_use]
+pub fn foreign(settings: &Block, depots: &[u32]) -> Vec<u32> {
+    let own: Vec<u32> = own_depots(settings).into_iter().map(|(id, _)| id).collect();
+    if own.is_empty() {
+        return Vec::new();
+    }
+    depots
+        .iter()
+        .copied()
+        .filter(|depot| !own.contains(depot))
+        .collect()
+}
+
+/// The app's own depots by their IDs, without those another app's, such as a Common
+/// Redistributable, mounts.
+fn own_depots(settings: &Block) -> Vec<(u32, &Block)> {
+    settings
+        .block("depots")
+        .map(|listed| {
+            listed
+                .pairs
+                .iter()
+                .filter_map(|pair| match &pair.value {
+                    Value::Block(depot) if depot.text("depotfromapp").is_none() => {
+                        Some((pair.key.parse().ok()?, depot))
+                    }
+                    Value::Block(_) | Value::Text(_) => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The systems a `config` block's `oslist` names, such as `windows` and `linux`.
+fn systems_of(config: Option<&Block>) -> Vec<String> {
+    config
+        .and_then(|config| config.text("oslist"))
+        .map(|list| {
+            list.split(',')
+                .map(|system| system.trim().to_ascii_lowercase())
+                .filter(|system| !system.is_empty())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Reads a snapshot's `text`, which must be `app`'s.
 ///
 /// # Errors
@@ -320,6 +451,134 @@ mod tests {
         \t\"extended\"\n\t{\n\t\t\"developer\"\t\t\"Someone\"\n\t}\n\
         }\n\
         Unloading Steam API...OK\n";
+
+    /// A demo's settings, each section shaped as steamcmd printed a public demo's and a released
+    /// game's: typed Demo with its base game as `parent`, a launch option for Windows, and depots
+    /// for Windows and Linux beside a Common Redistributable's.
+    const DEMO: &str = "\"1000070\"\n{\n\
+        \t\"common\"\n\t{\n\
+        \t\t\"name\"\t\t\"Sample Demo\"\n\
+        \t\t\"type\"\t\t\"Demo\"\n\
+        \t\t\"parent\"\t\t\"1000050\"\n\
+        \t\t\"oslist\"\t\t\"windows\"\n\
+        \t\t\"ReleaseState\"\t\t\"prerelease\"\n\
+        \t}\n\
+        \t\"config\"\n\t{\n\
+        \t\t\"installdir\"\t\t\"SampleDemo\"\n\
+        \t\t\"launch\"\n\t\t{\n\
+        \t\t\t\"0\"\n\t\t\t{\n\
+        \t\t\t\t\"executable\"\t\t\"sample.exe\"\n\
+        \t\t\t\t\"type\"\t\t\"default\"\n\
+        \t\t\t\t\"config\"\n\t\t\t\t{\n\t\t\t\t\t\"oslist\"\t\t\"windows\"\n\t\t\t\t}\n\
+        \t\t\t}\n\
+        \t\t}\n\
+        \t}\n\
+        \t\"depots\"\n\t{\n\
+        \t\t\"baselanguages\"\t\t\"\"\n\
+        \t\t\"228988\"\n\t\t{\n\
+        \t\t\t\"config\"\n\t\t\t{\n\t\t\t\t\"oslist\"\t\t\"windows\"\n\t\t\t}\n\
+        \t\t\t\"depotfromapp\"\t\t\"228980\"\n\
+        \t\t\t\"sharedinstall\"\t\t\"1\"\n\
+        \t\t}\n\
+        \t\t\"1000071\"\n\t\t{\n\
+        \t\t\t\"config\"\n\t\t\t{\n\t\t\t\t\"oslist\"\t\t\"windows\"\n\t\t\t\t\"language\"\t\t\"\"\n\t\t\t}\n\
+        \t\t}\n\
+        \t\t\"1000072\"\n\t\t{\n\
+        \t\t\t\"config\"\n\t\t\t{\n\t\t\t\t\"oslist\"\t\t\"linux\"\n\t\t\t\t\"language\"\t\t\"\"\n\t\t\t}\n\
+        \t\t}\n\
+        \t}\n\
+        }\n";
+
+    fn demo(text: &str) -> Block {
+        from_console(text, 1_000_070).unwrap()
+    }
+
+    #[test]
+    fn a_demo_typed_demo_whose_base_game_is_the_full_game_passes_and_any_other_is_named() {
+        let settings = demo(DEMO);
+        assert_eq!(
+            settings
+                .block("common")
+                .and_then(|common| common.text("parent")),
+            Some("1000050"),
+            "the base game is kept"
+        );
+        assert_eq!(
+            demo_of(&settings, 1_000_070, 1_000_050),
+            Vec::<String>::new()
+        );
+        let then = "under General Application Settings in Steamworks, then save the settings again";
+        assert_eq!(
+            demo_of(&settings, 1_000_070, 1_000_030),
+            [format!(
+                "app 1000070's base game is app 1000050, not the full game, app 1000030: change \
+                 it {then}"
+            )]
+        );
+        assert_eq!(
+            demo_of(
+                &demo(
+                    &DEMO
+                        .replace("\"Demo\"", "\"Game\"")
+                        .replace("\t\t\"parent\"\t\t\"1000050\"\n", "")
+                ),
+                1_000_070,
+                1_000_050
+            ),
+            [
+                format!("app 1000070 is typed Game, not Demo: set its type to Demo {then}"),
+                format!(
+                    "app 1000070's settings name no base game: enter the full game, app 1000050, \
+                     {then}"
+                ),
+            ]
+        );
+        assert_eq!(
+            demo_of(&Block { pairs: Vec::new() }, 1_000_070, 1_000_050).first(),
+            Some(&format!(
+                "app 1000070's settings give it no type: set it to Demo {then}"
+            ))
+        );
+    }
+
+    #[test]
+    fn a_system_an_app_s_own_depots_install_on_with_no_launch_option_is_named() {
+        assert_eq!(unlaunched(&demo(DEMO)), ["linux"]);
+        let both = DEMO.replace(
+            "\"oslist\"\t\t\"windows\"\n\t\t\t\t}",
+            "\"oslist\"\t\t\"windows,linux\"\n\t\t\t\t}",
+        );
+        assert!(unlaunched(&demo(&both)).is_empty(), "{both}");
+        let anywhere = DEMO.replace(
+            "\t\t\t\t\"config\"\n\t\t\t\t{\n\t\t\t\t\t\"oslist\"\t\t\"windows\"\n\t\t\t\t}\n",
+            "",
+        );
+        assert!(unlaunched(&demo(&anywhere)).is_empty(), "{anywhere}");
+        let tool = DEMO.replace("\"Demo\"", "\"Tool\"");
+        assert!(unlaunched(&demo(&tool)).is_empty(), "{tool}");
+        let unlaunchable = DEMO.replace("\t\t\"launch\"", "\t\t\"launched\"");
+        assert_eq!(unlaunched(&demo(&unlaunchable)), ["windows", "linux"]);
+    }
+
+    #[test]
+    fn a_depot_the_app_does_not_own_is_named_once_it_owns_any() {
+        let settings = demo(DEMO);
+        assert_eq!(
+            foreign(&settings, &[1_000_071, 1_000_072, 1_000_051]),
+            [1_000_051]
+        );
+        assert_eq!(
+            foreign(&settings, &[228_988]),
+            [228_988],
+            "a redistributable's is not its own"
+        );
+        let none = DEMO
+            .split("\t\t\"1000071\"")
+            .next()
+            .map(|head| format!("{head}\t}}\n}}\n"))
+            .unwrap();
+        assert!(foreign(&demo(&none), &[1_000_071]).is_empty(), "{none}");
+    }
 
     #[test]
     fn only_what_is_set_for_the_build_is_kept_from_what_steamcmd_printed() {

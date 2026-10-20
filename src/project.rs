@@ -28,6 +28,10 @@ pub const FILE: &str = "steamship.toml";
 /// Where a game keeps its app build script when its `steamship.toml` names none.
 const SCRIPT: &str = "steam/app_build.vdf";
 
+/// Where a game keeps its demo's app build script when its `steamship.toml` names none: a folder
+/// of its own, since the demo's settings snapshot and depot scripts go beside it.
+const DEMO_SCRIPT: &str = "steam/demo/app_build.vdf";
+
 /// The branch a game's build goes live on when its `steamship.toml` names none: the default branch
 /// is the publisher's to set, once the game is released.
 const BRANCH: &str = "testing";
@@ -36,8 +40,8 @@ const BRANCH: &str = "testing";
 /// that shipping leaves the rest of the machine to whoever works on it.
 const CORES: usize = 4;
 
-/// Every setting `steamship.toml` takes at its top, and under `[workshop]`.
-const SETTINGS: [&str; 9] = [
+/// Every setting `steamship.toml` takes at its top, under `[workshop]` and under `[demo]`.
+const SETTINGS: [&str; 10] = [
     "steamship",
     "script",
     "branch",
@@ -47,8 +51,14 @@ const SETTINGS: [&str; 9] = [
     "locale",
     "import",
     "workshop",
+    "demo",
 ];
 const WORKSHOP: [&str; 3] = ["mods", "items", "footer"];
+const DEMO: [&str; 4] = ["script", "build", "branch", "feature"];
+
+/// The custom feature that marks a Godot export preset as the demo's when `steamship.toml` names
+/// none.
+const FEATURE: &str = "demo";
 
 /// games-kit's record types `achievements` reads, and the list a file of steamship's own holds
 /// them in.
@@ -115,6 +125,23 @@ pub struct Project {
     pub items: PathBuf,
     /// Text set below every example mod's own description on the Workshop.
     pub footer: Option<String>,
+    /// The game's demo, its own app on Steam, when it has one.
+    pub demo: Option<Demo>,
+    /// The full game's app build script, when this is the game seen as its demo.
+    pub full: Option<PathBuf>,
+    /// The custom feature of the Godot export presets that make the demo.
+    pub feature: String,
+}
+
+/// A game's demo: its own app, shipped from the same commit as the full game.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Demo {
+    /// The demo app's build script, with its own settings snapshot beside it.
+    pub script: PathBuf,
+    /// The program and arguments that build the demo into the folders its depots ship.
+    pub build: Vec<String>,
+    /// The one branch the demo's script may set live.
+    pub branch: String,
 }
 
 /// An example mod, as its Workshop item.
@@ -180,8 +207,38 @@ impl Project {
             mods: Given::laid_out(root.join("modding")),
             items: scripts.join("workshop_items.json"),
             footer: None,
+            demo: under(root, DEMO_SCRIPT).is_file().then(|| Demo {
+                script: under(root, DEMO_SCRIPT),
+                build: Vec::new(),
+                branch: BRANCH.to_owned(),
+            }),
+            full: None,
+            feature: FEATURE.to_owned(),
             script,
         }
+    }
+
+    /// The game seen as its demo: the demo's script, build and branch in place of the game's, and
+    /// the game's own script kept as the full game's.
+    ///
+    /// # Errors
+    ///
+    /// When the game has no demo.
+    pub fn demo(&self) -> Result<Self, String> {
+        let demo = self.demo.clone().ok_or_else(|| {
+            format!(
+                "the game has no demo: write its app build script to {DEMO_SCRIPT}, or name it as \
+                 `script` under [demo] in {FILE}"
+            )
+        })?;
+        Ok(Self {
+            script: demo.script,
+            build: demo.build,
+            branch: demo.branch,
+            demo: None,
+            full: Some(self.script.clone()),
+            ..self.clone()
+        })
     }
 
     /// The game at `root`, as the `steamship.toml` `text` lays it out.
@@ -258,6 +315,20 @@ impl Project {
             }
             if let Some(footer) = workshop.get("footer") {
                 project.footer = Some(text_of(footer, "workshop.footer")?.to_owned());
+            }
+        }
+        if let Some(section) = table.get("demo") {
+            project.demo = Some(demo_configured(root, section, &project)?);
+            if let Some(value) = section.get("feature") {
+                let feature = text_of(value, "demo.feature")?;
+                // Godot splits a preset's custom features at commas and trims each.
+                if feature.trim().is_empty() || feature.contains(',') || feature.trim() != feature {
+                    return Err(format!(
+                        "`demo.feature` is \"{feature}\": name the one custom feature the demo's \
+                         export presets carry, such as \"{FEATURE}\""
+                    ));
+                }
+                feature.clone_into(&mut project.feature);
             }
         }
         Ok(project)
@@ -401,13 +472,19 @@ impl Project {
         })
     }
 
-    /// Every language's rich presence file, `rich_presence_<language>.vdf` beside the scripts.
+    /// Every language's rich presence file, `rich_presence_<language>.vdf` beside the scripts; a
+    /// demo shows the full game's, beside the full game's scripts.
     ///
     /// # Errors
     ///
     /// When the scripts' folder cannot be read.
     pub fn presence(&self) -> Result<Vec<PathBuf>, String> {
-        listed(self.scripts(), |name| {
+        let folder = self
+            .full
+            .as_deref()
+            .and_then(Path::parent)
+            .unwrap_or_else(|| self.scripts());
+        listed(folder, |name| {
             name.starts_with("rich_presence_")
                 && Path::new(name)
                     .extension()
@@ -478,6 +555,56 @@ impl Project {
         }
         Ok(found)
     }
+}
+
+/// The `[demo]` `section` of the game at `root`, whose own settings `game` holds: its branch is the
+/// game's unless it names one.
+fn demo_configured(root: &Path, section: &toml::Value, game: &Project) -> Result<Demo, String> {
+    let demo = section
+        .as_table()
+        .ok_or("`demo` is not a table: write it as a [demo] section")?;
+    known(demo, &DEMO, "demo.")?;
+    let script = demo.get("script").map_or_else(
+        || Ok(under(root, DEMO_SCRIPT)),
+        |value| inside(root, value, "demo.script"),
+    )?;
+    if script == game.script {
+        return Err(format!(
+            "`demo.script` is the full game's own app build script, {}: a demo is its own app, \
+             with a script of its own",
+            game.script.display()
+        ));
+    }
+    let build = demo
+        .get("build")
+        .map(|value| texts(value, "demo.build"))
+        .transpose()?
+        .unwrap_or_default();
+    if demo.contains_key("build") && build.is_empty() {
+        return Err(
+            "`demo.build` is empty: name the program and its arguments that build the demo, or \
+             leave it out"
+                .to_owned(),
+        );
+    }
+    let branch = match demo.get("branch") {
+        Some(value) => {
+            let branch = text_of(value, "demo.branch")?;
+            if branch.trim().is_empty() || webapi::is_default(branch) {
+                return Err(format!(
+                    "`demo.branch` is \"{branch}\": name the branch the demo's build goes live on, \
+                     such as \"{BRANCH}\"; the default branch is the publisher's to set"
+                ));
+            }
+            branch.to_owned()
+        }
+        None => game.branch.clone(),
+    };
+    Ok(Demo {
+        script,
+        build,
+        branch,
+    })
 }
 
 /// Refuses any key of `table` not among `settings`, each shown after `prefix`.
@@ -889,12 +1016,58 @@ mod tests {
     }
 
     #[test]
+    fn a_demo_is_seen_as_its_own_app_on_the_game_s_branch_unless_it_names_one() {
+        let game = configured(
+            "branch = \"beta\"\nbuild = [\"make\"]\n[demo]\nscript = \"steam/demo/app.vdf\"\n\
+             build = [\"make\", \"demo\"]",
+        )
+        .unwrap();
+        let demo = game.demo().unwrap();
+        assert_eq!(demo.script, under(Path::new("game"), "steam/demo/app.vdf"));
+        assert_eq!(demo.build, ["make", "demo"]);
+        assert_eq!(demo.branch, "beta");
+        assert_eq!(demo.full, Some(game.script.clone()));
+        assert_eq!(demo.demo, None);
+        assert_eq!(
+            demo.snapshot(),
+            under(Path::new("game"), "steam/demo/settings.vdf")
+        );
+        assert_eq!(demo.import, game.import);
+
+        let named = configured("[demo]\nbranch = \"demo-testing\"")
+            .unwrap()
+            .demo()
+            .unwrap();
+        assert_eq!(named.script, under(Path::new("game"), DEMO_SCRIPT));
+        assert_eq!(named.branch, "demo-testing");
+        assert_eq!(named.build, Vec::<String>::new());
+        assert_eq!(named.feature, "demo");
+        let trial = configured("[demo]\nfeature = \"trial\"").unwrap();
+        assert_eq!(trial.feature, "trial");
+        assert_eq!(trial.demo().unwrap().feature, "trial");
+
+        assert_eq!(
+            configured("").unwrap().demo().unwrap_err(),
+            "the game has no demo: write its app build script to steam/demo/app_build.vdf, or \
+             name it as `script` under [demo] in steamship.toml"
+        );
+        assert_eq!(
+            configured("[demo]\nscript = \"steam/app_build.vdf\"").unwrap_err(),
+            format!(
+                "`demo.script` is the full game's own app build script, {}: a demo is its own \
+                 app, with a script of its own",
+                under(Path::new("game"), SCRIPT).display()
+            )
+        );
+    }
+
+    #[test]
     fn a_file_saying_what_steamship_does_not_take_is_refused_naming_it() {
         for (text, said) in [
             (
                 "builds = []",
                 "`builds` is no setting steamship takes; it takes `steamship`, `script`, \
-                 `branch`, `build`, `cores`, `records`, `locale`, `import`, `workshop`",
+                 `branch`, `build`, `cores`, `records`, `locale`, `import`, `workshop`, `demo`",
             ),
             (
                 "branch = \"default\"",
@@ -959,6 +1132,45 @@ mod tests {
             )
         );
         assert_ne!(configured("steamship = ").map(|_| ()), Ok(()));
+    }
+
+    #[test]
+    fn a_demo_section_saying_what_steamship_does_not_take_is_refused_naming_it() {
+        let feature = |given: &str| {
+            format!(
+                "`demo.feature` is \"{given}\": name the one custom feature the demo's export \
+                 presets carry, such as \"demo\""
+            )
+        };
+        for (text, said) in [
+            (
+                "demo = \"steam/demo\"",
+                "`demo` is not a table: write it as a [demo] section".to_owned(),
+            ),
+            (
+                "[demo]\napp = 1000070",
+                "`demo.app` is no setting steamship takes; it takes `demo.script`, \
+                 `demo.build`, `demo.branch`, `demo.feature`"
+                    .to_owned(),
+            ),
+            ("[demo]\nfeature = \"demo, trial\"", feature("demo, trial")),
+            ("[demo]\nfeature = \" demo\"", feature(" demo")),
+            ("[demo]\nfeature = \"\"", feature("")),
+            (
+                "[demo]\nbuild = []",
+                "`demo.build` is empty: name the program and its arguments that build the demo, \
+                 or leave it out"
+                    .to_owned(),
+            ),
+            (
+                "[demo]\nbranch = \"public\"",
+                "`demo.branch` is \"public\": name the branch the demo's build goes live on, such \
+                 as \"testing\"; the default branch is the publisher's to set"
+                    .to_owned(),
+            ),
+        ] {
+            assert_eq!(configured(text).unwrap_err(), said, "{text}");
+        }
     }
 
     #[test]

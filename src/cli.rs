@@ -123,6 +123,9 @@ pub enum Command {
         /// `upload` still checks both.
         #[arg(long)]
         scripts_only: bool,
+        /// In a game's folder, check its demo, its own app, in place of the full game.
+        #[arg(long, conflicts_with = "script")]
+        demo: bool,
     },
     /// Check, build and upload, then print the build ID.
     ///
@@ -163,6 +166,9 @@ pub enum Command {
     Builds {
         /// The app, by its ID or its app build script; in a game's folder, its own.
         app: Option<String>,
+        /// In a game's folder, its demo's.
+        #[arg(long, conflicts_with = "app")]
+        demo: bool,
         /// How many of the last builds to list.
         #[arg(long, default_value_t = 10)]
         count: u32,
@@ -270,6 +276,9 @@ pub enum Command {
     Settings {
         /// The app, by its ID or its app build script; in a game's folder, its own.
         app: Option<String>,
+        /// In a game's folder, its demo's, with the demo's own snapshot beside its build scripts.
+        #[arg(long, conflicts_with = "app")]
+        demo: bool,
         /// Write the settings to this file, replacing it, to check against later; in a game's
         /// folder, `settings.vdf` beside its build scripts. Refused, exiting 2, for an install
         /// folder of anything but letters and digits.
@@ -318,6 +327,9 @@ pub enum Command {
     RichPresence {
         /// The app, by its ID or its app build script; in a game's folder, its own.
         app: Option<String>,
+        /// In a game's folder, send the full game's files to its demo.
+        #[arg(long, conflicts_with = "app")]
+        demo: bool,
         /// The rich presence files, such as `steam/rich_presence_english.vdf`; in a game's folder,
         /// every one beside its build scripts.
         files: Vec<PathBuf>,
@@ -483,6 +495,10 @@ pub struct Writing {
 
 /// What `upload` uploads, and how.
 #[derive(Debug, Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is a switch of its own on the command line, which clap reads into a field"
+)]
 pub struct Upload {
     /// The app build script, such as `steam/app_build.vdf`; in a game's folder, its own.
     pub script: Option<PathBuf>,
@@ -499,6 +515,12 @@ pub struct Upload {
     /// In a game's folder an upload always does.
     #[arg(long, conflicts_with = "preview")]
     pub default: bool,
+    /// In a game's folder, ship its demo, its own app, in place of the full game: built with the
+    /// demo's `build`, its depots kept apart from the full game's and shipping only the Godot
+    /// exports made with the demo's feature, and checked against the demo's own settings
+    /// snapshot, which must show it typed Demo with the full game as its base game.
+    #[arg(long, conflicts_with = "script")]
+    pub demo: bool,
     /// The build account, if not the one the last login remembered.
     #[arg(long, env = ACCOUNT)]
     pub account: Option<String>,
@@ -514,6 +536,9 @@ pub struct Upload {
 pub struct Promote {
     /// The app, by its ID or its app build script; in a game's folder, its own.
     pub app: Option<String>,
+    /// In a game's folder, its demo.
+    #[arg(long, conflicts_with = "app")]
+    pub demo: bool,
     /// The build, by its build ID.
     #[arg(long)]
     pub build: u64,

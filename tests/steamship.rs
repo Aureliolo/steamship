@@ -8511,6 +8511,148 @@ fn a_games_builds_settings_and_promotion_are_asked_for_its_own_app() {
 }
 
 #[test]
+fn a_demo_goes_up_as_its_own_app_typed_demo_under_the_full_game_and_never_into_it() {
+    let (_temp, root) = pushed_game(None);
+    let (none, said, why) = in_game(&root, &["check", "--demo"]);
+    assert_eq!(none, Some(2_i32), "{said}{why}");
+    assert!(
+        failure(&why).starts_with(
+            "the game has no demo: write its app build script to steam/demo/app_build.vdf"
+        ),
+        "{why}"
+    );
+
+    let demo = root.join("steam").join("demo");
+    fs::create_dir_all(&demo).unwrap();
+    fs::write(
+        demo.join("app_build.vdf"),
+        r#""AppBuild" { "AppID" "1000050" "ContentRoot" "../../export/" "SetLive" "testing" "Depots" { "1000051" "../depot.vdf" } }"#,
+    )
+    .unwrap();
+    pushed(&root, "A demo in the full game's app");
+    for args in [["check", "--demo"].as_slice(), ["upload"].as_slice()] {
+        let (crossed, shown, reason) = in_game(&root, args);
+        assert_eq!(crossed, Some(2_i32), "{args:?}: {shown}{reason}");
+        for line in [
+            "names app 1000050, the full game's own in ",
+            ": a demo is its own app, so put the demo's ID in it",
+            "depot 1000051 is in both ",
+            ": a demo ships depots of its own",
+        ] {
+            assert!(reason.contains(line), "{args:?}: {line:?} in {reason}");
+        }
+    }
+
+    with_demo(&root, "../../export/", "\t\t\"type\"\t\t\"Game\"\n");
+    pushed(&root, "A demo typed as a game");
+    let (untyped, shown, reason) = in_game(&root, &["upload", "--demo"]);
+    assert_eq!(untyped, Some(2_i32), "{shown}{reason}");
+    for line in [
+        "app 1000070 is typed Game, not Demo: set its type to Demo under General Application \
+         Settings in Steamworks",
+        "app 1000070's settings name no base game: enter the full game, app 1000050, under \
+         General Application Settings in Steamworks",
+    ] {
+        assert!(reason.contains(line), "{line:?} in {reason}");
+    }
+
+    with_demo(&root, "../../export/", DEMO_TYPED);
+    pushed(&root, "The demo under the full game");
+    let (unaccounted, building, stopped) = in_game(&root, &["upload", "--demo"]);
+    assert!(
+        building.contains(
+            "  build     none named under [demo] in steamship.toml, so the content goes up as it is"
+        ),
+        "{building}{stopped}"
+    );
+    assert_eq!(unaccounted, Some(2_i32), "no build account: {stopped}");
+
+    let (host, requests) = web_api(vec![("200 OK", BETAS), ("200 OK", BUILDS)]);
+    let (listed, list, problems) = in_game_with(
+        &root,
+        &["builds", "--demo"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(listed, Some(0_i32), "{list}{problems}");
+    let asked = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(asked.contains("appid=1000070"), "{asked}");
+}
+
+/// A demo's settings snapshot's `common` section, typed Demo under the full game.
+const DEMO_TYPED: &str = "\t\t\"type\"\t\t\"Demo\"\n\t\t\"parent\"\t\t\"1000050\"\n";
+
+/// Gives the game at `root` a demo in `steam/demo`: app 1000070 setting `testing` live, its one
+/// depot 1000071 shipping everything under `content_root`, and a settings snapshot whose `common`
+/// section is `common`.
+fn with_demo(root: &Path, content_root: &str, common: &str) {
+    let demo = root.join("steam").join("demo");
+    fs::create_dir_all(&demo).unwrap();
+    fs::write(
+        demo.join("app_build.vdf"),
+        format!(
+            r#""AppBuild" {{ "AppID" "1000070" "ContentRoot" "{content_root}" "SetLive" "testing" "Depots" {{ "1000071" "depot.vdf" }} }}"#
+        ),
+    )
+    .unwrap();
+    fs::write(
+        demo.join("depot.vdf"),
+        r#""DepotBuild" { "DepotID" "1000071" "FileMapping" { "LocalPath" "*" "DepotPath" "." "Recursive" "1" } }"#,
+    )
+    .unwrap();
+    fs::write(
+        demo.join("settings.vdf"),
+        format!(
+            "\"1000070\"\n{{\n\t\"common\"\n\t{{\n{common}\t}}\n\t\"config\"\n\t{{\n\
+             \t\t\"installdir\"\t\t\"InnDemo\"\n\t}}\n}}\n"
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_godot_export_ships_only_in_the_app_its_demo_feature_says_it_is_for() {
+    let (_temp, root) = pushed_game(None);
+    with_demo(&root, "../../export/", DEMO_TYPED);
+    fs::write(
+        root.join("export_presets.cfg"),
+        "[preset.0]\n\nname=\"Windows Desktop\"\nplatform=\"Windows Desktop\"\n\
+         custom_features=\"\"\nexport_path=\"export/windows/inn.exe\"\n\n[preset.0.options]\n\n\
+         [preset.1]\n\nname=\"Windows Desktop Demo\"\nplatform=\"Windows Desktop\"\n\
+         custom_features=\"demo\"\nexport_path=\"export/demo/windows/inn.exe\"\n\n\
+         [preset.1.options]\n",
+    )
+    .unwrap();
+    pushed(&root, "Both depots shipping every export");
+    for (args, line) in [
+        (
+            ["check", "--demo"].as_slice(),
+            "into depot 1000071, the demo's, and the export preset \"Windows Desktop\" in \
+             export_presets.cfg makes it without the `demo` feature: map only the folders the \
+             demo's presets export to",
+        ),
+        (
+            ["check"].as_slice(),
+            "into depot 1000051, the full game's, and the export preset \"Windows Desktop Demo\" \
+             in export_presets.cfg makes it with the `demo` feature: map only the folders the full \
+             game's presets export to",
+        ),
+    ] {
+        let (crossed, shown, reason) = in_game(&root, args);
+        assert_eq!(crossed, Some(2_i32), "{args:?}: {shown}{reason}");
+        assert!(reason.contains(line), "{args:?}: {line:?} in {reason}");
+    }
+
+    with_demo(&root, "../../export/demo/", DEMO_TYPED);
+    pushed(&root, "The demo's depot shipping the demo's exports alone");
+    let (apart, shown, reason) = in_game(&root, &["upload", "--demo"]);
+    assert!(
+        shown.contains("  build     none named under [demo]"),
+        "{shown}{reason}"
+    );
+    assert_eq!(apart, Some(2_i32), "no build account: {reason}");
+}
+
+#[test]
 fn a_games_example_mods_are_its_workshop_items_and_one_without_any_is_refused() {
     let (_temp, root) = pushed_game(None);
     let (code, stdout, stderr) = in_game(&root, &["workshop", "--visibility", "public"]);

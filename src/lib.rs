@@ -32,6 +32,7 @@ pub mod picture;
 pub mod platform;
 pub mod po;
 pub mod presence;
+pub mod presets;
 pub mod project;
 pub mod redact;
 pub mod redist;

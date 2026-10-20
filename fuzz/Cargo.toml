@@ -91,3 +91,10 @@ path = "fuzz_targets/likeness.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "presets"
+path = "fuzz_targets/presets.rs"
+test = false
+doc = false
+bench = false
