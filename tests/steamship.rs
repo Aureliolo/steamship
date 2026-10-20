@@ -8536,12 +8536,12 @@ fn a_demo_goes_up_as_its_own_app_typed_demo_under_the_full_game_and_never_into_i
         refusal.contains("\"AppID\" is 0, which Steamworks never gives"),
         "{refusal}"
     );
-    let (full, shipping, accountless) = in_game(&root, &["upload"]);
+    let (full, shipping, halted) = in_game(&root, &["upload"]);
     assert!(
         shipping.contains("  build     none named in steamship.toml"),
-        "the full game ships: {shipping}{accountless}"
+        "the full game ships: {shipping}{halted}"
     );
-    assert_eq!(full, Some(2_i32), "no build account: {accountless}");
+    assert_eq!(full, Some(2_i32), "stopped before steamcmd: {halted}");
 
     fs::write(
         demo.join("app_build.vdf"),
@@ -8577,14 +8577,14 @@ fn a_demo_goes_up_as_its_own_app_typed_demo_under_the_full_game_and_never_into_i
 
     with_demo(&root, "../../export/", DEMO_TYPED);
     pushed(&root, "The demo under the full game");
-    let (unaccounted, building, stopped) = in_game(&root, &["upload", "--demo"]);
+    let (shipped, building, stopped) = in_game(&root, &["upload", "--demo"]);
     assert!(
         building.contains(
             "  build     none named under [demo] in steamship.toml, so the content goes up as it is"
         ),
         "{building}{stopped}"
     );
-    assert_eq!(unaccounted, Some(2_i32), "no build account: {stopped}");
+    assert_eq!(shipped, Some(2_i32), "stopped before steamcmd: {stopped}");
 
     let (host, requests) = web_api(vec![("200 OK", BETAS), ("200 OK", BUILDS)]);
     let (listed, list, problems) = in_game_with(
@@ -8668,7 +8668,7 @@ fn a_godot_export_ships_only_in_the_app_its_demo_feature_says_it_is_for() {
         shown.contains("  build     none named under [demo]"),
         "{shown}{reason}"
     );
-    assert_eq!(apart, Some(2_i32), "no build account: {reason}");
+    assert_eq!(apart, Some(2_i32), "stopped before steamcmd: {reason}");
 }
 
 #[test]
