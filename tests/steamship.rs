@@ -7575,6 +7575,7 @@ fn a_file_of_steam_s_text_that_cannot_be_read_is_named() {
 
     fs::remove_dir(root.join("steam/workshop_english.json")).unwrap();
     fs::remove_file(root.join("steam/rich_presence_english.vdf")).unwrap();
+    fs::write(root.join("steam/store_english.json"), "{}").unwrap();
     fs::write(
         root.join("steam/store"),
         "a file where the store's folder goes",
@@ -7586,9 +7587,25 @@ fn a_file_of_steam_s_text_that_cannot_be_read_is_named() {
 }
 
 #[test]
-fn a_game_with_no_english_for_steam_s_text_is_told_so_and_has_nothing_written() {
+fn a_game_with_no_english_for_steam_s_text_is_told_so_and_has_nothing_written_or_removed() {
     let (_temp, root) = pushed_game(None);
-    fs::remove_file(root.join("steam/rich_presence_english.vdf")).unwrap();
+    let steam = root.join("steam");
+    fs::remove_file(steam.join("rich_presence_english.vdf")).unwrap();
+    let elsewhere = [
+        "store/english.json",
+        "workshop/german.json",
+        "ai_disclosure.json",
+        "rich_presence_german.vdf",
+    ];
+    for name in elsewhere {
+        let path = steam.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "written by the game's own tool").unwrap();
+    }
+
+    let (same, kept, why_not) = in_game(&root, &["text", "--unchanged"]);
+    assert_eq!(same, Some(0_i32), "{kept}{why_not}");
+    assert!(!why_not.contains("left over"), "{why_not}");
     let (code, said, why) = in_game(&root, &["text"]);
     assert_eq!(code, Some(0_i32), "{why}");
     let all = format!("{said}{why}");
@@ -7601,6 +7618,14 @@ fn a_game_with_no_english_for_steam_s_text_is_told_so_and_has_nothing_written() 
         assert!(all.contains(line), "{line:?} in {all}");
     }
     assert!(!all.contains("  next"), "{all}");
+    assert!(!all.contains("removed"), "{all}");
+    for name in elsewhere {
+        assert_eq!(
+            fs::read_to_string(steam.join(name)).unwrap(),
+            "written by the game's own tool",
+            "{name}"
+        );
+    }
 }
 
 #[test]

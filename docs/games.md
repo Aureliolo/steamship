@@ -166,4 +166,6 @@ Each catalogue translates the English under the context `store page`, `steam wor
 presence`, with the English line as the `msgid`; a rich presence line's fields are written
 `{field}` there, not Steam's `%field%`. A record's name is translated as games-kit's are, under
 `bishop.name` and the record's ID. Anything a catalogue does not translate, or marks fuzzy, is
-refused and nothing is written. A file of these kinds that would no longer be written is removed.
+refused and nothing is written. A file that would no longer be written is removed, but only of a
+kind whose English the game gives: without `store_english.json`, for instance, the store's files
+and `ai_disclosure.json` are left to whatever else writes them.
