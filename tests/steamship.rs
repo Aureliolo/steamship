@@ -7907,6 +7907,67 @@ fn a_game_whose_script_names_app_0_is_refused_by_check_and_upload() {
             "{args:?}: {stderr}"
         );
     }
+
+    let (built, said, why) = in_game(&root, &["check", "export"]);
+    assert_eq!(
+        built,
+        Some(0_i32),
+        "the build is checked before the app exists: {why}"
+    );
+    assert!(
+        said.lines().any(|line| line
+            .strip_prefix("  app       not named yet in ")
+            .is_some_and(
+                |script| Path::new(script).ends_with(Path::new("steam").join("app_build.vdf"))
+            )),
+        "{said}"
+    );
+    assert!(said.contains("  \u{2713} nothing refused\n"), "{said}");
+}
+
+#[test]
+fn a_game_with_no_achievement_records_has_no_import_due_unless_one_is_left() {
+    let (_temp, root) = pushed_game(None);
+    fs::remove_file(root.join("mods/base/data/achievements.json")).unwrap();
+    let unchanged = ["achievements", "--write", "--unchanged"];
+    let (code, said, why) = in_game(&root, &unchanged);
+    assert_eq!(code, Some(0_i32), "{why}");
+    assert!(
+        said.contains("the game holds no achievement records, so there is no import to write"),
+        "{said}"
+    );
+
+    let import = root.join("steam").join("achievements");
+    fs::create_dir_all(&import).unwrap();
+    for name in [
+        "1000050-achievements-definitions.csv",
+        "FIVE_LEVELS_ACHIEVED.png",
+        "steam-icons.json",
+    ] {
+        fs::write(import.join(name), "kept from before").unwrap();
+    }
+    let (left, _, named) = in_game(&root, &unchanged);
+    assert_eq!(left, Some(2_i32), "{named}");
+    for line in [
+        "1000050-achievements-definitions.csv is left over",
+        "FIVE_LEVELS_ACHIEVED.png is left over",
+    ] {
+        assert!(named.contains(line), "{line:?} in {named}");
+    }
+    assert!(!named.contains("steam-icons.json"), "{named}");
+
+    fs::remove_dir_all(&import).unwrap();
+    fs::write(&import, "a file where the import's folder goes").unwrap();
+    let (unread, _, failed) = in_game(&root, &unchanged);
+    assert_eq!(unread, Some(1_i32), "{failed}");
+    assert!(failed.contains("achievements: "), "{failed}");
+
+    let (written, _, refused) = in_game(&root, &["achievements", "--write"]);
+    assert_eq!(written, Some(2_i32), "{refused}");
+    assert!(
+        refused.contains("--write names no files, and the game holds no achievement records"),
+        "{refused}"
+    );
 }
 
 #[test]
