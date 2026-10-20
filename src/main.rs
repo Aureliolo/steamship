@@ -29,7 +29,7 @@ use steamship::windows::Terminal;
 use steamship::{
     achievements, assets, check, ci, conversation, download, drm, dump, editor, init, keychain,
     leaderboards, likeness, magic, picture, po, presence, redist, release, run, scripts, settings,
-    steamcmd, upload, vdf, webapi, workshop,
+    steamcmd, text, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -137,6 +137,7 @@ fn run(command: Command) -> ExitCode {
             files,
             preview,
         } => either(rich_presence_in(app, files, preview)),
+        Command::Text { unchanged } => either(try_text(unchanged)),
         Command::Promote(request) => either(promote_in(request)),
         Command::Branch {
             app,
@@ -2582,7 +2583,7 @@ fn catalogue_file(
     };
     if language == "english" {
         return Err(refused(
-            &"is in English, which the achievements' own files give",
+            &"is in English, the language the game's own files are written in",
         ));
     }
     if let Some(other) = others.iter().find(|other| other.language == language) {
@@ -3310,6 +3311,236 @@ fn unlike_icons(
         spinner.failed(&said);
     }
     unlike
+}
+
+/// `text` in a game: its English beside the build scripts translated by every catalogue, written
+/// there, or with `unchanged` compared with what is there.
+fn try_text(unchanged: bool) -> Result<ExitCode, ExitCode> {
+    show::title(if unchanged {
+        "text, unchanged"
+    } else {
+        "text, write"
+    });
+    let game = game()?;
+    let folder = game.scripts().to_path_buf();
+    let english = text_english(&game, &folder)?;
+    let mut catalogued: Vec<achievements::Catalogued> = Vec::new();
+    for path in game.catalogues().map_err(|why| fail(&why, REFUSED))? {
+        let read = catalogue_file(&path, &catalogued)?;
+        catalogued.push(read);
+    }
+    let files = text::written(&english, &catalogued).map_err(|wrong| {
+        for why in &wrong {
+            show::failure("refused", why, None);
+        }
+        ExitCode::from(REFUSED)
+    })?;
+    let hand_kept = english
+        .presence
+        .as_ref()
+        .is_some_and(|told| !told.writes_english);
+    let before = text_kept(&folder, hand_kept)?;
+    let stale: Vec<&(String, String)> = files
+        .iter()
+        .filter(|(name, written)| {
+            fs::read_to_string(folder.join(name)).ok().as_ref() != Some(written)
+        })
+        .collect();
+    let left: Vec<&String> = before
+        .iter()
+        .filter(|name| !files.iter().any(|(written, _)| written == *name))
+        .collect();
+    let stale_names: Vec<&String> = stale.iter().map(|(name, _)| name).collect();
+    if english
+        .store
+        .as_ref()
+        .is_some_and(|store| store.item.is_empty())
+    {
+        show::note(&format!(
+            "{} names no itemid, the store page's own, so no store upload is written",
+            text::STORE
+        ));
+    }
+    if unchanged {
+        return Ok(unchanged_or_not(
+            &folder,
+            files.len(),
+            &stale_names,
+            &left,
+            &before,
+        ));
+    }
+    let failed = |error: &io::Error| fail(&format!("{}: {error}", folder.display()), FAILED);
+    for (name, written) in &stale {
+        let path = folder.join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| failed(&error))?;
+        }
+        fs::write(&path, written).map_err(|error| failed(&error))?;
+        show::field("wrote", name);
+    }
+    for name in &left {
+        fs::remove_file(folder.join(name)).map_err(|error| failed(&error))?;
+        show::field("removed", name);
+    }
+    show::success(
+        &format!(
+            "{} holds the {} of the game's text in {}",
+            folder.display(),
+            show::counted(files.len(), "file"),
+            show::counted(catalogued.len().saturating_add(1), "language")
+        ),
+        "",
+    );
+    text_next(&files);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The game's English, read from the files beside its build scripts in `folder`, each shown.
+fn text_english(game: &Project, folder: &Path) -> Result<text::English, ExitCode> {
+    let read = |name: &str| -> Result<Option<(PathBuf, String)>, ExitCode> {
+        let path = folder.join(name);
+        match fs::read_to_string(&path) {
+            Ok(given) => {
+                show::field("file", &path.display().to_string());
+                Ok(Some((path, given)))
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(fail(&format!("{}: {error}", path.display()), FAILED)),
+        }
+    };
+    let refused = |path: &Path, why: &str| fail(&format!("{}: {why}", path.display()), REFUSED);
+    let mut english = text::English::default();
+    if let Some((path, given)) = read(text::STORE)? {
+        english.store = Some(text::store(&given).map_err(|why| refused(&path, &why))?);
+    }
+    if let Some((path, given)) = read(text::WORKSHOP)? {
+        english.workshop = Some(text::workshop(&given).map_err(|why| refused(&path, &why))?);
+    }
+    english.presence = match read(text::PRESENCE)? {
+        Some((path, given)) => {
+            let records = text_records(game)?;
+            Some(text::presence(&given, &records).map_err(|why| refused(&path, &why))?)
+        }
+        None => read(text::PRESENCE_ENGLISH)?
+            .map(|(path, given)| text::presence_english(&given).map_err(|why| refused(&path, &why)))
+            .transpose()?,
+    };
+    if english == text::English::default() {
+        show::note(&format!(
+            "there is no {}, {}, {} or {} beside the build scripts, so there is no English to \
+             write from",
+            text::STORE,
+            text::WORKSHOP,
+            text::PRESENCE,
+            text::PRESENCE_ENGLISH
+        ));
+    }
+    Ok(english)
+}
+
+/// Every record of the game, from each of its record files that holds a list of them.
+fn text_records(game: &Project) -> Result<Vec<serde_json::Value>, ExitCode> {
+    let mut records = Vec::new();
+    for path in game.record_files().map_err(|why| fail(&why, REFUSED))? {
+        let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
+        let read = fs::read_to_string(&path).map_err(|error| refused(&error))?;
+        if let serde_json::Value::Array(listed) =
+            serde_json::from_str(&read).map_err(|error| refused(&error))?
+        {
+            records.extend(listed);
+        }
+    }
+    Ok(records)
+}
+
+/// Each file of the kinds `text` writes in `folder`, by its path from there: the rich presence
+/// files but the English one when it is `hand_kept`, the statement of how AI was used, and the
+/// JSON files in the store's and the Workshop's folders.
+fn text_kept(folder: &Path, hand_kept: bool) -> Result<Vec<String>, ExitCode> {
+    let failed =
+        |path: &Path, error: &io::Error| fail(&format!("{}: {error}", path.display()), FAILED);
+    let names = |within: &Path, wanted: &dyn Fn(&str) -> bool| -> Result<Vec<String>, ExitCode> {
+        let entries = match fs::read_dir(within) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(failed(within, &error)),
+        };
+        let mut found = Vec::new();
+        for entry in entries {
+            let entry = entry.map_err(|error| failed(within, &error))?;
+            let is_dir = entry
+                .file_type()
+                .map_err(|error| failed(within, &error))?
+                .is_dir();
+            if let Ok(name) = entry.file_name().into_string()
+                && !is_dir
+                && wanted(&name)
+            {
+                found.push(name);
+            }
+        }
+        Ok(found)
+    };
+    let extended = |name: &str, wanted: &str| {
+        Path::new(name)
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case(wanted))
+    };
+    let mut kept: Vec<String> = names(folder, &|name| {
+        (name.starts_with("rich_presence_")
+            && extended(name, "vdf")
+            && !(hand_kept && name == text::PRESENCE_ENGLISH))
+            || name == text::DISCLOSURE
+    })?;
+    for within in [text::STORE_FOLDER, text::WORKSHOP_FOLDER] {
+        kept.extend(
+            names(&folder.join(within), &|name| extended(name, "json"))?
+                .into_iter()
+                .map(|name| format!("{within}/{name}")),
+        );
+    }
+    kept.sort();
+    Ok(kept)
+}
+
+/// Where each kind of file `text` wrote goes in Steamworks.
+fn text_next(files: &[(String, String)]) {
+    let wrote = |prefix: &str| files.iter().any(|(name, _)| name.starts_with(prefix));
+    if wrote(text::STORE_FOLDER) {
+        show::field(
+            "next",
+            &format!(
+                "upload every file in {}, at once, on the store page's Localization tab",
+                text::STORE_FOLDER
+            ),
+        );
+    }
+    if wrote(text::DISCLOSURE) {
+        show::field(
+            "next",
+            &format!(
+                "enter each language's statement in {} under the content survey's Generative AI \
+                 section",
+                text::DISCLOSURE
+            ),
+        );
+    }
+    if wrote(text::WORKSHOP_FOLDER) {
+        show::field(
+            "next",
+            &format!(
+                "enter each file in {} on the Workshop's Steamworks page, one language to a save",
+                text::WORKSHOP_FOLDER
+            ),
+        );
+    }
+    if wrote("rich_presence_") {
+        show::field(
+            "next",
+            "steamship rich-presence sends the rich presence files",
+        );
+    }
 }
 
 /// Says whether the `count` files `--write` makes are in `out` as it would write them, naming each
