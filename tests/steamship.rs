@@ -7680,6 +7680,48 @@ fn recommended_requirements_leave_the_upload_for_the_basic_info_sheet() {
         ),
         "{wrote}"
     );
+
+    let english = steam.join("store_english.json");
+    let without = fs::read_to_string(&english)
+        .unwrap()
+        .replace("[rec][osversion]", "[min][processor]")
+        .replace("[rec][memory][amount]", "[min][graphics]");
+    fs::write(&english, without).unwrap();
+    let (stale, _, left) = in_game(&root, &["text", "--unchanged"]);
+    assert_eq!(stale, Some(2_i32), "{left}");
+    assert!(left.contains("basic_info.json is left over"), "{left}");
+    let (removed, said, why) = in_game(&root, &["text"]);
+    assert_eq!(removed, Some(0_i32), "{why}");
+    assert!(said.contains("  removed   basic_info.json\n"), "{said}");
+    assert!(!steam.join("basic_info.json").exists());
+}
+
+/// [`store_details`] with `padding` bytes before the requirements.
+fn padded_details(recommended: &str, padding: usize) -> String {
+    store_details("Windows 10", recommended).replacen(
+        "\"data\":{",
+        &format!("\"data\":{{\"padding\":\"{}\",", "x".repeat(padding)),
+        1,
+    )
+}
+
+#[test]
+fn a_store_answer_of_megabytes_is_read_whole_and_one_past_eight_is_refused() {
+    let (_temp, root) = game_with_requirements();
+    let (host, _) = web_api(vec![
+        ("200 OK", padded_details("Windows 11", 2 << 20)),
+        ("200 OK", padded_details("Windows 11, 64 Bit", 2 << 20)),
+    ]);
+    let (read, said, why) = in_game_with(&root, &["text", "--steam"], &[(STAND_IN, &host)]);
+    assert_eq!(read, Some(0_i32), "{said}{why}");
+
+    let (huge, _) = web_api(vec![("200 OK", padded_details("Windows 11", 9 << 20))]);
+    let (refused, _, failure) = in_game_with(&root, &["text", "--steam"], &[(STAND_IN, &huge)]);
+    assert_eq!(refused, Some(1_i32), "{failure}");
+    assert!(
+        failure.contains("Steam's store's answer could not be read whole"),
+        "{failure}"
+    );
 }
 
 #[test]
