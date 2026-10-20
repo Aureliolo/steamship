@@ -330,11 +330,13 @@ pub enum Command {
     /// In a game's folder, translates the English kept beside its build scripts with every
     /// gettext catalogue in its locale folder, and writes beside the scripts:
     /// `store/<language>.json`, which the store page's Localization tab uploads, every language at
-    /// once, from `store_english.json` once it names the page's `itemid`; `ai_disclosure.json`,
-    /// the statement of how AI was used by language, from its `disclosure`, for the content
-    /// survey; `workshop/<language>.json`, the Workshop page's title and description, from
-    /// `workshop_english.json`; and `rich_presence_<language>.vdf`, which `rich-presence` sends,
-    /// from `presence_english.json` or else a `rich_presence_english.vdf` kept by hand.
+    /// once, from `store_english.json` once it names the page's `itemid`; `basic_info.json`, each
+    /// language's recommended system requirements by their names on the Basic Info form, which
+    /// that upload drops; `ai_disclosure.json`, the statement of how AI was used by language, from
+    /// its `disclosure`, for the content survey; `workshop/<language>.json`, the Workshop page's
+    /// title and description, from `workshop_english.json`; and `rich_presence_<language>.vdf`,
+    /// which `rich-presence` sends, from `presence_english.json` or else a
+    /// `rich_presence_english.vdf` kept by hand.
     ///
     /// A catalogue translates the English under the context `store page`, `steam workshop` or
     /// `rich presence`; anything it does not translate, or marks fuzzy, is refused and nothing is
@@ -342,8 +344,15 @@ pub enum Command {
     Text {
         /// Write nothing, and exit 2 naming each file that differs from what would be written, is
         /// missing, or is left over.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "steam")]
         unchanged: bool,
+        /// Write nothing, and exit 2 naming each system requirement, minimum or recommended, that
+        /// the game's public store page does not show in a language as `store_english.json` and
+        /// its translations give it. Steam shows them only once the page is public, Coming Soon
+        /// included; memory, storage, the DirectX version and VR support it rewords, so they are
+        /// not compared.
+        #[arg(long)]
+        steam: bool,
     },
     /// Set an uploaded build live on a branch.
     ///

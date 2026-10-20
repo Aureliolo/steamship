@@ -22,11 +22,16 @@ pub const PRESENCE: &str = "presence_english.json";
 pub const PRESENCE_ENGLISH: &str = "rich_presence_english.vdf";
 /// The statement of how AI was used, in every language.
 pub const DISCLOSURE: &str = "ai_disclosure.json";
+/// Each language's recommended system requirements, by their names on the store page's Basic Info
+/// form. The Localization tab's upload takes the minimum ones and drops these without a word.
+pub const BASIC_INFO: &str = "basic_info.json";
 /// The folders the store page's and the Workshop page's text are written into.
 pub const STORE_FOLDER: &str = "store";
 pub const WORKSHOP_FOLDER: &str = "workshop";
 
 const STORE_CONTEXT: &str = "store page";
+const REQUIREMENT: &str = "app[content][sysreqs][";
+const RECOMMENDED: &str = "rec";
 const WORKSHOP_CONTEXT: &str = "steam workshop";
 const PRESENCE_CONTEXT: &str = "rich presence";
 
@@ -71,6 +76,19 @@ pub enum Part {
 pub struct Workshop {
     pub title: String,
     pub description: String,
+}
+
+/// A system requirement in one language, as a field of [`STORE`] names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Requirement {
+    pub language: String,
+    /// As the form names it: `windows`, `mac`, `linux` or `android`.
+    pub platform: String,
+    /// `min` or `rec`.
+    pub tier: String,
+    /// The rest of the field's name, such as `osversion`, or `memory][amount` for a part of one.
+    pub field: String,
+    pub text: String,
 }
 
 /// Rich presence in English.
@@ -312,6 +330,7 @@ pub fn written(
     let mut languages: Vec<Option<&Catalogued>> = vec![None];
     languages.extend(translations.iter().map(Some));
     let mut disclosed = Vec::new();
+    let mut recommended = Vec::new();
     for each in languages {
         let language = each.map_or("english", |catalogued| catalogued.language);
         let mut said = |context: &str, id: &str| {
@@ -330,7 +349,16 @@ pub fn written(
                 disclosed.push((language, said(STORE_CONTEXT, &store.disclosure)));
             }
             if !store.item.is_empty() {
-                let fields = store_fields(store, &mut said);
+                let (typed, fields): (Vec<_>, Vec<_>) = store_fields(store, &mut said)
+                    .into_iter()
+                    .partition(|(name, _)| {
+                        requirement(name).is_some_and(|(_, tier, _)| tier == RECOMMENDED)
+                    });
+                recommended.extend(
+                    typed
+                        .into_iter()
+                        .map(|(name, text)| (format!("{name}[{language}]"), text)),
+                );
                 let mut pairs = vec![("itemid", store.item.as_str()), ("language", language)];
                 pairs.extend(
                     fields
@@ -383,12 +411,75 @@ pub fn written(
             .collect();
         files.push((DISCLOSURE.to_owned(), json_object(&pairs)));
     }
+    if !recommended.is_empty() {
+        let pairs: Vec<(&str, &str)> = recommended
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str()))
+            .collect();
+        files.push((BASIC_INFO.to_owned(), json_object(&pairs)));
+    }
     if wrong.is_empty() {
         files.sort();
         Ok(files)
     } else {
         Err(wrong)
     }
+}
+
+/// Every system requirement `store` gives, in English and in each language of `translations`.
+///
+/// # Errors
+///
+/// Each requirement a catalogue does not translate or marks fuzzy.
+pub fn requirements(
+    store: &Store,
+    translations: &[Catalogued],
+) -> Result<Vec<Requirement>, Vec<String>> {
+    let mut found = Vec::new();
+    let mut wrong = Vec::new();
+    let mut languages: Vec<Option<&Catalogued>> = vec![None];
+    languages.extend(translations.iter().map(Some));
+    for each in languages {
+        let language = each.map_or("english", |catalogued| catalogued.language);
+        for part in &store.blocks {
+            let Part::Field { name, text } = part else {
+                continue;
+            };
+            let Some((platform, tier, field)) = requirement(name) else {
+                continue;
+            };
+            let text = match each {
+                None => text.clone(),
+                Some(catalogued) => match translated(catalogued, STORE_CONTEXT, text) {
+                    Ok(translation) => translation,
+                    Err(why) => {
+                        wrong.push(why);
+                        continue;
+                    }
+                },
+            };
+            found.push(Requirement {
+                language: language.to_owned(),
+                platform: platform.to_owned(),
+                tier: tier.to_owned(),
+                field: field.to_owned(),
+                text,
+            });
+        }
+    }
+    if wrong.is_empty() {
+        Ok(found)
+    } else {
+        Err(wrong)
+    }
+}
+
+/// The platform, tier and rest of the name of a system requirement's field, such as
+/// `app[content][sysreqs][windows][rec][osversion]`; `None` for any other field.
+fn requirement(name: &str) -> Option<(&str, &str, &str)> {
+    let inner = name.strip_prefix(REQUIREMENT)?.strip_suffix(']')?;
+    let mut parts = inner.splitn(3, "][");
+    Some((parts.next()?, parts.next()?, parts.next()?))
 }
 
 /// The translation `catalogued` gives `id` under `context`.
@@ -672,6 +763,74 @@ msgstr "Die Erlenhexe"
             "{\n  \"english\": \"Made with AI assistance for coding.\",\n  \
              \"german\": \"Mit KI-Hilfe beim Programmieren gemacht.\"\n}\n"
         );
+    }
+
+    #[test]
+    fn recommended_requirements_leave_the_upload_for_the_basic_info_sheet_and_minimum_ones_stay() {
+        let page = STORE_PAGE.replace(
+            r#"{ "kind": "paragraph", "text": "Then the next." }"#,
+            r#"{ "kind": "field", "field": "app[content][sysreqs][linux][min][osversion]",
+                 "text": "Strings" },
+               { "kind": "field", "field": "app[content][sysreqs][linux][rec][graphics]",
+                 "text": "Bells" }"#,
+        );
+        let store = store(&page).unwrap();
+        let english = English {
+            store: Some(store.clone()),
+            ..English::default()
+        };
+        let files = written(&english, &[german(GERMAN)]).unwrap();
+        let upload = file(&files, "store/german.json");
+        assert!(
+            upload.contains("\"app[content][sysreqs][linux][min][osversion]\": \"Saiten\"")
+                && !upload.contains("[rec]"),
+            "{upload}"
+        );
+        assert_eq!(
+            file(&files, BASIC_INFO),
+            "{\n  \"app[content][sysreqs][linux][rec][graphics][english]\": \"Bells\",\n  \
+             \"app[content][sysreqs][linux][rec][graphics][german]\": \"Glocken\"\n}\n"
+        );
+        let found = requirements(&store, &[german(GERMAN)]).unwrap();
+        assert_eq!(
+            found
+                .iter()
+                .map(|each| {
+                    format!(
+                        "{} {} {} {} {}",
+                        each.language, each.platform, each.tier, each.field, each.text
+                    )
+                })
+                .collect::<Vec<_>>(),
+            [
+                "english linux min osversion Strings",
+                "english linux rec graphics Bells",
+                "german linux min osversion Saiten",
+                "german linux rec graphics Glocken"
+            ]
+        );
+        assert_eq!(
+            requirements(&store, &[german(&GERMAN.replace("Glocken", ""))]),
+            Err(vec![
+                "de.po does not translate \"Bells\", under msgctxt \"store page\"".to_owned()
+            ])
+        );
+    }
+
+    #[test]
+    fn only_a_field_named_as_a_system_requirement_with_a_platform_tier_and_part_is_one() {
+        assert_eq!(
+            requirement("app[content][sysreqs][mac][rec][memory][amount]"),
+            Some(("mac", "rec", "memory][amount"))
+        );
+        for other in [
+            "app[content][legal]",
+            "app[content][sysreqs][windows][min]",
+            "app[content][sysreqs][windows][min][osversion",
+            "sysreqs[windows][min][osversion]",
+        ] {
+            assert_eq!(requirement(other), None, "{other}");
+        }
     }
 
     #[test]

@@ -821,6 +821,14 @@ where
     HOST.to_owned()
 }
 
+/// `real`, another of Steam's hosts, or the stand-in on this machine a debug build is sent to in
+/// its place, as the Web API's is.
+#[must_use]
+pub fn host_or_stand_in(real: &str) -> String {
+    let host = host(|name| env::var(name).ok());
+    if host == HOST { real.to_owned() } else { host }
+}
+
 /// Where Steam serves the images it makes of each app's achievement icons, by name, whether the
 /// app is released or not. The `icon` addresses the Web API gives serve nothing until it is.
 const IMAGES: &str = "https://shared.akamai.steamstatic.com/community_assets/images/apps";

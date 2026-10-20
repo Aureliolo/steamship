@@ -7606,6 +7606,166 @@ fn a_game_s_rich_presence_names_each_of_its_records_of_a_type_in_every_language(
     assert!(refusal.contains("bishops.json: "), "{refusal}");
 }
 
+/// App details for app 1000050 showing `minimum` and `recommended` as its Windows operating
+/// system, as Steam's store marks them up.
+fn store_details(minimum: &str, recommended: &str) -> String {
+    let list = |title: &str, line: &str| {
+        format!(
+            "<strong>{title}:</strong><br><ul class=\\\"bb_ul\\\"><li><strong>OS:</strong> \
+             {line}<br></li></ul>"
+        )
+    };
+    format!(
+        r#"{{"1000050":{{"success":true,"data":{{"pc_requirements":{{"minimum":"{}","recommended":"{}"}},"mac_requirements":[],"linux_requirements":[]}}}}}}"#,
+        list("Minimum", minimum),
+        list("Recommended", recommended)
+    )
+}
+
+/// [`pushed_game`] giving a minimum and a recommended Windows operating system and a recommended
+/// amount of memory, each translated into German.
+fn game_with_requirements() -> (tempfile::TempDir, PathBuf) {
+    let (temp, root) = pushed_game(None);
+    let steam = root.join("steam");
+    fs::write(
+        steam.join("store_english.json"),
+        r#"{"itemid": 1000090, "blocks": [
+            {"kind": "short", "text": "An inn."},
+            {"kind": "field", "field": "app[content][sysreqs][windows][min][osversion]",
+             "text": "Windows 10"},
+            {"kind": "field", "field": "app[content][sysreqs][windows][rec][osversion]",
+             "text": "Windows 11"},
+            {"kind": "field", "field": "app[content][sysreqs][windows][rec][memory][amount]",
+             "text": "8"}
+        ]}"#,
+    )
+    .unwrap();
+    let locale = root.join("game/locale/de.po");
+    let mut german = fs::read_to_string(&locale).unwrap();
+    german.push_str(
+        "\nmsgctxt \"rich presence\"\nmsgid \"At the menu\"\nmsgstr \"Im Men\u{fc}\"\n\n\
+         msgctxt \"store page\"\nmsgid \"An inn.\"\nmsgstr \"Gasthaus.\"\n\n\
+         msgctxt \"store page\"\nmsgid \"Windows 10\"\nmsgstr \"Windows 10\"\n\n\
+         msgctxt \"store page\"\nmsgid \"Windows 11\"\nmsgstr \"Windows 11, 64 Bit\"\n\n\
+         msgctxt \"store page\"\nmsgid \"8\"\nmsgstr \"8\"\n",
+    );
+    fs::write(&locale, german).unwrap();
+    (temp, root)
+}
+
+#[test]
+fn recommended_requirements_leave_the_upload_for_the_basic_info_sheet() {
+    let (_temp, root) = game_with_requirements();
+    let steam = root.join("steam");
+    let (written, wrote, unwritten) = in_game(&root, &["text"]);
+    assert_eq!(written, Some(0_i32), "{unwritten}");
+    assert_eq!(
+        fs::read_to_string(steam.join("basic_info.json")).unwrap(),
+        "{\n  \"app[content][sysreqs][windows][rec][osversion][english]\": \"Windows 11\",\n  \
+         \"app[content][sysreqs][windows][rec][memory][amount][english]\": \"8\",\n  \
+         \"app[content][sysreqs][windows][rec][osversion][german]\": \"Windows 11, 64 Bit\",\n  \
+         \"app[content][sysreqs][windows][rec][memory][amount][german]\": \"8\"\n}\n"
+    );
+    let upload = fs::read_to_string(steam.join("store/german.json")).unwrap();
+    assert!(
+        upload.contains("\"app[content][sysreqs][windows][min][osversion]\": \"Windows 10\"")
+            && !upload.contains("[rec]"),
+        "{upload}"
+    );
+    assert!(
+        wrote.contains(
+            "  next      type each language's recommended system requirements in basic_info.json \
+             on the store page's Basic Info form, as the upload drops them; once the page is \
+             public, `steamship text --steam` finds any missed\n"
+        ),
+        "{wrote}"
+    );
+}
+
+#[test]
+fn the_store_page_is_read_in_every_language_and_each_requirement_it_lacks_named() {
+    let (_temp, root) = game_with_requirements();
+    let (host, requests) = web_api(vec![
+        ("200 OK", store_details("Windows 10", "Windows 11")),
+        ("200 OK", store_details("Windows 10", "Windows 11")),
+    ]);
+    let (lacking, said, why) = in_game_with(&root, &["text", "--steam"], &[(STAND_IN, &host)]);
+    assert_eq!(lacking, Some(2_i32), "{said}{why}");
+    let told = format!("{said}{why}");
+    for line in [
+        "german: the recommended windows osversion is not on the store page",
+        "\"Windows 11, 64 Bit\"",
+        "Steam rewords windows memory amount on the store page, so they are not compared",
+        "type the recommended ones from basic_info.json on the store page's Basic Info form, \
+         upload the files in store/ on its Localization tab for the minimum ones, and run it again",
+    ] {
+        assert!(told.contains(line), "{line:?} in {told}");
+    }
+    assert!(!told.contains("english: the"), "{told}");
+    for language in ["english", "german"] {
+        let asked = requests.recv().unwrap();
+        assert!(
+            asked.starts_with(&format!("GET /api/appdetails?appids=1000050&l={language} ")),
+            "{asked}"
+        );
+    }
+
+    let (fixed, _) = web_api(vec![
+        ("200 OK", store_details("Windows 10", "Windows 11")),
+        ("200 OK", store_details("Windows 10", "Windows 11, 64 Bit")),
+    ]);
+    let (shown, all, unshown) = in_game_with(&root, &["text", "--steam"], &[(STAND_IN, &fixed)]);
+    assert_eq!(shown, Some(0_i32), "{unshown}");
+    assert!(
+        all.contains(
+            "app 1000050's store page shows the 4 system requirements of the files in 2 languages"
+        ),
+        "{all}"
+    );
+}
+
+#[test]
+fn a_store_page_steam_does_not_show_or_cannot_give_is_named() {
+    let (_temp, root) = game_with_requirements();
+    let (host, _) = web_api(vec![("200 OK", r#"{"1000050":{"success":false}}"#)]);
+    let (private, _, hidden) = in_game_with(&root, &["text", "--steam"], &[(STAND_IN, &host)]);
+    assert_eq!(private, Some(2_i32), "{hidden}");
+    assert!(
+        hidden.contains(
+            "Steam shows no public store page for app 1000050, so its system requirements can \
+             be checked only on its Basic Info form"
+        ),
+        "{hidden}"
+    );
+
+    let (failing, _) = web_api(vec![("500 Internal Server Error", "")]);
+    let (broken, _, failure) = in_game_with(&root, &["text", "--steam"], &[(STAND_IN, &failing)]);
+    assert_eq!(broken, Some(1_i32), "{failure}");
+    assert!(
+        failure.contains("Steam's store answered HTTP 500"),
+        "{failure}"
+    );
+}
+
+#[test]
+fn a_store_page_check_of_a_game_giving_no_requirements_is_refused() {
+    let (_temp, root) = pushed_game(None);
+    fs::write(
+        root.join("steam/store_english.json"),
+        r#"{"blocks": [{"kind": "short", "text": "An inn."}]}"#,
+    )
+    .unwrap();
+    let (code, _, why) = in_game(&root, &["text", "--steam"]);
+    assert_eq!(code, Some(2_i32), "{why}");
+    assert!(
+        why.contains(
+            "store_english.json gives no system requirements, so there are none to look for on \
+             the store page"
+        ),
+        "{why}"
+    );
+}
+
 #[test]
 fn a_file_of_steam_s_text_that_cannot_be_read_is_named() {
     let (_temp, root) = pushed_game(None);
