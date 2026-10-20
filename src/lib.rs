@@ -43,6 +43,7 @@ pub mod secret_service;
 pub mod settings;
 pub mod show;
 pub mod steamcmd;
+pub mod storefront;
 pub mod terminal;
 pub mod text;
 pub mod typing;

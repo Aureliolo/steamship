@@ -29,7 +29,7 @@ use steamship::windows::Terminal;
 use steamship::{
     achievements, assets, check, ci, conversation, download, drm, dump, editor, init, keychain,
     leaderboards, likeness, magic, picture, po, presence, redist, release, run, scripts, settings,
-    steamcmd, text, upload, vdf, webapi, workshop,
+    steamcmd, storefront, text, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -137,7 +137,8 @@ fn run(command: Command) -> ExitCode {
             files,
             preview,
         } => either(rich_presence_in(app, files, preview)),
-        Command::Text { unchanged } => either(try_text(unchanged)),
+        Command::Text { steam: true, .. } => either(try_text_on_steam()),
+        Command::Text { unchanged, .. } => either(try_text(unchanged)),
         Command::Promote(request) => either(promote_in(request)),
         Command::Branch {
             app,
@@ -3375,17 +3376,8 @@ fn try_text(unchanged: bool) -> Result<ExitCode, ExitCode> {
     let game = game()?;
     let folder = game.scripts().to_path_buf();
     let english = text_english(&game, &folder)?;
-    let mut catalogued: Vec<achievements::Catalogued> = Vec::new();
-    for path in game.catalogues().map_err(|why| fail(&why, REFUSED))? {
-        let read = catalogue_file(&path, &catalogued)?;
-        catalogued.push(read);
-    }
-    let files = text::written(&english, &catalogued).map_err(|wrong| {
-        for why in &wrong {
-            show::failure("refused", why, None);
-        }
-        ExitCode::from(REFUSED)
-    })?;
+    let catalogued = text_catalogued(&game)?;
+    let files = text::written(&english, &catalogued).map_err(|wrong| refusals(&wrong))?;
     let before = text_kept(&folder, &english)?;
     let stale: Vec<&(String, String)> = files
         .iter()
@@ -3441,6 +3433,162 @@ fn try_text(unchanged: bool) -> Result<ExitCode, ExitCode> {
     );
     text_next(&files);
     Ok(ExitCode::SUCCESS)
+}
+
+/// `text --steam` in a game: each system requirement its English and catalogues give, looked for
+/// on its public store page in that language.
+fn try_text_on_steam() -> Result<ExitCode, ExitCode> {
+    show::title("text, on Steam");
+    let game = game()?;
+    let folder = game.scripts().to_path_buf();
+    let english = text_english(&game, &folder)?;
+    let catalogued = text_catalogued(&game)?;
+    let wanted = match &english.store {
+        Some(store) => text::requirements(store, &catalogued).map_err(|wrong| refusals(&wrong))?,
+        None => Vec::new(),
+    };
+    if wanted.is_empty() {
+        return Err(fail(
+            &format!(
+                "{} gives no system requirements, so there are none to look for on the store page",
+                text::STORE
+            ),
+            REFUSED,
+        ));
+    }
+    let app = scripts::load(&game.script)
+        .map_err(|problems| {
+            let problems: Vec<String> = problems.iter().map(ToString::to_string).collect();
+            refusals(&problems)
+        })?
+        .app_id;
+    show::field("app", &app.to_string());
+    let store = storefront::Storefront::new();
+    let mut languages: Vec<&str> = Vec::new();
+    for each in &wanted {
+        if !languages.contains(&each.language.as_str()) {
+            languages.push(&each.language);
+        }
+    }
+    let mut compared = 0_usize;
+    let mut missing = 0_usize;
+    let mut reworded: Vec<String> = Vec::new();
+    for language in &languages {
+        let spinner = Spinner::start("store", &format!("reading the page in {language}"), false);
+        let shown = match store.requirements(app, language) {
+            Ok(Some(shown)) => {
+                spinner.done(language);
+                shown
+            }
+            Ok(None) => {
+                spinner.failed(language);
+                return Err(fail(
+                    &format!(
+                        "Steam shows no public store page for app {app}, so its system \
+                         requirements can be checked only on its Basic Info form"
+                    ),
+                    REFUSED,
+                ));
+            }
+            Err(why) => {
+                spinner.failed(language);
+                return Err(fail(&why, FAILED));
+            }
+        };
+        let (looked, lacking) = requirements_shown(&wanted, language, &shown, &mut reworded);
+        compared = compared.saturating_add(looked);
+        missing = missing.saturating_add(lacking);
+    }
+    if !reworded.is_empty() {
+        show::note(&format!(
+            "Steam rewords {} on the store page, so they are not compared",
+            reworded.join(", ")
+        ));
+    }
+    if missing > 0 {
+        show::field(
+            "next",
+            &format!(
+                "type the recommended ones from {} on the store page's Basic Info form, upload the \
+                 files in {}/ on its Localization tab for the minimum ones, and run it again",
+                text::BASIC_INFO,
+                text::STORE_FOLDER
+            ),
+        );
+        return Ok(ExitCode::from(REFUSED));
+    }
+    if compared == 0 {
+        return Err(fail(
+            &format!(
+                "none of the system requirements {} gives is one the store page shows as typed",
+                text::STORE
+            ),
+            REFUSED,
+        ));
+    }
+    show::success(
+        &format!(
+            "app {app}'s store page shows the {} of the files in {}",
+            show::counted(compared, "system requirement"),
+            show::counted(languages.len(), "language")
+        ),
+        "",
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// How many of the requirements `wanted` in `language` were compared with what the store page
+/// `shown` holds, and how many it lacks, each named; those Steam rewords are added to `reworded`.
+fn requirements_shown(
+    wanted: &[text::Requirement],
+    language: &str,
+    shown: &storefront::Shown,
+    reworded: &mut Vec<String>,
+) -> (usize, usize) {
+    let mut compared = 0_usize;
+    let mut missing = 0_usize;
+    for each in wanted.iter().filter(|each| each.language == language) {
+        let named = format!("{} {}", each.platform, each.field.replace("][", " "));
+        if !storefront::comparable(each) {
+            if !reworded.contains(&named) {
+                reworded.push(named);
+            }
+            continue;
+        }
+        compared = compared.saturating_add(1);
+        if !storefront::holds(shown, each) {
+            missing = missing.saturating_add(1);
+            let tier = if each.tier == "rec" {
+                "recommended"
+            } else {
+                "minimum"
+            };
+            show::failure(
+                &format!("{language}: the {tier} {named} is not on the store page"),
+                &format!("\"{}\"", each.text),
+                None,
+            );
+        }
+    }
+    (compared, missing)
+}
+
+/// Each of `wrong` shown as refused, and the exit code for it.
+fn refusals(wrong: &[String]) -> ExitCode {
+    for why in wrong {
+        show::failure("refused", why, None);
+    }
+    ExitCode::from(REFUSED)
+}
+
+/// Every catalogue in the game's locale folder, read.
+fn text_catalogued(game: &Project) -> Result<Vec<achievements::Catalogued>, ExitCode> {
+    let mut catalogued: Vec<achievements::Catalogued> = Vec::new();
+    for path in game.catalogues().map_err(|why| fail(&why, REFUSED))? {
+        let read = catalogue_file(&path, &catalogued)?;
+        catalogued.push(read);
+    }
+    Ok(catalogued)
 }
 
 /// The game's English, read from the files beside its build scripts in `folder`, each shown.
@@ -3542,7 +3690,7 @@ fn text_kept(folder: &Path, english: &text::English) -> Result<Vec<String>, Exit
             && name.starts_with("rich_presence_")
             && extended(name, "vdf")
             && !(hand_kept && name == text::PRESENCE_ENGLISH))
-            || (english.store.is_some() && name == text::DISCLOSURE)
+            || (english.store.is_some() && (name == text::DISCLOSURE || name == text::BASIC_INFO))
     })?;
     for (within, given) in [
         (text::STORE_FOLDER, english.store.is_some()),
@@ -3570,6 +3718,17 @@ fn text_next(files: &[(String, String)]) {
             &format!(
                 "upload every file in {}, at once, on the store page's Localization tab",
                 text::STORE_FOLDER
+            ),
+        );
+    }
+    if wrote(text::BASIC_INFO) {
+        show::field(
+            "next",
+            &format!(
+                "type each language's recommended system requirements in {} on the store page's \
+                 Basic Info form, as the upload drops them; once the page is public, \
+                 `steamship text --steam` finds any missed",
+                text::BASIC_INFO
             ),
         );
     }
