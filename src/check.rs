@@ -322,6 +322,25 @@ fn same_file(one: &Path, other: &Path) -> bool {
     }
 }
 
+/// Whether `depot` ships `file`, as its mappings and exclusions take files from its content root,
+/// whether or not the file is there yet.
+#[must_use]
+pub fn ships(depot: &DepotScript, file: &Path) -> bool {
+    let root = &depot.content_root;
+    let (Some(parent), Some(file_name)) = (file.parent(), file.file_name()) else {
+        return false;
+    };
+    let file_name = file_name.to_string_lossy();
+    !excluded(root, file, &depot.exclusions)
+        && depot.mappings.iter().any(|mapping| {
+            let (folder, name) = split(mapping);
+            let folder = root.join(folder);
+            unmappable(mapping).is_none()
+                && pattern::matches(&name, &file_name)
+                && (parent == folder || (mapping.recursive && parent.starts_with(&folder)))
+        })
+}
+
 fn mapped_by(root: &Path, mapping: &FileMapping) -> Result<Vec<PathBuf>, String> {
     if let Some(message) = unmappable(mapping) {
         return Err(message.to_owned());
@@ -440,5 +459,49 @@ fn runtime_installed_apart(file: &Path) -> Option<String> {
         Err(error) => Some(format!(
             "cannot be read as .NET's runtime settings: {error}"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn depot(mappings: &[(&str, bool)], exclusions: &[&str]) -> DepotScript {
+        DepotScript {
+            path: PathBuf::from("steam/depot.vdf"),
+            depot_id: 1_000_051,
+            content_root: PathBuf::from("export"),
+            mappings: mappings
+                .iter()
+                .map(|(local_path, recursive)| FileMapping {
+                    local_path: (*local_path).to_owned(),
+                    depot_path: ".".to_owned(),
+                    recursive: *recursive,
+                })
+                .collect(),
+            exclusions: exclusions
+                .iter()
+                .map(|&exclusion| exclusion.to_owned())
+                .collect(),
+            install_scripts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_depot_ships_a_file_its_mappings_take_and_its_exclusions_leave() {
+        let windows = Path::new("export").join("windows").join("sample.exe");
+        let demo = Path::new("export")
+            .join("demo")
+            .join("windows")
+            .join("sample.exe");
+        assert!(ships(&depot(&[("windows/*", false)], &[]), &windows));
+        assert!(!ships(&depot(&[("windows/*", false)], &[]), &demo));
+        assert!(ships(&depot(&[("*", true)], &[]), &demo));
+        assert!(!ships(&depot(&[("*", false)], &[]), &demo));
+        assert!(ships(&depot(&[("demo/windows/*.exe", false)], &[]), &demo));
+        assert!(!ships(&depot(&[("demo/windows/*.pck", false)], &[]), &demo));
+        assert!(!ships(&depot(&[("*/windows/*", true)], &[]), &demo));
+        assert!(!ships(&depot(&[("*", true)], &["demo/windows/*"]), &demo));
+        assert!(!ships(&depot(&[("*", true)], &[]), Path::new("")));
     }
 }

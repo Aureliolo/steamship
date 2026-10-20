@@ -488,7 +488,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [vdf, elf, macho, pe, pattern, redact, terminal, dbus, picture, po, likeness]
+        target: [vdf, elf, macho, pe, pattern, redact, terminal, dbus, picture, po, likeness, presets]
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
