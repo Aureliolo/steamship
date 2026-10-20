@@ -4552,6 +4552,47 @@ fn the_achievement_editors_files_are_written_from_records_catalogues_and_icons()
 }
 
 #[test]
+fn an_achievement_unlocked_by_the_first_floor_built_is_written_without_a_bar_and_its_old_one_named()
+{
+    let game = inn_mod();
+    let out = game.path().join("steam").join("achievements");
+    let (first, said, why) = write_inn(game.path(), false);
+    assert_eq!(first, Some(0_i32), "{said}{why}");
+    fs::write(
+        game.path().join("mods/base/data/achievements.json"),
+        INN_RECORDS.replace(r#""at": 5"#, r#""at": 1"#),
+    )
+    .unwrap();
+
+    let (stale, _, why_stale) = write_inn(game.path(), true);
+    assert_eq!(stale, Some(2_i32), "{why_stale}");
+    assert!(
+        why_stale
+            .contains("1000050-achievements-definitions.csv differs from what the files make\n"),
+        "{why_stale}"
+    );
+    let (rewritten, again, noted) = write_inn(game.path(), false);
+    assert_eq!(rewritten, Some(0_i32), "{again}{noted}");
+    assert!(
+        fs::read_to_string(out.join("1000050-achievements-definitions.csv"))
+            .unwrap()
+            .contains("\nFIVE_LEVELS,,Client,false,false,,0,0\n"),
+        "{again}"
+    );
+    assert!(
+        noted.contains(
+            "FIVE_LEVELS's progress bar goes from floors 0 - 5 to no progress bar, which an import \
+             leaves as it was: set it in the editor by hand, then publish\n"
+        ),
+        "{noted}"
+    );
+    assert!(
+        !noted.contains("each stat a progress bar counts"),
+        "no bar is left to need its stat first: {noted}"
+    );
+}
+
+#[test]
 fn a_file_written_otherwise_or_left_over_is_named_and_rewritten_or_removed() {
     let game = inn_mod();
     let out = game.path().join("steam").join("achievements");

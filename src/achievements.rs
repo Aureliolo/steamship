@@ -685,8 +685,18 @@ fn names(id: &str, named: &str) -> bool {
     id == named || id.strip_prefix("base:") == Some(named)
 }
 
+/// Whether `at` is the first whole step above `default`.
+#[expect(
+    clippy::float_arithmetic,
+    reason = "a stat that counts in whole steps holds whole numbers, which an f64 adds exactly"
+)]
+fn first_step(default: f64, at: f64) -> bool {
+    (at - default - 1.0_f64).abs() < f64::EPSILON
+}
+
 /// Makes each achievement's set and progress stat in `whole` their IDs on Steam, refusing what
-/// the achievement editor would.
+/// the achievement editor would, and takes the bar from one that unlocks at the first whole step
+/// above its stat's default.
 ///
 /// # Errors
 ///
@@ -716,7 +726,17 @@ fn resolve(whole: &mut Listed) -> Result<(), String> {
                     wanted.api_name, progress.at, stat.api_name
                 ));
             }
-            progress.stat.clone_from(&stat.api_name);
+            // A bar that fills in one step only ever shows empty, so an achievement unlocked by
+            // the first step above where every player starts is a single moment.
+            let moment = stat.whole == Some(true)
+                && stat
+                    .default
+                    .is_some_and(|default| first_step(default, progress.at));
+            if moment {
+                wanted.defined.progress = None;
+            } else {
+                progress.stat.clone_from(&stat.api_name);
+            }
         }
         if let Some(set) = &mut wanted.defined.set {
             let Some(found) = whole
@@ -1870,6 +1890,42 @@ mod tests {
             counted.map(|progress| progress.stat.as_str()),
             Some("floors"),
             "counted by the stat's API name, which no ID names"
+        );
+    }
+
+    #[test]
+    fn an_achievement_unlocked_by_its_stat_s_first_whole_step_is_a_moment_without_a_bar() {
+        let records = r#"[
+            {"type": "stat", "id": "base:duels", "steam": "duels", "kind": "int"},
+            {"type": "stat", "id": "base:laps", "steam": "laps", "kind": "int", "default": 5},
+            {"type": "stat", "id": "base:miles", "steam": "miles", "kind": "float"},
+            {"type": "achievement", "steam": "FIRST_DUEL", "name": "A", "stat": "duels", "at": 1},
+            {"type": "achievement", "steam": "DUELLIST", "name": "A", "stat": "duels", "at": 100},
+            {"type": "achievement", "steam": "NEXT_LAP", "name": "A", "stat": "laps", "at": 6},
+            {"type": "achievement", "steam": "LAPS", "name": "A", "stat": "laps", "at": 7},
+            {"type": "achievement", "steam": "MILE", "name": "A", "stat": "miles", "at": 1}
+        ]"#;
+        let whole = together(vec![("a.json".to_owned(), read(records).unwrap())]).unwrap();
+        let bars: Vec<(&str, Option<(&str, f64)>)> = whole
+            .achievements
+            .iter()
+            .map(|wanted| {
+                let bar = wanted.defined.progress.as_ref();
+                (
+                    wanted.api_name.as_str(),
+                    bar.map(|progress| (progress.stat.as_str(), progress.at)),
+                )
+            })
+            .collect();
+        assert_eq!(
+            bars,
+            [
+                ("FIRST_DUEL", None),
+                ("DUELLIST", Some(("duels", 100.0_f64))),
+                ("NEXT_LAP", None),
+                ("LAPS", Some(("laps", 7.0_f64))),
+                ("MILE", Some(("miles", 1.0_f64))),
+            ]
         );
     }
 
