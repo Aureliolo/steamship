@@ -578,7 +578,10 @@ Import/Export, and no Web API sets them. `--write` writes those files into the `
 from the same files `--check` reads, without asking Steam anything:
 
 - `480-achievements-definitions.csv`: each achievement's set, who may unlock it, whether it is
-  a spoiler (hidden) or archived, and the stat its progress bar counts, from 0 up to its `at`;
+  a spoiler (hidden) or archived, and the stat its progress bar counts, from 0 up to its `at`.
+  One that unlocks at the first step above its stat's `default`, of a stat whose `kind` is `int`
+  (the first duel won, where another achievement counts the same stat to a hundred), is a single
+  moment and gets no bar, since a bar of one step only ever shows empty;
 - `480-achievements-localization.csv`: each name and description in English and in each
   language of the catalogues or localisation given;
 - `480-achievement-sets-localization.csv`, when there are sets: each set's name in the same

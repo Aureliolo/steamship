@@ -439,7 +439,8 @@ pub struct Writing {
     /// Write the achievement editor's files from these, as `--check` reads them; in a game's
     /// folder, with none, from its own, into `steam/achievements`. An achievement
     /// may also give its `set`, whether it is `archived`, its `permission`, the `stat` its
-    /// progress bar counts and the value it unlocks `at`, and its `icon` and `icon_locked`, PNG
+    /// progress bar counts and the value it unlocks `at` (no bar when that is the first whole step
+    /// above the stat's default), and its `icon` and `icon_locked`, PNG
     /// files in the games-kit mod the records are in or beside the file; a set gives its `setid` and
     /// English `name`, or as a games-kit record typed `achievement_set`, its set ID in `steam`.
     /// Each catalogue's language is its header's `Language`, or else its name, such as `de.po`;
