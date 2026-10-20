@@ -3386,11 +3386,7 @@ fn try_text(unchanged: bool) -> Result<ExitCode, ExitCode> {
         }
         ExitCode::from(REFUSED)
     })?;
-    let hand_kept = english
-        .presence
-        .as_ref()
-        .is_some_and(|told| !told.writes_english);
-    let before = text_kept(&folder, hand_kept)?;
+    let before = text_kept(&folder, &english)?;
     let stale: Vec<&(String, String)> = files
         .iter()
         .filter(|(name, written)| {
@@ -3505,10 +3501,11 @@ fn text_records(game: &Project) -> Result<Vec<serde_json::Value>, ExitCode> {
     Ok(records)
 }
 
-/// Each file of the kinds `text` writes in `folder`, by its path from there: the rich presence
-/// files but the English one when it is `hand_kept`, the statement of how AI was used, and the
-/// JSON files in the store's and the Workshop's folders.
-fn text_kept(folder: &Path, hand_kept: bool) -> Result<Vec<String>, ExitCode> {
+/// Each file in `folder` of a kind `text` writes from the `english` the game gives, by its path from
+/// there: the rich presence files but a hand-kept English one, the store's JSON files and the
+/// statement of how AI was used, and the Workshop's JSON files. A kind whose English the game does
+/// not give is left to whatever else writes it.
+fn text_kept(folder: &Path, english: &text::English) -> Result<Vec<String>, ExitCode> {
     let failed =
         |path: &Path, error: &io::Error| fail(&format!("{}: {error}", path.display()), FAILED);
     let names = |within: &Path, wanted: &dyn Fn(&str) -> bool| -> Result<Vec<String>, ExitCode> {
@@ -3538,13 +3535,22 @@ fn text_kept(folder: &Path, hand_kept: bool) -> Result<Vec<String>, ExitCode> {
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case(wanted))
     };
+    let presence = english.presence.as_ref();
+    let hand_kept = presence.is_some_and(|told| !told.writes_english);
     let mut kept: Vec<String> = names(folder, &|name| {
-        (name.starts_with("rich_presence_")
+        (presence.is_some()
+            && name.starts_with("rich_presence_")
             && extended(name, "vdf")
             && !(hand_kept && name == text::PRESENCE_ENGLISH))
-            || name == text::DISCLOSURE
+            || (english.store.is_some() && name == text::DISCLOSURE)
     })?;
-    for within in [text::STORE_FOLDER, text::WORKSHOP_FOLDER] {
+    for (within, given) in [
+        (text::STORE_FOLDER, english.store.is_some()),
+        (text::WORKSHOP_FOLDER, english.workshop.is_some()),
+    ] {
+        if !given {
+            continue;
+        }
         kept.extend(
             names(&folder.join(within), &|name| extended(name, "json"))?
                 .into_iter()
