@@ -185,10 +185,12 @@ pub fn installed_by(dll: &str) -> Option<&'static [u32]> {
 /// What [`judged`] found.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Judged {
-    /// Each DLL nothing gives the file that loads it, which Windows would refuse to start.
+    /// Each DLL nothing gives the file that loads it, which Windows would refuse to start, or
+    /// would stop when it first calls into a delay-loaded one.
     pub refused: Vec<Problem>,
-    /// Each DLL a redistributable installs, when which the app ticks is not known, or one an
-    /// install script of the build may install.
+    /// Each DLL a redistributable installs, when which the app ticks is not known, one an install
+    /// script of the build may install, and one delay-loaded that nothing installs, which a file
+    /// may be written to do without.
     pub unchecked: Vec<Problem>,
     /// The redistributables the app ticks that the build needs.
     pub ticked: BTreeSet<&'static str>,
@@ -232,7 +234,8 @@ pub fn judged(report: &Report, settings: Option<&Block>) -> Judged {
     let mut judged = Judged::default();
     for (file, imports) in installing.iter().flat_map(|depot| &depot.windows) {
         let mut seen = BTreeSet::new();
-        for dll in imports {
+        let loaded = imports.loaded.iter().map(|dll| (dll, false));
+        for (dll, delayed) in loaded.chain(imports.delayed.iter().map(|dll| (dll, true))) {
             let mut name = dll.to_ascii_lowercase();
             // Windows looks for a name without an extension as a DLL.
             if !name.contains('.') {
@@ -245,15 +248,13 @@ pub fn judged(report: &Report, settings: Option<&Block>) -> Judged {
             {
                 continue;
             }
-            judge(
-                &mut judged,
+            let loading = Loading {
                 file,
                 dll,
-                &name,
-                ticked.as_ref(),
-                scripted,
-                app,
-            );
+                name: &name,
+                delayed,
+            };
+            judge(&mut judged, &loading, ticked.as_ref(), scripted, app);
         }
     }
     judged
@@ -272,23 +273,44 @@ fn ticked(depots: &Block) -> BTreeSet<u32> {
         .collect()
 }
 
-/// Judges `dll`, spelt `name` in lower case, which `file` loads and neither Windows nor the build
-/// gives it.
+/// A DLL a Windows file loads that neither Windows nor the build gives it.
+struct Loading<'names> {
+    file: &'names Path,
+    /// As the file spells it, and in lower case with its extension.
+    dll: &'names str,
+    name: &'names str,
+    delayed: bool,
+}
+
+/// Judges what `loading` loads.
 fn judge(
     judged: &mut Judged,
-    file: &Path,
-    dll: &str,
-    name: &str,
+    loading: &Loading<'_>,
     ticked: Option<&BTreeSet<u32>>,
     scripted: bool,
     app: u32,
 ) {
+    let &Loading {
+        file,
+        dll,
+        name,
+        delayed,
+    } = loading;
+    let verb = if delayed { "delay-loads" } else { "imports" };
     let Some(depots) = installed_by(name) else {
         let missing = format!(
-            "imports {dll}, which neither Windows, the build's depots nor a Steamworks Common \
+            "{verb} {dll}, which neither Windows, the build's depots nor a Steamworks Common \
              Redistributable has"
         );
-        if scripted {
+        if delayed {
+            judged.unchecked.push(Problem::new(
+                file,
+                format!(
+                    "{missing}; the file starts without it, and works only where it finds it or \
+                     does without it"
+                ),
+            ));
+        } else if scripted {
             judged.unchecked.push(Problem::new(
                 file,
                 format!("{missing}, unless an install script of the build installs it"),
@@ -313,7 +335,7 @@ fn judge(
                 judged.refused.push(Problem::new(
                     file,
                     format!(
-                        "imports {dll}, which {names} installs, and app {app} ticks none in \
+                        "{verb} {dll}, which {names} installs, and app {app} ticks none in \
                          Steamworks; tick one under Installation, Redistributables, ship the DLL \
                          in a depot, or link its library in statically"
                     ),
@@ -324,7 +346,7 @@ fn judge(
         }
         None => judged.unchecked.push(Problem::new(
             file,
-            format!("imports {dll}, which {names} installs"),
+            format!("{verb} {dll}, which {names} installs"),
         )),
     }
 }

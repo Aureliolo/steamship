@@ -8,13 +8,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use steamship::check::{Report, check, scripts_only};
+use steamship::check::{self, Report, check, scripts_only};
 use steamship::scripts::Problem;
 use steamship::{redist, run, vdf};
 
 pub mod common;
 
-use common::pe::{settings_ticking, windows_library};
+use common::pe::{settings_ticking, windows_library, windows_library_delaying};
 
 struct Project {
     _temp: tempfile::TempDir,
@@ -507,6 +507,54 @@ fn a_dll_an_install_script_may_install_is_not_checked() {
             "imports fmod.dll, which neither Windows, the build's depots nor a Steamworks \
              Common Redistributable has, unless an install script of the build installs it"
         ]
+    );
+}
+
+#[test]
+fn a_build_s_folder_is_checked_alone_with_what_its_files_load_when_first_called() {
+    let project = Project::new();
+    project.put(
+        "windows/game.exe",
+        &windows_library_delaying(
+            &["kernel32.dll"],
+            &["vcruntime140.dll", "nvapi64.dll", "d3d12.dll"],
+        ),
+    );
+    project.put("windows/steam_appid.txt", b"480");
+    project.put("windows/Game_BurstDebugInformation_DoNotShip/lib.txt", b"x");
+    project.put("windows/data/game.pdb", b"symbols");
+    let folder = project.root.join("windows");
+    let report = check::folder(&folder, Some(1000));
+    assert_eq!(
+        messages(&report),
+        [
+            "is in the build; it is for development only and must not ship",
+            "is in the build; Unity names this folder as one not to ship",
+        ]
+    );
+    let build = report.depots.first().unwrap();
+    assert_eq!((build.files.len(), build.debug_symbols), (4, 1));
+    let judged = redist::judged(&report, Some(&ticking(&[])));
+    assert_eq!(
+        texts(&judged.refused),
+        [
+            "delay-loads vcruntime140.dll, which VC 2015 Redist, VC 2017 Redist, VC 2019 Redist \
+             or VC 2022 Redist installs, and app 1000 ticks none in Steamworks; tick one under \
+             Installation, Redistributables, ship the DLL in a depot, or link its library in \
+             statically"
+        ]
+    );
+    assert_eq!(
+        texts(&judged.unchecked),
+        [
+            "delay-loads nvapi64.dll, which neither Windows, the build's depots nor a Steamworks \
+             Common Redistributable has; the file starts without it, and works only where it \
+             finds it or does without it"
+        ]
+    );
+    assert_eq!(
+        messages(&check::folder(&folder.join("game.exe"), None)),
+        ["is not a folder"]
     );
 }
 

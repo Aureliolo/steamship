@@ -30,7 +30,7 @@ pub struct DepotFiles {
     /// How many of the files are debug symbols, which some teams ship on purpose.
     pub debug_symbols: usize,
     /// Each of the files that is a Windows program or library, with the DLLs it imports.
-    pub windows: Vec<(PathBuf, Vec<String>)>,
+    pub windows: Vec<(PathBuf, pe::Imports)>,
     /// Whether the depot runs an install script, which can install anything.
     pub install_scripts: bool,
 }
@@ -52,6 +52,43 @@ pub fn check(path: &Path) -> Report {
 #[must_use]
 pub fn scripts_only(path: &Path) -> Report {
     checked(path, false)
+}
+
+/// Checks every file in the build folder `path`, as before a script maps it: for app `app`, when
+/// it is known, which says whose redistributables count.
+#[must_use]
+pub fn folder(path: &Path, app: Option<u32>) -> Report {
+    let mut problems = Vec::new();
+    let mut found = Vec::new();
+    match walk(path, "*", true, &mut found) {
+        Ok(()) if !path.is_dir() => problems.push(Problem::new(path, "is not a folder")),
+        Ok(()) => {}
+        Err(error) => problems.push(Problem::new(path, format!("cannot be read: {error}"))),
+    }
+    let files: BTreeSet<PathBuf> = found.into_iter().collect();
+    for file in &files {
+        content_problems("the build", file, &mut problems);
+    }
+    for folder in not_to_ship(path, &files) {
+        problems.push(Problem::new(
+            &folder,
+            "is in the build; Unity names this folder as one not to ship",
+        ));
+    }
+    let build = DepotFiles {
+        depot_id: 0,
+        debug_symbols: files.iter().filter(|file| is_debug_symbols(file)).count(),
+        windows: windows_files(&files, &mut problems),
+        files,
+        install_scripts: false,
+    };
+    Report {
+        app_id: app,
+        set_live: None,
+        depots: vec![build],
+        problems,
+        content: true,
+    }
 }
 
 fn checked(path: &Path, content: bool) -> Report {
@@ -213,7 +250,7 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
     }
     mapped.retain(|file| !excluded(root, file, &depot.exclusions));
     for file in &mapped {
-        content_problems(depot.depot_id, file, problems);
+        content_problems(&format!("depot {}", depot.depot_id), file, problems);
     }
     for folder in not_to_ship(root, &mapped) {
         problems.push(Problem::new(
@@ -339,7 +376,8 @@ fn excluded(root: &Path, file: &Path, exclusions: &[String]) -> bool {
     })
 }
 
-fn content_problems(depot_id: u32, file: &Path, problems: &mut Vec<Problem>) {
+/// What is wrong with `file`, which ships in `place`, a depot or a build's folder.
+fn content_problems(place: &str, file: &Path, problems: &mut Vec<Problem>) {
     let name = file
         .file_name()
         .map(|name| name.to_string_lossy())
@@ -347,7 +385,7 @@ fn content_problems(depot_id: u32, file: &Path, problems: &mut Vec<Problem>) {
     if name.eq_ignore_ascii_case("steam_appid.txt") {
         problems.push(Problem::new(
             file,
-            format!("is in depot {depot_id}; it is for development only and must not ship"),
+            format!("is in {place}; it is for development only and must not ship"),
         ));
     }
     // Windows file systems have no executable bit, so there the question cannot be asked.
@@ -367,7 +405,7 @@ fn content_problems(depot_id: u32, file: &Path, problems: &mut Vec<Problem>) {
 fn windows_files(
     files: &BTreeSet<PathBuf>,
     problems: &mut Vec<Problem>,
-) -> Vec<(PathBuf, Vec<String>)> {
+) -> Vec<(PathBuf, pe::Imports)> {
     let mut found = Vec::new();
     for file in files {
         match File::open(file).and_then(|mut opened| pe::imports(&mut opened)) {
