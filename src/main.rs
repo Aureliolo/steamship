@@ -527,6 +527,45 @@ fn built(game: &Project) -> Result<(), ExitCode> {
     Ok(())
 }
 
+/// `achievements --write --unchanged` in `game`, which holds no achievement records: no import is
+/// due, so it passes unless the import's folder still holds a table or an icon.
+fn no_import_due(game: &Project) -> Result<ExitCode, ExitCode> {
+    show::title("achievements, unchanged");
+    let folder = &game.import;
+    let mut left: Vec<String> = match fs::read_dir(folder) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .filter_map(|entry| entry.file_name().into_string().ok())
+            .filter(|name| {
+                Path::new(name).extension().is_some_and(|extension| {
+                    extension.eq_ignore_ascii_case("csv") || extension.eq_ignore_ascii_case("png")
+                })
+            })
+            .collect(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(fail(&format!("{}: {error}", folder.display()), FAILED)),
+    };
+    if left.is_empty() {
+        show::success(
+            "the game holds no achievement records, so there is no import to write",
+            "",
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
+    left.sort();
+    for name in &left {
+        show::failure(&format!("{name} is left over"), "", None);
+    }
+    show::field(
+        "next",
+        &format!(
+            "the game holds no achievement records, so remove these from {}",
+            folder.display()
+        ),
+    );
+    Ok(ExitCode::from(REFUSED))
+}
+
 /// `achievements` with whatever is not given taken from the game.
 fn achievements_in(
     app: Option<String>,
@@ -564,6 +603,9 @@ fn achievements_in(
                 .or_else(|| receipt.is_file().then(|| game.import.clone()));
         }
         if own_write {
+            if writing.unchanged && game_achievements(game)?.is_empty() {
+                return no_import_due(game);
+            }
             writing.write = Some(own(game, "--write")?);
             if writing.out.is_none() {
                 writing.out = Some(game.import.clone());
@@ -2209,14 +2251,23 @@ fn try_check_folder(folder: &Path, scripts_only: bool) -> Result<ExitCode, ExitC
         Some(game) => {
             game.pinned(env!("CARGO_PKG_VERSION"))
                 .map_err(|why| fail(&why, REFUSED))?;
-            let script = game_script(&game)?;
-            let path = game.snapshot();
-            let snapshot = if path.is_file() {
-                Some(settings_file(&path, script.app_id)?)
+            // The build is checked before the app exists too, so an app script naming none is
+            // left to the commands that upload.
+            if let Some(app) = scripts::app_named(&game.script) {
+                let path = game.snapshot();
+                let snapshot = if path.is_file() {
+                    Some(settings_file(&path, app)?)
+                } else {
+                    None
+                };
+                (Some(app), snapshot)
             } else {
-                None
-            };
-            (Some(script.app_id), snapshot)
+                show::field(
+                    "app",
+                    &format!("not named yet in {}", game.script.display()),
+                );
+                (None, None)
+            }
         }
         None => (None, None),
     };
