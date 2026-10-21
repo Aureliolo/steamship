@@ -169,7 +169,7 @@ fn run(command: Command) -> ExitCode {
 fn check_in(script: Option<&Path>, scripts_only: bool, demo: bool) -> ExitCode {
     match script {
         Some(folder) if folder.is_dir() => run_check_folder(folder, scripts_only),
-        Some(script) => run_check(script, scripts_only),
+        Some(script) => run_check(script, scripts_only, None),
         None => either(try_game_check(demo)),
     }
 }
@@ -575,7 +575,7 @@ fn unchecked(command: &str, why: &str) {
 /// branches.
 fn try_game_check(demo: bool) -> Result<ExitCode, ExitCode> {
     let game = game_as(demo)?;
-    let checked = run_check(&game.script, true);
+    let checked = run_check(&game.script, true, Some(&game));
     if checked != ExitCode::SUCCESS {
         return Ok(checked);
     }
@@ -1075,7 +1075,7 @@ fn run_init(app: u32, mut depots: Vec<init::Depot>, folder: &Path) -> ExitCode {
             folder: "build".to_owned(),
         });
     }
-    let scripts = match init::scripts(app, &depots, folder) {
+    let scripts = match init::scripts(app, &depots, folder, None) {
         Ok(scripts) => scripts,
         Err(why) => return fail(&why, REFUSED),
     };
@@ -1105,6 +1105,20 @@ fn run_init(app: u32, mut depots: Vec<init::Depot>, folder: &Path) -> ExitCode {
         show::field("wrote", &path.display().to_string());
     }
     let app_script = folder.join("app_build.vdf");
+    // Which game a script belongs to, if any, shows only once it is there to be found.
+    if let Some(branch) = branch_of_game(&app_script) {
+        let set = init::scripts(app, &depots, folder, Some(&branch))
+            .map_err(|why| fail(&why, REFUSED))
+            .and_then(|again| {
+                let (_, text) = again.into_iter().next().unwrap_or_default();
+                fs::write(&app_script, text)
+                    .map_err(|error| fail(&format!("{}: {error}", app_script.display()), FAILED))
+            });
+        if let Err(code) = set {
+            return code;
+        }
+        show::field("branch", &format!("{branch}, the game's, set live"));
+    }
     show::success(
         "scripts written",
         &format!(
@@ -1113,6 +1127,21 @@ fn run_init(app: u32, mut depots: Vec<init::Depot>, folder: &Path) -> ExitCode {
         ),
     );
     ExitCode::SUCCESS
+}
+
+/// The branch of the game in the current folder whose app build script, or demo's, `script` is.
+fn branch_of_game(script: &Path) -> Option<String> {
+    let here = env::current_dir().ok()?;
+    let game = Project::find(&here).ok()??;
+    let written = fs::canonicalize(script).ok()?;
+    let is_it = |found: &Path| fs::canonicalize(found).is_ok_and(|found| found == written);
+    if is_it(&game.script) {
+        return Some(game.branch);
+    }
+    game.demo()
+        .ok()
+        .filter(|demo| is_it(&demo.script))
+        .map(|demo| demo.branch)
 }
 
 fn run_install() -> ExitCode {
@@ -2483,10 +2512,15 @@ fn depot_logs(output: &Path) -> Vec<(String, PathBuf)> {
     found
 }
 
-fn run_check(script: &Path, scripts_only: bool) -> ExitCode {
+/// `check` of `script`, or of `game`'s script, whose content waits for its upload to build it.
+fn run_check(script: &Path, scripts_only: bool, game: Option<&Project>) -> ExitCode {
     show::title("check");
     show::field("script", &script.display().to_string());
     match checked(script, scripts_only).and_then(|(report, _)| {
+        if let Some(game) = game {
+            game.live_on(report.set_live.as_deref())
+                .map_err(|why| fail(&why, REFUSED))?;
+        }
         if report.content {
             let snapshot = snapshot_beside(script, report.app_id)?;
             redistributables_shown(
@@ -2497,8 +2531,13 @@ fn run_check(script: &Path, scripts_only: bool) -> ExitCode {
         Ok(report)
     }) {
         Ok(report) => {
-            if !report.content {
-                show::field("content", "not checked (--scripts-only)");
+            match (report.content, game) {
+                (true, _) => {}
+                (false, Some(_)) => show::field(
+                    "content",
+                    "not checked; upload checks it once the game is built",
+                ),
+                (false, None) => show::field("content", "not checked (--scripts-only)"),
             }
             for depot in report.depots.iter().filter(|_| report.content) {
                 let symbols = match depot.debug_symbols {

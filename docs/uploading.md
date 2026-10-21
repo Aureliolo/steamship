@@ -40,7 +40,9 @@ steamship init 480 --depot 481=build/windows --depot 482=build/linux
 It writes `steam/app_build.vdf` and a `depot_build_<ID>.vdf` for each depot, each shipping every
 file in its folder except debug symbols. Without `--depot` the one depot is the app's ID plus
 one, shipping `build/`; `--folder` puts the scripts somewhere other than `steam/`. It never
-overwrites a script that is already there.
+overwrites a script that is already there. A script written where a game keeps its own, or its
+demo's, sets the game's branch live, `testing` unless `steamship.toml` names another; any other
+leaves `SetLive` commented out for you to choose.
 
 ## Checking scripts
 
