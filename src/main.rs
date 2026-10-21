@@ -4003,7 +4003,7 @@ fn text_next(files: &[(String, String)]) {
             "next",
             &format!(
                 "type each language's recommended system requirements in {} on the store page's \
-                 Basic Info form, as the upload drops them; once the page is public, \
+                 Basic Info form, as the upload leaves them out; once the page is public, \
                  `steamship text --steam` finds any missed",
                 text::BASIC_INFO
             ),
