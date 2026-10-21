@@ -805,9 +805,11 @@ fn an_upload_to_an_app_with_no_branch_yet_goes_live_on_default_alone_and_says_ho
         iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
             .take(3)
             .collect();
+    let setting = asked.last().unwrap();
     assert!(
-        asked[2].ends_with("appid=1000&buildid=4242&betakey=public"),
-        "{asked:?}"
+        setting.starts_with("POST /ISteamApps/SetAppBuildLive/v2/ ")
+            && setting.ends_with("appid=1000&buildid=4242&betakey=public"),
+        "{setting}"
     );
 
     // Without --default the build is live nowhere, which the upload fails on.
