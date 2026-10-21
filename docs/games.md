@@ -245,8 +245,8 @@ is written, since one naming no item cannot go up.
 
 A system requirement's field is named for its platform, its tier and its part, as
 `app[content][sysreqs][windows][min][osversion]`. The Localization tab takes the minimum ones,
-`[min]`, and drops every recommended one, `[rec]`, without saying so, and its export leaves them
-out too. So the recommended ones go into `basic_info.json` instead, each under its name on the
+`[min]`, and leaves out every recommended one, `[rec]`, without saying so, and its export leaves
+them out too. So the recommended ones go into `basic_info.json` instead, each under its name on the
 Basic Info form, which ends in the language, as `app[content][sysreqs][windows][rec][osversion][german]`.
 
 Once the store page is public, Coming Soon included, `steamship text --steam` reads it in each
