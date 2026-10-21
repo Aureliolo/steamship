@@ -114,6 +114,30 @@ fn a_script_named_by_a_relative_path_gets_absolute_paths_in_its_copy() {
 }
 
 #[test]
+fn a_held_back_branch_leaves_the_copy_without_set_live_and_the_rest_as_it_was() {
+    let project = Project::new();
+    let original = project.file("steam/app_build.vdf", APP);
+    let mut prepared = upload::prepare(&project.home, &original, "1.4.0 abc", false).unwrap();
+    let before = app_block(&prepared.script);
+    prepared.hold_back_set_live().unwrap();
+    assert_eq!(prepared.set_live, None);
+    assert_eq!(prepared.held_back.as_deref(), Some("testing"));
+    let after = app_block(&prepared.script);
+    assert_eq!(after.get("SetLive"), None);
+    assert_eq!(after.pairs.len(), before.pairs.len() - 1);
+    assert_eq!(after.text("Desc"), Some("1.4.0 abc"));
+    assert_eq!(after.block("Depots"), before.block("Depots"));
+    assert_eq!(
+        fs::read_to_string(&original).unwrap(),
+        APP,
+        "the original keeps its SetLive"
+    );
+
+    prepared.hold_back_set_live().unwrap();
+    assert_eq!(prepared.held_back.as_deref(), Some("testing"));
+}
+
+#[test]
 fn a_preview_is_set_in_the_file() {
     let project = Project::new();
     let original = project.file("steam/app_build.vdf", APP);

@@ -1583,9 +1583,10 @@ fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Refuses, naming every problem, when `check` found any; otherwise shows what was checked. With
-/// `scripts_only`, the content the scripts map is left unchecked.
-fn checked(script: &Path, scripts_only: bool) -> Result<check::Report, ExitCode> {
+/// Refuses, naming every problem, when `check` found any; otherwise shows what was checked, and
+/// answers whether the branch the script sets live can be. With `scripts_only`, the content the
+/// scripts map is left unchecked.
+fn checked(script: &Path, scripts_only: bool) -> Result<(check::Report, Branch), ExitCode> {
     let report = if scripts_only {
         check::scripts_only(script)
     } else {
@@ -1606,10 +1607,11 @@ fn checked(script: &Path, scripts_only: bool) -> Result<check::Report, ExitCode>
                 show::counted(report.depots.len(), "depot"),
             ),
         );
-        if let (Some(app), Some(branch)) = (report.app_id, report.set_live.as_deref()) {
-            live_branch_found(script, app, branch)?;
-        }
-        return Ok(report);
+        let branch = match (report.app_id, report.set_live.as_deref()) {
+            (Some(app), Some(branch)) => live_branch_found(script, app, branch)?,
+            _ => Branch::Ready,
+        };
+        return Ok((report, branch));
     }
     for problem in &report.problems {
         show::failure("refused", &problem.to_string(), None);
@@ -1721,17 +1723,27 @@ const UNKNOWN_TICKS: &str = "upload asks Steam which redistributables the app ti
 const UNCHECKED_BRANCH: &str = "a branch the app does not have leaves the build uploaded but not \
                                 live; steamship login --web-api-key keeps a key to check it with";
 
+/// Whether the branch an app build script sets live can be set live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Branch {
+    /// Found on Steam, or left for Steam to judge.
+    Ready,
+    /// Not there yet: the app has no build live on its default branch, and Steam gives it no other
+    /// branch until it has.
+    Unbranched,
+}
+
 /// Refuses a `SetLive` branch the app does not have, which Valve would otherwise report only
 /// after the whole upload. Steam is asked only with a key already at hand, never one typed for
 /// the purpose, and when it cannot answer the upload is not held up by it.
-fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<(), ExitCode> {
+fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<Branch, ExitCode> {
     let Some(api) = key_at_hand()? else {
         show::field(
             "branch",
             &format!("{branch}, not checked: no Web API key at hand"),
         );
         show::aside(UNCHECKED_BRANCH);
-        return Ok(());
+        return Ok(Branch::Ready);
     };
     let spinner = Spinner::start("branch", "asking Steam for the app's branches", false);
     match api.branches(app) {
@@ -1741,7 +1753,7 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<(), ExitCo
                 .any(|found| found.name.eq_ignore_ascii_case(branch)) =>
         {
             spinner.done(&format!("{branch}, found on Steam"));
-            Ok(())
+            Ok(Branch::Ready)
         }
         Ok(branches) => {
             spinner.failed("not on Steam");
@@ -1750,17 +1762,19 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<(), ExitCo
             Err(ExitCode::from(REFUSED))
         }
         Err(error) => {
-            let why = why_unanswered(&api, app, &error);
-            if why.is_some() {
-                spinner.skipped(&format!("{branch}, not checked"));
-            } else {
-                spinner.failed("not checked");
+            if why_unanswered(&api, app, &error).is_some() {
+                spinner.skipped(&format!("{branch}, not on Steam yet"));
+                show::aside(&format!(
+                    "app {app} has no build live on its default branch, and Steam gives it no \
+                     other branch until it has: an upload with --default sets the build live on \
+                     default alone, and then {branch} can be made in Steamworks under SteamPipe, \
+                     Builds"
+                ));
+                return Ok(Branch::Unbranched);
             }
+            spinner.failed("not checked");
             show::aside(&error.to_string());
-            if let Some(why) = why {
-                show::aside(&why);
-            }
-            Ok(())
+            Ok(Branch::Ready)
         }
     }
 }
@@ -1819,7 +1833,7 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         (Some(packed), None) => packed.account().clone(),
         _ => account(request.account, false)?.0,
     };
-    let found = checked(request.script, false)?;
+    let (found, branch) = checked(request.script, false)?;
     let needing = needs_redistributable(&found)?;
     let description = upload::commit(request.script)
         .and_then(|commit| upload::description(request.version, &commit))
@@ -1830,8 +1844,15 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
     if needing {
         ticked_on_steam(&found, (&held, &home, &manifest), &account, packed.as_ref())?;
     }
-    let prepared = upload::prepare(&home, request.script, &description, request.preview)
+    let mut prepared = upload::prepare(&home, request.script, &description, request.preview)
         .map_err(|error| fail(&error, FAILED))?;
+    // steamcmd uploads everything before Steam refuses to commit a build to a branch the app
+    // cannot have yet, so the build goes up set live nowhere by steamcmd.
+    if branch == Branch::Unbranched && !request.preview {
+        prepared
+            .hold_back_set_live()
+            .map_err(|error| fail(&error, FAILED))?;
+    }
     // Asked for on every upload by a game's tools, the default branch is left once the game is
     // released, and the upload goes on to its own branch as ever.
     let default = if request.default {
@@ -1899,15 +1920,26 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         outcome,
         upload::Outcome::Failed(_) | upload::Outcome::BuiltThenFailed { .. }
     ) {
-        let mut files = vec![
-            ("steamcmd's console".to_owned(), saved),
-            (format!("app_build_{}.log", prepared.app_id), prepared.log()),
-        ];
-        files.extend(depot_logs(&prepared.output));
-        dump_in_actions(&files, &marks.added(&steamcmd_logs), &redactor);
+        dump_failed(saved, &prepared, &marks.added(&steamcmd_logs), &redactor);
     }
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(code)
+}
+
+/// The logs of a failed upload, steamcmd's console saved at `saved` among them, as
+/// [`dump_in_actions`] shows them with what steamcmd `added` to its own.
+fn dump_failed(
+    saved: PathBuf,
+    prepared: &upload::Prepared,
+    added: &[(String, Vec<u8>)],
+    redactor: &Redactor,
+) {
+    let mut files = vec![
+        ("steamcmd's console".to_owned(), saved),
+        (format!("app_build_{}.log", prepared.app_id), prepared.log()),
+    ];
+    files.extend(depot_logs(&prepared.output));
+    dump_in_actions(&files, added, redactor);
 }
 
 /// What every run of steamcmd for one upload is given.
@@ -2122,8 +2154,8 @@ fn found_on_steam(
 }
 
 /// What an upload's ending is said with: the spinner still turning, how long steamcmd took,
-/// where its console was saved, the login handed over if any, and the Web API to set the build
-/// live on the default branch with, when asked to.
+/// where its console was saved, the login handed over if any, the Web API to set the build live
+/// on the default branch with, when asked to.
 struct Reporting<'upload> {
     spinner: Spinner,
     took: &'upload str,
@@ -2162,6 +2194,9 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
         upload::Outcome::Built { build_id } => {
             spinner.done(&format!("uploaded in {took}"));
             hand_on(*build_id);
+            if let Some(branch) = &prepared.held_back {
+                return first_on_default(app, *build_id, branch, default, &logs);
+            }
             return set_live(app, *build_id, prepared.set_live.as_deref(), default, &logs);
         }
         upload::Outcome::Previewed => {
@@ -2274,6 +2309,56 @@ fn set_live(
     (ExitCode::SUCCESS, live)
 }
 
+/// Says where `build_id`, just uploaded for `app`, is live while the app has no branch but
+/// default, so that `branch`, which the script sets live, cannot be made yet: on default, set
+/// through `default` when given. Answers as [`set_live`] does.
+fn first_on_default(
+    app: u32,
+    build_id: u64,
+    branch: &str,
+    default: Option<&webapi::Api>,
+    logs: &str,
+) -> (ExitCode, Live) {
+    let make = format!(
+        "make {branch} in Steamworks under SteamPipe, Builds, and set the build live there with "
+    );
+    let promote = format!("steamship promote {app} --build {build_id} --branch {branch}");
+    let Some(api) = default else {
+        show::failure(
+            &format!("app {app}: BuildID {build_id} uploaded, but set live nowhere"),
+            &format!(
+                "app {app} has no branch but default until a build is live there, so steamcmd \
+                 was not asked to set it live on {branch}"
+            ),
+            Some(Hint {
+                before: "set it live on default with ",
+                command: &format!("steamship promote {app} --build {build_id} --branch default"),
+                after: "",
+            }),
+        );
+        show::hint(Hint {
+            before: &make,
+            command: &promote,
+            after: "",
+        });
+        show::note(logs);
+        return (ExitCode::from(FAILED), Live::default());
+    };
+    let (code, live) = set_live(app, build_id, None, Some(api), logs);
+    if live.default {
+        show::note(&format!(
+            "not set live on {branch}: Steam gives app {app} no branch but default until a build \
+             is live there"
+        ));
+        show::hint(Hint {
+            before: &make,
+            command: &promote,
+            after: "",
+        });
+    }
+    (code, live)
+}
+
 /// Sets `build_id` of `app` live on the default branch through `api`, and says whether Steam
 /// did; the build is already live on `branch`, if the script sets one live.
 fn live_on_default(api: &webapi::Api, app: u32, build_id: u64, branch: Option<&str>) -> bool {
@@ -2310,14 +2395,14 @@ fn summary(
     prepared: &upload::Prepared,
     description: &str,
 ) -> serde_json::Value {
+    let branch = prepared.set_live.as_ref().or(prepared.held_back.as_ref());
     let (said, build_id) = match outcome {
         upload::Outcome::Built { build_id } => {
-            let said =
-                if (prepared.set_live.is_some() && !live.branch) || (default && !live.default) {
-                    "not-live"
-                } else {
-                    "uploaded"
-                };
+            let said = if (branch.is_some() && !live.branch) || (default && !live.default) {
+                "not-live"
+            } else {
+                "uploaded"
+            };
             (said, Some(*build_id))
         }
         upload::Outcome::Previewed => ("previewed", None),
@@ -2329,7 +2414,7 @@ fn summary(
         "outcome": said,
         "app": prepared.app_id,
         "build_id": build_id,
-        "branch": prepared.set_live,
+        "branch": branch,
         "live": live.branch,
         "default": live.default,
         "description": description,
@@ -2383,7 +2468,7 @@ fn depot_logs(output: &Path) -> Vec<(String, PathBuf)> {
 fn run_check(script: &Path, scripts_only: bool) -> ExitCode {
     show::title("check");
     show::field("script", &script.display().to_string());
-    match checked(script, scripts_only).and_then(|report| {
+    match checked(script, scripts_only).and_then(|(report, _)| {
         if report.content {
             let snapshot = snapshot_beside(script, report.app_id)?;
             redistributables_shown(
