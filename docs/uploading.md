@@ -131,6 +131,14 @@ app does not have, steamcmd reports only "Failed to commit build" and no BuildID
 the build is on Steam but not live, and why that happens. With a Web API key at hand it finds the
 build by its description and gives its BuildID and the `promote` command, as above.
 
+An app with no build live on its default branch, such as a new demo, has no other branch yet:
+Steamworks offers none until default has a build. With a Web API key at hand, steamship sees
+this before uploading, and has steamcmd upload the build without setting it live on the
+`SetLive` branch. With `--default` the build is set live on default, and the run gives the
+`promote` command that sets it live on the branch once the branch is made in Steamworks under
+SteamPipe, Builds. Without it the build is live nowhere, and the run fails, giving the `promote`
+command for default.
+
 steamcmd builds each depot against the manifest of the branch's last build, which Steam's CDN
 serves only some minutes after that build is made. An upload soon after the last one can fail
 on it, with `Failed to download manifest` and `(HTTP 404)`. steamship then asks the CDN for that
@@ -160,7 +168,8 @@ person to standard error:
 ```
 
 `outcome` is `uploaded`, `previewed`, `not-live` (built, but Steam shows another build on the
-branch, or did not set it live on default when asked), `built-then-failed`, `failed` or
+branch, the app cannot have the branch yet, or Steam did not set it live on default when asked),
+`built-then-failed`, `failed` or
 `not-logged-in`; `build_id` is the build Steam made, when it made one, and `branch` the one the
 script sets live, when it names one. `live` says whether the build is live on that branch, and
 `default` whether on [the default branch](#the-default-branch). The exit code is as without it,
