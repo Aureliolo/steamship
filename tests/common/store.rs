@@ -18,6 +18,7 @@ use std::ffi::OsString;
 use std::fs::{File, OpenOptions};
 #[cfg(target_os = "linux")]
 use std::io::{BufRead as _, BufReader};
+use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::process::{ChildStdin, Stdio};
 #[cfg(target_os = "linux")]
@@ -85,6 +86,53 @@ pub fn lock() -> File {
         .unwrap();
     file.lock().unwrap();
     file
+}
+
+/// A home of its own for a test that keeps a key in the system's store, holding [`lock`].
+///
+/// Its key is forgotten as it is dropped, by `forget`, whether the test passed or failed: the
+/// folder goes either way, and a key kept for a folder no longer there would stay in the
+/// person's own store for good.
+#[derive(Debug)]
+pub struct Home {
+    folder: tempfile::TempDir,
+    forget: fn(&Path),
+    _store: File,
+}
+
+impl Home {
+    /// # Panics
+    ///
+    /// When the lock cannot be held or the folder made.
+    #[must_use]
+    pub fn new(forget: fn(&Path)) -> Self {
+        Self::of(tempfile::tempdir().unwrap(), forget)
+    }
+
+    /// The home `folder`, made ready by the test.
+    ///
+    /// # Panics
+    ///
+    /// When the lock cannot be held.
+    #[must_use]
+    pub fn of(folder: tempfile::TempDir, forget: fn(&Path)) -> Self {
+        Self {
+            folder,
+            forget,
+            _store: lock(),
+        }
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        self.folder.path()
+    }
+}
+
+impl Drop for Home {
+    fn drop(&mut self) {
+        (self.forget)(self.folder.path());
+    }
 }
 
 /// What a `steamship` run by the tests needs set: on Linux this process's own Secret Service.

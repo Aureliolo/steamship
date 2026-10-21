@@ -52,11 +52,15 @@ fn store() {
 #[cfg(not(target_os = "linux"))]
 const fn store() {}
 
+/// A home whose key the library forgets once the test is done with it.
+fn forgetting_home() -> common::store::Home {
+    common::store::Home::new(|home| drop(keychain::forget(home)))
+}
+
 #[test]
 fn a_key_is_kept_replaced_read_back_and_forgotten_for_its_home_alone() {
     store();
-    let _store = common::store::lock();
-    let home = tempfile::tempdir().unwrap();
+    let home = forgetting_home();
     let other = tempfile::tempdir().unwrap();
     let home = home.path();
     assert!(!keychain::has(home).unwrap());
@@ -83,8 +87,7 @@ fn a_key_is_kept_replaced_read_back_and_forgotten_for_its_home_alone() {
 #[test]
 fn what_is_kept_that_is_not_a_key_is_refused_not_used() {
     store();
-    let _store = common::store::lock();
-    let home = tempfile::tempdir().unwrap();
+    let home = forgetting_home();
     let account = home.path().display().to_string();
     for kept in [&b"not a key"[..], &[0xff, 0xfe][..]] {
         platform::keep_secret(&account, kept).unwrap();
