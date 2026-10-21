@@ -7757,8 +7757,8 @@ fn recommended_requirements_leave_the_upload_for_the_basic_info_sheet() {
     assert!(
         wrote.contains(
             "  next      type each language's recommended system requirements in basic_info.json \
-             on the store page's Basic Info form, as the upload drops them; once the page is \
-             public, `steamship text --steam` finds any missed\n"
+             on the store page's Basic Info form, as the upload leaves them out; once the page \
+             is public, `steamship text --steam` finds any missed\n"
         ),
         "{wrote}"
     );
