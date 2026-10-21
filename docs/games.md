@@ -149,6 +149,10 @@ steamship upload --demo            # the pushed commit, built as the demo, uploa
 steamship builds --demo --json     # the demo's branches and last builds
 ```
 
+Steamworks names a new demo's install folder after the game followed by a space and Demo, which
+the first `settings --save --demo` refuses: rename it to letters and digits alone, such as
+`SpacewarDemo`, under Installation, General Installation, and save the settings again.
+
 So that neither ever goes up into the other, both the game's upload and the demo's are refused
 while the two scripts name the same app or share a depot. A demo script steamship cannot read,
 such as one kept at an `AppID` of 0 until the demo's app exists, holds back only the demo's
