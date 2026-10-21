@@ -484,6 +484,60 @@ fn status_in_ci_logs_in_with_the_login_handed_over_and_puts_it_where_steamcmd_lo
     );
 }
 
+/// A steamcmd stopped from outside as it starts, as one was on a macOS runner: exit 137, with a
+/// line added to its own connection log and nothing said of why.
+#[cfg(unix)]
+const KILLED: &str = "#!/bin/sh\n\
+    logs=\"$HOME/Steam/logs\"\n\
+    [ \"$(uname)\" = Darwin ] && logs=\"$HOME/Library/Application Support/Steam/logs\"\n\
+    mkdir -p \"$logs\"\n\
+    echo 'this run: connecting' >> \"$logs/connection_log.txt\"\n\
+    echo 'Loading Steam API...OK'\n\
+    exit 137\n";
+
+#[cfg(unix)]
+#[test]
+fn a_login_check_that_fails_without_a_reason_shows_steams_logs_in_actions() {
+    let home = faked_with(KILLED);
+    let logs = steamcmd::state_folder(home.path(), Platform::THIS).join("logs");
+    fs::create_dir_all(&logs).unwrap();
+    fs::write(logs.join("connection_log.txt"), "an older run\n").unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["status"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_LOGIN", &packed_login()),
+            ("STEAMSHIP_ACCOUNT", ""),
+            ("GITHUB_ACTIONS", "true"),
+        ],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("steamcmd exited 137 without saying why"),
+        "{stderr}"
+    );
+    for group in [
+        "::group::steamcmd's console\n",
+        "::group::steamcmd's connection_log.txt, from this run\n",
+    ] {
+        assert!(stdout.contains(group), "{group:?} in {stdout}");
+    }
+    assert!(stdout.contains("Loading Steam API...OK"), "{stdout}");
+    assert!(stdout.contains("this run: connecting"), "{stdout}");
+    assert!(!stdout.contains("an older run"), "{stdout}");
+
+    // Outside Actions nothing is dumped, as for an upload.
+    let (_, quiet, _) = steamship(
+        &["status"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_LOGIN", &packed_login()),
+            ("STEAMSHIP_ACCOUNT", ""),
+        ],
+    );
+    assert!(!quiet.contains("::group::"), "{quiet}");
+}
+
 #[cfg(unix)]
 #[test]
 fn an_upload_in_ci_logs_in_as_the_account_handed_over() {

@@ -1447,6 +1447,8 @@ fn check_saved_login(
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
+    let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
+    let marks = dump::Marks::take(&steamcmd_logs);
     let spinner = Spinner::start("steam", "checking the saved login", true);
     let finished = run::run(
         &program,
@@ -1469,7 +1471,15 @@ fn check_saved_login(
     match &judged {
         upload::Login::Taken => spinner.done("Steam takes the saved login"),
         upload::Login::Refused(_) => spinner.failed("Steam refused the saved login"),
-        upload::Login::Failed(_) => spinner.failed("could not check"),
+        upload::Login::Failed(_) => {
+            spinner.failed("could not check");
+            dump_in_actions(
+                &[],
+                &[("steamcmd's console".to_owned(), console)],
+                &marks.added(&steamcmd_logs),
+                &redactor,
+            );
+        }
     }
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(judged)
@@ -1939,7 +1949,7 @@ fn dump_failed(
         (format!("app_build_{}.log", prepared.app_id), prepared.log()),
     ];
     files.extend(depot_logs(&prepared.output));
-    dump_in_actions(&files, added, redactor);
+    dump_in_actions(&files, &[], added, redactor);
 }
 
 /// What every run of steamcmd for one upload is given.
@@ -2422,9 +2432,15 @@ fn summary(
 }
 
 /// Steam's logs of a failed run, as collapsed groups in a GitHub Actions job's log: `files` as
-/// they are, then what steamcmd added to its own logs this run, all of it redacted. The action
-/// deletes steamship's home when the job ends, so this is the only look at them there is.
-fn dump_in_actions(files: &[(String, PathBuf)], added: &[(String, Vec<u8>)], redactor: &Redactor) {
+/// they are, what was `captured` without being saved, then what steamcmd `added` to its own logs
+/// this run, all of it redacted. The action deletes steamship's home when the job ends, so this
+/// is the only look at them there is.
+fn dump_in_actions(
+    files: &[(String, PathBuf)],
+    captured: &[(String, Vec<u8>)],
+    added: &[(String, Vec<u8>)],
+    redactor: &Redactor,
+) {
     if !dump::in_actions(|name| env::var(name).ok()) {
         return;
     }
@@ -2436,7 +2452,7 @@ fn dump_in_actions(files: &[(String, PathBuf)], added: &[(String, Vec<u8>)], red
     let steamcmds = added
         .iter()
         .map(|(name, bytes)| (format!("steamcmd's {name}, from this run"), bytes.clone()));
-    for (title, bytes) in read.chain(steamcmds) {
+    for (title, bytes) in read.chain(captured.iter().cloned()).chain(steamcmds) {
         let text = redactor.redact(&bytes);
         shown.push_str(&dump::group(
             &title,
@@ -4800,6 +4816,7 @@ fn try_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
             ));
             dump_in_actions(
                 &[("steamcmd's console".to_owned(), saved)],
+                &[],
                 &marks.added(&steamcmd_logs),
                 &redactor,
             );
