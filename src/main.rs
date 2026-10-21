@@ -3836,8 +3836,8 @@ fn text_records(game: &Project) -> Result<Vec<serde_json::Value>, ExitCode> {
 }
 
 /// Each file in `folder` of a kind `text` writes from the `english` the game gives, by its path from
-/// there: the rich presence files but a hand-kept English one, the store's JSON files and the
-/// statement of how AI was used, and the Workshop's JSON files. A kind whose English the game does
+/// there: the rich presence files but a hand-kept English one, the store's JSON files, the
+/// statement of how AI was used and the sheets typed by hand, and the Workshop's JSON files. A kind whose English the game does
 /// not give is left to whatever else writes it.
 fn text_kept(folder: &Path, english: &text::English) -> Result<Vec<String>, ExitCode> {
     let failed =
@@ -3876,7 +3876,8 @@ fn text_kept(folder: &Path, english: &text::English) -> Result<Vec<String>, Exit
             && name.starts_with("rich_presence_")
             && extended(name, "vdf")
             && !(hand_kept && name == text::PRESENCE_ENGLISH))
-            || (english.store.is_some() && (name == text::DISCLOSURE || name == text::BASIC_INFO))
+            || (english.store.is_some()
+                && [text::DISCLOSURE, text::BASIC_INFO, text::SCREENSHOTS].contains(&name))
     })?;
     for (within, given) in [
         (text::STORE_FOLDER, english.store.is_some()),
@@ -3915,6 +3916,17 @@ fn text_next(files: &[(String, String)]) {
                  Basic Info form, as the upload drops them; once the page is public, \
                  `steamship text --steam` finds any missed",
                 text::BASIC_INFO
+            ),
+        );
+    }
+    if wrote(text::SCREENSHOTS) {
+        show::field(
+            "next",
+            &format!(
+                "type each language's screenshot alt text in {} into the screenshots' Edit \
+                 Accessibility Text panel on the Store Page tab, one language at a time, as the \
+                 upload carries none",
+                text::SCREENSHOTS
             ),
         );
     }
