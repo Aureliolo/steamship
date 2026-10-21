@@ -223,8 +223,9 @@ counted from 0, as `app[assets][extra][0][alt_text]`. That list need not follow 
 order, so with any `alt` given, `extras` names them all in the store's order. The store page's
 edit page holds it in the `data-rggamepageconfig` of its `application_config`, as
 `rgExtraAssetsData.rgExtraAssets`, each entry's `extra_asset_name` the image's name after
-`{STEAM_APP_IMAGE}/extras/`. The Store Page tab's extra assets list is in the About's order
-instead, and so is no guide. Every image the About shows has to be in `extras`. Each image it
+`{STEAM_APP_IMAGE}/extras/`. It holds every image uploaded, the About's own and any it does not
+show, and `extras` lists them all. The Store Page tab's extra assets list is in the About's
+order instead, and so is no guide. Every image the About shows has to be in `extras`. Each image it
 lists gets its `alt`, or an empty one, which clears what the store held, such as for a
 decorative image.
 
