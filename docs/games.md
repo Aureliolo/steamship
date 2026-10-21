@@ -179,8 +179,11 @@ steamship init 1000070 --depot 1000071=export/demo/windows \
   --depot 1000072=export/demo/linux --folder steam/demo
 ```
 
-Until the demo has a build live on its default branch, Steam cannot list its branches, so
-`check --demo` leaves its script's branch unchecked.
+Until the demo has a build live on its default branch, it has no other branch, so `check --demo`
+says the script's branch is not on Steam yet. The first `upload --demo --default` then sets the
+build live on default alone, and names the `promote` command for the branch once it is made in
+Steamworks under SteamPipe, Builds, as [Uploading a build](uploading.md#uploading-a-build)
+describes.
 
 ## Text in every language
 

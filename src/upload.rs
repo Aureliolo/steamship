@@ -132,9 +132,40 @@ pub struct Prepared {
     pub output: PathBuf,
     /// The branch the script sets the build live on, if any.
     pub set_live: Option<String>,
+    /// The branch the script sets the build live on, kept from steamcmd while the app cannot
+    /// have it yet.
+    pub held_back: Option<String>,
 }
 
 impl Prepared {
+    /// Leaves out the copy's `SetLive`, so that steamcmd sets the build live nowhere, and keeps
+    /// the branch it named in [`Prepared::held_back`].
+    ///
+    /// # Errors
+    ///
+    /// When the copy cannot be read or written again.
+    pub fn hold_back_set_live(&mut self) -> Result<(), Error> {
+        let Some(branch) = self.set_live.take() else {
+            return Ok(());
+        };
+        let problem = |reason: &str| Error::Script {
+            path: self.script.clone(),
+            reason: reason.to_owned(),
+        };
+        let text = fs::read_to_string(&self.script).map_err(at(&self.script))?;
+        let mut document = vdf::parse(&text).map_err(|error| problem(&error.to_string()))?;
+        for pair in &mut document.pairs {
+            if let Value::Block(app) = &mut pair.value {
+                app.pairs
+                    .retain(|kept| !kept.key.eq_ignore_ascii_case("SetLive"));
+            }
+        }
+        let written = vdf::write(&document).map_err(|error| problem(&error.to_string()))?;
+        fs::write(&self.script, written).map_err(at(&self.script))?;
+        self.held_back = Some(branch);
+        Ok(())
+    }
+
     /// The log steamcmd writes for the app, in [`Prepared::output`].
     #[must_use]
     pub fn log(&self) -> PathBuf {
@@ -229,6 +260,7 @@ pub fn prepare(
         script,
         output,
         set_live: app.text("SetLive").map(str::to_owned),
+        held_back: None,
     };
     clear_log(&prepared)?;
     Ok(prepared)

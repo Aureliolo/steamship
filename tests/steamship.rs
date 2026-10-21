@@ -756,6 +756,84 @@ fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_1() {
     }
 }
 
+/// `GetAppList` for a key that holds app 1000.
+#[cfg(unix)]
+const HOLDS_1000: &str = r#"{"applist": {"apps": {"app": [
+    {"appid": 1000, "app_type": "game", "app_name": "Spacewar"}
+]}}}"#;
+
+#[cfg(unix)]
+#[test]
+fn an_upload_to_an_app_with_no_branch_yet_goes_live_on_default_alone_and_says_how_to_go_on() {
+    let home = faked_with(&released_as("unavailable"));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let (host, requests) = web_api(vec![
+        ("500 Internal Server Error", ""),
+        ("200 OK", HOLDS_1000),
+        ("200 OK", SET_LIVE),
+    ]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("\"branch\":\"testing\"")
+            && stdout.contains("\"default\":true")
+            && stdout.contains("\"live\":false")
+            && stdout.contains("\"outcome\":\"not-live\""),
+        "{stdout}"
+    );
+    for line in [
+        "  branch    testing, not on Steam yet\n",
+        "app 1000 has no build live on its default branch, and Steam gives it no other branch \
+         until it has",
+        "app 1000: BuildID 4242, set live on default",
+        "not set live on testing: Steam gives app 1000 no branch but default until a build is \
+         live there",
+        "make testing in Steamworks under SteamPipe, Builds, and set the build live there with \
+         steamship promote 1000 --build 4242 --branch testing",
+    ] {
+        assert!(stderr.contains(line), "{line:?} in {stderr}");
+    }
+    let given = fs::read_to_string(home.path().join("apps/1000/app_build.vdf")).unwrap();
+    assert!(!given.contains("SetLive"), "{given}");
+    let asked: Vec<String> =
+        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(3)
+            .collect();
+    assert!(
+        asked[2].ends_with("appid=1000&buildid=4242&betakey=public"),
+        "{asked:?}"
+    );
+
+    // Without --default the build is live nowhere, which the upload fails on.
+    let (alone, _asked) = web_api(vec![
+        ("500 Internal Server Error", ""),
+        ("200 OK", HOLDS_1000),
+    ]);
+    let (nowhere, said, why) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &alone)],
+    );
+    assert_eq!(nowhere, Some(1_i32), "{said}{why}");
+    for line in [
+        "app 1000: BuildID 4242 uploaded, but set live nowhere",
+        "app 1000 has no branch but default until a build is live there, so steamcmd was not \
+         asked to set it live on testing",
+        "set it live on default with steamship promote 1000 --build 4242 --branch default",
+        "make testing in Steamworks under SteamPipe, Builds, and set the build live there with \
+         steamship promote 1000 --build 4242 --branch testing",
+    ] {
+        assert!(why.contains(line), "{line:?} in {why}");
+    }
+}
+
 #[test]
 fn an_upload_asked_for_default_too_cannot_be_a_preview() {
     let home = tempfile::tempdir().unwrap();
@@ -3882,10 +3960,16 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
         ],
     );
     assert_eq!(unbuilt, Some(0_i32), "{new}");
-    assert!(new.contains("  branch    beta2, not checked\n"), "{new}");
+    assert!(
+        new.contains("  branch    beta2, not on Steam yet\n"),
+        "{new}"
+    );
     assert!(!new.contains('\u{2717}'), "{new}");
     assert!(
-        new.contains("this key holds app 480, and Steam answers so while no build is live"),
+        new.contains(
+            "app 480 has no build live on its default branch, and Steam gives it no other branch \
+             until it has: an upload with --default sets the build live on default alone"
+        ),
         "{new}"
     );
 
@@ -6442,38 +6526,6 @@ fn a_500_about_an_app_the_key_holds_is_said_to_be_an_app_with_no_build_yet() {
     assert_eq!(other, Some(1_i32), "{alone}");
     assert!(alone.contains("Steam answered HTTP 500"), "{alone}");
     assert!(!alone.contains("this key holds"), "{alone}");
-}
-
-#[test]
-fn check_says_why_it_could_not_check_the_branch_of_an_app_with_no_build_yet() {
-    let home = tempfile::tempdir().unwrap();
-    let holds_480 = r#"{"applist": {"apps": {"app": [
-        {"appid": 480, "app_type": "game", "app_name": "Spacewar"}
-    ]}}}"#;
-    let (host, _requests) = web_api(vec![
-        ("500 Internal Server Error", ""),
-        ("200 OK", holds_480),
-    ]);
-    let (_folder, script) = setting_live("testing");
-    let script = script.to_string_lossy().into_owned();
-    let (code, said, _) = steamship(
-        &["check", &script],
-        Some(home.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &host),
-        ],
-    );
-    assert_eq!(code, Some(0_i32), "{said}");
-    assert!(said.contains("not checked"), "{said}");
-    assert!(
-        said.contains(
-            "this key holds app 480, and Steam answers so while no build is live on its default \
-             branch"
-        ),
-        "{said}"
-    );
 }
 
 /// A session bus that hangs up on everyone who connects, at a socket in the folder given back.
