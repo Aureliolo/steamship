@@ -205,12 +205,14 @@ them, and the page's text as `blocks`, each with its `kind`:
 }
 ```
 
-An image is named as the Description tab's custom images name it, the same in every language.
-Its `alt` goes into the upload under the image's place among the About's images, counted from 0,
-as `app[assets][extra][0][alt_text]`, the key the tab's own export gives it; an image without
-one, such as a decorative one, has no line. With alt text, the About shows each image once. The upload
-carries no screenshot's alt text, so the screenshots' go into `screenshots.json`, as `german 1`
-for the first one in German, to be typed into their panel.
+A field or block of another name is refused, naming it. An image is named as the Description
+tab's custom images name it, the same in every language. Its `alt` goes into the upload under
+the image's place among the About's images, counted from 0, as
+`app[assets][extra][0][alt_text]`, the key the tab's own export gives it; an image without one,
+such as a decorative one, has no line. With alt text, the About shows each image once. The
+upload carries no screenshot's alt text, so the screenshots' go into `screenshots.json`, as
+`german 1` for the first one in German, to be typed into their panel.
+
 Items in a row make one list. A `field` is any other text Steam shows in the player's language,
 such as a system requirement, by its name on the form. Until the `itemid` is set no store upload
 is written, since one naming no item cannot go up.

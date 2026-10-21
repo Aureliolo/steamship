@@ -124,10 +124,20 @@ pub struct Token {
 ///
 /// # Errors
 ///
-/// When it is not an object, its item ID is neither a number nor a text, or a block is of no kind
-/// Steam marks up or lacks what its kind needs.
+/// When it is not an object, holds what a store page has not, its item ID is neither a number nor
+/// a text, or a block is of no kind Steam marks up, lacks what its kind needs or holds more.
 pub fn store(text: &str) -> Result<Store, String> {
     let page = object(text, "an object holding \"itemid\" and \"blocks\"")?;
+    if let Some(other) = page.keys().find(|key| {
+        !matches!(
+            key.as_str(),
+            "itemid" | "disclosure" | "screenshots" | "blocks"
+        )
+    }) {
+        return Err(format!(
+            "\"{other}\" is none of itemid, disclosure, screenshots and blocks"
+        ));
+    }
     let item = match page.get("itemid") {
         None | Some(Json::Null) => String::new(),
         Some(Json::String(item)) => item.clone(),
@@ -145,46 +155,8 @@ pub fn store(text: &str) -> Result<Store, String> {
         Some(_) => return Err("\"blocks\" is not a list".to_owned()),
     };
     let mut blocks = Vec::with_capacity(listed.len());
-    for (index, block) in listed.iter().enumerate() {
-        let number = index.saturating_add(1);
-        let field = |name: &str| {
-            block
-                .get(name)
-                .and_then(Json::as_str)
-                .map(str::to_owned)
-                .ok_or_else(|| format!("block {number} has no \"{name}\" text"))
-        };
-        let part = match block.get("kind").and_then(Json::as_str) {
-            Some("short") => Part::Short(field("text")?),
-            Some("heading") => Part::Heading(field("text")?),
-            Some("paragraph") => Part::Paragraph(field("text")?),
-            Some("item") => Part::Item(field("text")?),
-            Some("image") => Part::Image {
-                name: field("image")?,
-                alt: match block.get("alt") {
-                    None | Some(Json::Null) => None,
-                    Some(Json::String(alt)) if alt.is_empty() => {
-                        return Err(format!(
-                            "block {number}'s \"alt\" is empty: leave it out of an image with none"
-                        ));
-                    }
-                    Some(Json::String(alt)) => Some(alt.clone()),
-                    Some(_) => return Err(format!("block {number}'s \"alt\" is not a text")),
-                },
-            },
-            Some("field") => Part::Field {
-                name: field("field")?,
-                text: field("text")?,
-            },
-            Some(kind) => {
-                return Err(format!(
-                    "block {number} is a \"{kind}\", which is none of short, heading, paragraph, \
-                     item, image and field"
-                ));
-            }
-            None => return Err(format!("block {number} has no \"kind\"")),
-        };
-        blocks.push(part);
+    for (index, given) in listed.iter().enumerate() {
+        blocks.push(block(given, index.saturating_add(1))?);
     }
     shown_once(&blocks)?;
     Ok(Store {
@@ -193,6 +165,68 @@ pub fn store(text: &str) -> Result<Store, String> {
         blocks,
         screenshots: screenshots(page.get("screenshots"))?,
     })
+}
+
+/// The block numbered `number` of [`STORE`]'s `blocks`.
+fn block(given: &Json, number: usize) -> Result<Part, String> {
+    let field = |name: &str| {
+        given
+            .get(name)
+            .and_then(Json::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| format!("block {number} has no \"{name}\" text"))
+    };
+    let (part, takes): (Part, &[&str]) = match given.get("kind").and_then(Json::as_str) {
+        Some("short") => (Part::Short(field("text")?), &["text"]),
+        Some("heading") => (Part::Heading(field("text")?), &["text"]),
+        Some("paragraph") => (Part::Paragraph(field("text")?), &["text"]),
+        Some("item") => (Part::Item(field("text")?), &["text"]),
+        Some("image") => {
+            let alt = match given.get("alt") {
+                None | Some(Json::Null) => None,
+                Some(Json::String(alt)) if alt.is_empty() => {
+                    return Err(format!(
+                        "block {number}'s \"alt\" is empty: leave it out of an image with none"
+                    ));
+                }
+                Some(Json::String(alt)) => Some(alt.clone()),
+                Some(_) => return Err(format!("block {number}'s \"alt\" is not a text")),
+            };
+            (
+                Part::Image {
+                    name: field("image")?,
+                    alt,
+                },
+                &["image", "alt"],
+            )
+        }
+        Some("field") => (
+            Part::Field {
+                name: field("field")?,
+                text: field("text")?,
+            },
+            &["field", "text"],
+        ),
+        Some(kind) => {
+            return Err(format!(
+                "block {number} is a \"{kind}\", which is none of short, heading, paragraph, \
+                 item, image and field"
+            ));
+        }
+        None => return Err(format!("block {number} has no \"kind\"")),
+    };
+    if let Some(other) = given.as_object().and_then(|holds| {
+        holds
+            .keys()
+            .find(|key| *key != "kind" && !takes.contains(&key.as_str()))
+    }) {
+        return Err(format!(
+            "block {number} holds \"{other}\", which a block of kind {} does not take: it takes {}",
+            given.get("kind").and_then(Json::as_str).unwrap_or_default(),
+            takes.join(" and ")
+        ));
+    }
+    Ok(part)
 }
 
 /// Refuses an About that shows an image a second time while any of its images has alt text,
@@ -1022,7 +1056,10 @@ msgstr "Die Erlenhexe"
                 .collect::<Vec<_>>(),
             ["ai_disclosure.json"]
         );
-        let without = STORE_PAGE.replace("\"disclosure\"", "\"other\"");
+        let without = STORE_PAGE.replace(
+            "  \"disclosure\": \"Made with AI assistance for coding.\",\n",
+            "",
+        );
         assert_eq!(store(&without).unwrap().disclosure, "");
         assert_eq!(store("{\"itemid\": \"12\"}").unwrap().item, "12");
     }
@@ -1064,6 +1101,19 @@ msgstr "Die Erlenhexe"
                  {\"kind\": \"short\", \"text\": \"\"}, {\"kind\": \"image\", \"image\": \"a\"}]}",
                 "block 3 shows a a second time, and alt text is written only for an About that \
                  shows each image once",
+            ),
+            (
+                "{\"itemid\": 1, \"title\": \"A\"}",
+                "\"title\" is none of itemid, disclosure, screenshots and blocks",
+            ),
+            (
+                "{\"blocks\": [{\"kind\": \"short\", \"text\": \"A.\", \"alt\": \"B.\"}]}",
+                "block 1 holds \"alt\", which a block of kind short does not take: it takes text",
+            ),
+            (
+                "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\", \"width\": 1}]}",
+                "block 1 holds \"width\", which a block of kind image does not take: it takes \
+                 image and alt",
             ),
             (
                 "{\"screenshots\": \"A.\"}",
