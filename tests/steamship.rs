@@ -7701,6 +7701,61 @@ fn recommended_requirements_leave_the_upload_for_the_basic_info_sheet() {
     assert!(!steam.join("basic_info.json").exists());
 }
 
+#[test]
+fn screenshots_alt_text_goes_to_its_own_sheet_and_an_about_image_s_into_the_upload() {
+    let (_temp, root) = pushed_game(None);
+    let steam = root.join("steam");
+    let english = steam.join("store_english.json");
+    fs::write(
+        &english,
+        r#"{"itemid": 1000090, "screenshots": ["The inn at dusk."], "blocks": [
+            {"kind": "short", "text": "An inn."},
+            {"kind": "image", "image": "about_hearth", "alt": "A fire in the hearth."}
+        ]}"#,
+    )
+    .unwrap();
+    let locale = root.join("game/locale/de.po");
+    let mut german = fs::read_to_string(&locale).unwrap();
+    german.push_str(
+        "\nmsgctxt \"rich presence\"\nmsgid \"At the menu\"\nmsgstr \"Im Men\u{fc}\"\n\n\
+         msgctxt \"store page\"\nmsgid \"An inn.\"\nmsgstr \"Gasthaus.\"\n\n\
+         msgctxt \"store page\"\nmsgid \"The inn at dusk.\"\nmsgstr \"Das Gasthaus am Abend.\"\n\n\
+         msgctxt \"store page\"\nmsgid \"A fire in the hearth.\"\nmsgstr \"Das Feuer im Herd.\"\n",
+    );
+    fs::write(&locale, german).unwrap();
+    let (written, wrote, unwritten) = in_game(&root, &["text"]);
+    assert_eq!(written, Some(0_i32), "{unwritten}");
+    assert_eq!(
+        fs::read_to_string(steam.join("screenshots.json")).unwrap(),
+        "{\n  \"english 1\": \"The inn at dusk.\",\n  \
+         \"german 1\": \"Das Gasthaus am Abend.\"\n}\n"
+    );
+    assert!(
+        fs::read_to_string(steam.join("store/german.json"))
+            .unwrap()
+            .contains("\"app[assets][extra][0][alt_text]\": \"Das Feuer im Herd.\""),
+    );
+    assert!(
+        wrote.contains(
+            "  next      type each language's screenshot alt text in screenshots.json into the \
+             screenshots' Edit Accessibility Text panel on the Store Page tab, one language at a \
+             time, as the upload carries none\n"
+        ),
+        "{wrote}"
+    );
+
+    let without = fs::read_to_string(&english)
+        .unwrap()
+        .replace(r#""screenshots": ["The inn at dusk."], "#, "");
+    fs::write(&english, without).unwrap();
+    let (stale, _, left) = in_game(&root, &["text", "--unchanged"]);
+    assert_eq!(stale, Some(2_i32), "{left}");
+    assert!(left.contains("screenshots.json is left over"), "{left}");
+    let (removed, said, why) = in_game(&root, &["text"]);
+    assert_eq!(removed, Some(0_i32), "{why}");
+    assert!(said.contains("  removed   screenshots.json\n"), "{said}");
+}
+
 /// [`store_details`] with `padding` bytes before the requirements.
 fn padded_details(recommended: &str, padding: usize) -> String {
     store_details("Windows 10", recommended).replacen(
