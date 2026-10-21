@@ -248,8 +248,8 @@ A system requirement's field is named for its platform, its tier and its part, a
 `[min]`, and leaves out every recommended one, `[rec]`, without saying so, and its export leaves
 them out too. So the recommended ones go into `basic_info.json` instead, each under its name on the
 Basic Info form, which ends in the language, as `app[content][sysreqs][windows][rec][osversion][german]`.
-A Localization upload leaves the recommended ones typed there as they are, so the form can be
-filled before or after it.
+An upload on the Localization tab leaves the recommended ones typed there as they are, so the
+form can be filled before or after it.
 
 Once the store page is public, Coming Soon included, `steamship text --steam` reads it in each
 language and exits 2 naming every requirement, minimum or recommended, that it does not show as
