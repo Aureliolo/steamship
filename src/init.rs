@@ -32,14 +32,21 @@ pub fn depot(text: &str) -> Result<Depot, String> {
     Ok(Depot { id, folder })
 }
 
-/// The scripts for `app` and its `depots`, by file name, to be written into `folder`, which is
-/// relative to where the depots' folders are.
+/// The scripts for `app` and its `depots`, by file name, to be written into `folder`.
+///
+/// `folder` is relative to where the depots' folders are. The app's script sets `set_live` live,
+/// the branch of the game it is the script of; with none, it leaves the branch to its author.
 ///
 /// # Errors
 ///
 /// When `folder` climbs out of where it is written from, which the scripts could not name a way
 /// back from.
-pub fn scripts(app: u32, depots: &[Depot], folder: &Path) -> Result<Vec<(String, String)>, String> {
+pub fn scripts(
+    app: u32,
+    depots: &[Depot],
+    folder: &Path,
+    set_live: Option<&str>,
+) -> Result<Vec<(String, String)>, String> {
     let mut back = String::new();
     for part in folder.components() {
         match part {
@@ -61,6 +68,20 @@ pub fn scripts(app: u32, depots: &[Depot], folder: &Path) -> Result<Vec<(String,
         let _said: fmt::Result = writeln!(listed, "\t\t\"{0}\" \"depot_build_{0}.vdf\"", depot.id);
         listed
     });
+    let set_live = set_live.map_or_else(
+        || {
+            "\t// The branch to set each build live on once it is uploaded. Not \"default\", which\n\
+             \t// only the Steamworks site may set live.\n\
+             \t// \"SetLive\" \"beta\"\n"
+                .to_owned()
+        },
+        |branch| {
+            format!(
+                "\t// The game's branch, which each build is set live on once it is uploaded.\n\
+                 \t\"SetLive\" \"{branch}\"\n"
+            )
+        },
+    );
     let app_script = format!(
         "// The app build script steamcmd runs, written by steamship init. Check it with\n\
          // steamship check, and upload it with steamship upload.\n\
@@ -69,9 +90,7 @@ pub fn scripts(app: u32, depots: &[Depot], folder: &Path) -> Result<Vec<(String,
          \t\"AppID\" \"{app}\"\n\
          \t// Where the depots' folders are found from, relative to this file.\n\
          \t\"ContentRoot\" \"{back}\"\n\
-         \t// The branch to set each build live on once it is uploaded. Not \"default\", which\n\
-         \t// only the Steamworks site may set live.\n\
-         \t// \"SetLive\" \"beta\"\n\
+         {set_live}\
          \t\"Depots\"\n\
          \t{{\n\
          {listed}\
@@ -142,7 +161,7 @@ mod tests {
                 folder: "build/linux".to_owned(),
             },
         ];
-        let written = scripts(1000, &depots, Path::new("steam")).unwrap();
+        let written = scripts(1000, &depots, Path::new("steam"), None).unwrap();
         let names: Vec<&str> = written.iter().map(|(name, _)| name.as_str()).collect();
         assert_eq!(
             names,
@@ -174,13 +193,27 @@ mod tests {
     }
 
     #[test]
+    fn a_games_own_script_sets_its_branch_live() {
+        let one = [Depot {
+            id: 481,
+            folder: "build".to_owned(),
+        }];
+        let written = scripts(480, &one, Path::new("steam"), Some("testing")).unwrap();
+        let app = vdf::parse(&written.first().unwrap().1).unwrap();
+        assert_eq!(
+            app.block("AppBuild").unwrap().text("SetLive"),
+            Some("testing")
+        );
+    }
+
+    #[test]
     fn the_way_back_counts_the_folders_the_scripts_are_in() {
         let one = [Depot {
             id: 481,
             folder: "build".to_owned(),
         }];
         let content = |folder: &str| {
-            let written = scripts(480, &one, Path::new(folder)).unwrap();
+            let written = scripts(480, &one, Path::new(folder), None).unwrap();
             let app = vdf::parse(&written.first().unwrap().1).unwrap();
             app.block("AppBuild")
                 .unwrap()
@@ -192,7 +225,7 @@ mod tests {
         assert_eq!(content("tools/steam"), "../../");
         assert_eq!(content("."), "./");
         assert_eq!(
-            scripts(480, &one, Path::new("../steam")).unwrap_err(),
+            scripts(480, &one, Path::new("../steam"), None).unwrap_err(),
             "../steam is not a folder inside this one, which the scripts could find their way \
              back from"
         );
