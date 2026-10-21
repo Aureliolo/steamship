@@ -889,9 +889,11 @@ fn rich_presence_in(
     if let Some(game) = game.as_ref().filter(|_| files.is_empty()) {
         files = game.presence().map_err(|why| fail(&why, REFUSED))?;
         if files.is_empty() {
+            show::title("rich-presence");
             return Err(fail(
                 &format!(
-                    "the game holds no rich_presence_<language>.vdf beside {}",
+                    "the game holds no rich_presence_<language>.vdf beside {}: write \
+                     rich_presence_english.vdf there, or name the files to send",
                     game.script.display()
                 ),
                 REFUSED,
@@ -3714,15 +3716,17 @@ fn try_text(unchanged: bool) -> Result<ExitCode, ExitCode> {
         fs::remove_file(folder.join(name)).map_err(|error| failed(&error))?;
         show::field("removed", name);
     }
-    show::success(
-        &format!(
+    let holds = if files.is_empty() {
+        format!("{} holds none of the game's text", folder.display())
+    } else {
+        format!(
             "{} holds the {} of the game's text in {}",
             folder.display(),
             show::counted(files.len(), "file"),
             show::counted(catalogued.len().saturating_add(1), "language")
-        ),
-        "",
-    );
+        )
+    };
+    show::success(&holds, "");
     text_next(&files);
     Ok(ExitCode::SUCCESS)
 }
