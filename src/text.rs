@@ -25,12 +25,18 @@ pub const DISCLOSURE: &str = "ai_disclosure.json";
 /// Each language's recommended system requirements, by their names on the store page's Basic Info
 /// form. The Localization tab's upload takes the minimum ones and drops these without a word.
 pub const BASIC_INFO: &str = "basic_info.json";
+/// Each language's alt text for the screenshots, by their places in the store's order.
+///
+/// The Localization tab's upload and export carry no screenshot's alt text, which only the Store
+/// Page tab's panel for it takes, one language at a time.
+pub const SCREENSHOTS: &str = "screenshots.json";
 /// The folders the store page's and the Workshop page's text are written into.
 pub const STORE_FOLDER: &str = "store";
 pub const WORKSHOP_FOLDER: &str = "workshop";
 
 const STORE_CONTEXT: &str = "store page";
 const REQUIREMENT: &str = "app[content][sysreqs][";
+const ALT_TEXT: &str = "app[assets][extra][";
 const RECOMMENDED: &str = "rec";
 const WORKSHOP_CONTEXT: &str = "steam workshop";
 const PRESENCE_CONTEXT: &str = "rich presence";
@@ -52,6 +58,8 @@ pub struct Store {
     /// The statement of how AI was used in making the game, empty for none.
     pub disclosure: String,
     pub blocks: Vec<Part>,
+    /// Each screenshot's alt text, in the store's order of them.
+    pub screenshots: Vec<String>,
 }
 
 /// One block of the store page's text.
@@ -62,8 +70,11 @@ pub enum Part {
     Paragraph(String),
     Item(String),
     /// A picture or a clip, by its name among the Description tab's custom images, which is the
-    /// same in every language.
-    Image(String),
+    /// same in every language, and what a screen reader says of it, if anything.
+    Image {
+        name: String,
+        alt: Option<String>,
+    },
     /// A field Steam shows in the player's language outside the description, such as the legal
     /// line or a system requirement, by its name on the form.
     Field {
@@ -148,7 +159,19 @@ pub fn store(text: &str) -> Result<Store, String> {
             Some("heading") => Part::Heading(field("text")?),
             Some("paragraph") => Part::Paragraph(field("text")?),
             Some("item") => Part::Item(field("text")?),
-            Some("image") => Part::Image(field("image")?),
+            Some("image") => Part::Image {
+                name: field("image")?,
+                alt: match block.get("alt") {
+                    None | Some(Json::Null) => None,
+                    Some(Json::String(alt)) if alt.is_empty() => {
+                        return Err(format!(
+                            "block {number}'s \"alt\" is empty: leave it out of an image with none"
+                        ));
+                    }
+                    Some(Json::String(alt)) => Some(alt.clone()),
+                    Some(_) => return Err(format!("block {number}'s \"alt\" is not a text")),
+                },
+            },
             Some("field") => Part::Field {
                 name: field("field")?,
                 text: field("text")?,
@@ -163,11 +186,59 @@ pub fn store(text: &str) -> Result<Store, String> {
         };
         blocks.push(part);
     }
+    shown_once(&blocks)?;
     Ok(Store {
         item,
         disclosure,
         blocks,
+        screenshots: screenshots(page.get("screenshots"))?,
     })
+}
+
+/// Refuses an About that shows an image a second time while any of its images has alt text,
+/// since Steam numbers the images whose alt text it keeps only as seen with each shown once.
+fn shown_once(blocks: &[Part]) -> Result<(), String> {
+    if !blocks
+        .iter()
+        .any(|part| matches!(part, Part::Image { alt: Some(_), .. }))
+    {
+        return Ok(());
+    }
+    let mut shown: Vec<&str> = Vec::new();
+    for (index, part) in blocks.iter().enumerate() {
+        if let Part::Image { name, .. } = part {
+            if shown.contains(&name.as_str()) {
+                return Err(format!(
+                    "block {} shows {name} a second time, and alt text is written only for an \
+                     About that shows each image once",
+                    index.saturating_add(1)
+                ));
+            }
+            shown.push(name);
+        }
+    }
+    Ok(())
+}
+
+/// The screenshots' alt text, as [`STORE`]'s `screenshots` lists it.
+fn screenshots(given: Option<&Json>) -> Result<Vec<String>, String> {
+    let listed = match given {
+        None | Some(Json::Null) => return Ok(Vec::new()),
+        Some(Json::Array(listed)) => listed,
+        Some(_) => {
+            return Err("\"screenshots\" is not a list of each screenshot's alt text".to_owned());
+        }
+    };
+    let mut screenshots = Vec::with_capacity(listed.len());
+    for (index, alt) in listed.iter().enumerate() {
+        let number = index.saturating_add(1);
+        match alt.as_str() {
+            Some("") => return Err(format!("screenshot {number}'s alt text is empty")),
+            Some(alt) => screenshots.push(alt.to_owned()),
+            None => return Err(format!("screenshot {number}'s alt text is not a text")),
+        }
+    }
+    Ok(screenshots)
 }
 
 /// Reads [`WORKSHOP`].
@@ -331,6 +402,7 @@ pub fn written(
     languages.extend(translations.iter().map(Some));
     let mut disclosed = Vec::new();
     let mut recommended = Vec::new();
+    let mut screenshots = Vec::new();
     for each in languages {
         let language = each.map_or("english", |catalogued| catalogued.language);
         let mut said = |context: &str, id: &str| {
@@ -347,6 +419,12 @@ pub fn written(
         if let Some(store) = &english.store {
             if !store.disclosure.is_empty() {
                 disclosed.push((language, said(STORE_CONTEXT, &store.disclosure)));
+            }
+            for (index, alt) in store.screenshots.iter().enumerate() {
+                screenshots.push((
+                    format!("{language} {}", index.saturating_add(1)),
+                    said(STORE_CONTEXT, alt),
+                ));
             }
             if !store.item.is_empty() {
                 let (typed, fields): (Vec<_>, Vec<_>) = store_fields(store, &mut said)
@@ -404,20 +482,9 @@ pub fn written(
             }
         }
     }
-    if !disclosed.is_empty() {
-        let pairs: Vec<(&str, &str)> = disclosed
-            .iter()
-            .map(|(language, text)| (*language, text.as_str()))
-            .collect();
-        files.push((DISCLOSURE.to_owned(), json_object(&pairs)));
-    }
-    if !recommended.is_empty() {
-        let pairs: Vec<(&str, &str)> = recommended
-            .iter()
-            .map(|(name, text)| (name.as_str(), text.as_str()))
-            .collect();
-        files.push((BASIC_INFO.to_owned(), json_object(&pairs)));
-    }
+    sheet(&mut files, DISCLOSURE, &disclosed);
+    sheet(&mut files, BASIC_INFO, &recommended);
+    sheet(&mut files, SCREENSHOTS, &screenshots);
     if wrong.is_empty() {
         files.sort();
         Ok(files)
@@ -497,16 +564,31 @@ fn translated(catalogued: &Catalogued, context: &str, id: &str) -> Result<String
 }
 
 /// The store page's fields by their names on the form, as its Localization tab takes them: the
-/// short description, About This Game marked up as Steamworks marks it, then each other field.
+/// short description, About This Game marked up as Steamworks marks it, the alt text of its
+/// images, then each other field.
+///
+/// Steam numbers the About's images in the order it shows them, and keys each one's alt text by
+/// that number.
 fn store_fields(
     store: &Store,
     said: &mut impl FnMut(&str, &str) -> String,
 ) -> Vec<(String, String)> {
     let mut short = String::new();
     let mut about: Vec<String> = Vec::new();
+    let mut described = Vec::new();
+    let mut images = 0_usize;
     let mut fields = Vec::new();
     let mut listing = false;
     for part in &store.blocks {
+        if let Part::Image { alt, .. } = part {
+            if let Some(alt) = alt {
+                described.push((
+                    format!("{ALT_TEXT}{images}][alt_text]"),
+                    said(STORE_CONTEXT, alt),
+                ));
+            }
+            images = images.saturating_add(1);
+        }
         let line = match part {
             Part::Short(english) => {
                 short = said(STORE_CONTEXT, english);
@@ -519,7 +601,7 @@ fn store_fields(
             Part::Heading(english) => format!("[h2]{}[/h2]", said(STORE_CONTEXT, english)),
             Part::Paragraph(english) => format!("[p]{}[/p]", said(STORE_CONTEXT, english)),
             Part::Item(english) => format!("[*]{}", said(STORE_CONTEXT, english)),
-            Part::Image(name) => format!("[img]{{STEAM_APP_IMAGE}}/extras/{name}[/img]"),
+            Part::Image { name, .. } => format!("[img]{{STEAM_APP_IMAGE}}/extras/{name}[/img]"),
         };
         if matches!(part, Part::Item(_)) != listing {
             about.push(if listing { "[/list]" } else { "[list]" }.to_owned());
@@ -535,6 +617,7 @@ fn store_fields(
         ("app[content][short_description]".to_owned(), short),
         ("app[content][about]".to_owned(), about.join("\r\n")),
     ];
+    out.extend(described);
     out.extend(fields);
     out
 }
@@ -564,6 +647,18 @@ fn presence_file(language: &str, tokens: Vec<(String, String)>) -> Result<String
     );
     let written = vdf::write(&Block { pairs: vec![lang] }).map_err(|error| error.to_string())?;
     presence::read(&written).map(|_| written)
+}
+
+/// `pairs` added to `files` as the file `name`, if there are any.
+fn sheet(files: &mut Vec<(String, String)>, name: &str, pairs: &[(impl AsRef<str>, String)]) {
+    if pairs.is_empty() {
+        return;
+    }
+    let pairs: Vec<(&str, &str)> = pairs
+        .iter()
+        .map(|(key, text)| (key.as_ref(), text.as_str()))
+        .collect();
+    files.push((name.to_owned(), json_object(&pairs)));
 }
 
 /// `pairs` as a JSON object, in their order, laid out as Prettier lays out JSON.
@@ -665,6 +760,18 @@ msgstr "Rechte vorbehalten."
 msgctxt "store page"
 msgid "Then the next."
 msgstr "Dann die letzte."
+
+msgctxt "store page"
+msgid "The board, set for a duel."
+msgstr "Das Brett, bereit zum Duell."
+
+msgctxt "store page"
+msgid "A duel at dusk."
+msgstr "Das Duell am Abend."
+
+msgctxt "store page"
+msgid "The bells ring."
+msgstr "Die Glocken klingen."
 
 msgctxt "store page"
 msgid "Made with AI assistance for coding."
@@ -818,6 +925,73 @@ msgstr "Die Erlenhexe"
     }
 
     #[test]
+    fn an_about_image_s_alt_text_goes_up_under_its_place_among_the_about_s_images() {
+        let page = STORE_PAGE.replace(
+            r#"{ "kind": "item", "text": "Strings" },"#,
+            r#"{ "kind": "image", "image": "about_board", "alt": "The board, set for a duel." },
+               { "kind": "item", "text": "Strings" },"#,
+        );
+        let english = English {
+            store: Some(store(&page).unwrap()),
+            ..English::default()
+        };
+        let files = written(&english, &[german(GERMAN)]).unwrap();
+        let upload = file(&files, "store/german.json");
+        assert!(
+            upload.contains(
+                "[/img]\\r\\n[list]\\r\\n[*]Saiten\\r\\n[*]Glocken\\r\\n[/list]\\r\\n\
+                 [p]Dann die letzte.[/p]\",\n  \
+                 \"app[assets][extra][1][alt_text]\": \"Das Brett, bereit zum Duell.\",\n  \
+                 \"app[content][legal]\""
+            ) && !upload.contains("[extra][0]"),
+            "{upload}"
+        );
+        assert!(
+            upload.contains("[img]{STEAM_APP_IMAGE}/extras/about_board[/img]"),
+            "{upload}"
+        );
+        assert!(
+            file(&files, "store/english.json")
+                .contains("\"app[assets][extra][1][alt_text]\": \"The board, set for a duel.\""),
+            "{files:?}"
+        );
+        assert_eq!(
+            written(
+                &english,
+                &[german(&GERMAN.replace("Das Brett, bereit zum Duell.", ""))]
+            ),
+            Err(vec![
+                "de.po does not translate \"The board, set for a duel.\", under msgctxt \
+                 \"store page\""
+                    .to_owned()
+            ])
+        );
+    }
+
+    #[test]
+    fn screenshots_alt_text_is_written_to_a_sheet_of_its_own_in_every_language() {
+        let page = STORE_PAGE.replacen(
+            '{',
+            r#"{ "screenshots": ["A duel at dusk.", "The bells ring."],"#,
+            1,
+        );
+        let english = English {
+            store: Some(store(&page).unwrap()),
+            ..English::default()
+        };
+        let files = written(&english, &[german(GERMAN)]).unwrap();
+        assert_eq!(
+            file(&files, SCREENSHOTS),
+            "{\n  \"english 1\": \"A duel at dusk.\",\n  \"english 2\": \"The bells ring.\",\n  \
+             \"german 1\": \"Das Duell am Abend.\",\n  \"german 2\": \"Die Glocken klingen.\"\n}\n"
+        );
+        assert!(
+            !file(&files, "store/german.json").contains("Abend"),
+            "{files:?}"
+        );
+    }
+
+    #[test]
     fn only_a_field_named_as_a_system_requirement_with_a_platform_tier_and_part_is_one() {
         assert_eq!(
             requirement("app[content][sysreqs][mac][rec][memory][amount]"),
@@ -877,10 +1051,44 @@ msgstr "Die Erlenhexe"
                 "{\"blocks\": [{\"kind\": \"field\", \"text\": \"a\"}]}",
                 "block 1 has no \"field\" text",
             ),
+            (
+                "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\", \"alt\": \"\"}]}",
+                "block 1's \"alt\" is empty: leave it out of an image with none",
+            ),
+            (
+                "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\", \"alt\": 1}]}",
+                "block 1's \"alt\" is not a text",
+            ),
+            (
+                "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\", \"alt\": \"A.\"}, \
+                 {\"kind\": \"short\", \"text\": \"\"}, {\"kind\": \"image\", \"image\": \"a\"}]}",
+                "block 3 shows a a second time, and alt text is written only for an About that \
+                 shows each image once",
+            ),
+            (
+                "{\"screenshots\": \"A.\"}",
+                "\"screenshots\" is not a list of each screenshot's alt text",
+            ),
+            (
+                "{\"screenshots\": [\"A.\", \"\"]}",
+                "screenshot 2's alt text is empty",
+            ),
+            (
+                "{\"screenshots\": [null]}",
+                "screenshot 1's alt text is not a text",
+            ),
         ] {
             assert_eq!(store(page), Err(why.to_owned()), "{page}");
         }
         assert!(store("{").unwrap_err().starts_with("is not JSON: "));
+        assert!(
+            store(
+                "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\"}, \
+                 {\"kind\": \"image\", \"image\": \"a\"}]}"
+            )
+            .is_ok(),
+            "an image shown twice with no alt text anywhere"
+        );
     }
 
     #[test]

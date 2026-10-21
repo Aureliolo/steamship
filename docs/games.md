@@ -180,23 +180,25 @@ naming each file that differs, is missing or is left over, so a gate can run it.
 | --- | --- | --- |
 | `store_english.json` | `store/<language>.json` | the store page's Localization tab, every file in one upload |
 | its recommended system requirements | `basic_info.json` | the store page's Basic Info form, one language at a time |
+| its `screenshots` | `screenshots.json` | the screenshots' alt text panel on the Store Page tab, one language at a time |
 | its `disclosure` | `ai_disclosure.json` | the content survey's Generative AI section, one box a language |
 | `workshop_english.json` | `workshop/<language>.json` | the Workshop's Steamworks page, one language to a save |
 | `presence_english.json` | `rich_presence_<language>.vdf` | `steamship rich-presence` |
 
 `store_english.json` holds the store page's `itemid`, which its Localization tab's export names
-and which is not the app's, the `disclosure`, and the page's text as `blocks`, each with its
-`kind`:
+and which is not the app's, the `disclosure`, each screenshot's alt text in the store's order of
+them, and the page's text as `blocks`, each with its `kind`:
 
 ```json
 {
   "itemid": "1000090",
   "disclosure": "Made with AI assistance for coding.",
+  "screenshots": ["The first screenshot, as a screen reader says it.", "The second."],
   "blocks": [
     { "kind": "short", "text": "The short description." },
     { "kind": "heading", "text": "A heading in About This Game" },
     { "kind": "paragraph", "text": "A paragraph." },
-    { "kind": "image", "image": "about_score" },
+    { "kind": "image", "image": "about_score", "alt": "What the image shows." },
     { "kind": "item", "text": "One item of a list" },
     { "kind": "field", "field": "app[content][legal]", "text": "The legal line." }
   ]
@@ -204,6 +206,11 @@ and which is not the app's, the `disclosure`, and the page's text as `blocks`, e
 ```
 
 An image is named as the Description tab's custom images name it, the same in every language.
+Its `alt` goes into the upload under the image's place among the About's images, counted from 0,
+as `app[assets][extra][0][alt_text]`, the key the tab's own export gives it; an image without
+one, such as a decorative one, has no line. With alt text, the About shows each image once. The upload
+carries no screenshot's alt text, so the screenshots' go into `screenshots.json`, as `german 1`
+for the first one in German, to be typed into their panel.
 Items in a row make one list. A `field` is any other text Steam shows in the player's language,
 such as a system requirement, by its name on the form. Until the `itemid` is set no store upload
 is written, since one naming no item cannot go up.
