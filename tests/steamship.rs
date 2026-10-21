@@ -3431,6 +3431,16 @@ where
     (format!("http://{address}"), requests)
 }
 
+/// A home whose key `steamship logout` forgets once the test is done with it, since on macOS only
+/// the program that kept a key may remove it.
+fn forgetting_home() -> common::store::Home {
+    common::store::Home::new(logout)
+}
+
+fn logout(home: &Path) {
+    drop(steamship(&["logout"], Some(home), &[]));
+}
+
 /// `steamship login --web-api-key` with the Web API at `host`, `typed` piped to its prompt, and
 /// `variables` set besides.
 fn login_with_key(
@@ -3466,8 +3476,7 @@ fn login_with_key(
 
 #[test]
 fn login_with_web_api_key_keeps_a_key_steam_takes_and_logout_forgets_it() {
-    let _store = common::store::lock();
-    let home = tempfile::tempdir().unwrap();
+    let home = forgetting_home();
     let (host, requests) = web_api(vec![("200 OK", APPS)]);
     let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY, &[]);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
@@ -3562,7 +3571,7 @@ fn login_with_web_api_key_keeps_a_key_steam_takes_and_logout_forgets_it() {
 
 #[test]
 fn login_with_web_api_key_keeps_nothing_steam_refuses() {
-    let home = tempfile::tempdir().unwrap();
+    let home = forgetting_home();
     let (host, _requests) = web_api(vec![("403 Forbidden", "")]);
     let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY, &[]);
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
@@ -3576,14 +3585,13 @@ fn login_with_web_api_key_keeps_nothing_steam_refuses() {
 
 #[test]
 fn builds_at_a_terminal_asks_for_the_key_then_offers_to_keep_it() {
-    let _store = common::store::lock();
     let steamship_program = env!("CARGO_BIN_EXE_steamship");
     #[cfg(windows)]
     let line = format!("{steamship_program} builds 1000010");
     #[cfg(unix)]
     let line = format!("'{steamship_program}' builds 1000010");
     for (answer, shown) in [("\r", "\u{2713} kept in"), ("n\r", "not kept")] {
-        let home = tempfile::tempdir().unwrap();
+        let home = forgetting_home();
         let (host, _requests) = web_api(vec![("200 OK", BETAS), ("200 OK", BUILDS)]);
         let mut session = Session::start_with(
             &line,
@@ -3602,15 +3610,13 @@ fn builds_at_a_terminal_asks_for_the_key_then_offers_to_keep_it() {
         let (_, status, _) = steamship(&["status"], Some(home.path()), &[]);
         let kept = status.contains(&format!("  api key   kept in {}\n", keychain::STORE));
         assert_eq!(kept, answer == "\r", "{answer:?}: {status}\nshown: {seen}");
-        drop(steamship(&["logout"], Some(home.path()), &[]));
     }
 }
 
 #[cfg(unix)]
 #[test]
 fn login_on_a_terminal_keeps_the_key_typed_at_its_offer_and_offers_no_more() {
-    let _store = common::store::lock();
-    let home = asking();
+    let home = common::store::Home::of(asking(), logout);
     let (host, _requests) = web_api(vec![("200 OK", APPS)]);
     let login = format!(
         "'{}' login --account build_bot",
@@ -3646,7 +3652,6 @@ fn login_on_a_terminal_keeps_the_key_typed_at_its_offer_and_offers_no_more() {
     );
     assert!(!seen.contains(KEY), "the key was shown: {seen}");
     assert_eq!(session.end().wait().unwrap(), Some(0_i32));
-    drop(steamship(&["logout"], Some(home.path()), &[]));
 }
 
 #[test]
