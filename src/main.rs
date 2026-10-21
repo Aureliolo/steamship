@@ -1750,9 +1750,14 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<(), ExitCo
             Err(ExitCode::from(REFUSED))
         }
         Err(error) => {
-            spinner.failed("not checked");
+            let why = why_unanswered(&api, app, &error);
+            if why.is_some() {
+                spinner.skipped(&format!("{branch}, not checked"));
+            } else {
+                spinner.failed("not checked");
+            }
             show::aside(&error.to_string());
-            if let Some(why) = why_unanswered(&api, app, &error) {
+            if let Some(why) = why {
                 show::aside(&why);
             }
             Ok(())

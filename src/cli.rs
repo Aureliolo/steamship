@@ -424,8 +424,8 @@ pub enum Command {
     Init {
         /// The app's ID, from Steamworks.
         app: u32,
-        /// A depot and the folder its files ship from, such as 1001=build/windows; once for each
-        /// depot.
+        /// A depot and the folder its files ship from, such as 1001=build/windows, from the folder
+        /// init runs in, not from `--folder`; once for each depot.
         #[arg(long = "depot", value_name = "ID=FOLDER", value_parser = init::depot)]
         depots: Vec<init::Depot>,
         /// The folder the scripts are written into.

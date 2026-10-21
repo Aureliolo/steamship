@@ -402,6 +402,12 @@ impl Spinner {
         failed(&label, value);
     }
 
+    /// Ends a step that could not be taken, for a reason that is no fault.
+    pub fn skipped(self, value: &str) {
+        let label = self.stop();
+        field(&label, value);
+    }
+
     /// Stops the spinner while something else is shown, and starts it again after.
     #[must_use]
     pub fn around<Show>(self, show: Show, text: &str, clock: bool) -> Self
