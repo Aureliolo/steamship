@@ -757,6 +757,7 @@ pub fn godot_version(text: &str) -> Option<String> {
 /// When Git cannot be run, the game is not in a repository, its tree holds changes, or origin
 /// cannot be asked or is at another commit.
 pub fn pushed(root: &Path) -> Result<Pushed, String> {
+    in_repository(root)?;
     unchanged(root)?;
     let commit = git(root, &["rev-parse", "HEAD"])?;
     let remote = git(root, &["ls-remote", "--symref", "origin", "HEAD"])?;
@@ -891,21 +892,7 @@ fn remote_head(printed: &str) -> Option<(String, String)> {
 /// What Git printed for `args` in `root`, without the line ending it closed with; the start is
 /// kept, as `status --porcelain` begins a line with a space for a file changed but not staged.
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let output = run::output(
-        run::command("git")
-            .args(args)
-            .current_dir(root)
-            // A remote asked for a password would wait for one; the credential helper answers.
-            .env("GIT_TERMINAL_PROMPT", "0"),
-    )
-    .map_err(|error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            "Git is not installed, or not on the PATH, and steamship ships only a pushed commit"
-                .to_owned()
-        } else {
-            format!("Git could not be run ({error}), and steamship ships only a pushed commit")
-        }
-    })?;
+    let output = git_run(root, args)?;
     if !output.status.success() {
         let said = String::from_utf8_lossy(&output.stderr);
         let said = said
@@ -922,6 +909,41 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout)
         .trim_end()
         .to_owned())
+}
+
+/// Git run with `args` in `root`, however it ended.
+fn git_run(root: &Path, args: &[&str]) -> Result<process::Output, String> {
+    run::output(
+        run::command("git")
+            .args(args)
+            .current_dir(root)
+            // A remote asked for a password would wait for one; the credential helper answers.
+            .env("GIT_TERMINAL_PROMPT", "0"),
+    )
+    .map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            "Git is not installed, or not on the PATH, and steamship ships only a pushed commit"
+                .to_owned()
+        } else {
+            format!("Git could not be run ({error}), and steamship ships only a pushed commit")
+        }
+    })
+}
+
+/// Refuses a game at `root` that is in no Git repository, which has no commit to ship.
+fn in_repository(root: &Path) -> Result<(), String> {
+    if git_run(root, &["rev-parse", "--is-inside-work-tree"])?
+        .status
+        .success()
+    {
+        return Ok(());
+    }
+    Err(format!(
+        "{} is in no Git repository, and steamship ships a game only from a commit pushed to \
+         origin: make it a repository and push it, or name the app build script and its \
+         version, as steamship upload <script> --version <version>",
+        root.display()
+    ))
 }
 
 #[cfg(test)]

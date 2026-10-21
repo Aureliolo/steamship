@@ -8048,7 +8048,7 @@ fn a_game_with_no_english_for_steam_s_text_is_told_so_and_has_nothing_written_or
         "there is no store_english.json, workshop_english.json, presence_english.json or \
          rich_presence_english.vdf beside the build scripts, so there is no English to write \
          from",
-        " holds the 0 files of the game's text in 2 languages\n",
+        " holds none of the game's text\n",
     ] {
         assert!(all.contains(line), "{line:?} in {all}");
     }
@@ -8659,14 +8659,13 @@ fn a_games_rich_presence_is_sent_from_its_pushed_tree_and_one_without_any_is_ref
     let refused = failure(&why);
     assert!(
         refused.starts_with("the game holds no rich_presence_<language>.vdf beside ")
-            && refused.ends_with(
-                &Path::new("steam")
-                    .join("app_build.vdf")
-                    .display()
-                    .to_string()
-            ),
+            && refused.ends_with(&format!(
+                "{}: write rich_presence_english.vdf there, or name the files to send",
+                Path::new("steam").join("app_build.vdf").display()
+            )),
         "{why}"
     );
+    assert!(said.starts_with("steamship rich-presence\n"), "{said}");
 }
 
 #[test]
@@ -8881,6 +8880,30 @@ fn a_games_example_mods_are_its_workshop_items_and_one_without_any_is_refused() 
         failure(&why).starts_with("the game has no example mod: no folder in "),
         "{why}"
     );
+}
+
+#[test]
+fn a_game_in_no_repository_is_refused_saying_how_to_ship_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("game");
+    fs::create_dir_all(root.join("steam")).unwrap();
+    fs::write(
+        root.join("steam").join("app_build.vdf"),
+        r#""AppBuild" { "AppID" "480" "SetLive" "testing" "Depots" { "481" "depot.vdf" } }"#,
+    )
+    .unwrap();
+    let (code, stdout, stderr) = in_game(&root, &["upload"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    let refused = failure(&stderr);
+    assert!(
+        refused.ends_with(
+            " is in no Git repository, and steamship ships a game only from a commit pushed to \
+             origin: make it a repository and push it, or name the app build script and its \
+             version, as steamship upload <script> --version <version>"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("fatal:"), "{stderr}");
 }
 
 #[test]
