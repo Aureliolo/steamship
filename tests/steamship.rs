@@ -293,6 +293,24 @@ fn init_writes_scripts_check_takes_and_never_overwrites_them() {
         );
         assert!(folder.path().join(&path).is_file(), "{name}");
     }
+    // steam/app_build.vdf is where a game keeps its script, so this folder is now a game.
+    assert!(
+        stdout.contains("  branch    testing, the game's, set live\n"),
+        "{stdout}"
+    );
+    let written = fs::read_to_string(folder.path().join("steam").join("app_build.vdf")).unwrap();
+    assert!(written.contains("\t\"SetLive\" \"testing\"\n"), "{written}");
+    let (demo, demo_said, _) = steamship_in(
+        folder.path(),
+        &["init", "490", "--folder", "steam/demo"],
+        Some(&home),
+        &[],
+    );
+    assert_eq!(demo, Some(0_i32), "{demo_said}");
+    assert!(
+        demo_said.contains("  branch    testing, the game's, set live\n"),
+        "{demo_said}"
+    );
     for platform in ["windows", "linux"] {
         let build = folder.path().join("build").join(platform);
         fs::create_dir_all(&build).unwrap();
@@ -313,6 +331,29 @@ fn init_writes_scripts_check_takes_and_never_overwrites_them() {
         )
     );
     assert_eq!(fs::read_to_string(&script).unwrap(), before);
+}
+
+#[test]
+fn init_leaves_the_branch_to_choose_for_scripts_no_game_keeps() {
+    let folder = tempfile::tempdir().unwrap();
+    let home = folder.path().join("home");
+    let (code, stdout, stderr) = steamship_in(
+        folder.path(),
+        &["init", "480", "--folder", "tools/steam"],
+        Some(&home),
+        &[],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(!stdout.contains("  branch "), "{stdout}");
+    let written = fs::read_to_string(
+        folder
+            .path()
+            .join("tools")
+            .join("steam")
+            .join("app_build.vdf"),
+    )
+    .unwrap();
+    assert!(written.contains("\t// \"SetLive\" \"beta\"\n"), "{written}");
 }
 
 #[test]
@@ -8534,6 +8575,10 @@ fn a_game_check_names_each_comparison_the_game_gives_nothing_for() {
         &["check"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
+    assert!(
+        stdout.contains("  content   not checked; upload checks it once the game is built\n"),
+        "{stdout}"
+    );
     // The folder's tail alone, as macOS gives the child its temporary folder through /private.
     let data = Path::new("inn").join("mods").join("base").join("data");
     let script = Path::new("inn").join("steam").join("app_build.vdf");
@@ -8922,6 +8967,7 @@ fn a_games_script_may_set_only_the_games_branch_live() {
             ),
             "{args:?}: {stderr}"
         );
+        assert!(!stdout.contains("nothing refused"), "{args:?}: {stdout}");
     }
 
     fs::write(root.join("steamship.toml"), "branch = \"beta\"\n").unwrap();
