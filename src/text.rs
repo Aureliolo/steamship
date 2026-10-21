@@ -60,6 +60,9 @@ pub struct Store {
     pub blocks: Vec<Part>,
     /// Each screenshot's alt text, in the store's order of them.
     pub screenshots: Vec<String>,
+    /// The store's images by name, in the order it keeps them, which numbers their alt text: each
+    /// the About shows, and any it does not.
+    pub extras: Vec<String>,
 }
 
 /// One block of the store page's text.
@@ -131,11 +134,11 @@ pub fn store(text: &str) -> Result<Store, String> {
     if let Some(other) = page.keys().find(|key| {
         !matches!(
             key.as_str(),
-            "itemid" | "disclosure" | "screenshots" | "blocks"
+            "itemid" | "disclosure" | "screenshots" | "extras" | "blocks"
         )
     }) {
         return Err(format!(
-            "\"{other}\" is none of itemid, disclosure, screenshots and blocks"
+            "\"{other}\" is none of itemid, disclosure, screenshots, extras and blocks"
         ));
     }
     let item = match page.get("itemid") {
@@ -158,12 +161,21 @@ pub fn store(text: &str) -> Result<Store, String> {
     for (index, given) in listed.iter().enumerate() {
         blocks.push(block(given, index.saturating_add(1))?);
     }
-    shown_once(&blocks)?;
+    let extras = texts(page.get("extras"), "extras", "image name")?;
+    if let Some(twice) = extras
+        .iter()
+        .enumerate()
+        .find_map(|(index, name)| extras.get(..index)?.contains(name).then_some(name))
+    {
+        return Err(format!("\"extras\" names {twice} twice"));
+    }
+    in_steams_order(&blocks, &extras)?;
     Ok(Store {
         item,
         disclosure,
         blocks,
-        screenshots: screenshots(page.get("screenshots"))?,
+        screenshots: texts(page.get("screenshots"), "screenshots", "alt text")?,
+        extras,
     })
 }
 
@@ -229,50 +241,58 @@ fn block(given: &Json, number: usize) -> Result<Part, String> {
     Ok(part)
 }
 
-/// Refuses an About that shows an image a second time while any of its images has alt text,
-/// since Steam numbers the images whose alt text it keeps only as seen with each shown once.
-fn shown_once(blocks: &[Part]) -> Result<(), String> {
-    if !blocks
-        .iter()
-        .any(|part| matches!(part, Part::Image { alt: Some(_), .. }))
-    {
-        return Ok(());
-    }
-    let mut shown: Vec<&str> = Vec::new();
+/// Refuses alt text Steam would not number as meant: the number is the image's place in the
+/// store's own list of its images, which need not follow the About's order and may hold an image
+/// the About does not show, so with any alt text `extras` has to give that list, holding each
+/// image the About shows; and each image's alt text is given once.
+fn in_steams_order(blocks: &[Part], extras: &[String]) -> Result<(), String> {
+    let mut described: Vec<&str> = Vec::new();
     for (index, part) in blocks.iter().enumerate() {
-        if let Part::Image { name, .. } = part {
-            if shown.contains(&name.as_str()) {
+        let Part::Image { name, alt } = part else {
+            continue;
+        };
+        let number = index.saturating_add(1);
+        if alt.is_some() {
+            if extras.is_empty() {
                 return Err(format!(
-                    "block {} shows {name} a second time, and alt text is written only for an \
-                     About that shows each image once",
-                    index.saturating_add(1)
+                    "block {number} gives \"alt\", and \"extras\" does not list the About's \
+                     images in the order the store keeps them, by which Steam numbers their alt \
+                     text"
                 ));
             }
-            shown.push(name);
+            if described.contains(&name.as_str()) {
+                return Err(format!(
+                    "block {number} gives {name} alt text a second time: give it once"
+                ));
+            }
+            described.push(name);
+        }
+        if !extras.is_empty() && !extras.contains(name) {
+            return Err(format!(
+                "block {number} shows {name}, which \"extras\" does not list"
+            ));
         }
     }
     Ok(())
 }
 
-/// The screenshots' alt text, as [`STORE`]'s `screenshots` lists it.
-fn screenshots(given: Option<&Json>) -> Result<Vec<String>, String> {
+/// The texts [`STORE`]'s list `key` gives, each `what` it holds.
+fn texts(given: Option<&Json>, key: &str, what: &str) -> Result<Vec<String>, String> {
     let listed = match given {
         None | Some(Json::Null) => return Ok(Vec::new()),
         Some(Json::Array(listed)) => listed,
-        Some(_) => {
-            return Err("\"screenshots\" is not a list of each screenshot's alt text".to_owned());
-        }
+        Some(_) => return Err(format!("\"{key}\" is not a list of texts")),
     };
-    let mut screenshots = Vec::with_capacity(listed.len());
-    for (index, alt) in listed.iter().enumerate() {
+    let mut texts = Vec::with_capacity(listed.len());
+    for (index, text) in listed.iter().enumerate() {
         let number = index.saturating_add(1);
-        match alt.as_str() {
-            Some("") => return Err(format!("screenshot {number}'s alt text is empty")),
-            Some(alt) => screenshots.push(alt.to_owned()),
-            None => return Err(format!("screenshot {number}'s alt text is not a text")),
+        match text.as_str() {
+            Some("") => return Err(format!("\"{key}\" {number}, its {what}, is empty")),
+            Some(text) => texts.push(text.to_owned()),
+            None => return Err(format!("\"{key}\" {number}, its {what}, is not a text")),
         }
     }
-    Ok(screenshots)
+    Ok(texts)
 }
 
 /// Reads [`WORKSHOP`].
@@ -601,28 +621,40 @@ fn translated(catalogued: &Catalogued, context: &str, id: &str) -> Result<String
 /// short description, About This Game marked up as Steamworks marks it, the alt text of its
 /// images, then each other field.
 ///
-/// Steam numbers the About's images in the order it shows them, and keys each one's alt text by
-/// that number.
+/// Steam keys each image's alt text by the image's place in `extras`, the store's own list of
+/// its images. Each one listed is given its alt text, or none, which clears what the store held.
 fn store_fields(
     store: &Store,
     said: &mut impl FnMut(&str, &str) -> String,
 ) -> Vec<(String, String)> {
     let mut short = String::new();
     let mut about: Vec<String> = Vec::new();
-    let mut described = Vec::new();
-    let mut images = 0_usize;
     let mut fields = Vec::new();
     let mut listing = false;
+    let described: Vec<(String, String)> = store
+        .extras
+        .iter()
+        .enumerate()
+        .map(|(place, listed)| {
+            let alt = store.blocks.iter().find_map(|part| {
+                if let Part::Image {
+                    name,
+                    alt: Some(alt),
+                } = part
+                    && name == listed
+                {
+                    Some(alt)
+                } else {
+                    None
+                }
+            });
+            (
+                format!("{ALT_TEXT}{place}][alt_text]"),
+                alt.map_or_else(String::new, |alt| said(STORE_CONTEXT, alt)),
+            )
+        })
+        .collect();
     for part in &store.blocks {
-        if let Part::Image { alt, .. } = part {
-            if let Some(alt) = alt {
-                described.push((
-                    format!("{ALT_TEXT}{images}][alt_text]"),
-                    said(STORE_CONTEXT, alt),
-                ));
-            }
-            images = images.saturating_add(1);
-        }
         let line = match part {
             Part::Short(english) => {
                 short = said(STORE_CONTEXT, english);
@@ -959,12 +991,18 @@ msgstr "Die Erlenhexe"
     }
 
     #[test]
-    fn an_about_image_s_alt_text_goes_up_under_its_place_among_the_about_s_images() {
-        let page = STORE_PAGE.replace(
-            r#"{ "kind": "item", "text": "Strings" },"#,
-            r#"{ "kind": "image", "image": "about_board", "alt": "The board, set for a duel." },
+    fn an_about_image_s_alt_text_goes_up_under_its_place_in_the_store_s_list_not_the_about_s() {
+        let page = STORE_PAGE
+            .replace(
+                r#"{ "kind": "item", "text": "Strings" },"#,
+                r#"{ "kind": "image", "image": "about_board", "alt": "The board, set for a duel." },
                { "kind": "item", "text": "Strings" },"#,
-        );
+            )
+            .replacen(
+                '{',
+                r#"{ "extras": ["about_board", "about_unused", "about_score"],"#,
+                1,
+            );
         let english = English {
             store: Some(store(&page).unwrap()),
             ..English::default()
@@ -975,18 +1013,22 @@ msgstr "Die Erlenhexe"
             upload.contains(
                 "[/img]\\r\\n[list]\\r\\n[*]Saiten\\r\\n[*]Glocken\\r\\n[/list]\\r\\n\
                  [p]Dann die letzte.[/p]\",\n  \
-                 \"app[assets][extra][1][alt_text]\": \"Das Brett, bereit zum Duell.\",\n  \
+                 \"app[assets][extra][0][alt_text]\": \"Das Brett, bereit zum Duell.\",\n  \
+                 \"app[assets][extra][1][alt_text]\": \"\",\n  \
+                 \"app[assets][extra][2][alt_text]\": \"\",\n  \
                  \"app[content][legal]\""
-            ) && !upload.contains("[extra][0]"),
+            ),
             "{upload}"
         );
         assert!(
-            upload.contains("[img]{STEAM_APP_IMAGE}/extras/about_board[/img]"),
-            "{upload}"
+            upload.contains(
+                "extras/about_score[/img]\\r\\n[img]{STEAM_APP_IMAGE}/extras/about_board[/img]"
+            ),
+            "the About shows the board second, the store lists it first: {upload}"
         );
         assert!(
             file(&files, "store/english.json")
-                .contains("\"app[assets][extra][1][alt_text]\": \"The board, set for a duel.\""),
+                .contains("\"app[assets][extra][0][alt_text]\": \"The board, set for a duel.\""),
             "{files:?}"
         );
         assert_eq!(
@@ -1097,14 +1139,27 @@ msgstr "Die Erlenhexe"
                 "block 1's \"alt\" is not a text",
             ),
             (
-                "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\", \"alt\": \"A.\"}, \
-                 {\"kind\": \"short\", \"text\": \"\"}, {\"kind\": \"image\", \"image\": \"a\"}]}",
-                "block 3 shows a a second time, and alt text is written only for an About that \
-                 shows each image once",
+                "{\"blocks\": [{\"kind\": \"short\", \"text\": \"\"}, \
+                 {\"kind\": \"image\", \"image\": \"a\", \"alt\": \"A.\"}]}",
+                "block 2 gives \"alt\", and \"extras\" does not list the About's images in the \
+                 order the store keeps them, by which Steam numbers their alt text",
+            ),
+            (
+                "{\"extras\": [\"a\"], \"blocks\": [\
+                 {\"kind\": \"image\", \"image\": \"a\", \"alt\": \"A.\"}, \
+                 {\"kind\": \"image\", \"image\": \"b\"}]}",
+                "block 2 shows b, which \"extras\" does not list",
+            ),
+            ("{\"extras\": [\"a\", \"a\"]}", "\"extras\" names a twice"),
+            (
+                "{\"extras\": [\"a\"], \"blocks\": [\
+                 {\"kind\": \"image\", \"image\": \"a\", \"alt\": \"A.\"}, \
+                 {\"kind\": \"image\", \"image\": \"a\", \"alt\": \"B.\"}]}",
+                "block 2 gives a alt text a second time: give it once",
             ),
             (
                 "{\"itemid\": 1, \"title\": \"A\"}",
-                "\"title\" is none of itemid, disclosure, screenshots and blocks",
+                "\"title\" is none of itemid, disclosure, screenshots, extras and blocks",
             ),
             (
                 "{\"blocks\": [{\"kind\": \"short\", \"text\": \"A.\", \"alt\": \"B.\"}]}",
@@ -1117,15 +1172,15 @@ msgstr "Die Erlenhexe"
             ),
             (
                 "{\"screenshots\": \"A.\"}",
-                "\"screenshots\" is not a list of each screenshot's alt text",
+                "\"screenshots\" is not a list of texts",
             ),
             (
                 "{\"screenshots\": [\"A.\", \"\"]}",
-                "screenshot 2's alt text is empty",
+                "\"screenshots\" 2, its alt text, is empty",
             ),
             (
-                "{\"screenshots\": [null]}",
-                "screenshot 1's alt text is not a text",
+                "{\"extras\": [null]}",
+                "\"extras\" 1, its image name, is not a text",
             ),
         ] {
             assert_eq!(store(page), Err(why.to_owned()), "{page}");
@@ -1133,11 +1188,12 @@ msgstr "Die Erlenhexe"
         assert!(store("{").unwrap_err().starts_with("is not JSON: "));
         assert!(
             store(
-                "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\"}, \
+                "{\"extras\": [\"a\"], \"blocks\": [\
+                 {\"kind\": \"image\", \"image\": \"a\", \"alt\": \"A.\"}, \
                  {\"kind\": \"image\", \"image\": \"a\"}]}"
             )
             .is_ok(),
-            "an image shown twice with no alt text anywhere"
+            "an image shown twice, its alt text given once"
         );
     }
 

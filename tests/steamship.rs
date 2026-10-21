@@ -7731,7 +7731,8 @@ fn screenshots_alt_text_goes_to_its_own_sheet_and_an_about_image_s_into_the_uplo
     let english = steam.join("store_english.json");
     fs::write(
         &english,
-        r#"{"itemid": 1000090, "screenshots": ["The inn at dusk."], "blocks": [
+        r#"{"itemid": 1000090, "screenshots": ["The inn at dusk."], "extras": ["about_hearth"],
+            "blocks": [
             {"kind": "short", "text": "An inn."},
             {"kind": "image", "image": "about_hearth", "alt": "A fire in the hearth."}
         ]}"#,
