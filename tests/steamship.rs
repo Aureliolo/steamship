@@ -3864,7 +3864,30 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
         ],
     );
     assert_eq!(unanswered, Some(0_i32), "{said}");
-    assert!(said.contains("not checked"), "{said}");
+    assert!(said.contains("\u{2717} not checked"), "{said}");
+
+    // An app the key holds with no build live on its default branch, such as a new demo's: Steam
+    // cannot say yet, which is no fault of the script's.
+    let held = r#"{"applist": {"apps": {"app": [
+        {"appid": 480, "app_type": "game", "app_name": "Spacewar"}
+    ]}}}"#;
+    let (holding, _asked) = web_api(vec![("500 Internal Server Error", ""), ("200 OK", held)]);
+    let (unbuilt, new, _) = steamship(
+        &["check", &script],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &holding),
+        ],
+    );
+    assert_eq!(unbuilt, Some(0_i32), "{new}");
+    assert!(new.contains("  branch    beta2, not checked\n"), "{new}");
+    assert!(!new.contains('\u{2717}'), "{new}");
+    assert!(
+        new.contains("this key holds app 480, and Steam answers so while no build is live"),
+        "{new}"
+    );
 
     // No key set or kept: nothing is asked of Steam, and the branch is said to be unchecked, with
     // what that risks and how to have it checked.

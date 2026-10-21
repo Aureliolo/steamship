@@ -166,9 +166,17 @@ keep the demo's exports out of it, such as by mapping `windows/*` alone.
 
 The demo's rich presence is the game's, sent from the files beside the game's script. Its
 achievements and leaderboards are left out of `check --demo`, since a demo is best without
-them and the game's records are the full game's. `steamship init` makes the demo's scripts with
-the demo's app and depots and `--folder steam/demo`, and `steamship drm-wrap` wraps its
-executable with the demo's script, so that it runs under the demo's app.
+them and the game's records are the full game's. `steamship drm-wrap` wraps the demo's
+executable with the demo's script, so that it runs under the demo's app. `steamship init` makes
+the demo's scripts, each depot's folder named from the game's folder:
+
+```sh
+steamship init 1000070 --depot 1000071=export/demo/windows \
+  --depot 1000072=export/demo/linux --folder steam/demo
+```
+
+Until the demo has a build live on its default branch, Steam cannot list its branches, so
+`check --demo` leaves its script's branch unchecked.
 
 ## Text in every language
 
