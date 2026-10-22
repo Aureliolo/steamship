@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::iter;
+use std::mem;
 
 use serde_json::{Map, Value, json};
 
@@ -160,6 +161,112 @@ pub fn rebarred(before: &str, after: &str) -> Vec<(String, String, String)> {
             (*old != bar).then(|| (api_name, old.clone(), bar))
         })
         .collect()
+}
+
+/// Each achievement in the tables both before and after whose meaning changed.
+///
+/// Each comes with its API name, and which of its English name, its English description and the
+/// stat its progress bar counts changed. The definitions and the localisation are each as
+/// [`tables`] writes them.
+#[must_use]
+pub fn reworded(
+    (defined_before, localised_before): (&str, &str),
+    (defined_after, localised_after): (&str, &str),
+) -> Vec<(String, Vec<&'static str>)> {
+    let was = meanings(defined_before, localised_before);
+    meanings(defined_after, localised_after)
+        .into_iter()
+        .filter_map(|(api_name, meaning)| {
+            let (_, old) = was.iter().find(|(each, _)| *each == api_name)?;
+            let changed: Vec<&'static str> = [
+                ("English name", 0),
+                ("English description", 1),
+                ("progress stat", 2),
+            ]
+            .into_iter()
+            .filter(|&(_, part)| old.get(part) != meaning.get(part))
+            .map(|(said, _)| said)
+            .collect();
+            (!changed.is_empty()).then_some((api_name, changed))
+        })
+        .collect()
+}
+
+/// Each achievement in `definitions` with its English name, its English description and the stat
+/// its progress bar counts, from `localisation`; an achievement the definitions do not name is
+/// left out.
+fn meanings(definitions: &str, localisation: &str) -> Vec<(String, [String; 3])> {
+    let records = records(localisation);
+    let english = records
+        .first()
+        .and_then(|header| header.iter().position(|field| field == "english"));
+    let text = |api_name: &str, field: &str| {
+        english
+            .and_then(|column| {
+                records
+                    .iter()
+                    .find(|record| {
+                        record.first().is_some_and(|name| name == api_name)
+                            && record.get(1).is_some_and(|each| each == field)
+                    })
+                    .and_then(|record| record.get(column))
+            })
+            .cloned()
+            .unwrap_or_default()
+    };
+    records_of(definitions)
+        .into_iter()
+        .map(|(api_name, stat)| {
+            let meaning = [
+                text(&api_name, "name"),
+                text(&api_name, "description"),
+                stat,
+            ];
+            (api_name, meaning)
+        })
+        .collect()
+}
+
+/// Each achievement in `definitions` and the stat its progress bar counts, empty for none.
+fn records_of(definitions: &str) -> Vec<(String, String)> {
+    records(definitions)
+        .into_iter()
+        .skip(1)
+        .filter_map(|record| {
+            let [api_name, _, _, _, _, stat, _, _] = record.as_slice() else {
+                return None;
+            };
+            Some((api_name.clone(), stat.clone()))
+        })
+        .collect()
+}
+
+/// The records of a table [`row`] wrote, each a list of its fields: a field in quotes may hold a
+/// comma, a line break or a doubled quote.
+fn records(text: &str) -> Vec<Vec<String>> {
+    let mut records = Vec::new();
+    let mut record = Vec::new();
+    let mut field = String::new();
+    let mut quoted = false;
+    let mut characters = text.chars().peekable();
+    while let Some(character) = characters.next() {
+        match (character, quoted) {
+            ('"', true) if characters.next_if_eq(&'"').is_some() => field.push('"'),
+            ('"', _) => quoted = !quoted,
+            (',', false) => record.push(mem::take(&mut field)),
+            ('\n', false) => {
+                record.push(mem::take(&mut field));
+                records.push(mem::take(&mut record));
+            }
+            ('\r', false) => {}
+            (other, _) => field.push(other),
+        }
+    }
+    if !field.is_empty() || !record.is_empty() {
+        record.push(field);
+        records.push(record);
+    }
+    records
 }
 
 /// Each achievement in `definitions` and its progress bar, as the editor shows it: the stat it
@@ -610,6 +717,44 @@ mod tests {
             "neither a flag changed nor an achievement new to the definitions"
         );
         assert_eq!(rebarred("", &after), []);
+    }
+
+    #[test]
+    fn an_achievement_whose_english_or_stat_changed_is_named_with_what_changed() {
+        let defined = |stat: &str| {
+            format!(
+                "\"api_name (required, unique)\",setid\n\
+                 RENAMED,,Client,false,false,,0,0\n\
+                 RECOUNTED,,Client,false,false,{stat},0,5\n\
+                 TRANSLATED,,Client,false,false,,0,0\n"
+            )
+        };
+        let localised = |name: &str, german: &str| {
+            format!(
+                "api_name,field,english,german\n\
+                 RENAMED,name,{name},Name\n\
+                 RENAMED,description,\"Win, then rest.\",Gewinne.\n\
+                 RECOUNTED,name,Counted,Gezählt\n\
+                 RECOUNTED,description,\"Count\nthem \"\"all\"\"\",Zähle.\n\
+                 TRANSLATED,name,Same,{german}\n\
+                 TRANSLATED,description,Same,Gleich\n"
+            )
+        };
+        let before = (defined("WINS"), localised("Old", "Alt"));
+        let after = (defined("ROUNDS"), localised("New", "Neu"));
+        assert_eq!(
+            reworded(
+                (before.0.as_str(), before.1.as_str()),
+                (after.0.as_str(), after.1.as_str())
+            ),
+            [
+                ("RENAMED".to_owned(), vec!["English name"]),
+                ("RECOUNTED".to_owned(), vec!["progress stat"]),
+            ],
+            "a translation alone, and a quoted text with a comma, a line break and quotes, are \
+             no change"
+        );
+        assert_eq!(reworded(("", ""), (after.0.as_str(), after.1.as_str())), []);
     }
 
     #[test]
