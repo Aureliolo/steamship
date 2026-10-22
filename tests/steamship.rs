@@ -4790,8 +4790,9 @@ fn an_achievement_unlocked_by_the_first_floor_built_is_written_without_a_bar_and
     );
     assert!(
         noted.contains(
-            "FIVE_LEVELS's progress bar goes from floors 0 - 5 to no progress bar, which an import \
-             leaves as it was: set it in the editor by hand, then publish\n"
+            "FIVE_LEVELS's progress bar goes from floors 0 - 5 to no progress bar, which Steam's \
+             Web API cannot show: look at it in the editor once imported, and set it there by \
+             hand if it has not moved, before publishing\n"
         ),
         "{noted}"
     );
@@ -4850,8 +4851,9 @@ fn a_file_written_otherwise_or_left_over_is_named_and_rewritten_or_removed() {
     assert!(
         noted.contains("no icon for 1 achievement: Steam shows its own\n")
             && noted.contains(
-                "FIVE_LEVELS's progress bar goes from floors 0 - 5 to no progress bar, which an \
-                 import leaves as it was: set it in the editor by hand, then publish\n"
+                "FIVE_LEVELS's progress bar goes from floors 0 - 5 to no progress bar, which \
+                 Steam's Web API cannot show: look at it in the editor once imported, and set it \
+                 there by hand if it has not moved, before publishing\n"
             ),
         "{noted}"
     );

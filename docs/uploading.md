@@ -638,10 +638,10 @@ localisation in the import that makes the achievements it names. Each time, stay
 until Pending Changes is gone; a page left sooner has applied only some of the icons. Once
 published, `--check` reads them back from Steam in every language.
 
-An import leaves the progress bar of an achievement Steam already has as it was, and Steam's
-Web API does not give the bar, so `--check` cannot see it. When `--write` changes a bar the
-folder's definitions gave before, it names the achievement with both ranges, to set by hand in
-the editor before publishing.
+Steam's Web API does not give an achievement's progress bar, so `--check` cannot see it. When
+`--write` changes a bar the folder's definitions gave before, it names the achievement with both
+ranges. Look at each in the editor once the import is saved, and set by hand any that has not
+moved, before publishing.
 
 ### Which icons Steam has
 
