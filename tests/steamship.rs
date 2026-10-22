@@ -4803,6 +4803,43 @@ fn an_achievement_unlocked_by_the_first_floor_built_is_written_without_a_bar_and
 }
 
 #[test]
+fn an_achievement_reworded_without_new_icons_is_named_to_look_at_them() {
+    let game = inn_mod();
+    let records = game.path().join("mods/base/data/achievements.json");
+    let (first, said, why) = write_inn(game.path(), false);
+    assert_eq!(first, Some(0_i32), "{said}{why}");
+    let reworded = INN_RECORDS
+        .replace("Down by the Wheel", "Under the Taproom")
+        .replace("Drain a mill's first sluice.", "Dig under an inn's taproom.");
+    fs::write(&records, &reworded).unwrap();
+    let (code, _, noted) = write_inn(game.path(), false);
+    assert_eq!(code, Some(0_i32), "{noted}");
+    assert!(
+        noted.contains(
+            "FIRST_ANCHOR's English name and English description changed and its icons did not: \
+             look at them, so that they still show what it asks for\n"
+        ),
+        "{noted}"
+    );
+    assert!(!noted.contains("FIVE_LEVELS's English"), "{noted}");
+
+    // Drawn afresh with the new words, the icons are taken to show them.
+    fs::write(
+        &records,
+        reworded.replace("Under the Taproom", "Below the Taproom"),
+    )
+    .unwrap();
+    fs::write(
+        game.path().join("mods/base/icons/first_anchor.png"),
+        icon_png(256, 140),
+    )
+    .unwrap();
+    let (redrawn, _, quiet) = write_inn(game.path(), false);
+    assert_eq!(redrawn, Some(0_i32), "{quiet}");
+    assert!(!quiet.contains("its icons did not"), "{quiet}");
+}
+
+#[test]
 fn a_file_written_otherwise_or_left_over_is_named_and_rewritten_or_removed() {
     let game = inn_mod();
     let out = game.path().join("steam").join("achievements");
