@@ -638,7 +638,8 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
         return Ok(uploaded);
     }
     if let Some(branch) = &script.set_live {
-        let described = either(try_branch(&app, branch, &version));
+        let description = game.description.as_deref().unwrap_or(&version);
+        let described = either(try_branch(&app, branch, description));
         if described != ExitCode::SUCCESS {
             return Ok(described);
         }
