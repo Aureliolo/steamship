@@ -9286,3 +9286,53 @@ fn a_game_whose_steamship_toml_names_a_description_has_its_branch_described_so()
         "{asked:?}"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_games_first_upload_to_an_app_with_no_branch_yet_succeeds_and_says_how_to_describe_it() {
+    let (_temp, root, home) = settled_inn(&format!("description = \"testing\"\n{BUILDING}"));
+    let (host, requests) = web_api(vec![
+        ("500 Internal Server Error", ""),
+        (
+            "200 OK",
+            r#"{"applist": {"apps": {"app": [
+                {"appid": 1000050, "app_type": "game", "app_name": "Tidal Mill Inn"}
+            ]}}}"#,
+        ),
+        ("200 OK", SET_LIVE),
+        ("200 OK", BETAS),
+        ("200 OK", BUILDS),
+    ]);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["upload"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            (STAND_IN, &host),
+        ],
+    );
+    let shown = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(0_i32), "{shown}");
+    for line in [
+        "app 1000050: BuildID 4242, set live on default",
+        "make testing in Steamworks under SteamPipe, Builds, and set the build live there with \
+         steamship promote 1000050 --build 4242 --branch testing",
+        "once it is made, describe testing with steamship branch 1000050 testing --description \
+         \"testing\"",
+        "steamship builds\n",
+    ] {
+        assert!(shown.contains(line), "{line:?} in {shown}");
+    }
+    let asked: Vec<String> =
+        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(5)
+            .collect();
+    assert!(
+        !asked
+            .iter()
+            .any(|request| request.contains("UpdateAppBranchDescription")),
+        "a branch Steam does not have yet is not described: {asked:?}"
+    );
+}
