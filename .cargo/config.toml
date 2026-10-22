@@ -14,3 +14,8 @@ rustflags = ["-C", "target-feature=+crt-static", "-C", "control-flow-guard"]
 # release ask for them (VSCMD_ARG_VCVARS_SPECTRE); without them, a build here would not link.
 [env]
 CFLAGS_x86_64_pc_windows_msvc = "/Qspectre"
+
+# A runner has lost name lookups for over half a minute, longer than cargo's default three retries
+# wait; ten wait out a gap that long rather than failing the job.
+[net]
+retry = 10
