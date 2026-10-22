@@ -41,10 +41,11 @@ const BRANCH: &str = "testing";
 const CORES: usize = 4;
 
 /// Every setting `steamship.toml` takes at its top, under `[workshop]` and under `[demo]`.
-const SETTINGS: [&str; 10] = [
+const SETTINGS: [&str; 11] = [
     "steamship",
     "script",
     "branch",
+    "description",
     "build",
     "cores",
     "records",
@@ -54,7 +55,7 @@ const SETTINGS: [&str; 10] = [
     "demo",
 ];
 const WORKSHOP: [&str; 3] = ["mods", "items", "footer"];
-const DEMO: [&str; 4] = ["script", "build", "branch", "feature"];
+const DEMO: [&str; 5] = ["script", "build", "branch", "description", "feature"];
 
 /// The custom feature that marks a Godot export preset as the demo's when `steamship.toml` names
 /// none.
@@ -108,6 +109,8 @@ pub struct Project {
     pub script: PathBuf,
     /// The one branch the script may set live.
     pub branch: String,
+    /// What an upload describes that branch as, when not the version.
+    pub description: Option<String>,
     /// The program and arguments that build the game into the folders its depots ship; empty
     /// when the content is built some other way.
     pub build: Vec<String>,
@@ -142,6 +145,8 @@ pub struct Demo {
     pub build: Vec<String>,
     /// The one branch the demo's script may set live.
     pub branch: String,
+    /// What an upload describes that branch as, when not the version.
+    pub description: Option<String>,
 }
 
 /// An example mod, as its Workshop item.
@@ -199,6 +204,7 @@ impl Project {
             configured: false,
             pin: None,
             branch: BRANCH.to_owned(),
+            description: None,
             build: Vec::new(),
             cores: CORES,
             records: vec![Given::laid_out(under(root, "mods/base/data"))],
@@ -211,6 +217,7 @@ impl Project {
                 script: under(root, DEMO_SCRIPT),
                 build: Vec::new(),
                 branch: BRANCH.to_owned(),
+                description: None,
             }),
             full: None,
             feature: FEATURE.to_owned(),
@@ -235,6 +242,7 @@ impl Project {
             script: demo.script,
             build: demo.build,
             branch: demo.branch,
+            description: demo.description,
             demo: None,
             full: Some(self.script.clone()),
             ..self.clone()
@@ -280,6 +288,9 @@ impl Project {
                 ));
             }
             branch.clone_into(&mut project.branch);
+        }
+        if let Some(value) = table.get("description") {
+            project.description = Some(description(value, "description")?);
         }
         if let Some(value) = table.get("cores") {
             project.cores = value
@@ -600,11 +611,29 @@ fn demo_configured(root: &Path, section: &toml::Value, game: &Project) -> Result
         }
         None => game.branch.clone(),
     };
+    let description = demo
+        .get("description")
+        .map(|value| description(value, "demo.description"))
+        .transpose()?
+        .or_else(|| game.description.clone());
     Ok(Demo {
         script,
         build,
         branch,
+        description,
     })
+}
+
+/// The branch description `value` gives as the setting `name`, refused when it is empty.
+fn description(value: &toml::Value, name: &str) -> Result<String, String> {
+    let text = text_of(value, name)?;
+    if text.trim().is_empty() {
+        return Err(format!(
+            "`{name}` is empty: name what an upload describes the branch as, such as \"testing\", \
+             or leave it out for the version"
+        ));
+    }
+    Ok(text.to_owned())
 }
 
 /// Refuses any key of `table` not among `settings`, each shown after `prefix`.
@@ -1062,7 +1091,21 @@ mod tests {
             .unwrap();
         assert_eq!(named.script, under(Path::new("game"), DEMO_SCRIPT));
         assert_eq!(named.branch, "demo-testing");
+        assert_eq!(named.description, None, "described as its version");
         assert_eq!(named.build, Vec::<String>::new());
+        let described =
+            configured("description = \"nightly\"\n[demo]\ndescription = \"testing\"").unwrap();
+        assert_eq!(described.description.as_deref(), Some("nightly"));
+        assert_eq!(
+            described.demo().unwrap().description.as_deref(),
+            Some("testing")
+        );
+        let inherited = configured("description = \"nightly\"\n[demo]").unwrap();
+        assert_eq!(
+            inherited.demo().unwrap().description.as_deref(),
+            Some("nightly"),
+            "the game's, as its branch is"
+        );
         assert_eq!(named.feature, "demo");
         let trial = configured("[demo]\nfeature = \"trial\"").unwrap();
         assert_eq!(trial.feature, "trial");
@@ -1089,7 +1132,17 @@ mod tests {
             (
                 "builds = []",
                 "`builds` is no setting steamship takes; it takes `steamship`, `script`, \
-                 `branch`, `build`, `cores`, `records`, `locale`, `import`, `workshop`, `demo`",
+                 `branch`, `description`, `build`, `cores`, `records`, `locale`, `import`, \
+                 `workshop`, `demo`",
+            ),
+            (
+                "description = \"\"",
+                "`description` is empty: name what an upload describes the branch as, such as \
+                 \"testing\", or leave it out for the version",
+            ),
+            (
+                "description = 1",
+                "`description` is not text: write it in quotes",
             ),
             (
                 "branch = \"default\"",
@@ -1172,7 +1225,13 @@ mod tests {
             (
                 "[demo]\napp = 1000070",
                 "`demo.app` is no setting steamship takes; it takes `demo.script`, \
-                 `demo.build`, `demo.branch`, `demo.feature`"
+                 `demo.build`, `demo.branch`, `demo.description`, `demo.feature`"
+                    .to_owned(),
+            ),
+            (
+                "[demo]\ndescription = \" \"",
+                "`demo.description` is empty: name what an upload describes the branch as, such \
+                 as \"testing\", or leave it out for the version"
                     .to_owned(),
             ),
             ("[demo]\nfeature = \"demo, trial\"", feature("demo, trial")),

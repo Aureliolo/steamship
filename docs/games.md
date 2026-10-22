@@ -55,6 +55,8 @@ footer = "The game's own example mod, dedicated to the public domain under CC0 1
 - `branch`: the one branch the app build script may set live, if not `testing`. The default
   branch is never named here: steamship sets it through the Web API while the game is
   unreleased, and the publisher sets it once it is released.
+- `description`: what the branch is described as to players who choose it, if not the version
+  each upload ships.
 - `cores`: the most processors steamcmd and the build run on, if not 4, so that shipping leaves
   the rest of the machine to whoever works on it. Windows and Linux hold them to it; macOS
   holds no program to fewer than all.
@@ -89,7 +91,8 @@ that fails:
    rich presence with the game's files, each that the game has.
 6. The build is uploaded, and set live on its branch and, while Steam shows the game unreleased,
    on the default branch too.
-7. The branch's description becomes the version, and the branches and last builds are shown.
+7. The branch's description becomes the version, or `description`, and the branches and last
+   builds are shown.
 
 `--preview` stops after Valve's dry run, with nothing uploaded. `steamship check` with no script
 runs the comparisons alone, after checking the scripts and the branch they set live, and needs
@@ -130,6 +133,7 @@ folder and commit, by its own app build script at `steam/demo/app_build.vdf`, or
 script = "steam/demo/app_build.vdf"
 build = ["python", "tools/build.py", "--demo"]
 branch = "testing"
+description = "testing"
 ```
 
 - `demo.script`: the demo's app build script, if not `steam/demo/app_build.vdf`. Its settings
@@ -137,6 +141,7 @@ branch = "testing"
 - `demo.build`: the program and its arguments that build the demo. Without it, the demo's
   content goes up as it is.
 - `demo.branch`: the one branch the demo's script may set live, if not the game's.
+- `demo.description`: what the demo's branch is described as, if not the game's `description`.
 - `demo.feature`: the custom feature of the Godot export presets that make the demo, if not
   `demo`. The game tells it is the demo with `OS.has_feature("demo")`.
 
