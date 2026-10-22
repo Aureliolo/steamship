@@ -136,17 +136,21 @@ fn without_bookkeeping(block: &Block) -> Vec<Pair> {
         .collect()
 }
 
-/// Whether `settings` hold Steam Cloud, said plainly: an app with none set up in Steamworks has
-/// no `ufs` section at all, which a snapshot alone cannot tell from one that left it out.
+/// Whether `settings` hold Steam Cloud, and for whom, said plainly.
+///
+/// An app with none set up in Steamworks has no `ufs` section at all, which a snapshot alone
+/// cannot tell from one that left it out. Cloud kept to developers passes every comparison while
+/// players have none, and Steamworks has ticked that for an app by itself the first time its
+/// Cloud was saved.
 #[must_use]
 pub fn cloud(settings: &Block) -> &'static str {
-    if settings
-        .block("ufs")
-        .is_some_and(|ufs| !ufs.pairs.is_empty())
-    {
-        "Steam Cloud set up in Steamworks"
-    } else {
-        "Steam Cloud not set up in Steamworks"
+    match settings.block("ufs") {
+        Some(ufs) if ufs.text("hidecloudui") == Some("1") => {
+            "Steam Cloud set up in Steamworks for developers only, so players have none: turn \
+             it on for everyone on the app's Steam Cloud page"
+        }
+        Some(ufs) if !ufs.pairs.is_empty() => "Steam Cloud set up in Steamworks",
+        _ => "Steam Cloud not set up in Steamworks",
     }
 }
 
@@ -620,9 +624,23 @@ mod tests {
     }
 
     #[test]
-    fn steam_cloud_is_said_to_be_set_up_or_not() {
+    fn steam_cloud_is_said_to_be_set_up_for_everyone_for_developers_only_or_not_at_all() {
         let with = from_console(CONSOLE, 1_000_010).unwrap();
         assert_eq!(cloud(&with), "Steam Cloud set up in Steamworks");
+        for (hidden, said) in [
+            (
+                "1",
+                "Steam Cloud set up in Steamworks for developers only, so players have none: \
+                 turn it on for everyone on the app's Steam Cloud page",
+            ),
+            ("0", "Steam Cloud set up in Steamworks"),
+        ] {
+            let text = format!(
+                "\"ufs\" {{ \"quota\" \"100000000\" \"maxnumfiles\" \"200\" \
+                 \"hidecloudui\" \"{hidden}\" }}"
+            );
+            assert_eq!(cloud(&vdf::parse(&text).unwrap()), said, "{text}");
+        }
         for text in [
             "\"config\" { \"installdir\" \"Nocturne\" }",
             "\"ufs\" { }",
