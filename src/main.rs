@@ -3449,8 +3449,13 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
         }
         return try_achievements_imported(app_id, &listed.achievements, &icons, out);
     }
-    let definitions = format!("{app_id}-achievements-definitions.csv");
-    let defined_before = fs::read_to_string(out.join(&definitions)).unwrap_or_default();
+    let tables = [
+        format!("{app_id}-achievements-definitions.csv"),
+        format!("{app_id}-achievements-localization.csv"),
+    ];
+    let tables_before = tables
+        .each_ref()
+        .map(|name| fs::read_to_string(out.join(name)).unwrap_or_default());
     let failed = |error: &io::Error| fail(&format!("{folder}: {error}"), FAILED);
     fs::create_dir_all(out).map_err(|error| failed(&error))?;
     for (name, bytes) in &stale {
@@ -3478,18 +3483,53 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
         ),
     );
     import_notes(&listed);
-    let defined = package
-        .iter()
-        .find(|(name, _)| *name == definitions)
-        .map(|(_, bytes)| String::from_utf8_lossy(bytes));
-    for (api_name, was, is) in editor::rebarred(&defined_before, defined.as_deref().unwrap_or("")) {
+    changed_notes(&package, &tables, &tables_before, &stale_names);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Names what an import of `package` changes that Steam's Web API cannot show, comparing its
+/// definitions and localisation, the `tables`, with what they held `before`: each progress bar
+/// that moves, and each achievement whose meaning changes while its icons, among the `stale`
+/// files written afresh, do not.
+fn changed_notes(
+    package: &[(String, Vec<u8>)],
+    tables: &[String; 2],
+    before: &[String; 2],
+    stale: &[&String],
+) {
+    let [defined, localised] = tables.each_ref().map(|table| {
+        package
+            .iter()
+            .find(|(name, _)| name == table)
+            .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default()
+    });
+    let [defined_before, localised_before] = before;
+    for (api_name, was, is) in editor::rebarred(defined_before, &defined) {
         show::note(&format!(
             "{api_name}'s progress bar goes from {was} to {is}, which Steam's Web API cannot \
              show: look at it in the editor once imported, and set it there by hand if it has \
              not moved, before publishing"
         ));
     }
-    Ok(ExitCode::SUCCESS)
+    let reworded = editor::reworded((defined_before, localised_before), (&defined, &localised));
+    for (api_name, changed) in reworded {
+        let drawn = [false, true].map(|locked| editor::icon_name(&api_name, locked));
+        let has_icons = package.iter().any(|(name, _)| drawn.contains(name));
+        let redrawn = stale.iter().any(|name| drawn.contains(name));
+        if !has_icons || redrawn {
+            continue;
+        }
+        let changed = match changed.as_slice() {
+            [only] => (*only).to_owned(),
+            [first @ .., last] => format!("{} and {last}", first.join(", ")),
+            [] => continue,
+        };
+        show::note(&format!(
+            "{api_name}'s {changed} changed and its icons did not: look at them, so that they \
+             still show what it asks for"
+        ));
+    }
 }
 
 /// How an import is saved so that all of it is applied: a page left before Pending Changes

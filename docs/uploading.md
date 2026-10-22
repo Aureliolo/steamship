@@ -643,6 +643,10 @@ Steam's Web API does not give an achievement's progress bar, so `--check` cannot
 ranges. Look at each in the editor once the import is saved, and set by hand any that has not
 moved, before publishing.
 
+It also names each achievement whose English name, English description or counted stat
+changes while its icons stay as they were, so that an icon drawn for what it used to ask is
+looked at before it goes up.
+
 ### Which icons Steam has
 
 ```sh
