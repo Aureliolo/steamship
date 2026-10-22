@@ -185,14 +185,17 @@ fn upload_in(request: &cli::Upload) -> ExitCode {
     };
     let default = request.default;
     match (request.script.as_deref(), shipping.version) {
-        (Some(script), Some(version)) => run_upload(&Upload {
-            script,
-            version,
-            preview: shipping.preview,
-            default,
-            account: shipping.account,
-            json: shipping.json,
-        }),
+        (Some(script), Some(version)) => {
+            run_upload(&Upload {
+                script,
+                version,
+                preview: shipping.preview,
+                default,
+                account: shipping.account,
+                json: shipping.json,
+            })
+            .0
+        }
         (Some(script), None) => fail(
             &format!(
                 "give the version {} goes up as with --version, or run steamship upload with no \
@@ -626,7 +629,7 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     if compared != ExitCode::SUCCESS {
         return Ok(compared);
     }
-    let uploaded = run_upload(&Upload {
+    let (uploaded, held_back) = run_upload(&Upload {
         script: &game.script,
         version: &version,
         preview: shipping.preview,
@@ -639,9 +642,17 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     }
     if let Some(branch) = &script.set_live {
         let description = game.description.as_deref().unwrap_or(&version);
-        let described = either(try_branch(&app, branch, description));
-        if described != ExitCode::SUCCESS {
-            return Ok(described);
+        if held_back.is_some() {
+            show::hint(Hint {
+                before: &format!("once it is made, describe {branch} with "),
+                command: &format!("steamship branch {app} {branch} --description {description:?}"),
+                after: "",
+            });
+        } else {
+            let described = either(try_branch(&app, branch, description));
+            if described != ExitCode::SUCCESS {
+                return Ok(described);
+            }
         }
     }
     Ok(either(try_builds(&app, 10, false)))
@@ -1855,13 +1866,16 @@ struct Upload<'command> {
     json: bool,
 }
 
-fn run_upload(upload: &Upload<'_>) -> ExitCode {
+/// Uploads as `upload` asks, and answers the exit code with the branch the script sets live that
+/// the upload held back from, as the app cannot have it yet.
+fn run_upload(upload: &Upload<'_>) -> (ExitCode, Option<String>) {
     match try_upload(upload) {
-        Ok(code) | Err(code) => code,
+        Ok(uploaded) => uploaded,
+        Err(code) => (code, None),
     }
 }
 
-fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
+fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCode> {
     if request.json {
         show::divert();
     }
@@ -1965,7 +1979,7 @@ fn try_upload(request: &Upload<'_>) -> Result<ExitCode, ExitCode> {
         dump_failed(saved, &prepared, &marks.added(&steamcmd_logs), &redactor);
     }
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
-    Ok(code)
+    Ok((code, prepared.held_back))
 }
 
 /// The logs of a failed upload, steamcmd's console saved at `saved` among them, as

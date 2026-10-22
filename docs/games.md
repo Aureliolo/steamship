@@ -92,7 +92,9 @@ that fails:
 6. The build is uploaded, and set live on its branch and, while Steam shows the game unreleased,
    on the default branch too.
 7. The branch's description becomes the version, or `description`, and the branches and last
-   builds are shown.
+   builds are shown. On the first upload of an app with no branch but default, the build goes
+   live on default alone, and steamship names the commands that set it live on the game's branch
+   and describe it once that branch is made in Steamworks.
 
 `--preview` stops after Valve's dry run, with nothing uploaded. `steamship check` with no script
 runs the comparisons alone, after checking the scripts and the branch they set live, and needs
