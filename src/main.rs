@@ -645,7 +645,10 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
         if held_back.is_some() {
             show::hint(Hint {
                 before: &format!("once it is made, describe {branch} with "),
-                command: &format!("steamship branch {app} {branch} --description {description:?}"),
+                command: &format!(
+                    "steamship branch {} {branch} --description {description:?}",
+                    script.app_id
+                ),
                 after: "",
             });
         } else {
