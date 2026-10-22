@@ -140,7 +140,9 @@ pub enum Command {
     /// settings snapshot `steam/settings.vdf`, its achievements, leaderboards
     /// and rich presence, and uploaded as the version `project.godot` gives, live on the default
     /// branch too while the app is unreleased. Once it is live, the branch's description becomes
-    /// the version.
+    /// the version, or the file's `description`. An app with no branch but default has the build
+    /// live on default alone, and steamship names the commands that set it live on the game's
+    /// branch and describe it once that branch is made.
     Upload(Upload),
     /// Upload a Workshop item, then print its ID.
     ///
