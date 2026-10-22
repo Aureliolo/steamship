@@ -720,6 +720,24 @@ mod tests {
     }
 
     #[test]
+    fn a_table_is_read_back_field_for_field_as_row_wrote_it() {
+        let fields = |record: &[&str]| -> Vec<String> {
+            record.iter().map(|&field| field.to_owned()).collect()
+        };
+        let written = row(["a", "b, \"c\"\nd", "e"]);
+        assert_eq!(
+            records(&format!("{written}f,g\r\nh,")),
+            vec![
+                fields(&["a", "b, \"c\"\nd", "e"]),
+                fields(&["f", "g"]),
+                fields(&["h", ""]),
+            ]
+        );
+        assert_eq!(records("x"), vec![fields(&["x"])]);
+        assert_eq!(records(""), Vec::<Vec<String>>::new());
+    }
+
+    #[test]
     fn an_achievement_whose_english_or_stat_changed_is_named_with_what_changed() {
         let defined = |stat: &str| {
             format!(
