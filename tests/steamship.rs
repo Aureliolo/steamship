@@ -9248,4 +9248,47 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
             && !shown_preview.contains("steamship builds"),
         "a preview ends with Valve's dry run: {shown_preview}"
     );
+
+    let settings = root.join("steamship.toml");
+    let configured = fs::read_to_string(&settings).unwrap();
+    fs::write(
+        &settings,
+        format!("description = \"nightly\"\n{configured}"),
+    )
+    .unwrap();
+    pushed(&root, "The branch described as nightly");
+    let (named, named_asked) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(4242)),
+        ("200 OK", SET_LIVE),
+        ("200 OK", DESCRIBED),
+        ("200 OK", UPDATED),
+        ("200 OK", BETAS),
+        ("200 OK", BUILDS),
+    ]);
+    let (described, shown_described, described_why) = steamship_in(
+        &root,
+        &["upload"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            (STAND_IN, &named),
+        ],
+    );
+    assert_eq!(described, Some(0_i32), "{shown_described}{described_why}");
+    assert!(
+        shown_described.contains("app 1000050: testing described as \"nightly\""),
+        "{shown_described}{described_why}"
+    );
+    let sent: Vec<String> =
+        iter::repeat_with(|| named_asked.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(5)
+            .collect();
+    assert!(
+        sent.last()
+            .unwrap()
+            .ends_with("appid=1000050&betakey=testing&description=nightly"),
+        "{sent:?}"
+    );
 }
