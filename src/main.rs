@@ -3484,8 +3484,9 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
         .map(|(_, bytes)| String::from_utf8_lossy(bytes));
     for (api_name, was, is) in editor::rebarred(&defined_before, defined.as_deref().unwrap_or("")) {
         show::note(&format!(
-            "{api_name}'s progress bar goes from {was} to {is}, which an import leaves as it \
-             was: set it in the editor by hand, then publish"
+            "{api_name}'s progress bar goes from {was} to {is}, which Steam's Web API cannot \
+             show: look at it in the editor once imported, and set it there by hand if it has \
+             not moved, before publishing"
         ));
     }
     Ok(ExitCode::SUCCESS)
