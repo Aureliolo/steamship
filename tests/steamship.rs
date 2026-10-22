@@ -9162,10 +9162,11 @@ const INN_STEAMCMD: &str = "#!/bin/sh\n\
     echo \"Successfully finished AppID 1000050 $finished\" > \"$output/app_build_1000050.log\"\n\
     echo 'Logging in user build_bot to Steam Public...OK'\n";
 
+/// The game [`pushed_game`] makes with `toml`, without achievements, beside a home whose
+/// steamcmd is [`INN_STEAMCMD`] and whose settings snapshot is Steam's own, pushed.
 #[cfg(unix)]
-#[test]
-fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described() {
-    let (_temp, root) = pushed_game(Some(BUILDING));
+fn settled_inn(toml: &str) -> (tempfile::TempDir, PathBuf, tempfile::TempDir) {
+    let (temp, root) = pushed_game(Some(toml));
     fs::remove_file(
         root.join("mods")
             .join("base")
@@ -9185,7 +9186,13 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
         steamship_in(&root, &["settings", "--check"], Some(home.path()), &quiet);
     assert_eq!(checked, Some(0_i32), "{shown}{reason}");
     assert!(shown.contains("Steam's settings match the file"), "{shown}");
+    (temp, root, home)
+}
 
+/// `steamship upload` in the game at `root`, with a Web API that sets build 4242 live and
+/// describes `testing`, and the first five requests it was sent.
+#[cfg(unix)]
+fn uploaded_inn(root: &Path, home: &Path) -> (Option<i32>, String, String, Vec<String>) {
     let (host, requests) = web_api(vec![
         ("200 OK", BETAS),
         ("200 OK", testing_live(4242)),
@@ -9196,15 +9203,30 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
         ("200 OK", BUILDS),
     ]);
     let (code, stdout, stderr) = steamship_in(
-        &root,
+        root,
         &["upload"],
-        Some(home.path()),
+        Some(home),
         &[
             ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
             ("STEAMSHIP_WEB_API_KEY", KEY),
             (STAND_IN, &host),
         ],
     );
+    let asked = if code == Some(0_i32) {
+        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(5)
+            .collect()
+    } else {
+        Vec::new()
+    };
+    (code, stdout, stderr, asked)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described() {
+    let (_temp, root, home) = settled_inn(BUILDING);
+    let (code, stdout, stderr, asked) = uploaded_inn(&root, home.path());
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     for line in [
         "  version   0.3.1\n",
@@ -9219,10 +9241,6 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
         fs::read_to_string(home.path().join("builds")).unwrap(),
         "built\n"
     );
-    let asked: Vec<String> =
-        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
-            .take(5)
-            .collect();
     let describing = asked.last().unwrap();
     assert!(
         describing.starts_with("POST /ISteamApps/UpdateAppBranchDescription/v1/ ")
@@ -9248,47 +9266,23 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
             && !shown_preview.contains("steamship builds"),
         "a preview ends with Valve's dry run: {shown_preview}"
     );
+}
 
-    let settings = root.join("steamship.toml");
-    let configured = fs::read_to_string(&settings).unwrap();
-    fs::write(
-        &settings,
-        format!("description = \"nightly\"\n{configured}"),
-    )
-    .unwrap();
-    pushed(&root, "The branch described as nightly");
-    let (named, named_asked) = web_api(vec![
-        ("200 OK", BETAS),
-        ("200 OK", testing_live(4242)),
-        ("200 OK", SET_LIVE),
-        ("200 OK", DESCRIBED),
-        ("200 OK", UPDATED),
-        ("200 OK", BETAS),
-        ("200 OK", BUILDS),
-    ]);
-    let (described, shown_described, described_why) = steamship_in(
-        &root,
-        &["upload"],
-        Some(home.path()),
-        &[
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            (STAND_IN, &named),
-        ],
-    );
-    assert_eq!(described, Some(0_i32), "{shown_described}{described_why}");
+#[cfg(unix)]
+#[test]
+fn a_game_whose_steamship_toml_names_a_description_has_its_branch_described_so() {
+    let (_temp, root, home) = settled_inn(&format!("description = \"nightly\"\n{BUILDING}"));
+    let (code, stdout, stderr, asked) = uploaded_inn(&root, home.path());
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     assert!(
-        shown_described.contains("app 1000050: testing described as \"nightly\""),
-        "{shown_described}{described_why}"
+        stdout.contains("app 1000050: testing described as \"nightly\""),
+        "{stdout}{stderr}"
     );
-    let sent: Vec<String> =
-        iter::repeat_with(|| named_asked.recv_timeout(Duration::from_secs(10)).unwrap())
-            .take(5)
-            .collect();
     assert!(
-        sent.last()
+        asked
+            .last()
             .unwrap()
             .ends_with("appid=1000050&betakey=testing&description=nightly"),
-        "{sent:?}"
+        "{asked:?}"
     );
 }
