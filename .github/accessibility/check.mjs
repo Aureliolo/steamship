@@ -25,11 +25,13 @@ if (pages.length === 0) {
 const axe = await readFile(createRequire(import.meta.url).resolve("axe-core/axe.min.js"), "utf8");
 
 // The browser's own output goes to the log, since a launch that times out reports nothing else
-// about why the browser never came up.
+// about why the browser never came up. A fresh runner's first start of a new Chrome has taken
+// longer than puppeteer's default 30 seconds to offer its debugging endpoint.
 const browser = await puppeteer.launch({
   executablePath: process.env.CHROME,
   headless: true,
   dumpio: true,
+  timeout: 120_000,
 });
 let violations = 0;
 try {
