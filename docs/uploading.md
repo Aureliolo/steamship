@@ -60,6 +60,8 @@ steamship check steam/app_build.vdf
 - a `ContentRoot` or `LocalPath` that does not exist or matches no files;
 - an `InstallScript` that is not a file in the content, or that the depot does not map;
 - a `steam_appid.txt` in the content, and the folders Unity names as not to ship;
+- a Steam Input Action Manifest in the content listing a controller configuration that the
+  build does not ship beside it;
 - a Linux or macOS program, or a script starting with `#!`, without its executable bit, where
   the file system has one;
 - a Windows program or library importing a DLL that neither Windows 10 and later, a depot that

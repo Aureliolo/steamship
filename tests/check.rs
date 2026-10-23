@@ -155,6 +155,66 @@ fn setting_public_live_is_refused_as_the_default_branch() {
 }
 
 #[test]
+fn an_action_manifest_must_ship_each_configuration_it_lists_beside_it() {
+    let (project, app) = Project::shipping("");
+    let manifest = project.file(
+        "export/windows/steam_input/action_manifest.vdf",
+        b"\"Action Manifest\"\n{\n\t\"configurations\"\n\t{\n\
+          \t\t\"controller_neptune\"\n\t\t{\n\t\t\t\"0\"\n\t\t\t{\n\
+          \t\t\t\t\"path\"\t\"controller_neptune.vdf\"\n\t\t\t}\n\t\t}\n\
+          \t\t\"controller_xboxone\"\n\t\t{\n\t\t\t\"0\"\n\t\t\t{\n\
+          \t\t\t\t\"path\"\t\"controller_xboxone.vdf\"\n\t\t\t}\n\t\t}\n\t}\n\
+          \t\"actions\"\n\t{\n\t}\n}\n",
+    );
+    project.put(
+        "export/windows/steam_input/controller_neptune.vdf",
+        b"\"controller_mappings\"\n{\n}\n",
+    );
+    project.put(
+        "export/linux/data/other.vdf",
+        b"\"configurations\" { \"x\" { \"0\" { \"path\" \"missing.vdf\" } } }",
+    );
+    let report = check(&app);
+    assert_eq!(
+        messages(&report),
+        [
+            "is Steam Input's Action Manifest in depot 1001, and lists \"controller_xboxone.vdf\" \
+             for controller_xboxone, which the build does not ship beside it: put the \
+             configuration there, or take it out of the manifest"
+        ]
+    );
+    assert_eq!(
+        report.problems.first().unwrap().file.file_name(),
+        manifest.file_name()
+    );
+
+    project.put(
+        "export/windows/steam_input/controller_xboxone.vdf",
+        b"\"controller_mappings\"\n{\n}\n",
+    );
+    assert_eq!(messages(&check(&app)), Vec::<String>::new());
+
+    let lacking = "\"Action Manifest\" { \"configurations\" { \"controller_ps5\" { \"0\" { \
+                   \"path\" \"controller_ps5.vdf\" } } } }\n";
+    project.put("export/windows/notes/manifest.txt", lacking.as_bytes());
+    let mut large = lacking.to_owned();
+    large.push_str(&" ".repeat(4 * 1024 * 1024 - 1 - lacking.len()));
+    project.put("export/windows/large/action_manifest.vdf", large.as_bytes());
+    assert_eq!(
+        messages(&check(&app)).len(),
+        1,
+        "a VDF file a byte under 4 MiB is read as a manifest"
+    );
+    large.push(' ');
+    project.put("export/windows/large/action_manifest.vdf", large.as_bytes());
+    assert_eq!(
+        messages(&check(&app)),
+        Vec::<String>::new(),
+        "only a VDF file under 4 MiB is read as a manifest"
+    );
+}
+
+#[test]
 fn a_folder_unity_says_not_to_ship_is_refused_once() {
     let (project, app) = Project::shipping("");
     project.put(
