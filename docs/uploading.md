@@ -346,6 +346,11 @@ or GNOME Keyring or KWallet on Linux. It is sent in a request header, never in a
 key can do everything its group may, for every app the group holds, so give it a group of its
 own with only the apps and permissions it needs.
 
+A Web API request that gets no answer at all is made once more 10 seconds later, as each method
+steamship calls does the same when called twice. When the second try fails too, the message
+says why, such as the host name not being found, the connection refused or a timeout, and how
+long that try ran.
+
 ## Settings in Steamworks
 
 ```sh
