@@ -329,8 +329,8 @@ fn held_to(cores: usize) -> Result<String, ExitCode> {
 /// Refuses the game's settings snapshot when it shows `script`'s app unfit for it: an install
 /// folder of anything but letters and digits, a depot of the script's not among the app's own, a
 /// system the app's depots install on that no launch option runs on, or, for a demo, an app not
-/// typed Demo with the full game as its base game. Refused too when there is none and one is
-/// `needed`.
+/// typed Demo with the full game as its base game, or without the Steam Input defaults the full
+/// game's snapshot shows. Refused too when there is none and one is `needed`.
 fn snapshot_sound(
     game: &Project,
     script: &scripts::AppScript,
@@ -375,6 +375,20 @@ fn snapshot_sound(
             refusals(&problems)
         })?;
         wrong.extend(settings::demo_of(&snapshot, app, full.app_id));
+        let full_snapshot = full
+            .path
+            .parent()
+            .unwrap_or(&game.root)
+            .join(settings::SNAPSHOT);
+        if full_snapshot.is_file() {
+            let game_settings = settings_file(&full_snapshot, full.app_id)?;
+            wrong.extend(settings::controls_unlike(
+                &snapshot,
+                app,
+                &game_settings,
+                full.app_id,
+            ));
+        }
     }
     if wrong.is_empty() {
         return Ok(());
@@ -4569,6 +4583,7 @@ fn asked_settings(
         Ok(shown) => {
             spinner.done("shown");
             show::field("cloud", settings::cloud(&shown));
+            show::field("input", &settings::controls(&shown));
             Ok(shown)
         }
         Err(why) => {
