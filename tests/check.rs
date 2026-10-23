@@ -198,7 +198,14 @@ fn an_action_manifest_must_ship_each_configuration_it_lists_beside_it() {
                    \"path\" \"controller_ps5.vdf\" } } } }\n";
     project.put("export/windows/notes/manifest.txt", lacking.as_bytes());
     let mut large = lacking.to_owned();
-    large.push_str(&" ".repeat(4 * 1024 * 1024 - lacking.len()));
+    large.push_str(&" ".repeat(4 * 1024 * 1024 - 1 - lacking.len()));
+    project.put("export/windows/large/action_manifest.vdf", large.as_bytes());
+    assert_eq!(
+        messages(&check(&app)).len(),
+        1,
+        "a VDF file a byte under 4 MiB is read as a manifest"
+    );
+    large.push(' ');
     project.put("export/windows/large/action_manifest.vdf", large.as_bytes());
     assert_eq!(
         messages(&check(&app)),
