@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error;
 use std::fmt;
+use std::io;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -153,26 +154,33 @@ impl fmt::Display for Unreached {
 fn unanswered(error: &ureq::Error) -> String {
     #[expect(
         clippy::wildcard_enum_match_arm,
-        reason = "ureq's errors are non-exhaustive, and those of a request that was never \
-                  well formed are told apart by nothing a person could act on"
+        reason = "ureq's errors are non-exhaustive, and the rest come of a request or a TLS \
+                  setup steamship never makes, or of an answer Steam never gives"
     )]
     match error {
         ureq::Error::HostNotFound => "the host name was not found".to_owned(),
         ureq::Error::Timeout(timeout) => format!("the {timeout} timeout ran out"),
-        ureq::Error::Io(error) => error.raw_os_error().map_or_else(
-            || format!("the connection failed: {}", error.kind()),
-            |code| format!("the connection failed: {} (os error {code})", error.kind()),
-        ),
+        ureq::Error::Io(error) => format!("the connection failed: {}", failed(error)),
         ureq::Error::ConnectionFailed => "the connection failed".to_owned(),
         ureq::Error::Tls(said) => format!("TLS failed: {said}"),
-        ureq::Error::Rustls(said) => format!("TLS failed: {said}"),
-        ureq::Error::Pem(_) => "TLS failed on a certificate that could not be read".to_owned(),
         ureq::Error::InvalidProxyUrl | ureq::Error::ConnectProxyFailed(_) => {
             "the proxy failed".to_owned()
         }
         ureq::Error::BodyStalled => "the answer stopped coming".to_owned(),
-        ureq::Error::Protocol(_) => "the answer was not HTTP".to_owned(),
         _ => "the request failed".to_owned(),
+    }
+}
+
+/// What a connection that failed with `error` came to: the system's error code, or the reason
+/// carried with it, which is how TLS says why it refused a certificate.
+fn failed(error: &io::Error) -> String {
+    let kind = error.kind().to_string();
+    if let Some(code) = error.raw_os_error() {
+        return format!("{kind} (os error {code})");
+    }
+    match error.get_ref().map(ToString::to_string) {
+        Some(said) if !said.eq_ignore_ascii_case(&kind) => format!("{kind}: {said}"),
+        _ => kind,
     }
 }
 
@@ -2135,6 +2143,34 @@ mod tests {
                 ureq::Error::Io(ErrorKind::ConnectionReset.into()),
                 "the connection failed: connection reset after 2.0 s",
             ),
+            (
+                ureq::Error::Io(io::Error::new(
+                    ErrorKind::ConnectionRefused,
+                    "Connection refused",
+                )),
+                "the connection failed: connection refused after 2.0 s",
+            ),
+            (
+                ureq::Error::Io(io::Error::new(
+                    ErrorKind::InvalidData,
+                    "invalid peer certificate: UnknownIssuer",
+                )),
+                "the connection failed: invalid data: invalid peer certificate: UnknownIssuer \
+                 after 2.0 s",
+            ),
+            (
+                ureq::Error::ConnectionFailed,
+                "the connection failed after 2.0 s",
+            ),
+            (
+                ureq::Error::Tls("Rustls invalid dns name error"),
+                "TLS failed: Rustls invalid dns name error after 2.0 s",
+            ),
+            (
+                ureq::Error::BodyStalled,
+                "the answer stopped coming after 2.0 s",
+            ),
+            (ureq::Error::InvalidProxyUrl, "the proxy failed after 2.0 s"),
             (
                 ureq::Error::ConnectProxyFailed("user:secret@proxy.example".to_owned()),
                 "the proxy failed after 2.0 s",
