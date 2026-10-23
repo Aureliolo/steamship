@@ -8904,6 +8904,50 @@ fn with_demo(root: &Path, content_root: &str, common: &str) {
 }
 
 #[test]
+fn a_demo_without_the_full_games_steam_input_defaults_is_refused_until_it_has_them() {
+    let (_temp, root) = pushed_game(None);
+    with_demo(&root, "../../export/", DEMO_TYPED);
+    // As a game's snapshot holds them, with a gamepad and a touch default chosen.
+    fs::write(
+        root.join("steam").join("settings.vdf"),
+        "\"1000050\"\n{\n\t\"config\"\n\t{\n\t\t\"installdir\"\t\t\"TidalMillInn\"\n\
+         \t\t\"steamcontrollertouchtemplateindex\"\t\t\"8\"\n\
+         \t\t\"steamcontrollertemplateindex\"\t\t\"4\"\n\t}\n}\n",
+    )
+    .unwrap();
+    pushed(&root, "A game with Steam Input defaults and a demo without");
+    let (refused, shown, reason) = in_game(&root, &["upload", "--demo"]);
+    assert_eq!(refused, Some(2_i32), "{shown}{reason}");
+    for line in [
+        "app 1000070 has no Default Controller Configuration, and the full game, app 1000050, \
+         has template 4: choose the full game's on app 1000070's Steam Input page in Steamworks",
+        "app 1000070 has no Default Touch Configuration, and the full game, app 1000050, has \
+         template 8",
+    ] {
+        assert!(reason.contains(line), "{line:?} in {reason}");
+    }
+
+    fs::write(
+        root.join("steam").join("demo").join("settings.vdf"),
+        format!(
+            "\"1000070\"\n{{\n\t\"common\"\n\t{{\n{DEMO_TYPED}\t}}\n\t\"config\"\n\t{{\n\
+             \t\t\"installdir\"\t\t\"InnDemo\"\n\
+             \t\t\"steamcontrollertouchtemplateindex\"\t\t\"8\"\n\
+             \t\t\"steamcontrollertemplateindex\"\t\t\"4\"\n\t}}\n}}\n"
+        ),
+    )
+    .unwrap();
+    pushed(&root, "The demo with the game's Steam Input defaults");
+    let (passed, building, stopped) = in_game(&root, &["upload", "--demo"]);
+    assert!(!stopped.contains("Steam Input"), "{building}{stopped}");
+    assert!(
+        building.contains("  build     none named under [demo] in steamship.toml"),
+        "on to the upload: {building}{stopped}"
+    );
+    assert_eq!(passed, Some(2_i32), "stopped before steamcmd: {stopped}");
+}
+
+#[test]
 fn a_godot_export_ships_only_in_the_app_its_demo_feature_says_it_is_for() {
     let (_temp, root) = pushed_game(None);
     with_demo(&root, "../../export/", DEMO_TYPED);

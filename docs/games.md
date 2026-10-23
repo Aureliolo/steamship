@@ -165,7 +165,12 @@ while the two scripts name the same app or share a depot. A demo script steamshi
 such as one kept at an `AppID` of 0 until the demo's app exists, holds back only the demo's
 commands, not the full game's. The demo's check and upload are refused too while
 its snapshot shows an app not typed Demo, or with another base game than the one the game's
-script names. For the demo and the game alike, a depot the script uploads that is not among the
+script names. They are refused too while the demo lacks a Default Controller Configuration or
+Default Touch Configuration that the game's snapshot shows, or has another: a new app has none,
+and without them a Steam Deck gives the demo no input from its controls. Choose the game's on
+the demo's Steam Input page,
+`https://partner.steamgames.com/apps/controller/<app>`, and save the demo's settings again. For
+the demo and the game alike, a depot the script uploads that is not among the
 app's own is refused, and so is a system the app's depots install on that no launch option runs
 on.
 

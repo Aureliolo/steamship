@@ -216,6 +216,53 @@ pub fn demo_of(settings: &Block, app: u32, full: u32) -> Vec<String> {
     wrong
 }
 
+/// The defaults the Steam Input page sets, by their key in `config` and their name on the page.
+const CONTROLS: [(&str, &str); 2] = [
+    (
+        "steamcontrollertemplateindex",
+        "Default Controller Configuration",
+    ),
+    (
+        "steamcontrollertouchtemplateindex",
+        "Default Touch Configuration",
+    ),
+];
+
+/// Each Steam Input default the full game's settings `game` have that `settings` lack or set
+/// otherwise, which refuses them as the demo's.
+///
+/// `settings` are app `app`'s, and `game` app `full`'s. Without its defaults a Steam Deck gives a
+/// demo no input from its controls at all.
+#[must_use]
+pub fn controls_unlike(settings: &Block, app: u32, game: &Block, full: u32) -> Vec<String> {
+    let config = |of: &Block, key: &str| {
+        of.block("config")
+            .and_then(|config| config.text(key))
+            .map(ToOwned::to_owned)
+    };
+    let then = format!(
+        "choose the full game's on app {app}'s Steam Input page in Steamworks, then save the \
+         settings again"
+    );
+    CONTROLS
+        .iter()
+        .filter_map(|(key, name)| {
+            let wanted = config(game, key)?;
+            match config(settings, key) {
+                Some(set) if set == wanted => None,
+                Some(set) => Some(format!(
+                    "app {app}'s {name} is template {set} and the full game's, app {full}'s, is \
+                     template {wanted}: {then}"
+                )),
+                None => Some(format!(
+                    "app {app} has no {name}, and the full game, app {full}, has template \
+                     {wanted}: {then}"
+                )),
+            }
+        })
+        .collect()
+}
+
 /// Each system an app the player launches has a depot of its own for, and no launch option runs
 /// on, by its name in `oslist`; none for an app of another type, such as a tool.
 #[must_use]
@@ -495,6 +542,65 @@ mod tests {
 
     fn demo(text: &str) -> Block {
         from_console(text, 1_000_070).unwrap()
+    }
+
+    /// `DEMO` with the Steam Input defaults `controls` in its `config`, written as a snapshot
+    /// holds them.
+    fn controlled(controls: &[(&str, &str)]) -> Block {
+        let installdir = "\t\t\"installdir\"\t\t\"SampleDemo\"\n";
+        let mut lines = installdir.to_owned();
+        for (key, value) in controls {
+            lines.push_str(&["\t\t\"", key, "\"\t\t\"", value, "\"\n"].concat());
+        }
+        demo(&DEMO.replace(installdir, &lines))
+    }
+
+    #[test]
+    fn a_demo_without_the_full_games_steam_input_defaults_is_told_to_choose_them() {
+        let both = [
+            ("steamcontrollertouchtemplateindex", "8"),
+            ("steamcontrollertemplateindex", "4"),
+        ];
+        let game = controlled(&both);
+        let then = "choose the full game's on app 1000070's Steam Input page in Steamworks, then \
+                    save the settings again";
+        assert_eq!(
+            controls_unlike(&demo(DEMO), 1_000_070, &game, 1_000_050),
+            [
+                format!(
+                    "app 1000070 has no Default Controller Configuration, and the full game, app \
+                     1000050, has template 4: {then}"
+                ),
+                format!(
+                    "app 1000070 has no Default Touch Configuration, and the full game, app \
+                     1000050, has template 8: {then}"
+                ),
+            ]
+        );
+        assert_eq!(
+            controls_unlike(
+                &controlled(&[
+                    ("steamcontrollertouchtemplateindex", "8"),
+                    ("steamcontrollertemplateindex", "1"),
+                ]),
+                1_000_070,
+                &game,
+                1_000_050
+            ),
+            [format!(
+                "app 1000070's Default Controller Configuration is template 1 and the full \
+                 game's, app 1000050's, is template 4: {then}"
+            )]
+        );
+        assert_eq!(
+            controls_unlike(&controlled(&both), 1_000_070, &game, 1_000_050),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            controls_unlike(&controlled(&both), 1_000_070, &demo(DEMO), 1_000_050),
+            Vec::<String>::new(),
+            "a game with no default asks none of its demo"
+        );
     }
 
     #[test]
