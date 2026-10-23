@@ -368,7 +368,9 @@ and shows it in Valve's own format. It also says whether Steam Cloud is set up, 
 with none has no Cloud section at all, and a snapshot without one would otherwise read the same
 either way. Cloud kept to developers is named as such, since players then have none while every
 check passes, and Steamworks can keep an app's Cloud to developers by itself the first time it
-is saved.
+is saved. It names the defaults chosen on the app's Steam Input page too, by template number,
+and says so when there is no Default Controller Configuration: a new app has none, and a Steam
+Deck has given a demo without one no input from its controls.
 
 `--save` keeps it in a file beside your scripts, and `--check` exits 2 naming every setting
 that differs from that file, such as `config/launch/0/executable`. Run the check before a
