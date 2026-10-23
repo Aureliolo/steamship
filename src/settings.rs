@@ -154,30 +154,93 @@ pub fn cloud(settings: &Block) -> &'static str {
     }
 }
 
-/// What `settings` show of the defaults on the app's Steam Input page. An app has none until they
+/// What `settings` show of the app's Steam Input page.
+///
+/// That is its defaults by their names there, where a configuration the game bundles is kept, the
+/// Steam Deck's touchscreen mode, and the controllers opted in. An app has no defaults until they
 /// are chosen there, and a Steam Deck has given a demo with none no input from its controls.
 #[must_use]
 pub fn controls(settings: &Block) -> String {
-    let template = |key: &str| settings.block("config")?.text(key);
-    let [(controller, _), (touch, _)] = CONTROLS;
-    let touch = template(touch).map_or_else(
+    let config = |key: &str| settings.block("config")?.text(key);
+    let [(controller, _, templates), (touch, _, touch_templates)] = CONTROLS;
+    let mut rest = vec![config(touch).map_or_else(
         || "no touch default".to_owned(),
-        |touch| format!("touch template {touch}"),
-    );
-    template(controller).map_or_else(
+        |touch| format!("touch {}", named(touch_templates, touch)),
+    )];
+    if let Some(mode) = config(DECK_TOUCHSCREEN) {
+        let mode = DECK_MODES
+            .iter()
+            .find(|(value, _)| *value == mode)
+            .map_or_else(|| format!("mode {mode}"), |(_, name)| format!("\"{name}\""));
+        rest.push(format!("Steam Deck touchscreen {mode}"));
+    }
+    if let Some(opted) = config(OPTED_IN) {
+        rest.push(opted.parse::<u32>().map_or_else(
+            |_| format!("controllers opted into Steam Input as \"{opted}\""),
+            |bits| {
+                let names: Vec<&str> = CONTROLLERS
+                    .iter()
+                    .filter(|(bit, _)| bits & bit == *bit)
+                    .map(|(_, name)| *name)
+                    .collect();
+                if names.is_empty() {
+                    "no controller opted into Steam Input".to_owned()
+                } else {
+                    format!("{} opted into Steam Input", names.join(", "))
+                }
+            },
+        ));
+    }
+    let rest = rest.join(", ");
+    config(controller).map_or_else(
         || {
             format!(
-                "no Default Controller Configuration in Steamworks, and {touch}, so a Steam Deck \
+                "no Default Controller Configuration in Steamworks, and {rest}, so a Steam Deck \
                  may give the game no input from its controls: choose one on the app's Steam \
                  Input page"
             )
         },
-        |controller| {
-            format!(
-                "Steam Input defaults set in Steamworks: controller template {controller}, {touch}"
-            )
+        |chosen| {
+            let chosen = match action_manifest(settings) {
+                Some("") => format!("{} with no action manifest named", named(templates, chosen)),
+                Some(manifest) => format!("{} from {manifest}", named(templates, chosen)),
+                None => named(templates, chosen),
+            };
+            format!("Steam Input defaults set in Steamworks: controller {chosen}, {rest}")
         },
     )
+}
+
+/// The path from the install folder that `settings` give the app's Steam Input action manifest,
+/// when its Default Controller Configuration is one the game bundles; empty when they give none.
+#[must_use]
+pub fn action_manifest(settings: &Block) -> Option<&str> {
+    let config = settings.block("config")?;
+    let [(controller, _, _), _] = CONTROLS;
+    (config.text(controller) == Some(BUNDLED)).then(|| config.text(MANIFEST).map_or("", str::trim))
+}
+
+/// The systems depot `depot` installs on as `settings` show it, by their names in `oslist`; none
+/// when it installs on every one, or when the settings do not show it.
+#[must_use]
+pub fn depot_systems(settings: &Block, depot: u32) -> Vec<String> {
+    own_depots(settings)
+        .into_iter()
+        .find(|(id, _)| *id == depot)
+        .map(|(_, listed)| systems_of(listed.block("config")))
+        .unwrap_or_default()
+}
+
+/// A default's name on the Steam Input page among `choices`, or its number when it is none of
+/// them.
+fn named(choices: &[(&str, &str)], value: &str) -> String {
+    choices
+        .iter()
+        .find(|(choice, _)| *choice == value)
+        .map_or_else(
+            || format!("template {value}"),
+            |(_, name)| format!("\"{name}\""),
+        )
 }
 
 /// `settings` for `app` as a snapshot file: Valve's own format, as `app_info_print` shows it.
@@ -242,22 +305,70 @@ pub fn demo_of(settings: &Block, app: u32, full: u32) -> Vec<String> {
     wrong
 }
 
-/// The defaults the Steam Input page sets, by their key in `config` and their name on the page.
-const CONTROLS: [(&str, &str); 2] = [
+/// The defaults the Steam Input page sets, by their key in `config`, their name on the page, and
+/// the choices it offers for them by value and name.
+const CONTROLS: [(&str, &str, Choices); 2] = [
     (
         "steamcontrollertemplateindex",
         "Default Controller Configuration",
+        &[
+            (BUNDLED, "Custom Configuration"),
+            ("2", "Gamepad with Camera Controls"),
+            ("3", "Gamepad with High Precision Camera/Aim"),
+            ("4", "Generic Gamepad"),
+            ("6", "Keyboard and Mouse Emulation (WASD)"),
+            ("1", "Custom Configuration, via Steam Workshop (deprecated)"),
+        ],
     ),
     (
         "steamcontrollertouchtemplateindex",
         "Default Touch Configuration",
+        &[
+            (BUNDLED, "Custom Configuration"),
+            ("8", "Mouse point and click"),
+            ("9", "Mouse trackpad"),
+            ("1", "Custom Configuration, via Steam Workshop (deprecated)"),
+        ],
     ),
+];
+
+/// The choices a select on the Steam Input page offers, by value and name.
+type Choices = &'static [(&'static str, &'static str)];
+
+/// The value of a default that is the game's own configuration, read from the action manifest
+/// it ships.
+const BUNDLED: &str = "13";
+
+/// The key in `config` of the action manifest's path, which the page sends only for a bundled
+/// Default Controller Configuration.
+const MANIFEST: &str = "steaminputmanifestpath";
+
+/// The key in `config` of the Steam Deck's touchscreen mode, and the modes by value and name.
+const DECK_TOUCHSCREEN: &str = "steamdecktouchscreen";
+const DECK_MODES: [(&str, &str); 6] = [
+    ("5", "None"),
+    ("1", "Left Mouse Click Emulation"),
+    ("2", "Right Mouse Click Emulation"),
+    ("3", "Middle Mouse Button Emulation"),
+    ("0", "Mouse Hover"),
+    ("4", "Touch API Pass-through"),
+];
+
+/// The key in `config` of the controllers opted into Steam Input, and each one's bits in it.
+const OPTED_IN: &str = "steamconfigurator3rdpartynative";
+const CONTROLLERS: [(u32, &str); 5] = [
+    (2, "Xbox"),
+    (1, "PlayStation"),
+    (8, "Nintendo Switch"),
+    (4, "Generic (DirectInput)"),
+    (0xFFF0, "Any Future Devices"),
 ];
 
 /// Each Steam Input default the full game's settings `game` have that `settings` lack or set
 /// otherwise, which refuses them as the demo's.
 ///
-/// `settings` are app `app`'s, and `game` app `full`'s. Without its defaults a Steam Deck gives a
+/// A demo bundling a configuration of its own has that default whatever the game's is. `settings`
+/// are app `app`'s, and `game` app `full`'s. Without its defaults a Steam Deck gives a
 /// demo no input from its controls at all.
 #[must_use]
 pub fn controls_unlike(settings: &Block, app: u32, game: &Block, full: u32) -> Vec<String> {
@@ -272,17 +383,18 @@ pub fn controls_unlike(settings: &Block, app: u32, game: &Block, full: u32) -> V
     );
     CONTROLS
         .iter()
-        .filter_map(|(key, name)| {
+        .filter_map(|(key, name, choices)| {
             let wanted = config(game, key)?;
             match config(settings, key) {
-                Some(set) if set == wanted => None,
+                Some(set) if set == wanted || set == BUNDLED => None,
                 Some(set) => Some(format!(
-                    "app {app}'s {name} is template {set} and the full game's, app {full}'s, is \
-                     template {wanted}: {then}"
+                    "app {app}'s {name} is {} and the full game's, app {full}'s, is {}: {then}",
+                    named(choices, &set),
+                    named(choices, &wanted)
                 )),
                 None => Some(format!(
-                    "app {app} has no {name}, and the full game, app {full}, has template \
-                     {wanted}: {then}"
+                    "app {app} has no {name}, and the full game, app {full}, has {}: {then}",
+                    named(choices, &wanted)
                 )),
             }
         })
@@ -588,18 +700,82 @@ mod tests {
                 ("steamcontrollertouchtemplateindex", "8"),
                 ("steamcontrollertemplateindex", "4"),
             ])),
-            "Steam Input defaults set in Steamworks: controller template 4, touch template 8"
+            "Steam Input defaults set in Steamworks: controller \"Generic Gamepad\", touch \
+             \"Mouse point and click\""
         );
         assert_eq!(
-            controls(&controlled(&[("steamcontrollertemplateindex", "4")])),
-            "Steam Input defaults set in Steamworks: controller template 4, no touch default"
+            controls(&controlled(&[("steamcontrollertemplateindex", "7")])),
+            "Steam Input defaults set in Steamworks: controller template 7, no touch default"
         );
         assert_eq!(
-            controls(&controlled(&[("steamcontrollertouchtemplateindex", "8")])),
-            "no Default Controller Configuration in Steamworks, and touch template 8, so a Steam \
-             Deck may give the game no input from its controls: choose one on the app's Steam \
-             Input page"
+            controls(&controlled(&[
+                ("steamcontrollertouchtemplateindex", "8"),
+                ("steamdecktouchscreen", "1"),
+                ("steamconfigurator3rdpartynative", "0"),
+            ])),
+            "no Default Controller Configuration in Steamworks, and touch \"Mouse point and \
+             click\", Steam Deck touchscreen \"Left Mouse Click Emulation\", no controller opted \
+             into Steam Input, so a Steam Deck may give the game no input from its controls: \
+             choose one on the app's Steam Input page"
         );
+    }
+
+    #[test]
+    fn a_configuration_the_game_bundles_is_said_with_its_manifest_and_the_controllers_opted_in() {
+        // As Steamworks keeps them once a Custom Configuration is saved with every controller
+        // opted in.
+        let bundled = controlled(&[
+            ("steamcontrollertemplateindex", "13"),
+            ("steamcontrollertouchtemplateindex", "8"),
+            ("steamdecktouchscreen", "1"),
+            ("steaminputmanifestpath", "steam_input/action_manifest.vdf"),
+            ("steamconfigurator3rdpartynative", "65535"),
+        ]);
+        assert_eq!(
+            controls(&bundled),
+            "Steam Input defaults set in Steamworks: controller \"Custom Configuration\" from \
+             steam_input/action_manifest.vdf, touch \"Mouse point and click\", Steam Deck \
+             touchscreen \"Left Mouse Click Emulation\", Xbox, PlayStation, Nintendo Switch, \
+             Generic (DirectInput), Any Future Devices opted into Steam Input"
+        );
+        assert_eq!(
+            action_manifest(&bundled),
+            Some("steam_input/action_manifest.vdf")
+        );
+        let unnamed = controlled(&[
+            ("steamcontrollertemplateindex", "13"),
+            ("steamdecktouchscreen", "9"),
+            ("steamconfigurator3rdpartynative", "6"),
+        ]);
+        assert_eq!(
+            controls(&unnamed),
+            "Steam Input defaults set in Steamworks: controller \"Custom Configuration\" with no \
+             action manifest named, no touch default, Steam Deck touchscreen mode 9, Xbox, \
+             Generic (DirectInput) opted into Steam Input"
+        );
+        assert_eq!(action_manifest(&unnamed), Some(""));
+        assert_eq!(
+            action_manifest(&controlled(&[
+                ("steamcontrollertemplateindex", "4"),
+                ("steaminputmanifestpath", "steam_input/action_manifest.vdf"),
+            ])),
+            None,
+            "a manifest path is read only for a bundled configuration"
+        );
+        assert!(
+            controls(&controlled(&[
+                ("steamcontrollertemplateindex", "4"),
+                ("steamconfigurator3rdpartynative", "many"),
+            ]))
+            .ends_with(", no touch default, controllers opted into Steam Input as \"many\"")
+        );
+    }
+
+    #[test]
+    fn a_depots_systems_are_those_its_settings_show_and_none_when_they_show_it_not() {
+        let settings = demo(DEMO);
+        assert_eq!(depot_systems(&settings, 1_000_072), ["linux"]);
+        assert_eq!(depot_systems(&settings, 1_000_079), Vec::<String>::new());
     }
 
     #[test]
@@ -616,11 +792,11 @@ mod tests {
             [
                 format!(
                     "app 1000070 has no Default Controller Configuration, and the full game, app \
-                     1000050, has template 4: {then}"
+                     1000050, has \"Generic Gamepad\": {then}"
                 ),
                 format!(
                     "app 1000070 has no Default Touch Configuration, and the full game, app \
-                     1000050, has template 8: {then}"
+                     1000050, has \"Mouse point and click\": {then}"
                 ),
             ]
         );
@@ -635,9 +811,33 @@ mod tests {
                 1_000_050
             ),
             [format!(
-                "app 1000070's Default Controller Configuration is template 1 and the full \
-                 game's, app 1000050's, is template 4: {then}"
+                "app 1000070's Default Controller Configuration is \"Custom Configuration, via \
+                 Steam Workshop (deprecated)\" and the full game's, app 1000050's, is \"Generic \
+                 Gamepad\": {then}"
             )]
+        );
+        let bundled = controlled(&[
+            ("steamcontrollertouchtemplateindex", "13"),
+            ("steamcontrollertemplateindex", "13"),
+            ("steaminputmanifestpath", "steam_input/action_manifest.vdf"),
+        ]);
+        assert_eq!(
+            controls_unlike(&bundled, 1_000_070, &game, 1_000_050),
+            Vec::<String>::new(),
+            "a demo bundling its own configuration has its defaults"
+        );
+        assert_eq!(
+            controls_unlike(&game, 1_000_070, &bundled, 1_000_050),
+            [
+                format!(
+                    "app 1000070's Default Controller Configuration is \"Generic Gamepad\" and \
+                     the full game's, app 1000050's, is \"Custom Configuration\": {then}"
+                ),
+                format!(
+                    "app 1000070's Default Touch Configuration is \"Mouse point and click\" and \
+                     the full game's, app 1000050's, is \"Custom Configuration\": {then}"
+                ),
+            ]
         );
         assert_eq!(
             controls_unlike(&controlled(&both), 1_000_070, &game, 1_000_050),
