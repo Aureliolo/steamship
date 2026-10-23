@@ -154,6 +154,32 @@ pub fn cloud(settings: &Block) -> &'static str {
     }
 }
 
+/// What `settings` show of the defaults on the app's Steam Input page. An app has none until they
+/// are chosen there, and a Steam Deck has given a demo with none no input from its controls.
+#[must_use]
+pub fn controls(settings: &Block) -> String {
+    let template = |key: &str| settings.block("config")?.text(key);
+    let [(controller, _), (touch, _)] = CONTROLS;
+    let touch = template(touch).map_or_else(
+        || "no touch default".to_owned(),
+        |touch| format!("touch template {touch}"),
+    );
+    template(controller).map_or_else(
+        || {
+            format!(
+                "no Default Controller Configuration in Steamworks, and {touch}, so a Steam Deck \
+                 may give the game no input from its controls: choose one on the app's Steam \
+                 Input page"
+            )
+        },
+        |controller| {
+            format!(
+                "Steam Input defaults set in Steamworks: controller template {controller}, {touch}"
+            )
+        },
+    )
+}
+
 /// `settings` for `app` as a snapshot file: Valve's own format, as `app_info_print` shows it.
 ///
 /// # Errors
@@ -553,6 +579,27 @@ mod tests {
             lines.push_str(&["\t\t\"", key, "\"\t\t\"", value, "\"\n"].concat());
         }
         demo(&DEMO.replace(installdir, &lines))
+    }
+
+    #[test]
+    fn the_steam_input_defaults_are_said_and_a_missing_controller_one_is_named() {
+        assert_eq!(
+            controls(&controlled(&[
+                ("steamcontrollertouchtemplateindex", "8"),
+                ("steamcontrollertemplateindex", "4"),
+            ])),
+            "Steam Input defaults set in Steamworks: controller template 4, touch template 8"
+        );
+        assert_eq!(
+            controls(&controlled(&[("steamcontrollertemplateindex", "4")])),
+            "Steam Input defaults set in Steamworks: controller template 4, no touch default"
+        );
+        assert_eq!(
+            controls(&controlled(&[("steamcontrollertouchtemplateindex", "8")])),
+            "no Default Controller Configuration in Steamworks, and touch template 8, so a Steam \
+             Deck may give the game no input from its controls: choose one on the app's Steam \
+             Input page"
+        );
     }
 
     #[test]

@@ -4583,6 +4583,7 @@ fn asked_settings(
         Ok(shown) => {
             spinner.done("shown");
             show::field("cloud", settings::cloud(&shown));
+            show::field("input", &settings::controls(&shown));
             Ok(shown)
         }
         Err(why) => {
