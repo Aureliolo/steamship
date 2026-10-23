@@ -9,7 +9,8 @@ use std::path::{Path, PathBuf, is_separator};
 use crate::scripts::{self, AppScript, DepotScript, FileMapping, Problem};
 #[cfg(unix)]
 use crate::unix;
-use crate::{pattern, pe, vdf};
+use crate::vdf::Block;
+use crate::{pattern, pe, settings, vdf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
@@ -44,14 +45,21 @@ const DO_NOT_SHIP: [&str; 2] = [
 /// Checks the app script at `path`, its depot scripts, and the content they map.
 #[must_use]
 pub fn check(path: &Path) -> Report {
-    checked(path, true)
+    checked(path, true, None)
+}
+
+/// Checks as [`check`] does, and the content against `settings`, the app's settings snapshot,
+/// when there is one.
+#[must_use]
+pub fn against(path: &Path, settings: Option<&Block>) -> Report {
+    checked(path, true, settings)
 }
 
 /// Checks the app script at `path` and its depot scripts alone, as can be done before the build
 /// they map exists.
 #[must_use]
 pub fn scripts_only(path: &Path) -> Report {
-    checked(path, false)
+    checked(path, false, None)
 }
 
 /// Checks every file in the build folder `path`, as before a script maps it: for app `app`, when
@@ -91,9 +99,9 @@ pub fn folder(path: &Path, app: Option<u32>) -> Report {
     }
 }
 
-fn checked(path: &Path, content: bool) -> Report {
+fn checked(path: &Path, content: bool, settings: Option<&Block>) -> Report {
     match scripts::load(path) {
-        Ok(app) => check_loaded(&app, content),
+        Ok(app) => check_loaded(&app, content, settings),
         Err(problems) => Report {
             app_id: None,
             set_live: None,
@@ -104,7 +112,7 @@ fn checked(path: &Path, content: bool) -> Report {
     }
 }
 
-fn check_loaded(app: &AppScript, content: bool) -> Report {
+fn check_loaded(app: &AppScript, content: bool, settings: Option<&Block>) -> Report {
     let mut problems = Vec::new();
     match app
         .set_live
@@ -165,6 +173,9 @@ fn check_loaded(app: &AppScript, content: bool) -> Report {
         .collect::<Vec<_>>();
     if content {
         unshipped_configurations(&depots, &mut problems);
+        if let Some(settings) = settings {
+            unshipped_manifest(app, settings, &mut problems);
+        }
     }
     Report {
         app_id: Some(app.app_id),
@@ -215,6 +226,129 @@ fn unshipped_configurations(depots: &[DepotFiles], problems: &mut Vec<Problem>) 
             }
         }
     }
+}
+
+/// What to do when a bundled Steam Input configuration has no action manifest named.
+const NAME_THE_MANIFEST: &str = "enter its path from the install folder on the app's Steam Input \
+                                 page in Steamworks, then save the settings again";
+
+/// A problem for each system the build installs on without the action manifest of the Steam
+/// Input configuration that `settings`, `app`'s, say the game bundles; one for the snapshot when
+/// they name none. Steam reads the manifest from the install folder, where the depots' mappings
+/// put each file, so a depot for one system shipping it leaves the others without.
+fn unshipped_manifest(app: &AppScript, settings: &Block, problems: &mut Vec<Problem>) {
+    let Some(manifest) = settings::action_manifest(settings) else {
+        return;
+    };
+    let snapshot = app
+        .path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(settings::SNAPSHOT);
+    if manifest.is_empty() {
+        problems.push(Problem::new(
+            &snapshot,
+            format!(
+                "chooses a Custom Configuration as app {}'s Default Controller Configuration and \
+                 names no action manifest: {NAME_THE_MANIFEST}",
+                app.app_id
+            ),
+        ));
+        return;
+    }
+    let mut systems: Vec<String> = Vec::new();
+    let mut shipping: Vec<String> = Vec::new();
+    for depot in &app.depots {
+        let on = settings::depot_systems(settings, depot.depot_id);
+        let ships = installs(depot, manifest);
+        if ships && on.is_empty() {
+            return;
+        }
+        for system in on {
+            if ships && !shipping.contains(&system) {
+                shipping.push(system.clone());
+            }
+            if !systems.contains(&system) {
+                systems.push(system);
+            }
+        }
+    }
+    let unshipped = |on: &str| {
+        Problem::new(
+            &snapshot,
+            format!(
+                "names \"{manifest}\" as app {}'s Steam Input action manifest, and the build \
+                 installs no file there{on}: ship the manifest at that path in the install \
+                 folder, or change the path on the app's Steam Input page in Steamworks and save \
+                 the settings again",
+                app.app_id
+            ),
+        )
+    };
+    if systems.is_empty() {
+        problems.push(unshipped(""));
+    }
+    for system in systems.iter().filter(|system| !shipping.contains(system)) {
+        problems.push(unshipped(&format!(" on {system}")));
+    }
+}
+
+/// A problem when the build in `folder`, app `app`'s, lacks the action manifest of the Steam
+/// Input configuration that `settings` say the game bundles, or when they name none.
+#[must_use]
+pub fn folder_manifest(folder: &Path, app: u32, settings: &Block) -> Option<Problem> {
+    let manifest = settings::action_manifest(settings)?;
+    if manifest.is_empty() {
+        return Some(Problem::new(
+            folder,
+            format!(
+                "is a build of app {app}, whose settings choose a Custom Configuration as its \
+                 Default Controller Configuration and name no action manifest: \
+                 {NAME_THE_MANIFEST}"
+            ),
+        ));
+    }
+    (!folder.join(scripts::native(manifest)).is_file()).then(|| {
+        Problem::new(
+            folder,
+            format!(
+                "has no \"{manifest}\", which app {app}'s settings name as its Steam Input action \
+                 manifest: put the manifest there, or change the path on the app's Steam Input \
+                 page in Steamworks and save the settings again"
+            ),
+        )
+    })
+}
+
+/// Whether `depot` installs a file of its content at `path`, a path from the install folder.
+fn installs(depot: &DepotScript, path: &str) -> bool {
+    let parts = |written: &str| -> Vec<String> {
+        scripts::native(written)
+            .split(is_separator)
+            .filter(|part| !part.is_empty() && *part != ".")
+            .map(str::to_owned)
+            .collect()
+    };
+    let wanted = parts(path);
+    depot.mappings.iter().any(|mapping| {
+        let Some(rest) = wanted.strip_prefix(parts(&mapping.depot_path).as_slice()) else {
+            return false;
+        };
+        let Some((name, folders)) = rest.split_last() else {
+            return false;
+        };
+        let (folder, pattern) = split(mapping);
+        let file = folders
+            .iter()
+            .fold(depot.content_root.join(folder), |file, part| {
+                file.join(part)
+            })
+            .join(name);
+        (folders.is_empty() || mapping.recursive)
+            && pattern::matches(&pattern, name)
+            && !excluded(&depot.content_root, &file, &depot.exclusions)
+            && file.is_file()
+    })
 }
 
 /// Each controller and the configuration file `file` lists for it, when `file` is Steam Input's

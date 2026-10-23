@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use steamship::check::{self, Report, check, scripts_only};
 use steamship::scripts::Problem;
-use steamship::{redist, run, vdf};
+use steamship::{redist, run, settings, vdf};
 
 pub mod common;
 
@@ -211,6 +211,154 @@ fn an_action_manifest_must_ship_each_configuration_it_lists_beside_it() {
         messages(&check(&app)),
         Vec::<String>::new(),
         "only a VDF file under 4 MiB is read as a manifest"
+    );
+}
+
+/// App 1000's settings as a snapshot keeps them once the Steam Input page chooses a Custom
+/// Configuration with its action manifest at `manifest`, with depot 1001 for Windows and 1002
+/// for Linux.
+fn bundling(manifest: &str) -> vdf::Block {
+    settings::read(
+        &format!(
+            "\"1000\"\n{{\n\t\"config\"\n\t{{\n\
+             \t\t\"steamcontrollertemplateindex\"\t\t\"13\"\n\
+             \t\t\"steaminputmanifestpath\"\t\t\"{manifest}\"\n\t}}\n\
+             \t\"depots\"\n\t{{\n\
+             \t\t\"1001\"\n\t\t{{\n\t\t\t\"config\"\n\t\t\t{{\n\
+             \t\t\t\t\"oslist\"\t\t\"windows\"\n\t\t\t}}\n\t\t}}\n\
+             \t\t\"1002\"\n\t\t{{\n\t\t\t\"config\"\n\t\t\t{{\n\
+             \t\t\t\t\"oslist\"\t\t\"linux\"\n\t\t\t}}\n\t\t}}\n\t}}\n}}\n"
+        ),
+        1000,
+    )
+    .unwrap()
+}
+
+/// What `check` says when the build installs no file at `manifest`, the action manifest's path
+/// the settings name, `on` a system or anywhere.
+fn manifest_missing(manifest: &str, on: &str) -> String {
+    format!(
+        "names \"{manifest}\" as app 1000's Steam Input action manifest, and the build installs \
+         no file there{on}: ship the manifest at that path in the install folder, or change the \
+         path on the app's Steam Input page in Steamworks and save the settings again"
+    )
+}
+
+const MANIFEST: &[u8] = b"\"Action Manifest\"\n{\n}\n";
+
+#[test]
+fn a_build_must_install_the_action_manifest_its_settings_name_on_every_system() {
+    let (project, app) = Project::shipping("");
+    let path = "steam_input/action_manifest.vdf";
+    let settings = bundling(path);
+    let report = check::against(&app, Some(&settings));
+    assert_eq!(
+        messages(&report),
+        [
+            manifest_missing(path, " on windows"),
+            manifest_missing(path, " on linux")
+        ]
+    );
+    assert_eq!(
+        report.problems.first().unwrap().file,
+        project.root.join("steam").join("settings.vdf")
+    );
+    assert_eq!(
+        messages(&check::against(&app, None)),
+        Vec::<String>::new(),
+        "nothing is asked without settings"
+    );
+
+    project.put("export/windows/steam_input/action_manifest.vdf", MANIFEST);
+    assert_eq!(
+        messages(&check::against(&app, Some(&settings))),
+        [manifest_missing(path, " on linux")]
+    );
+    project.put("export/linux/steam_input/action_manifest.vdf", MANIFEST);
+    assert_eq!(
+        messages(&check::against(&app, Some(&settings))),
+        Vec::<String>::new()
+    );
+
+    assert_eq!(
+        messages(&check::against(&app, Some(&bundling("")))),
+        [
+            "chooses a Custom Configuration as app 1000's Default Controller Configuration and \
+             names no action manifest: enter its path from the install folder on the app's Steam \
+             Input page in Steamworks, then save the settings again"
+        ]
+    );
+}
+
+#[test]
+fn the_action_manifest_is_looked_for_where_the_depots_mappings_install_each_file() {
+    let (project, _) = Project::shipping("");
+    project.put(
+        "steam/depot_input.vdf",
+        br#""DepotBuild"
+{
+	"DepotID" "1003"
+	"FileMapping" { "LocalPath" "input/*.vdf" "DepotPath" "steam_input/" "Recursive" "0" }
+	"FileExclusion" "old.vdf"
+}
+"#,
+    );
+    let app = project.file(
+        "steam/input_build.vdf",
+        br#""AppBuild" { "AppID" "1000" "ContentRoot" "../export/" "Depots" { "1003" "depot_input.vdf" } }"#,
+    );
+    project.put("export/input/action_manifest.vdf", MANIFEST);
+    project.put("export/input/old.vdf", MANIFEST);
+    project.put("export/input/action_manifest.txt", MANIFEST);
+    project.put("export/input/sub/action_manifest.vdf", MANIFEST);
+    let said = |path: &str| messages(&check::against(&app, Some(&bundling(path))));
+    assert_eq!(
+        said("steam_input/action_manifest.vdf"),
+        Vec::<String>::new(),
+        "a depot no system is named for installs everywhere"
+    );
+    assert_eq!(
+        said("./steam_input//action_manifest.vdf"),
+        Vec::<String>::new()
+    );
+    for path in [
+        "other/action_manifest.vdf",
+        "steam_input",
+        "steam_input/action_manifest.txt",
+        "steam_input/old.vdf",
+        "steam_input/sub/action_manifest.vdf",
+        "steam_input/absent.vdf",
+    ] {
+        assert_eq!(said(path), [manifest_missing(path, "")], "{path}");
+    }
+}
+
+#[test]
+fn a_build_folder_must_hold_the_action_manifest_its_settings_name() {
+    let project = Project::new();
+    project.put("windows/game.exe", b"MZ");
+    let folder = project.root.join("windows");
+    let path = "steam_input/action_manifest.vdf";
+    assert_eq!(
+        check::folder_manifest(&folder, 1000, &bundling(path)).map(|problem| problem.message),
+        Some(
+            "has no \"steam_input/action_manifest.vdf\", which app 1000's settings name as its \
+             Steam Input action manifest: put the manifest there, or change the path on the \
+             app's Steam Input page in Steamworks and save the settings again"
+                .to_owned()
+        )
+    );
+    project.put("windows/steam_input/action_manifest.vdf", MANIFEST);
+    assert_eq!(check::folder_manifest(&folder, 1000, &bundling(path)), None);
+    assert_eq!(
+        check::folder_manifest(&folder, 1000, &bundling("")).map(|problem| problem.message),
+        Some(
+            "is a build of app 1000, whose settings choose a Custom Configuration as its Default \
+             Controller Configuration and name no action manifest: enter its path from the \
+             install folder on the app's Steam Input page in Steamworks, then save the settings \
+             again"
+                .to_owned()
+        )
     );
 }
 

@@ -62,6 +62,9 @@ steamship check steam/app_build.vdf
 - a `steam_appid.txt` in the content, and the folders Unity names as not to ship;
 - a Steam Input Action Manifest in the content listing a controller configuration that the
   build does not ship beside it;
+- when the settings snapshot beside the scripts chooses a Custom Configuration as the Default
+  Controller Configuration, a build that does not install its action manifest at the path the
+  snapshot names, on each system the depots install on, or a snapshot naming no path;
 - a Linux or macOS program, or a script starting with `#!`, without its executable bit, where
   the file system has one;
 - a Windows program or library importing a DLL that neither Windows 10 and later, a depot that
@@ -370,9 +373,11 @@ and shows it in Valve's own format. It also says whether Steam Cloud is set up, 
 with none has no Cloud section at all, and a snapshot without one would otherwise read the same
 either way. Cloud kept to developers is named as such, since players then have none while every
 check passes, and Steamworks can keep an app's Cloud to developers by itself the first time it
-is saved. It names the defaults chosen on the app's Steam Input page too, by template number,
-and says so when there is no Default Controller Configuration: a new app has none, and a Steam
-Deck has given a demo without one no input from its controls.
+is saved. It names the defaults chosen on the app's Steam Input page too, as the page names
+them, with the path of the action manifest for a Custom Configuration the game bundles, the
+Steam Deck's touchscreen mode and the controllers opted into Steam Input. It says so when there
+is no Default Controller Configuration: a new app has none, and a Steam Deck has given a demo
+without one no input from its controls.
 
 `--save` keeps it in a file beside your scripts, and `--check` exits 2 naming every setting
 that differs from that file, such as `config/launch/0/executable`. Run the check before a

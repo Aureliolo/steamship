@@ -8926,9 +8926,10 @@ fn a_demo_without_the_full_games_steam_input_defaults_is_refused_until_it_has_th
     assert_eq!(refused, Some(2_i32), "{shown}{reason}");
     for line in [
         "app 1000070 has no Default Controller Configuration, and the full game, app 1000050, \
-         has template 4: choose the full game's on app 1000070's Steam Input page in Steamworks",
+         has \"Generic Gamepad\": choose the full game's on app 1000070's Steam Input page in \
+         Steamworks",
         "app 1000070 has no Default Touch Configuration, and the full game, app 1000050, has \
-         template 8",
+         \"Mouse point and click\"",
     ] {
         assert!(reason.contains(line), "{line:?} in {reason}");
     }
@@ -8951,6 +8952,63 @@ fn a_demo_without_the_full_games_steam_input_defaults_is_refused_until_it_has_th
         "on to the upload: {building}{stopped}"
     );
     assert_eq!(passed, Some(2_i32), "stopped before steamcmd: {stopped}");
+}
+
+#[test]
+fn a_demo_bundling_its_own_steam_input_configuration_goes_up_only_with_its_action_manifest() {
+    let (_temp, root) = pushed_game(None);
+    with_demo(&root, "../../export/", DEMO_TYPED);
+    fs::write(
+        root.join("steam").join("settings.vdf"),
+        "\"1000050\"\n{\n\t\"config\"\n\t{\n\t\t\"installdir\"\t\t\"TidalMillInn\"\n\
+         \t\t\"steamcontrollertouchtemplateindex\"\t\t\"8\"\n\
+         \t\t\"steamcontrollertemplateindex\"\t\t\"4\"\n\t}\n}\n",
+    )
+    .unwrap();
+    // As a demo's snapshot holds them once its Steam Input page bundles a Custom Configuration.
+    fs::write(
+        root.join("steam").join("demo").join("settings.vdf"),
+        format!(
+            "\"1000070\"\n{{\n\t\"common\"\n\t{{\n{DEMO_TYPED}\t}}\n\t\"config\"\n\t{{\n\
+             \t\t\"installdir\"\t\t\"InnDemo\"\n\
+             \t\t\"steamcontrollertemplateindex\"\t\t\"13\"\n\
+             \t\t\"steamcontrollertouchtemplateindex\"\t\t\"8\"\n\
+             \t\t\"steamdecktouchscreen\"\t\t\"1\"\n\
+             \t\t\"steaminputmanifestpath\"\t\t\"steam_input/action_manifest.vdf\"\n\
+             \t\t\"steamconfigurator3rdpartynative\"\t\t\"65535\"\n\t}}\n}}\n"
+        ),
+    )
+    .unwrap();
+    pushed(&root, "A demo bundling its Steam Input configuration");
+    let (stopped, shown, reason) = in_game(&root, &["upload", "--demo"]);
+    assert_eq!(stopped, Some(2_i32), "{shown}{reason}");
+    assert!(
+        reason.contains("name the build account") && !reason.contains("Steam Input"),
+        "past the demo's Steam Input defaults: {shown}{reason}"
+    );
+
+    let script = Path::new("steam").join("demo").join("app_build.vdf");
+    let script = script.to_str().unwrap();
+    let (refused, checking, unshipped) = in_game(&root, &["check", script]);
+    assert_eq!(refused, Some(2_i32), "{checking}{unshipped}");
+    assert!(
+        unshipped.contains(
+            "names \"steam_input/action_manifest.vdf\" as app 1000070's Steam Input action \
+             manifest, and the build installs no file there: ship the manifest at that path in \
+             the install folder"
+        ),
+        "{checking}{unshipped}"
+    );
+
+    let manifest = root.join("export").join("steam_input");
+    fs::create_dir_all(&manifest).unwrap();
+    fs::write(
+        manifest.join("action_manifest.vdf"),
+        "\"Action Manifest\"\n{\n}\n",
+    )
+    .unwrap();
+    let (passed, checked, said) = in_game(&root, &["check", script]);
+    assert_eq!(passed, Some(0_i32), "{checked}{said}");
 }
 
 #[test]
