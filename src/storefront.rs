@@ -5,7 +5,7 @@
 //! given as a choice or an amount, so only those typed as text are compared word for word.
 
 use std::collections::BTreeMap;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value as Json;
 
@@ -68,14 +68,17 @@ impl Storefront {
     ///
     /// When the store cannot be reached or answers with anything but app details.
     pub fn requirements(&self, app: u32, language: &str) -> Result<Option<Shown>, String> {
+        let started = Instant::now();
         let mut response = self
             .agent
             .get(format!("{}/api/appdetails", self.host))
             .query("appids", app.to_string())
             .query("l", language)
             .call()
-            .ok()
-            .ok_or("Steam's store could not be reached")?;
+            .map_err(|error| {
+                let unreached = webapi::Unreached::from(&error, started.elapsed());
+                format!("Steam's store could not be reached: {unreached}")
+            })?;
         let status = response.status().as_u16();
         if !(200..=299).contains(&status) {
             return Err(format!("Steam's store answered HTTP {status}"));

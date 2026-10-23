@@ -11,7 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::error;
 use std::fmt;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 use ureq::Body;
@@ -69,8 +70,8 @@ pub enum Error {
     Refused,
     /// Steam answered with this HTTP status, and the reason it gave, if any.
     Status(u16, String),
-    /// Steam could not be reached.
-    Unreachable,
+    /// Steam could not be reached, on the second try either: why that try failed.
+    Unreachable(Unreached),
     /// Steam answered with something that is not what the method answers.
     Unreadable(&'static str),
     /// Steam answered that the call failed, saying this.
@@ -91,7 +92,10 @@ impl fmt::Display for Error {
                 write!(formatter, "Steam answered HTTP {status}")
             }
             Self::Status(status, said) => write!(formatter, "Steam answered HTTP {status}: {said}"),
-            Self::Unreachable => formatter.write_str("partner.steam-api.com could not be reached"),
+            Self::Unreachable(unreached) => write!(
+                formatter,
+                "partner.steam-api.com could not be reached, tried twice: {unreached}"
+            ),
             Self::Unreadable(what) => write!(formatter, "Steam's answer holds no {what}"),
             Self::Failed(message) => write!(formatter, "Steam says: {message}"),
         }
@@ -108,10 +112,67 @@ impl Error {
             Self::NotAKey => "not-a-key",
             Self::Refused => "key-refused",
             Self::Status(..) => "http-error",
-            Self::Unreachable => "unreachable",
+            Self::Unreachable(_) => "unreachable",
             Self::Unreadable(_) => "unreadable",
             Self::Failed(_) => "steam-failed",
         }
+    }
+}
+
+/// Why a request had no answer, and how long it ran before it gave up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unreached {
+    pub why: String,
+    pub after: Duration,
+}
+
+impl Unreached {
+    /// Why `error` left a request that ran for `after` without an answer.
+    #[must_use]
+    pub fn from(error: &ureq::Error, after: Duration) -> Self {
+        Self {
+            why: unanswered(error),
+            after,
+        }
+    }
+}
+
+impl fmt::Display for Unreached {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{} after {:.1} s",
+            self.why,
+            self.after.as_secs_f64()
+        )
+    }
+}
+
+/// What `error` says of why a request had no answer, in words of steamship's own: ureq's own
+/// message can hold a proxy's address with the credentials in it.
+fn unanswered(error: &ureq::Error) -> String {
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "ureq's errors are non-exhaustive, and those of a request that was never \
+                  well formed are told apart by nothing a person could act on"
+    )]
+    match error {
+        ureq::Error::HostNotFound => "the host name was not found".to_owned(),
+        ureq::Error::Timeout(timeout) => format!("the {timeout} timeout ran out"),
+        ureq::Error::Io(error) => error.raw_os_error().map_or_else(
+            || format!("the connection failed: {}", error.kind()),
+            |code| format!("the connection failed: {} (os error {code})", error.kind()),
+        ),
+        ureq::Error::ConnectionFailed => "the connection failed".to_owned(),
+        ureq::Error::Tls(said) => format!("TLS failed: {said}"),
+        ureq::Error::Rustls(said) => format!("TLS failed: {said}"),
+        ureq::Error::Pem(_) => "TLS failed on a certificate that could not be read".to_owned(),
+        ureq::Error::InvalidProxyUrl | ureq::Error::ConnectProxyFailed(_) => {
+            "the proxy failed".to_owned()
+        }
+        ureq::Error::BodyStalled => "the answer stopped coming".to_owned(),
+        ureq::Error::Protocol(_) => "the answer was not HTTP".to_owned(),
+        _ => "the request failed".to_owned(),
     }
 }
 
@@ -844,7 +905,14 @@ pub struct Api {
     key: Key,
     host: String,
     images: String,
+    /// How long a request that had no answer waits before it is made again.
+    pause: Duration,
 }
+
+/// How long a Web API request that had no answer waits before it is made again. Each method
+/// steamship calls does the same when called twice, and a moment without a connection would
+/// otherwise cost a step whose work is done, such as setting a build live once it is uploaded.
+const PAUSE: Duration = Duration::from_secs(10);
 
 impl Api {
     #[must_use]
@@ -868,6 +936,7 @@ impl Api {
             key,
             host: host.to_owned(),
             images,
+            pause: PAUSE,
         }
     }
 
@@ -885,12 +954,15 @@ impl Api {
         if !named {
             return Err(format!("\"{name}\" is not the name of an image Steam made"));
         }
+        let started = Instant::now();
         let mut response = self
             .agent
             .get(format!("{}/{app}/{name}", self.images))
             .call()
-            .ok()
-            .ok_or("Steam's image host could not be reached")?;
+            .map_err(|error| {
+                let unreached = Unreached::from(&error, started.elapsed());
+                format!("Steam's image host could not be reached: {unreached}")
+            })?;
         let status = response.status().as_u16();
         if !(200..=299).contains(&status) {
             return Err(format!("Steam's image host answered HTTP {status}"));
@@ -1091,11 +1163,12 @@ impl Api {
     }
 
     fn post(&self, method: &str, form: &[(&str, String)]) -> Result<Value, Error> {
-        let response = self
-            .agent
-            .post(format!("{}/{method}/", self.host))
-            .header("x-webapi-key", self.key.0.as_str())
-            .send_form(form.iter().map(|(name, value)| (*name, value.as_str())));
+        let response = self.answered(|| {
+            self.agent
+                .post(format!("{}/{method}/", self.host))
+                .header("x-webapi-key", self.key.0.as_str())
+                .send_form(form.iter().map(|(name, value)| (*name, value.as_str())))
+        });
         // A service method can answer 200 and say it failed only in its result header.
         if let Ok(answer) = &response {
             let header = |name: &str| {
@@ -1158,29 +1231,44 @@ impl Api {
         method: &str,
         query: &[(&str, String)],
     ) -> Result<Value, Error> {
-        let mut request = self
-            .agent
-            .get(format!("{}/{interface}/{method}/", self.host))
-            .header("x-webapi-key", self.key.0.as_str());
-        for (name, value) in query {
-            request = request.query(*name, value);
-        }
         // Steam's cache in front of some methods keeps an answer for up to an hour, heeds no
         // request to skip it, and its nodes hold different ones, so a leaderboard deleted minutes
         // earlier can still be listed. A query it has not seen is answered from Steam itself.
         let now = SystemTime::now().duration_since(UNIX_EPOCH);
-        request = request.query(
-            "steamship",
-            now.map_or(0, |since| since.as_nanos()).to_string(),
-        );
-        read(request.call())
+        let unseen = now.map_or(0, |since| since.as_nanos()).to_string();
+        read(self.answered(|| {
+            let mut request = self
+                .agent
+                .get(format!("{}/{interface}/{method}/", self.host))
+                .header("x-webapi-key", self.key.0.as_str());
+            for (name, value) in query {
+                request = request.query(*name, value);
+            }
+            request.query("steamship", &unseen).call()
+        }))
+    }
+
+    /// The answer to the request `send` makes, made once more after a pause when it has none.
+    fn answered<Send>(&self, send: Send) -> Result<Response<Body>, Error>
+    where
+        Send: Fn() -> Result<Response<Body>, ureq::Error>,
+    {
+        let attempt = || {
+            let started = Instant::now();
+            send().map_err(|error| Unreached::from(&error, started.elapsed()))
+        };
+        attempt()
+            .or_else(|_| {
+                thread::sleep(self.pause);
+                attempt()
+            })
+            .map_err(Error::Unreachable)
     }
 }
 
-/// The JSON Steam answered, where the status says it answered at all. The transport's own error
-/// is never shown, as it can name the address.
-fn read(response: Result<Response<Body>, ureq::Error>) -> Result<Value, Error> {
-    let mut response = response.ok().ok_or(Error::Unreachable)?;
+/// The JSON Steam answered, where the status says it answered at all.
+fn read(response: Result<Response<Body>, Error>) -> Result<Value, Error> {
+    let mut response = response?;
     let status = response.status().as_u16();
     if matches!(status, 401 | 403) {
         return Err(Error::Refused);
@@ -1248,7 +1336,7 @@ pub fn date(seconds: u64) -> (u64, u64, u64) {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read as _, Write as _};
+    use std::io::{ErrorKind, Read as _, Write as _};
     use std::net::TcpListener;
     use std::sync::mpsc;
     use std::thread;
@@ -1391,8 +1479,9 @@ mod tests {
                 "Steam answered HTTP 404: Unable to find specificed betakey x",
             ),
             (
-                Error::Unreachable,
-                "partner.steam-api.com could not be reached",
+                refused(),
+                "partner.steam-api.com could not be reached, tried twice: the connection failed: \
+                 connection refused after 0.4 s",
             ),
             (Error::Unreadable("betas"), "Steam's answer holds no betas"),
             (Error::Failed("no".to_owned()), "Steam says: no"),
@@ -1618,11 +1707,7 @@ mod tests {
             no_build_yet(&Error::Status(500, String::new()), 480, &apps),
             None
         );
-        for other in [
-            Error::Status(503, String::new()),
-            Error::Refused,
-            Error::Unreachable,
-        ] {
+        for other in [Error::Status(503, String::new()), Error::Refused, refused()] {
             assert_eq!(no_build_yet(&other, 1_000_030, &apps), None, "{other:?}");
         }
     }
@@ -1716,7 +1801,18 @@ mod tests {
     const KEY_TEXT: &str = "0123456789ABCDEF0123456789ABCDEF";
 
     fn api(host: &str) -> Api {
-        Api::at(Key::parse(KEY_TEXT).unwrap(), host)
+        Api {
+            pause: Duration::ZERO,
+            ..Api::at(Key::parse(KEY_TEXT).unwrap(), host)
+        }
+    }
+
+    /// What a request refused at once comes to.
+    fn refused() -> Error {
+        Error::Unreachable(Unreached {
+            why: "the connection failed: connection refused".to_owned(),
+            after: Duration::from_millis(400),
+        })
     }
 
     #[test]
@@ -1853,9 +1949,8 @@ mod tests {
             "200 OK",
             r#"{"response": {"betas": {"testing": {"BuildID": 7}}}}"#,
         );
-        assert_eq!(
-            api(&stopped).overview(1, 5),
-            Err(Error::Unreachable),
+        assert!(
+            matches!(api(&stopped).overview(1, 5), Err(Error::Unreachable(_))),
             "the second call finds no server"
         );
     }
@@ -2014,10 +2109,61 @@ mod tests {
         let closed = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = closed.local_addr().unwrap();
         drop(closed);
-        assert_eq!(
-            api(&format!("http://{address}")).branches(1),
-            Err(Error::Unreachable)
+        let unreached = api(&format!("http://{address}")).branches(1).unwrap_err();
+        assert!(
+            unreached.to_string().starts_with(
+                "partner.steam-api.com could not be reached, tried twice: the connection failed: \
+                 connection refused (os error "
+            ),
+            "{unreached}"
         );
+    }
+
+    #[test]
+    fn why_a_request_had_no_answer_is_said_without_what_a_proxy_address_holds() {
+        let after = Duration::from_millis(2_050);
+        for (error, said) in [
+            (
+                ureq::Error::HostNotFound,
+                "the host name was not found after 2.0 s",
+            ),
+            (
+                ureq::Error::Timeout(ureq::Timeout::Global),
+                "the global timeout ran out after 2.0 s",
+            ),
+            (
+                ureq::Error::Io(ErrorKind::ConnectionReset.into()),
+                "the connection failed: connection reset after 2.0 s",
+            ),
+            (
+                ureq::Error::ConnectProxyFailed("user:secret@proxy.example".to_owned()),
+                "the proxy failed after 2.0 s",
+            ),
+            (
+                ureq::Error::BadUri("http://user:secret@proxy.example".to_owned()),
+                "the request failed after 2.0 s",
+            ),
+        ] {
+            assert_eq!(Unreached::from(&error, after).to_string(), said);
+        }
+    }
+
+    #[test]
+    fn a_request_with_no_answer_is_made_once_more_and_then_answered() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let host = format!("http://{}", listener.local_addr().unwrap());
+        let (sender, requests) = mpsc::channel();
+        let _serving = thread::spawn(move || {
+            drop(listener.accept().unwrap());
+            serve(
+                &listener,
+                "200 OK",
+                r#"{"response": {"result": 1}}"#,
+                &sender,
+            );
+        });
+        assert_eq!(api(&host).set_live(480, 7, "testing"), Ok(()));
+        assert!(received(&requests).contains("SetAppBuildLive"));
     }
 
     #[test]
@@ -2212,7 +2358,7 @@ mod tests {
             Error::NotAKey,
             Error::Refused,
             Error::Status(500, String::new()),
-            Error::Unreachable,
+            refused(),
             Error::Unreadable("betas"),
             Error::Failed("no".to_owned()),
         ]
