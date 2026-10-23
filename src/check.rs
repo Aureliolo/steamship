@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf, is_separator};
 use crate::scripts::{self, AppScript, DepotScript, FileMapping, Problem};
 #[cfg(unix)]
 use crate::unix;
-use crate::{pattern, pe};
+use crate::{pattern, pe, vdf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
@@ -162,7 +162,10 @@ fn check_loaded(app: &AppScript, content: bool) -> Report {
                 install_scripts: !depot.install_scripts.is_empty(),
             }
         })
-        .collect();
+        .collect::<Vec<_>>();
+    if content {
+        unshipped_configurations(&depots, &mut problems);
+    }
     Report {
         app_id: Some(app.app_id),
         set_live: app
@@ -173,6 +176,83 @@ fn check_loaded(app: &AppScript, content: bool) -> Report {
         problems,
         content,
     }
+}
+
+/// The size a VDF file in a build has to stay under to be read as Steam Input's Action Manifest,
+/// which runs to tens of kilobytes even with every language's strings.
+const MANIFEST_LIMIT: u64 = 4 * 1024 * 1024;
+
+/// A problem for each controller configuration that an Action Manifest in `depots` lists and the
+/// build does not ship where the manifest says, which is beside it.
+fn unshipped_configurations(depots: &[DepotFiles], problems: &mut Vec<Problem>) {
+    let mut shipped: Option<BTreeSet<PathBuf>> = None;
+    for depot in depots {
+        for file in &depot.files {
+            for (controller, path) in configurations(file) {
+                let wanted = file
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .join(scripts::native(&path));
+                let shipped = shipped.get_or_insert_with(|| {
+                    depots
+                        .iter()
+                        .flat_map(|each| &each.files)
+                        .filter_map(|shipping| fs::canonicalize(shipping).ok())
+                        .collect()
+                });
+                if fs::canonicalize(&wanted).is_ok_and(|wanted| shipped.contains(&wanted)) {
+                    continue;
+                }
+                problems.push(Problem::new(
+                    file,
+                    format!(
+                        "is Steam Input's Action Manifest in depot {}, and lists \"{path}\" for \
+                         {controller}, which the build does not ship beside it: put the \
+                         configuration there, or take it out of the manifest",
+                        depot.depot_id
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+/// Each controller and the configuration file `file` lists for it, when `file` is Steam Input's
+/// Action Manifest; none when it is any other file.
+fn configurations(file: &Path) -> Vec<(String, String)> {
+    let vdf = file
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("vdf"));
+    let small = || fs::metadata(file).is_ok_and(|metadata| metadata.len() < MANIFEST_LIMIT);
+    if !vdf || !small() {
+        return Vec::new();
+    }
+    let Some(root) = fs::read_to_string(file)
+        .ok()
+        .and_then(|text| vdf::parse(&text).ok())
+    else {
+        return Vec::new();
+    };
+    let Some(listed) = root
+        .block("Action Manifest")
+        .and_then(|manifest| manifest.block("configurations"))
+    else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for controller in &listed.pairs {
+        let vdf::Value::Block(entries) = &controller.value else {
+            continue;
+        };
+        for entry in &entries.pairs {
+            if let vdf::Value::Block(entry) = &entry.value
+                && let Some(path) = entry.text("path")
+            {
+                found.push((controller.key.clone(), path.to_owned()));
+            }
+        }
+    }
+    found
 }
 
 /// A problem for each of `depot`'s mappings that no content could make right.
