@@ -169,7 +169,9 @@ script names. They are refused too while the demo lacks a Default Controller Con
 Default Touch Configuration that the game's snapshot shows, or has another: a new app has none,
 and without them a Steam Deck gives the demo no input from its controls. Choose the game's on
 the demo's Steam Input page,
-`https://partner.steamgames.com/apps/controller/<app>`, and save the demo's settings again. For
+`https://partner.steamgames.com/apps/controller/<app>`, and save the demo's settings again. A
+demo that bundles a Custom Configuration of its own has its defaults whatever the game's are,
+and goes up only with its action manifest at the path its snapshot names. For
 the demo and the game alike, a depot the script uploads that is not among the
 app's own is refused, and so is a system the app's depots install on that no launch option runs
 on.

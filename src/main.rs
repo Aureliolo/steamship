@@ -1654,13 +1654,15 @@ fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
 }
 
 /// Refuses, naming every problem, when `check` found any; otherwise shows what was checked, and
-/// answers whether the branch the script sets live can be. With `scripts_only`, the content the
-/// scripts map is left unchecked.
+/// answers whether the branch the script sets live can be. The content is checked against the
+/// settings snapshot beside the script when there is one; with `scripts_only`, it is left
+/// unchecked.
 fn checked(script: &Path, scripts_only: bool) -> Result<(check::Report, Branch), ExitCode> {
     let report = if scripts_only {
         check::scripts_only(script)
     } else {
-        check::check(script)
+        let settings = snapshot_beside(script, scripts::app_named(script))?;
+        check::against(script, settings.as_ref())
     };
     if report.problems.is_empty() {
         let what = if report.content {
@@ -2637,7 +2639,12 @@ fn try_check_folder(folder: &Path, scripts_only: bool) -> Result<ExitCode, ExitC
         }
         None => (None, None),
     };
-    let report = check::folder(folder, app);
+    let mut report = check::folder(folder, app);
+    if let (Some(app), Some(settings)) = (app, &snapshot) {
+        report
+            .problems
+            .extend(check::folder_manifest(folder, app, settings));
+    }
     if !report.problems.is_empty() {
         for problem in &report.problems {
             show::failure("refused", &problem.to_string(), None);
