@@ -204,12 +204,10 @@ pub fn store(text: &str) -> Result<Store, String> {
 
 /// The block numbered `number` of [`STORE`]'s `blocks`.
 fn block(given: &Json, number: usize) -> Result<Part, String> {
-    let field = |name: &str| {
-        given
-            .get(name)
-            .and_then(Json::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| format!("block {number} has no \"{name}\" text"))
+    let field = |name: &str| match given.get(name).and_then(Json::as_str) {
+        Some("") => Err(format!("block {number}'s \"{name}\" is empty")),
+        Some(text) => Ok(text.to_owned()),
+        None => Err(format!("block {number} has no \"{name}\" text")),
     };
     let (part, takes): (Part, &[&str]) = match given.get("kind").and_then(Json::as_str) {
         Some("short") => (Part::Short(field("text")?), &["text"]),
@@ -333,11 +331,10 @@ pub fn workshop(text: &str) -> Result<Workshop, String> {
             "\"{other}\" is no field of the Workshop page, which has a title and a description"
         ));
     }
-    let field = |name: &str| {
-        page.get(name)
-            .and_then(Json::as_str)
-            .map(str::to_owned)
-            .ok_or_else(|| format!("there is no \"{name}\" text"))
+    let field = |name: &str| match page.get(name).and_then(Json::as_str) {
+        Some("") => Err(format!("\"{name}\" is empty")),
+        Some(given) => Ok(given.to_owned()),
+        None => Err(format!("there is no \"{name}\" text")),
     };
     Ok(Workshop {
         title: field("title")?,
@@ -354,20 +351,18 @@ pub fn workshop(text: &str) -> Result<Workshop, String> {
 ///
 /// # Errors
 ///
-/// When it is not such an object, a token does not start with `#`, or a record's token is also
-/// given as a line.
+/// When it is not such an object, a token is not `#` and a word of letters, digits and `_`, a
+/// line is empty, or a record's token is also given as a line.
 pub fn presence(text: &str, records: &[Json]) -> Result<Presence, String> {
     let lines = object(text, "an object of tokens and their English")?;
     let mut tokens = Vec::with_capacity(lines.len());
     let mut made = Vec::new();
     for (name, line) in &lines {
-        if !name.starts_with('#') {
-            return Err(format!("{name} does not start with #"));
-        }
+        token_named(name)?;
         match line {
             Json::String(english) => tokens.push(Token {
                 name: name.clone(),
-                english: english.clone(),
+                english: line_of(name, english)?.to_owned(),
                 context: PRESENCE_CONTEXT.to_owned(),
                 id: braced(english),
             }),
@@ -375,7 +370,7 @@ pub fn presence(text: &str, records: &[Json]) -> Result<Presence, String> {
                 let kind = family
                     .get("records")
                     .and_then(Json::as_str)
-                    .filter(|_| family.len() == 1 && name.ends_with('_'))
+                    .filter(|kind| !kind.is_empty() && family.len() == 1 && name.ends_with('_'))
                     .ok_or_else(|| {
                         format!(
                             "{name} is neither a line nor, ending in _, {{\"records\": a record \
@@ -415,11 +410,16 @@ pub fn presence(text: &str, records: &[Json]) -> Result<Presence, String> {
 ///
 /// # Errors
 ///
-/// When it is not a rich presence file, as `rich-presence` reads one, in English.
+/// When it is not a rich presence file, as `rich-presence` reads one, in English, or a token is
+/// one [`presence`] would refuse.
 pub fn presence_english(text: &str) -> Result<Presence, String> {
     let read = presence::read(text)?;
     if read.language != "english" {
         return Err(format!("is in {}, not english", read.language));
+    }
+    for (name, english) in &read.tokens {
+        token_named(name)?;
+        let _line = line_of(name, english)?;
     }
     Ok(Presence {
         tokens: read
@@ -434,6 +434,33 @@ pub fn presence_english(text: &str) -> Result<Presence, String> {
             .collect(),
         writes_english: false,
     })
+}
+
+/// Refuses a token name Steam could not refer to: Steam reads a reference, `{#Token_%field%}`, up
+/// to the first character that is not a letter, a digit or `_`.
+fn token_named(name: &str) -> Result<(), String> {
+    let Some(word) = name.strip_prefix('#') else {
+        return Err(format!("{name} does not start with #"));
+    };
+    if word.is_empty()
+        || !word
+            .chars()
+            .all(|letter| letter.is_ascii_alphanumeric() || letter == '_')
+    {
+        return Err(format!(
+            "{name} is no token Steam can name: after its #, letters, digits and _ only"
+        ));
+    }
+    Ok(())
+}
+
+/// `english`, the line of the token `name`, refused when it is empty.
+fn line_of<'line>(name: &str, english: &'line str) -> Result<&'line str, String> {
+    if english.is_empty() {
+        Err(format!("{name} has no English: give it its line"))
+    } else {
+        Ok(english)
+    }
 }
 
 /// Each record of `records` typed `kind` with an ID and a name, as its ID and name.
@@ -1306,7 +1333,7 @@ msgstr "Die Erlenhexe"
             ("{\"blocks\": {}}", "\"blocks\" is not a list"),
             ("{\"blocks\": [{}]}", "block 1 has no \"kind\""),
             (
-                "{\"blocks\": [{\"kind\": \"short\", \"text\": \"\"}, {\"kind\": \"quote\"}]}",
+                "{\"blocks\": [{\"kind\": \"short\", \"text\": \"A\"}, {\"kind\": \"quote\"}]}",
                 "block 2 is a \"quote\", which is none of short, heading, paragraph, item, \
                  image and field",
             ),
@@ -1327,7 +1354,7 @@ msgstr "Die Erlenhexe"
                 "block 1's \"alt\" is not a text",
             ),
             (
-                "{\"blocks\": [{\"kind\": \"short\", \"text\": \"\"}, \
+                "{\"blocks\": [{\"kind\": \"short\", \"text\": \"S.\"}, \
                  {\"kind\": \"image\", \"image\": \"a\", \"alt\": \"A.\"}]}",
                 "block 2 gives \"alt\", and \"extras\" does not list the About's images in the \
                  order the store keeps them, by which Steam numbers their alt text",
@@ -1485,6 +1512,22 @@ msgstr "Die Erlenhexe"
                 r##"{"#Bishop_alder": "Alder", "#Bishop_": {"records": "bishop"}}"##,
                 "#Bishop_alder is given a line, and a bishop record makes it too",
             ),
+            (
+                r##"{"#Status Day": "Day"}"##,
+                "#Status Day is no token Steam can name: after its #, letters, digits and _ only",
+            ),
+            (
+                r##"{"#": "Day"}"##,
+                "# is no token Steam can name: after its #, letters, digits and _ only",
+            ),
+            (
+                r##"{"#Status_Day": ""}"##,
+                "#Status_Day has no English: give it its line",
+            ),
+            (
+                r##"{"#Bishop_": {"records": ""}}"##,
+                "#Bishop_ is neither a line nor, ending in _, {\"records\": a record type}",
+            ),
         ] {
             assert_eq!(
                 presence(source, &records()).map(|_| ()),
@@ -1503,6 +1546,59 @@ msgstr "Die Erlenhexe"
                  double quote, which a KeyValues file cannot hold"
                     .to_owned()
             ])
+        );
+    }
+
+    #[test]
+    fn a_hand_kept_english_file_is_held_to_the_same_tokens_and_lines() {
+        let file = |token: &str, line: &str| {
+            format!(
+                "\"lang\"\n{{\n\t\"Language\"\t\"english\"\n\t\"Tokens\"\n\t{{\n\t\t\"{token}\"\t\
+                 \"{line}\"\n\t}}\n}}\n"
+            )
+        };
+        assert_eq!(
+            presence_english(&file("#Status Day", "Day")).map(|_| ()),
+            Err(
+                "#Status Day is no token Steam can name: after its #, letters, digits and _ only"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            presence_english(&file("#Status_Day", "")).map(|_| ()),
+            Err("#Status_Day has no English: give it its line".to_owned())
+        );
+        assert_eq!(
+            presence_english(&file("#Status_Day", "Day")).map(|told| told.tokens.len()),
+            Ok(1)
+        );
+    }
+
+    #[test]
+    fn an_empty_text_on_the_store_or_workshop_page_is_refused() {
+        for (source, why) in [
+            (
+                r#"{"blocks": [{"kind": "paragraph", "text": ""}]}"#,
+                "block 1's \"text\" is empty",
+            ),
+            (
+                r#"{"blocks": [{"kind": "field", "field": "", "text": "A"}]}"#,
+                "block 1's \"field\" is empty",
+            ),
+            (
+                r#"{"blocks": [{"kind": "image", "image": ""}]}"#,
+                "block 1's \"image\" is empty",
+            ),
+        ] {
+            assert_eq!(store(source).map(|_| ()), Err(why.to_owned()), "{source}");
+        }
+        assert_eq!(
+            workshop(r#"{"title": "", "description": "Made."}"#).map(|_| ()),
+            Err("\"title\" is empty".to_owned())
+        );
+        assert_eq!(
+            workshop(r#"{"title": "Mods", "description": ""}"#).map(|_| ()),
+            Err("\"description\" is empty".to_owned())
         );
     }
 
