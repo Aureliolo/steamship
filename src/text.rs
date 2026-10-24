@@ -40,6 +40,29 @@ const ALT_TEXT: &str = "app[assets][extra][";
 const RECOMMENDED: &str = "rec";
 const WORKSHOP_CONTEXT: &str = "steam workshop";
 const PRESENCE_CONTEXT: &str = "rich presence";
+/// Steamworks cuts the store page's short description past this many characters.
+const SHORT_MOST: usize = 300;
+/// Steamworks takes the Workshop page's description up to this many characters.
+const WORKSHOP_DESCRIPTION_MOST: usize = 200;
+
+// What a translator is told of each kind of Steam's text, in the template.
+const STORE_NOTE: &str = "On the game's Steam store page; plain prose, no markup.";
+const FIELD_NOTE: &str = "A line of the game's Steam store page outside its description, such \
+                          as a system requirement; plain text, every product and model name kept \
+                          as written.";
+const DISCLOSURE_NOTE: &str = "The game's statement on its Steam store page of how AI was used \
+                               in making it, shown under About This Game; plain prose, no \
+                               markup, and the same plain claim in every language.";
+const SCREENSHOT_NOTE: &str = "Alt text for a screenshot on the game's Steam store page, read \
+                               aloud by screen readers; plain prose.";
+const IMAGE_NOTE: &str = "Alt text for a picture in the About This Game of the game's Steam \
+                          store page, read aloud by screen readers; plain prose.";
+const WORKSHOP_NOTE: &str = "On the game's Steam Workshop page, beside its picture: the title a \
+                             short headline, the description one or two lines; plain prose, no \
+                             markup.";
+const PRESENCE_NOTE: &str = "What Steam shows the player's friends. Keep every {field}, which \
+                             Steam fills with a value, and every {#Token_{field}} whole, which \
+                             Steam fills with that token's own line.";
 
 /// The English of everything this writes, each part present when its file is.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -439,6 +462,170 @@ fn object(text: &str, what: &str) -> Result<Map<String, Json>, String> {
     }
 }
 
+/// One entry of the translation template: the English under its context, what its translator is
+/// told, and the most characters Steam shows of it, where its room is short.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub context: String,
+    pub english: String,
+    pub note: String,
+    pub most: Option<usize>,
+}
+
+/// Every text of `english` a catalogue translates, once each, ordered by context and English.
+///
+/// A record's name that rich presence shows is left out: the records give it to the template
+/// already, under their own context.
+///
+/// # Errors
+///
+/// Each English text already past Steam's room for it, which Steam would cut before any language.
+pub fn entries(english: &English) -> Result<Vec<Entry>, Vec<String>> {
+    let mut said: Vec<Entry> = Vec::new();
+    let mut add = |context: &str, id: &str, note: &str, most: Option<usize>| {
+        if let Some(given) = said
+            .iter_mut()
+            .find(|entry| entry.context == context && entry.english == id)
+        {
+            given.most = given.most.into_iter().chain(most).min();
+        } else {
+            said.push(Entry {
+                context: context.to_owned(),
+                english: id.to_owned(),
+                note: note.to_owned(),
+                most,
+            });
+        }
+    };
+    if let Some(store) = &english.store {
+        for part in &store.blocks {
+            match part {
+                Part::Short(text) => add(STORE_CONTEXT, text, STORE_NOTE, Some(SHORT_MOST)),
+                Part::Heading(text) | Part::Paragraph(text) | Part::Item(text) => {
+                    add(STORE_CONTEXT, text, STORE_NOTE, None);
+                }
+                Part::Image { alt: Some(alt), .. } => add(STORE_CONTEXT, alt, IMAGE_NOTE, None),
+                Part::Image { alt: None, .. } => {}
+                Part::Field { text, .. } => add(STORE_CONTEXT, text, FIELD_NOTE, None),
+            }
+        }
+        if !store.disclosure.is_empty() {
+            add(STORE_CONTEXT, &store.disclosure, DISCLOSURE_NOTE, None);
+        }
+        for alt in &store.screenshots {
+            add(STORE_CONTEXT, alt, SCREENSHOT_NOTE, None);
+        }
+    }
+    if let Some(page) = &english.workshop {
+        add(WORKSHOP_CONTEXT, &page.title, WORKSHOP_NOTE, None);
+        add(
+            WORKSHOP_CONTEXT,
+            &page.description,
+            WORKSHOP_NOTE,
+            Some(WORKSHOP_DESCRIPTION_MOST),
+        );
+    }
+    if let Some(told) = &english.presence {
+        for token in told
+            .tokens
+            .iter()
+            .filter(|token| token.context == PRESENCE_CONTEXT)
+        {
+            add(PRESENCE_CONTEXT, &token.id, PRESENCE_NOTE, None);
+        }
+    }
+    let past: Vec<String> = said
+        .iter()
+        .filter_map(|entry| {
+            let most = entry.most?;
+            let file = if entry.context == WORKSHOP_CONTEXT {
+                WORKSHOP
+            } else {
+                STORE
+            };
+            past_room(file, "english", &entry.english, most)
+        })
+        .collect();
+    if !past.is_empty() {
+        return Err(past);
+    }
+    said.sort_by(|one, other| (&one.context, &one.english).cmp(&(&other.context, &other.english)));
+    Ok(said)
+}
+
+/// `entries` as a gettext template, each with its note and, where its room is short, the flag
+/// `max-length:N` that translation tools show and hold a translation to.
+#[must_use]
+pub fn template(entries: &[Entry]) -> String {
+    let mut lines = vec![
+        "# The Steam text of a game, for its translation template, by steamship: the store page \
+         under \"store page\","
+            .to_owned(),
+        "# the Workshop page under \"steam workshop\" and rich presence under \"rich presence\"."
+            .to_owned(),
+        "msgid \"\"".to_owned(),
+        "msgstr \"\"".to_owned(),
+        "\"Content-Type: text/plain; charset=UTF-8\\n\"".to_owned(),
+        String::new(),
+    ];
+    for entry in entries {
+        lines.extend(entry.note.lines().map(|line| format!("#. {line}")));
+        if let Some(most) = entry.most {
+            lines.push(format!("#, max-length:{most}"));
+        }
+        lines.push(format!("msgctxt {}", quoted(&entry.context)));
+        lines.push(format!("msgid {}", quoted(&entry.english)));
+        lines.push("msgstr \"\"".to_owned());
+        lines.push(String::new());
+    }
+    lines.join("\n")
+}
+
+/// `text` as a gettext string, escaped as gettext reads it back.
+fn quoted(text: &str) -> String {
+    let escaped = text
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\t', "\\t");
+    format!("\"{escaped}\"")
+}
+
+/// Each short description and Workshop description among `files` past Steam's room for it, which
+/// Steam would cut, naming the catalogue of `translations` it comes from.
+fn past_rooms(files: &[(String, String)], translations: &[Catalogued]) -> Vec<String> {
+    files
+        .iter()
+        .filter_map(|(name, written)| {
+            let (folder, file) = name.split_once('/')?;
+            let language = file.strip_suffix(".json")?;
+            let (field, english, most) = match folder {
+                STORE_FOLDER => ("app[content][short_description]", STORE, SHORT_MOST),
+                WORKSHOP_FOLDER => ("description", WORKSHOP, WORKSHOP_DESCRIPTION_MOST),
+                _ => return None,
+            };
+            let shown: Json = serde_json::from_str(written).ok()?;
+            let from = translations
+                .iter()
+                .find(|catalogued| catalogued.language == language)
+                .map_or(english, |catalogued| &catalogued.file);
+            past_room(from, language, shown.get(field)?.as_str()?, most)
+        })
+        .collect()
+}
+
+/// Why `text`, in `language` as `file` gives it, is past the `most` characters Steam shows of it,
+/// if it is.
+fn past_room(file: &str, language: &str, text: &str, most: usize) -> Option<String> {
+    let count = text.chars().count();
+    (count > most).then(|| {
+        format!(
+            "{file}: {text:?} is {count} characters in {language}, past the {most} Steam shows: \
+             shorten it"
+        )
+    })
+}
+
 /// Every file of the text in English and in each language of `translations`, by its path from
 /// the build scripts' folder, with what it holds; or every translation missing from them.
 ///
@@ -539,6 +726,7 @@ pub fn written(
     sheet(&mut files, DISCLOSURE, &disclosed);
     sheet(&mut files, BASIC_INFO, &recommended);
     sheet(&mut files, SCREENSHOTS, &screenshots);
+    wrong.extend(past_rooms(&files, translations));
     if wrong.is_empty() {
         files.sort();
         Ok(files)
@@ -1354,5 +1542,99 @@ msgstr "Die Erlenhexe"
             "{#Bishop_%bishop%}, {open {} {two words}"
         );
         assert_eq!(steam_fields("ends {"), "ends {");
+    }
+
+    #[test]
+    fn steams_room_holds_exactly_its_count_and_refuses_one_more() {
+        assert_eq!(past_room(STORE, "english", &"a".repeat(300), 300), None);
+        assert_eq!(
+            past_room(STORE, "english", &"\u{e4}".repeat(301), 300),
+            Some(format!(
+                "{STORE}: \"{}\" is 301 characters in english, past the 300 Steam shows: shorten it",
+                "\u{e4}".repeat(301)
+            ))
+        );
+    }
+
+    #[test]
+    fn a_text_said_twice_is_one_entry_held_to_the_room_either_gives_it() {
+        let english = English {
+            store: Some(
+                store(
+                    r#"{"blocks": [{"kind": "paragraph", "text": "A mill."},
+                    {"kind": "short", "text": "A mill."}]}"#,
+                )
+                .unwrap(),
+            ),
+            workshop: None,
+            presence: None,
+        };
+        assert_eq!(
+            entries(&english),
+            Ok(vec![Entry {
+                context: STORE_CONTEXT.to_owned(),
+                english: "A mill.".to_owned(),
+                note: STORE_NOTE.to_owned(),
+                most: Some(SHORT_MOST),
+            }])
+        );
+    }
+
+    #[test]
+    fn a_translated_short_description_past_steams_room_names_its_catalogue() {
+        let english = English {
+            store: Some(
+                store(r#"{"itemid": 1000090, "blocks": [{"kind": "short", "text": "A mill."}]}"#)
+                    .unwrap(),
+            ),
+            workshop: None,
+            presence: None,
+        };
+        let german = Catalogued {
+            file: "de.po".to_owned(),
+            language: "german",
+            catalogue: po::read(&format!(
+                "msgctxt \"store page\"\nmsgid \"A mill.\"\nmsgstr \"{}\"\n",
+                "m".repeat(301)
+            ))
+            .unwrap(),
+        };
+        assert_eq!(
+            written(&english, &[german]),
+            Err(vec![format!(
+                "de.po: \"{}\" is 301 characters in german, past the 300 Steam shows: shorten it",
+                "m".repeat(301)
+            )])
+        );
+    }
+
+    #[test]
+    fn a_translated_description_past_steams_room_names_its_catalogue() {
+        let page = Workshop {
+            title: "Harbours".to_owned(),
+            description: "Made by players.".to_owned(),
+        };
+        let german = Catalogued {
+            file: "de.po".to_owned(),
+            language: "german",
+            catalogue: po::read(&format!(
+                "msgctxt \"steam workshop\"\nmsgid \"Harbours\"\nmsgstr \"H\u{e4}fen\"\n\n\
+                 msgctxt \"steam workshop\"\nmsgid \"Made by players.\"\nmsgstr \"{}\"\n",
+                "b".repeat(201)
+            ))
+            .unwrap(),
+        };
+        let english = English {
+            store: None,
+            workshop: Some(page),
+            presence: None,
+        };
+        assert_eq!(
+            written(&english, &[german]),
+            Err(vec![format!(
+                "de.po: \"{}\" is 201 characters in german, past the 200 Steam shows: shorten it",
+                "b".repeat(201)
+            )])
+        );
     }
 }

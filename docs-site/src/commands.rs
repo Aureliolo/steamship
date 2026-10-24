@@ -21,12 +21,12 @@ pub fn html() -> String {
         "<h1 id=\"commands\">Commands</h1>\n<p class=\"lede\">{}</p>\n",
         inline(LEDE)
     );
-    for command in commands() {
-        let name = command.get_name();
+    for (name, command) in commands() {
+        let id = name.replace(' ', "-");
         let (about, more) = described(&command);
         let _written: fmt::Result = write!(
             page,
-            "<section class=\"tool\" id=\"{name}\">\n<h2 id=\"steamship-{name}\"><code>steamship \
+            "<section class=\"tool\" id=\"{id}\">\n<h2 id=\"steamship-{id}\"><code>steamship \
              {name}</code></h2>\n<p>{}</p>\n",
             inline(&about)
         );
@@ -36,7 +36,7 @@ pub fn html() -> String {
         let _usage: fmt::Result = writeln!(
             page,
             "<figure class=\"code\"><pre><code>{}</code></pre></figure>",
-            escaped(&usage(&command))
+            escaped(&usage(&name, &command))
         );
         let arguments = arguments(&command);
         if !arguments.is_empty() {
@@ -87,14 +87,13 @@ pub fn html() -> String {
 #[must_use]
 pub fn text() -> String {
     let mut page = format!("# Commands\n\n{LEDE}\n");
-    for command in commands() {
-        let name = command.get_name();
+    for (name, command) in commands() {
         let (about, more) = described(&command);
         let _written: fmt::Result = write!(page, "\n## `steamship {name}`\n\n{about}\n\n");
         for paragraph in more {
             let _more: fmt::Result = write!(page, "{paragraph}\n\n");
         }
-        let _usage: fmt::Result = writeln!(page, "```text\n{}\n```", usage(&command));
+        let _usage: fmt::Result = writeln!(page, "```text\n{}\n```", usage(&name, &command));
         for argument in arguments(&command) {
             let _entry: fmt::Result = write!(
                 page,
@@ -123,12 +122,29 @@ pub fn text() -> String {
     page
 }
 
-/// Every command, in the order `--help` lists them, without clap's own `help`.
-fn commands() -> Vec<Command> {
+/// Every command, in the order `--help` lists them, without clap's own `help`. A command that
+/// only groups others, as `self` does, stands for each of them, named as it is typed:
+/// `self check`.
+fn commands() -> Vec<(String, Command)> {
+    let typed = |command: &Command| command.get_name() != "help";
     Cli::command()
         .get_subcommands()
-        .filter(|command| command.get_name() != "help")
-        .cloned()
+        .filter(|command| typed(command))
+        .flat_map(|command| {
+            let grouped: Vec<(String, Command)> = command
+                .get_subcommands()
+                .filter(|inner| typed(inner))
+                .map(|inner| {
+                    let name = format!("{} {}", command.get_name(), inner.get_name());
+                    (name, inner.clone())
+                })
+                .collect();
+            if grouped.is_empty() {
+                vec![(command.get_name().to_owned(), command.clone())]
+            } else {
+                grouped
+            }
+        })
         .collect()
 }
 
@@ -152,11 +168,11 @@ fn described(command: &Command) -> (String, Vec<String>) {
     (format!("{about}."), more)
 }
 
-/// How the command is typed, as its help's usage line puts it.
-fn usage(command: &Command) -> String {
+/// How the command `name` is typed, as its help's usage line puts it.
+fn usage(name: &str, command: &Command) -> String {
     let rendered = command
         .clone()
-        .bin_name(format!("steamship {}", command.get_name()))
+        .bin_name(format!("steamship {name}"))
         .render_usage()
         .to_string();
     rendered
@@ -243,14 +259,22 @@ mod tests {
     #[test]
     fn every_command_is_on_the_page_with_its_usage_and_options() {
         let page = html();
-        for command in commands() {
-            let name = command.get_name();
+        for (name, _) in commands() {
+            let id = name.replace(' ', "-");
             assert!(
-                page.contains(&format!("<section class=\"tool\" id=\"{name}\">")),
+                page.contains(&format!("<section class=\"tool\" id=\"{id}\">")),
                 "{name}"
             );
         }
         assert!(!page.contains("id=\"help\""), "clap's own help is left out");
+        assert!(
+            page.contains("<h2 id=\"steamship-self-check\"><code>steamship self check</code></h2>"),
+            "a command a group holds is named as it is typed: {page}"
+        );
+        assert!(
+            !page.contains("id=\"self\""),
+            "the group alone has no section"
+        );
         assert!(
             page.contains("<pre><code>steamship upload [OPTIONS] [SCRIPT]</code></pre>"),
             "{page}"
@@ -318,10 +342,11 @@ mod tests {
 
     #[test]
     fn the_longer_help_adds_only_what_the_one_line_does_not_say() {
-        let login = commands()
-            .into_iter()
-            .find(|command| command.get_name() == "login");
-        let (about, more) = login.as_ref().map(described).unwrap_or_default();
+        let login = commands().into_iter().find(|(name, _)| name == "login");
+        let (about, more) = login
+            .as_ref()
+            .map(|(_, command)| described(command))
+            .unwrap_or_default();
         assert_eq!(about, "Log in to Steam, once, for uploads.");
         assert_eq!(more.len(), 1, "{more:?}");
         assert!(

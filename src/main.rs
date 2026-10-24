@@ -27,9 +27,9 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    achievements, assets, check, ci, conversation, download, drm, dump, editor, init, keychain,
-    leaderboards, likeness, magic, picture, po, presence, presets, redist, release, run, scripts,
-    settings, steamcmd, storefront, text, upload, vdf, webapi, workshop,
+    achievements, assets, check, ci, conversation, digest, download, drm, dump, editor, init,
+    itself, keychain, leaderboards, likeness, magic, picture, po, presence, presets, redist,
+    release, run, scripts, settings, steamcmd, storefront, text, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -46,7 +46,10 @@ fn main() -> ExitCode {
         Err(error) => error.exit(),
     };
     // Completion is text for a shell to load, often at every start, so it asks nothing online.
-    let update = if matches!(command, Command::Completions { .. }) {
+    let update = if matches!(
+        command,
+        Command::Completions { .. } | Command::Languages { .. }
+    ) {
         None
     } else {
         update_check()
@@ -139,8 +142,9 @@ fn run(command: Command) -> ExitCode {
             files,
             preview,
         } => either(rich_presence_in(app, demo, files, preview)),
-        Command::Text { steam: true, .. } => either(try_text_on_steam()),
-        Command::Text { unchanged, .. } => either(try_text(unchanged)),
+        Command::Text(request) => either(text_in(request)),
+        Command::Languages { json } => run_languages(json),
+        Command::Itself(cli::Itself::Check) => either(try_self_check()),
         Command::Promote(request) => either(promote_in(request)),
         Command::Branch {
             app,
@@ -3895,6 +3899,118 @@ fn try_text(unchanged: bool) -> Result<ExitCode, ExitCode> {
     };
     show::success(&holds, "");
     text_next(&files);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `text`, or `--template` or `--steam` of it, in a game.
+fn text_in(request: cli::Text) -> Result<ExitCode, ExitCode> {
+    if request.steam {
+        try_text_on_steam()
+    } else if request.template {
+        try_text_template()
+    } else {
+        try_text(request.unchanged)
+    }
+}
+
+/// `text --template` in a game: every English text Steam shows, as a gettext template on standard
+/// output, for the game's own template to take in.
+fn try_text_template() -> Result<ExitCode, ExitCode> {
+    show::divert();
+    show::title("text, template");
+    let game = game()?;
+    let folder = game.scripts().to_path_buf();
+    let english = text_english(&game, &folder)?;
+    let entries = text::entries(&english).map_err(|wrong| refusals(&wrong))?;
+    show::plain(&text::template(&entries));
+    show::success(
+        &format!(
+            "the template holds {} of Steam's text",
+            show::counted(entries.len(), "message")
+        ),
+        "",
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `languages`: every locale a catalogue may be named by, with Steam's name for its language.
+fn run_languages(json: bool) -> ExitCode {
+    let languages = po::languages();
+    if json {
+        let table: serde_json::Map<String, serde_json::Value> = languages
+            .iter()
+            .map(|(locale, language)| ((*locale).to_owned(), (*language).into()))
+            .collect();
+        show::plain(&format!("{}\n", serde_json::Value::Object(table)));
+    } else {
+        show::title("languages");
+        let rows: Vec<(String, String)> = languages
+            .iter()
+            .map(|(locale, language)| ((*locale).to_owned(), (*language).to_owned()))
+            .collect();
+        show::fields(&rows);
+    }
+    ExitCode::SUCCESS
+}
+
+/// `self check`: this binary's SHA-256 against the one its release's SBOM lists for this system.
+fn try_self_check() -> Result<ExitCode, ExitCode> {
+    show::title("self check");
+    let version = env!("CARGO_PKG_VERSION");
+    let Some(target) = itself::target() else {
+        return Err(fail(
+            &format!(
+                "steamship {version} was built for a system no release builds for, so there is no \
+                 release binary to compare it with"
+            ),
+            REFUSED,
+        ));
+    };
+    let path = env::current_exe()
+        .map_err(|error| fail(&format!("where this steamship is: {error}"), FAILED))?;
+    show::field("binary", &path.display().to_string());
+    let mut file = fs::File::open(&path)
+        .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
+    let own = digest::sha256(&mut file)
+        .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
+    let url = itself::sbom(version, |name| env::var(name).ok());
+    let spinner = Spinner::start("release", &format!("reading {url}"), false);
+    let sbom = match download::text(&url) {
+        Ok(sbom) => sbom,
+        Err(error) => {
+            spinner.failed(&error.to_string());
+            return Err(ExitCode::from(FAILED));
+        }
+    };
+    let listed = match itself::listed(&sbom, version, target) {
+        Ok(listed) => listed,
+        Err(why) => {
+            spinner.failed("unreadable");
+            return Err(fail(&format!("{url} {why}"), FAILED));
+        }
+    };
+    if listed != own {
+        spinner.failed("differs");
+        show::field("this binary", &digest::hex(&own));
+        show::field("release's", &digest::hex(&listed));
+        return Err(fail(
+            &format!(
+                "{} is not the {target} binary of steamship {version}'s release: install the \
+                 release again, from {}",
+                path.display(),
+                update::LATEST
+            ),
+            REFUSED,
+        ));
+    }
+    spinner.done(&format!("the {target} binary of v{version}"));
+    show::success(
+        &format!(
+            "{} is steamship {version}'s release binary for {target}, byte for byte",
+            path.display()
+        ),
+        &digest::hex(&own),
+    );
     Ok(ExitCode::SUCCESS)
 }
 

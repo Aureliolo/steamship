@@ -77,6 +77,12 @@ const LANGUAGES: [(&str, &str); 34] = [
     ("zh-Hant", "tchinese"),
 ];
 
+/// Each locale a catalogue may be named by, with Steam's name for its language.
+#[must_use]
+pub const fn languages() -> &'static [(&'static str, &'static str)] {
+    &LANGUAGES
+}
+
 /// Steam's name for the language of `locale`, such as `german` for `de` and `brazilian` for
 /// `pt_BR`, or none when Steam has no such language.
 #[must_use]

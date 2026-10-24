@@ -126,6 +126,11 @@ GitHub-hosted runner, which a checksum cannot: a checksum made beside a tampered
 with it perfectly. Every release also carries an SPDX SBOM of its five binaries, attested against
 each archive in the same file.
 
+Once installed, `steamship self check` compares its own binary with the SHA-256 that SBOM lists
+for your system, fetched from the release, and exits 2 if they differ, as a check before an
+upload can. A release cannot be changed once published, so a binary that differs was built
+elsewhere or altered since. A build from source differs from every release's.
+
 ## Tab completion
 
 Homebrew installs tab completion for bash, zsh and fish, and `man steamship`. Anywhere else,

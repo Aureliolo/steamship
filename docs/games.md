@@ -285,6 +285,19 @@ Each catalogue translates the English under the context `store page`, `steam wor
 presence`, with the English line as the `msgid`; a rich presence line's fields are written
 `{field}` there, not Steam's `%field%`. A record's name is translated as games-kit's are, under
 `bishop.name` and the record's ID. Anything a catalogue does not translate, or marks fuzzy, is
-refused and nothing is written. A file that would no longer be written is removed, but only of a
-kind whose English the game gives: without `store_english.json`, for instance, the store's files
-and `ai_disclosure.json` are left to whatever else writes them.
+refused and nothing is written, and so is a short description past the 300 characters the store
+page shows or a Workshop description past the 200 it takes, in English or any language. A file
+that would no longer be written is removed, but only of a kind whose English the game gives:
+without `store_english.json`, for instance, the store's files and `ai_disclosure.json` are left
+to whatever else writes them.
+
+`steamship text --template` writes nothing and prints those English lines as a gettext template,
+for the game's own template to take in: each under its context, with a note for its translator,
+and `#, max-length:300` or `#, max-length:200` where Steam's room is short, which translation
+tools show. It checks the English as `text` does first, so a short description already past 300
+characters is refused there. A record's name that rich presence shows is left out, since the
+records give it to the template already.
+
+`steamship languages` lists each locale a catalogue may be named by, with Steam's name for its
+language, and `--json` prints the same as one object, `{"pt-BR": "brazilian", ...}`, for a tool
+that keeps its own copy to check it against.
