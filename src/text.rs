@@ -1581,6 +1581,34 @@ msgstr "Die Erlenhexe"
     }
 
     #[test]
+    fn a_translated_short_description_past_steams_room_names_its_catalogue() {
+        let english = English {
+            store: Some(
+                store(r#"{"itemid": 1000090, "blocks": [{"kind": "short", "text": "A mill."}]}"#)
+                    .unwrap(),
+            ),
+            workshop: None,
+            presence: None,
+        };
+        let german = Catalogued {
+            file: "de.po".to_owned(),
+            language: "german",
+            catalogue: po::read(&format!(
+                "msgctxt \"store page\"\nmsgid \"A mill.\"\nmsgstr \"{}\"\n",
+                "m".repeat(301)
+            ))
+            .unwrap(),
+        };
+        assert_eq!(
+            written(&english, &[german]),
+            Err(vec![format!(
+                "de.po: \"{}\" is 301 characters in german, past the 300 Steam shows: shorten it",
+                "m".repeat(301)
+            )])
+        );
+    }
+
+    #[test]
     fn a_translated_description_past_steams_room_names_its_catalogue() {
         let page = Workshop {
             title: "Harbours".to_owned(),

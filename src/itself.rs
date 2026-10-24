@@ -86,6 +86,8 @@ pub fn listed(text: &str, version: &str, target: &str) -> Result<[u8; 32], Strin
 
 #[cfg(test)]
 mod tests {
+    use std::env::consts;
+
     use super::*;
 
     const SBOM: &str = r#"{"spdxVersion": "SPDX-2.3", "files": [
@@ -175,7 +177,13 @@ mod tests {
     }
 
     #[test]
-    fn this_system_is_one_a_release_builds_for() {
-        assert!(target().is_some());
+    fn this_system_is_named_as_its_releases_archive_is() {
+        let named = target().unwrap();
+        let system = match consts::OS {
+            "windows" => "-pc-windows-msvc",
+            "macos" => "-apple-darwin",
+            _ => "-linux-musl",
+        };
+        assert_eq!(named, format!("{}{system}", consts::ARCH));
     }
 }
