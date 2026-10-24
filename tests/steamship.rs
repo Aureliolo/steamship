@@ -4246,6 +4246,50 @@ fn check_judges_a_build_s_folder_in_a_game_by_the_redistributables_its_snapshot_
 }
 
 #[test]
+fn check_of_a_build_s_folder_in_a_game_reads_its_rich_presence_offline() {
+    let home = tempfile::tempdir().unwrap();
+    let (_project, script) = shipping_dll(
+        &["kernel32.dll", "vcruntime140.dll"],
+        Some(&settings_ticking(&["228989"])),
+    );
+    let steam = script.parent().unwrap();
+    let root = steam.parent().unwrap();
+    let content = root.join("content");
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let check = ["check", content.to_str().unwrap()];
+    drop(presence_file(
+        steam,
+        "english",
+        "\t\t\"#menu\"\t\"At the menu\"\n",
+    ));
+    // The file's tail alone, as macOS gives the child its temporary folder through /private.
+    let english = Path::new("steam").join("rich_presence_english.vdf");
+
+    let (passed, said, stderr) = steamship_in(root, &check, Some(home.path()), &quiet);
+    assert_eq!(passed, Some(0_i32), "{said}{stderr}");
+    assert!(
+        said.contains("  presence  \u{2713} 1 rich presence file, checked\n"),
+        "{said}"
+    );
+
+    drop(presence_file(
+        steam,
+        "english",
+        "\t\t\"#menu\"\t\"Charter {0}\"\n",
+    ));
+    let (refused, _, why) = steamship_in(root, &check, Some(home.path()), &quiet);
+    assert_eq!(refused, Some(2_i32), "{why}");
+    assert!(
+        why.contains(&format!(
+            "{}: #menu: \"{{0}}\" is a slot Steam cannot fill: Steam fills %field% and \
+             {{#Token_%field%}} alone",
+            english.display()
+        )),
+        "{why}"
+    );
+}
+
+#[test]
 fn upload_refuses_a_dll_nothing_installs_before_it_logs_in() {
     let home = tempfile::tempdir().unwrap();
     let (_project, script) = shipping_dll(&["kernel32.dll", "fmod.dll"], None);
