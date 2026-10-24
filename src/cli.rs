@@ -358,20 +358,10 @@ pub enum Command {
     ///
     /// A catalogue translates the English under the context `store page`, `steam workshop` or
     /// `rich presence`; anything it does not translate, or marks fuzzy, is refused and nothing is
-    /// written. A file of these kinds that would no longer be written is removed.
-    Text {
-        /// Write nothing, and exit 2 naming each file that differs from what would be written, is
-        /// missing, or is left over.
-        #[arg(long, conflicts_with = "steam")]
-        unchanged: bool,
-        /// Write nothing, and exit 2 naming each system requirement, minimum or recommended, that
-        /// the game's public store page does not show in a language as `store_english.json` and
-        /// its translations give it. Steam shows them only once the page is public, Coming Soon
-        /// included; memory, storage, the DirectX version and VR support it rewords, so they are
-        /// not compared.
-        #[arg(long)]
-        steam: bool,
-    },
+    /// written, and so is a short description past the 300 characters the store page shows or a
+    /// Workshop description past the 200 it takes. A file of these kinds that would no longer be
+    /// written is removed.
+    Text(Text),
     /// Set an uploaded build live on a branch.
     ///
     /// Sets a build live on a branch without uploading it again, through Steam's partner Web
@@ -442,6 +432,19 @@ pub enum Command {
     ///
     /// `login` and `upload` do this themselves; this does it ahead of time, as in CI.
     Install,
+    /// List the languages Steam supports, by the locales gettext names them.
+    ///
+    /// Each locale steamship reads a catalogue of, with Steam's name for its language, the API
+    /// language code its files are named by, such as `pt-BR` and `brazilian`. A locale is matched
+    /// regardless of case, with `_` read as `-`.
+    Languages {
+        /// Print the list as one JSON object of each locale and Steam's name for its language.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check steamship itself.
+    #[command(name = "self", subcommand)]
+    Itself(Itself),
     #[command(
         about = "Print tab completion for bash, zsh, fish, PowerShell or elvish",
         long_about = concat!(
@@ -458,6 +461,41 @@ pub enum Command {
         /// The shell to complete in.
         shell: clap_complete::Shell,
     },
+}
+
+/// What `text` writes, checks or prints.
+#[derive(Debug, Clone, Copy, Args)]
+pub struct Text {
+    /// Write nothing, and exit 2 naming each file that differs from what would be written, is
+    /// missing, or is left over.
+    #[arg(long, conflicts_with = "steam")]
+    pub unchanged: bool,
+    /// Write nothing beside the scripts, and print every English text Steam shows as a gettext
+    /// template under the contexts the catalogues translate it by, each with a note for its
+    /// translator, and `max-length:N` where Steam's room for it is short, for a game's own
+    /// template to take in. A record's name rich presence shows is left to the records.
+    #[arg(long, conflicts_with_all = ["unchanged", "steam"])]
+    pub template: bool,
+    /// Write nothing, and exit 2 naming each system requirement, minimum or recommended, that
+    /// the game's public store page does not show in a language as `store_english.json` and
+    /// its translations give it. Steam shows them only once the page is public, Coming Soon
+    /// included; memory, storage, the DirectX version and VR support it rewords, so they are
+    /// not compared.
+    #[arg(long)]
+    pub steam: bool,
+}
+
+/// What `self` does to steamship itself.
+#[derive(Debug, Clone, Copy, Subcommand)]
+pub enum Itself {
+    /// Check that this steamship is its release's own binary, byte for byte.
+    ///
+    /// Reads the SPDX SBOM published with this version's GitHub release, which lists the SHA-256
+    /// of each system's binary, and compares this binary's with the one built for this system. A
+    /// release cannot be changed once published, so a binary that differs was built elsewhere or
+    /// altered since: install the release again. A build from source, such as `cargo install`,
+    /// differs from every release's.
+    Check,
 }
 
 /// What `achievements` writes for Steamworks' achievement editor, from what, and where.

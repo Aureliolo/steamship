@@ -30,6 +30,7 @@ use std::time::{Duration, Instant, SystemTime};
 #[cfg(unix)]
 use steamship::account::Account;
 use steamship::install;
+use steamship::itself;
 use steamship::keychain;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
@@ -9529,4 +9530,227 @@ fn a_games_first_upload_to_an_app_with_no_branch_yet_succeeds_and_says_how_to_de
             .any(|request| request.contains("UpdateAppBranchDescription")),
         "a branch Steam does not have yet is not described: {asked:?}"
     );
+}
+
+/// The template `text --template` prints for [`TEMPLATED_STORE`], [`TEMPLATED_WORKSHOP`] and
+/// [`TEMPLATED_PRESENCE`]: every entry once, by context and English.
+const TEMPLATE: &str = concat!(
+    "# The Steam text of a game, for its translation template, by steamship: the store page ",
+    "under \"store page\",\n",
+    "# the Workshop page under \"steam workshop\" and rich presence under \"rich presence\".\n",
+    "msgid \"\"\nmsgstr \"\"\n\"Content-Type: text/plain; charset=UTF-8\\n\"\n\n",
+    "#. What Steam shows the player's friends. Keep every {field}, which Steam fills with a ",
+    "value, and every {#Token_{field}} whole, which Steam fills with that token's own line.\n",
+    "msgctxt \"rich presence\"\nmsgid \"At the menu\"\nmsgstr \"\"\n\n",
+    "#. What Steam shows the player's friends. Keep every {field}, which Steam fills with a ",
+    "value, and every {#Token_{field}} whole, which Steam fills with that token's own line.\n",
+    "msgctxt \"rich presence\"\nmsgid \"Grinding at {mill}\"\nmsgstr \"\"\n\n",
+    "#. On the game's Steam Workshop page, beside its picture: the title a short headline, the ",
+    "description one or two lines; plain prose, no markup.\n",
+    "msgctxt \"steam workshop\"\nmsgid \"Harbours\"\nmsgstr \"\"\n\n",
+    "#. On the game's Steam Workshop page, beside its picture: the title a short headline, the ",
+    "description one or two lines; plain prose, no markup.\n",
+    "#, max-length:200\n",
+    "msgctxt \"steam workshop\"\nmsgid \"Made by players.\"\nmsgstr \"\"\n\n",
+    "#. On the game's Steam store page; plain prose, no markup.\n",
+    "#, max-length:300\n",
+    "msgctxt \"store page\"\nmsgid \"A mill on a tidal river.\"\nmsgstr \"\"\n\n",
+    "#. A line of the game's Steam store page outside its description, such as a system ",
+    "requirement; plain text, every product and model name kept as written.\n",
+    "msgctxt \"store page\"\nmsgid \"All rights reserved.\"\nmsgstr \"\"\n\n",
+    "#. On the game's Steam store page; plain prose, no markup.\n",
+    "msgctxt \"store page\"\nmsgid \"Grind \\\"grain\\\" at high water.\"\nmsgstr \"\"\n\n",
+    "#. The game's statement on its Steam store page of how AI was used in making it, shown ",
+    "under About This Game; plain prose, no markup, and the same plain claim in every ",
+    "language.\n",
+    "msgctxt \"store page\"\nmsgid \"Made with AI assistance for coding.\"\nmsgstr \"\"\n\n",
+    "#. Alt text for a screenshot on the game's Steam store page, read aloud by screen readers; ",
+    "plain prose.\n",
+    "msgctxt \"store page\"\nmsgid \"The harbour at dawn.\"\nmsgstr \"\"\n\n",
+    "#. Alt text for a picture in the About This Game of the game's Steam store page, read aloud ",
+    "by screen readers; plain prose.\n",
+    "msgctxt \"store page\"\nmsgid \"The wheel turning.\"\nmsgstr \"\"\n",
+);
+
+const TEMPLATED_STORE: &str = r#"{
+  "itemid": 1000090,
+  "disclosure": "Made with AI assistance for coding.",
+  "screenshots": ["The harbour at dawn."],
+  "extras": ["about_mill"],
+  "blocks": [
+    {"kind": "short", "text": "A mill on a tidal river."},
+    {"kind": "paragraph", "text": "Grind \"grain\" at high water."},
+    {"kind": "image", "image": "about_mill", "alt": "The wheel turning."},
+    {"kind": "field", "field": "app[content][legal]", "text": "All rights reserved."},
+    {"kind": "image", "image": "about_mill"},
+    {"kind": "paragraph", "text": "A mill on a tidal river."}
+  ]
+}"#;
+const TEMPLATED_WORKSHOP: &str = r#"{"title": "Harbours", "description": "Made by players."}"#;
+const TEMPLATED_PRESENCE: &str = r##"{"#menu": "At the menu", "#grinding": "Grinding at %mill%",
+    "#Mill_": {"records": "achievement"}}"##;
+
+#[test]
+fn a_games_steam_text_is_printed_as_a_template_its_own_takes_in() {
+    let (_temp, root) = pushed_game(None);
+    let steam = root.join("steam");
+    fs::write(steam.join("store_english.json"), TEMPLATED_STORE).unwrap();
+    fs::write(steam.join("workshop_english.json"), TEMPLATED_WORKSHOP).unwrap();
+    fs::write(steam.join("presence_english.json"), TEMPLATED_PRESENCE).unwrap();
+
+    let (code, template, told) = in_game(&root, &["text", "--template"]);
+    assert_eq!(code, Some(0_i32), "{told}");
+    assert_eq!(template, TEMPLATE, "{told}");
+    assert!(
+        told.contains("the template holds 10 messages of Steam's text"),
+        "{told}"
+    );
+    assert!(
+        !steam.join("workshop").exists(),
+        "nothing is written beside the scripts"
+    );
+}
+
+#[test]
+fn a_short_description_steam_would_cut_is_refused_before_any_template() {
+    let (_temp, root) = pushed_game(None);
+    let long = "A mill. ".repeat(40);
+    fs::write(
+        root.join("steam/store_english.json"),
+        format!(r#"{{"blocks": [{{"kind": "short", "text": "{long}"}}]}}"#),
+    )
+    .unwrap();
+
+    let (code, template, told) = in_game(&root, &["text", "--template"]);
+    assert_eq!(code, Some(2_i32), "{told}");
+    assert_eq!(template, "");
+    assert!(
+        told.contains(&format!(
+            "store_english.json: {long:?} is 320 characters in english, past the 300 Steam shows: \
+             shorten it"
+        )),
+        "{told}"
+    );
+}
+
+#[test]
+fn a_translation_past_steams_room_is_refused_and_nothing_is_written() {
+    let (_temp, root) = pushed_game(None);
+    fs::write(root.join("steam/workshop_english.json"), TEMPLATED_WORKSHOP).unwrap();
+    let long = "Von Spielern gemacht. ".repeat(10);
+    let locale = root.join("game/locale/de.po");
+    let mut german = fs::read_to_string(&locale).unwrap();
+    german.push_str(
+        "\nmsgctxt \"rich presence\"\nmsgid \"At the menu\"\nmsgstr \"Im Men\u{fc}\"\n\n\
+         msgctxt \"steam workshop\"\nmsgid \"Harbours\"\nmsgstr \"H\u{e4}fen\"\n\n\
+         msgctxt \"steam workshop\"\nmsgid \"Made by players.\"\n",
+    );
+    german.push_str(&["msgstr \"", &long, "\"\n"].concat());
+    fs::write(&locale, german).unwrap();
+
+    let (code, _, told) = in_game(&root, &["text"]);
+    assert_eq!(code, Some(2_i32), "{told}");
+    assert!(
+        told.contains(&format!(
+            "de.po: {long:?} is 220 characters in german, past the 200 Steam shows: shorten it"
+        )),
+        "{told}"
+    );
+    assert!(!root.join("steam/workshop").exists(), "nothing is written");
+}
+
+#[test]
+fn every_locale_is_listed_with_steams_name_for_its_language() {
+    let (as_json, listed, told) = steamship(&["languages", "--json"], None, &[]);
+    assert_eq!(as_json, Some(0_i32), "{told}");
+    let table: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&listed).unwrap();
+    assert_eq!(table.len(), 34);
+    for (locale, language) in [
+        ("pt-BR", "brazilian"),
+        ("zh-Hans", "schinese"),
+        ("es-419", "latam"),
+        ("ko", "koreana"),
+    ] {
+        assert_eq!(
+            table.get(locale).and_then(|named| named.as_str()),
+            Some(language)
+        );
+    }
+
+    let (code, shown, why) = steamship(&["languages"], None, &[]);
+    assert_eq!(code, Some(0_i32), "{why}");
+    assert!(shown.contains("  pt-BR     brazilian\n"), "{shown}");
+}
+
+/// The SBOM a release of this version would publish, giving this system's binary `sha256`.
+fn sbom_listing(sha256: &str) -> String {
+    let version = env!("CARGO_PKG_VERSION");
+    let target = itself::target().unwrap();
+    format!(
+        r#"{{"spdxVersion": "SPDX-2.3", "files": [{{"fileName": "steamship-{version}-{target}/steamship{}", "checksums": [{{"algorithm": "SHA256", "checksumValue": "{sha256}"}}]}}]}}"#,
+        if cfg!(windows) { ".exe" } else { "" }
+    )
+}
+
+/// `self check`, reading releases from `host`.
+fn self_check(host: &str) -> (Option<i32>, String, String) {
+    let home = tempfile::tempdir().unwrap();
+    steamship(
+        &["self", "check"],
+        Some(home.path()),
+        &[(itself::STAND_IN, host), ("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    )
+}
+
+#[test]
+fn a_binary_its_release_lists_passes_its_self_check() {
+    use steamship::digest;
+    let own = digest::hex(
+        &digest::sha256(&mut File::open(env!("CARGO_BIN_EXE_steamship")).unwrap()).unwrap(),
+    );
+    let (host, requests) = web_api(vec![("200 OK", sbom_listing(&own))]);
+
+    let (code, said, told) = self_check(&host);
+    assert_eq!(code, Some(0_i32), "{said}{told}");
+    let version = env!("CARGO_PKG_VERSION");
+    assert!(
+        said.contains(&format!("is steamship {version}'s release binary for ")),
+        "{said}"
+    );
+    assert!(said.contains(&own), "{said}");
+    assert!(
+        requests
+            .recv()
+            .unwrap()
+            .starts_with(&format!("GET /v{version}/steamship-{version}.spdx.json ")),
+        "the SBOM of this version's release is read"
+    );
+}
+
+#[test]
+fn a_binary_that_differs_from_its_release_is_refused() {
+    let (host, _requests) = web_api(vec![("200 OK", sbom_listing(&"0".repeat(64)))]);
+
+    let (code, said, told) = self_check(&host);
+    assert_eq!(code, Some(2_i32), "{said}{told}");
+    assert!(
+        told.contains(&format!(
+            "binary of steamship {}'s release: install the release again, from \
+             https://github.com/Aureliolo/steamship/releases/latest",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{told}"
+    );
+    assert!(said.contains(&"0".repeat(64)), "{said}");
+}
+
+#[test]
+fn a_release_without_an_sbom_fails_the_self_check_saying_so() {
+    let (missing, said, told) = self_check(&web_api(vec![("404 Not Found", "{}")]).0);
+    assert_eq!(missing, Some(1_i32), "{said}{told}");
+    assert!(said.contains("404"), "{said}{told}");
+
+    let (unreadable, read, refusal) = self_check(&web_api(vec![("200 OK", "{}")]).0);
+    assert_eq!(unreadable, Some(1_i32), "{read}{refusal}");
+    assert!(refusal.contains(".spdx.json lists no files"), "{refusal}");
 }

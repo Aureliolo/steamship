@@ -17,6 +17,7 @@ pub mod editor;
 pub mod elf;
 pub mod init;
 pub mod install;
+pub mod itself;
 pub mod keychain;
 pub mod leaderboards;
 pub mod likeness;
