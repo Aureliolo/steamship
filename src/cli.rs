@@ -116,7 +116,8 @@ pub enum Command {
     /// start or when first called, that neither Windows nor the folder has. In a game's folder,
     /// one a Common Redistributable installs is refused unless the settings snapshot ticks it, and
     /// so is a build without the Steam Input action manifest the snapshot names. The snapshot is
-    /// the demo's with `--demo`, or for a folder that only the demo's depots ship.
+    /// the demo's with `--demo`, or for a folder that only the demo's depots ship. The game's
+    /// rich presence files are read too, as `rich-presence --preview` reads them, all offline.
     Check {
         /// The app build script, such as `steam/app_build.vdf`, or a build's folder, such as
         /// `export/windows`; in a game's folder, its own script.

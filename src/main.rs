@@ -2615,7 +2615,7 @@ fn run_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> ExitCode {
 /// Checks the build in `folder` on its own, as soon as it is built. In a game's folder its
 /// Windows files are judged against the redistributables its settings snapshot ticks: the demo's
 /// with `demo`, or when only the demo's depots ship the folder, as a demo can tick fewer than the
-/// full game.
+/// full game; and its rich presence files are read as `rich-presence` sends them.
 fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<ExitCode, ExitCode> {
     if scripts_only {
         return Err(fail(
@@ -2630,7 +2630,7 @@ fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<Exi
     let here = env::current_dir()
         .map_err(|error| fail(&format!("the current folder: {error}"), FAILED))?;
     let mut report = check::folder(folder, None);
-    let (app, snapshot) = match Project::find(&here).map_err(|why| fail(&why, REFUSED))? {
+    let (app, snapshot, presence) = match Project::find(&here).map_err(|why| fail(&why, REFUSED))? {
         Some(game) => {
             game.pinned(env!("CARGO_PKG_VERSION"))
                 .map_err(|why| fail(&why, REFUSED))?;
@@ -2639,6 +2639,9 @@ fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<Exi
             } else {
                 game
             };
+            // A push gate checks a build offline, so the rich presence the build will show is
+            // read here too rather than left to the check that asks Steam.
+            let presence = game.presence().map_err(|why| fail(&why, REFUSED))?;
             // The build is checked before the app exists too, so an app script naming none is
             // left to the commands that upload.
             if let Some(app) = scripts::app_named(&game.script) {
@@ -2648,13 +2651,13 @@ fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<Exi
                 } else {
                     None
                 };
-                (Some(app), snapshot)
+                (Some(app), snapshot, presence)
             } else {
                 show::field(
                     "app",
                     &format!("not named yet in {}", game.script.display()),
                 );
-                (None, None)
+                (None, None, presence)
             }
         }
         None if demo => {
@@ -2667,7 +2670,7 @@ fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<Exi
                 REFUSED,
             ));
         }
-        None => (None, None),
+        None => (None, None, Vec::new()),
     };
     report.app_id = app;
     if let (Some(app), Some(settings)) = (app, &snapshot) {
@@ -2675,9 +2678,13 @@ fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<Exi
             .problems
             .extend(check::folder_manifest(folder, app, settings));
     }
-    if !report.problems.is_empty() {
+    let presence_refused = presence_read(&presence).err();
+    if !report.problems.is_empty() || presence_refused.is_some() {
         for problem in &report.problems {
             show::failure("refused", &problem.to_string(), None);
+        }
+        if let Some(why) = &presence_refused {
+            show::failure("refused", why, None);
         }
         return Err(ExitCode::from(REFUSED));
     }
@@ -2692,6 +2699,15 @@ fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<Exi
                 "{}{symbols}, {} for Windows, checked",
                 show::counted(build.files.len(), "file"),
                 build.windows.len()
+            ),
+        );
+    }
+    if !presence.is_empty() {
+        show::done(
+            "presence",
+            &format!(
+                "{}, checked",
+                show::counted(presence.len(), "rich presence file")
             ),
         );
     }
@@ -4431,9 +4447,25 @@ fn import_notes(listed: &achievements::Listed) {
 /// The rich presence files, each read and checked, refused before Steam is asked anything when
 /// one is wrong or two are for the same language.
 fn presence_files(files: &[PathBuf]) -> Result<Vec<presence::Language>, ExitCode> {
+    let languages = presence_read(files).map_err(|why| fail(&why, REFUSED))?;
+    for (path, language) in files.iter().zip(&languages) {
+        show::field(
+            &language.language,
+            &format!(
+                "{}, from {}",
+                show::counted(language.tokens.len(), "token"),
+                path.display()
+            ),
+        );
+    }
+    Ok(languages)
+}
+
+/// Each rich presence file in `files`, read as `rich-presence` sends it, in their order.
+fn presence_read(files: &[PathBuf]) -> Result<Vec<presence::Language>, String> {
     let mut languages: Vec<presence::Language> = Vec::with_capacity(files.len());
     for path in files {
-        let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
+        let refused = |why: &dyn Display| format!("{}: {why}", path.display());
         let text = fs::read_to_string(path).map_err(|error| refused(&error))?;
         let language = presence::read(&text).map_err(|why| refused(&why))?;
         if languages
@@ -4445,14 +4477,6 @@ fn presence_files(files: &[PathBuf]) -> Result<Vec<presence::Language>, ExitCode
                 language.language
             )));
         }
-        show::field(
-            &language.language,
-            &format!(
-                "{}, from {}",
-                show::counted(language.tokens.len(), "token"),
-                path.display()
-            ),
-        );
         languages.push(language);
     }
     Ok(languages)

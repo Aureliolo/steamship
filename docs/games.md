@@ -123,7 +123,9 @@ Each command run in a game takes from it whatever is not given:
 - `steamship check export/windows` checks a build's folder as soon as it is built, judging its
   Windows files against the redistributables the snapshot ticks, and refusing it without the
   Steam Input action manifest the snapshot names. A folder that only the demo's depots ship is
-  judged against the demo's snapshot, and `--demo` asks for that whichever depots ship it.
+  judged against the demo's snapshot, and `--demo` asks for that whichever depots ship it. It
+  reads the game's rich presence files as `rich-presence --preview` does, so a push gate refuses
+  a line Steam cannot fill without asking Steam.
 
 ## A demo
 
