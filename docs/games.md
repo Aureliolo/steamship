@@ -121,7 +121,9 @@ Each command run in a game takes from it whatever is not given:
   share of players who have each achievement and each aggregated stat's total.
 - `steamship builds` and `steamship promote` take the game's app.
 - `steamship check export/windows` checks a build's folder as soon as it is built, judging its
-  Windows files against the redistributables the snapshot ticks.
+  Windows files against the redistributables the snapshot ticks, and refusing it without the
+  Steam Input action manifest the snapshot names. A folder that only the demo's depots ship is
+  judged against the demo's snapshot, and `--demo` asks for that whichever depots ship it.
 
 ## A demo
 
