@@ -6287,11 +6287,20 @@ fn rich_presence_files_are_checked_before_steam_and_a_preview_sends_nothing() {
         "french",
         "\t\t\"#running\"\t\"In {#season_%s%}\"\n",
     );
+    let unfillable = presence_file(
+        files.path(),
+        "german",
+        "\t\t\"#running\"\t\"Zu 50% fertig\"\n",
+    );
     let again = files.path().join("again.vdf");
     let _: u64 = fs::copy(&english, &again).unwrap();
     let missing = files.path().join("missing.vdf");
     for (file, why) in [
         (unnamed, "no token starts #season_"),
+        (
+            unfillable,
+            "#running: \"% fertig\" holds a % that starts no %field%",
+        ),
         (
             again.to_string_lossy().into_owned(),
             "is a second file for english",
@@ -8657,6 +8666,32 @@ fn a_game_check_names_each_comparison_the_game_gives_nothing_for() {
             .unwrap_or_default();
         assert!(line.ends_with(&end), "{start}…{end} in {stdout}{stderr}");
     }
+}
+
+#[test]
+fn a_game_check_refuses_a_rich_presence_line_steam_cannot_fill() {
+    let (_temp, root) = pushed_game(None);
+    drop(presence_file(
+        &root.join("steam"),
+        "english",
+        "\t\t\"#menu\"\t\"Leading {guild}\"\n",
+    ));
+    let host = refusing_web_api(12);
+    let (code, stdout, stderr) = in_game_with(
+        &root,
+        &["check"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_ne!(code, Some(0_i32), "{stdout}{stderr}");
+    let file = Path::new("steam").join("rich_presence_english.vdf");
+    assert!(
+        stderr.contains(&format!(
+            "{}: #menu: \"{{guild}}\" is a slot Steam cannot fill: Steam fills %field% and \
+             {{#Token_%field%}} alone",
+            file.display()
+        )),
+        "{stdout}{stderr}"
+    );
 }
 
 #[test]

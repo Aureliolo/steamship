@@ -360,12 +360,16 @@ pub fn presence(text: &str, records: &[Json]) -> Result<Presence, String> {
     for (name, line) in &lines {
         token_named(name)?;
         match line {
-            Json::String(english) => tokens.push(Token {
-                name: name.clone(),
-                english: line_of(name, english)?.to_owned(),
-                context: PRESENCE_CONTEXT.to_owned(),
-                id: braced(english),
-            }),
+            Json::String(english) => {
+                presence::fillable(line_of(name, english)?)
+                    .map_err(|why| format!("{name}: {why}"))?;
+                tokens.push(Token {
+                    name: name.clone(),
+                    english: english.clone(),
+                    context: PRESENCE_CONTEXT.to_owned(),
+                    id: braced(english),
+                });
+            }
             Json::Object(family) => {
                 let kind = family
                     .get("records")
@@ -1466,6 +1470,27 @@ msgstr "Die Erlenhexe"
     }
 
     #[test]
+    fn a_translation_that_breaks_a_field_is_refused_naming_its_file() {
+        let english = English {
+            presence: Some(presence(PRESENCE_SOURCE, &records()).unwrap()),
+            ..English::default()
+        };
+        let broken = GERMAN.replace(
+            "msgstr \"{#Bishop_{bishop}}, im Duell\"",
+            "msgstr \"{#Bishop_{bishop}, im Duell\"",
+        );
+        assert_eq!(
+            written(&english, &[german(&broken)]),
+            Err(vec![
+                "rich_presence_german.vdf would not be read back: #Status_Race: \
+                 \"{#Bishop_%bishop%, im Duell\" holds a reference Steam cannot fill: write \
+                 {#Token} or {#Token_%field%}"
+                    .to_owned()
+            ])
+        );
+    }
+
+    #[test]
     fn rich_presence_kept_by_hand_in_english_is_translated_and_left_as_it_is() {
         let english = English {
             presence: Some(
@@ -1527,6 +1552,11 @@ msgstr "Die Erlenhexe"
             (
                 r##"{"#Bishop_": {"records": ""}}"##,
                 "#Bishop_ is neither a line nor, ending in _, {\"records\": a record type}",
+            ),
+            (
+                r##"{"#Status_Day": "Day {day}"}"##,
+                "#Status_Day: \"{day}\" is a slot Steam cannot fill: Steam fills %field% and \
+                 {#Token_%field%} alone",
             ),
         ] {
             assert_eq!(
