@@ -2061,11 +2061,7 @@ mod tests {
                 .iter()
                 .map(|text| text.name.as_str())
                 .collect::<Vec<_>>(),
-            [
-                "Rising Water",
-                "Des eaux qui montent",
-                "Pegelstand"
-            ]
+            ["Rising Water", "Des eaux qui montent", "Pegelstand"]
         );
         assert_eq!(
             whole.set_names,

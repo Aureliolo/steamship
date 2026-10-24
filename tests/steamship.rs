@@ -4810,7 +4810,10 @@ fn an_achievement_reworded_without_new_icons_is_named_to_look_at_them() {
     assert_eq!(first, Some(0_i32), "{said}{why}");
     let reworded = INN_RECORDS
         .replace("Down by the Wheel", "Under the Taproom")
-        .replace("Drain a mill's first sluice.", "Dig under an inn's taproom.");
+        .replace(
+            "Drain a mill's first sluice.",
+            "Dig under an inn's taproom.",
+        );
     fs::write(&records, &reworded).unwrap();
     let (code, _, noted) = write_inn(game.path(), false);
     assert_eq!(code, Some(0_i32), "{noted}");
@@ -4926,7 +4929,10 @@ fn inn_schema(icons: [&str; 3]) -> &'static str {
         )
         .replace("CRAFTED_ALONE", "FIRST_ANCHOR")
         .replace("Bushel by Bushel", "Down by the Wheel")
-        .replace("Bag a sack of flour by hand.", "Drain a mill's first sluice.")
+        .replace(
+            "Bag a sack of flour by hand.",
+            "Drain a mill's first sluice.",
+        )
         .replace("f895e737db45e18257a61fac5b6d409aa6872b82", five_levels)
         .replace("41373b0acc59cfbe2c973699975640bc1db1026a", first_anchor)
         .replace(
@@ -6051,8 +6057,8 @@ fn games_kits_records_are_checked_saying_what_steam_does_not_give() {
     assert_eq!(refused, Some(2_i32), "{why}");
     assert!(
         why.contains(
-            "CRAFTED_ALONE: the description is \"Bag a sack of flour by hand.\" on Steam and \"Lay a \
-             floor yourself.\" in the file"
+            "CRAFTED_ALONE: the description is \"Bag a sack of flour by hand.\" on Steam and \"Bag \
+             the flour yourself.\" in the file"
         ) && why.contains("1 of 2 achievements match: 1 differs\n"),
         "{why}"
     );
