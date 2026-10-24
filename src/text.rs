@@ -1543,4 +1543,70 @@ msgstr "Die Erlenhexe"
         );
         assert_eq!(steam_fields("ends {"), "ends {");
     }
+
+    #[test]
+    fn steams_room_holds_exactly_its_count_and_refuses_one_more() {
+        assert_eq!(past_room(STORE, "english", &"a".repeat(300), 300), None);
+        assert_eq!(
+            past_room(STORE, "english", &"\u{e4}".repeat(301), 300),
+            Some(format!(
+                "{STORE}: \"{}\" is 301 characters in english, past the 300 Steam shows: shorten it",
+                "\u{e4}".repeat(301)
+            ))
+        );
+    }
+
+    #[test]
+    fn a_text_said_twice_is_one_entry_held_to_the_room_either_gives_it() {
+        let english = English {
+            store: Some(
+                store(
+                    r#"{"blocks": [{"kind": "paragraph", "text": "A mill."},
+                    {"kind": "short", "text": "A mill."}]}"#,
+                )
+                .unwrap(),
+            ),
+            workshop: None,
+            presence: None,
+        };
+        assert_eq!(
+            entries(&english),
+            Ok(vec![Entry {
+                context: STORE_CONTEXT.to_owned(),
+                english: "A mill.".to_owned(),
+                note: STORE_NOTE.to_owned(),
+                most: Some(SHORT_MOST),
+            }])
+        );
+    }
+
+    #[test]
+    fn a_translated_description_past_steams_room_names_its_catalogue() {
+        let page = Workshop {
+            title: "Harbours".to_owned(),
+            description: "Made by players.".to_owned(),
+        };
+        let german = Catalogued {
+            file: "de.po".to_owned(),
+            language: "german",
+            catalogue: po::read(&format!(
+                "msgctxt \"steam workshop\"\nmsgid \"Harbours\"\nmsgstr \"H\u{e4}fen\"\n\n\
+                 msgctxt \"steam workshop\"\nmsgid \"Made by players.\"\nmsgstr \"{}\"\n",
+                "b".repeat(201)
+            ))
+            .unwrap(),
+        };
+        let english = English {
+            store: None,
+            workshop: Some(page),
+            presence: None,
+        };
+        assert_eq!(
+            written(&english, &[german]),
+            Err(vec![format!(
+                "de.po: \"{}\" is 201 characters in german, past the 200 Steam shows: shorten it",
+                "b".repeat(201)
+            )])
+        );
+    }
 }
