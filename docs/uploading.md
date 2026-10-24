@@ -88,7 +88,10 @@ as a graphics driver's to run where it is missing.
 A build's folder can be checked on its own as soon as it is built, before any script maps it, as
 a build tool does after exporting each platform. The files in it, and in every folder in it, are
 checked as a depot's are; in a game's folder, its Windows files are judged against the
-redistributables the game's settings snapshot ticks.
+redistributables the game's settings snapshot ticks, and the build is refused without the Steam
+Input action manifest the snapshot names. That is the demo's snapshot when only the demo's
+depots ship the folder, or with `--demo`, since a demo can tick fewer redistributables than its
+game.
 
 ```sh
 steamship check export/windows

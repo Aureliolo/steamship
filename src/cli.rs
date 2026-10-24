@@ -114,7 +114,9 @@ pub enum Command {
     /// Given a build's folder, checks the files in it alone, as soon as it is built and before
     /// any script maps it: among them every DLL its Windows programs and libraries load, at the
     /// start or when first called, that neither Windows nor the folder has. In a game's folder,
-    /// one a Common Redistributable installs is refused unless the settings snapshot ticks it.
+    /// one a Common Redistributable installs is refused unless the settings snapshot ticks it, and
+    /// so is a build without the Steam Input action manifest the snapshot names. The snapshot is
+    /// the demo's with `--demo`, or for a folder that only the demo's depots ship.
     Check {
         /// The app build script, such as `steam/app_build.vdf`, or a build's folder, such as
         /// `export/windows`; in a game's folder, its own script.
@@ -123,8 +125,10 @@ pub enum Command {
         /// `upload` still checks both.
         #[arg(long)]
         scripts_only: bool,
-        /// In a game's folder, check its demo, its own app, in place of the full game.
-        #[arg(long, conflicts_with = "script")]
+        /// In a game's folder, check its demo, its own app, in place of the full game; with a
+        /// build's folder, judge it against the demo's settings snapshot, as is done without it
+        /// for a folder only the demo's depots ship.
+        #[arg(long)]
         demo: bool,
     },
     /// Check, build and upload, then print the build ID.
