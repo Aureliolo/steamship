@@ -948,23 +948,23 @@ mod tests {
         let branches = [
             webapi::Branch {
                 name: "public".to_owned(),
-                build_id: 25_585_928,
+                build_id: 20_000_001,
                 description: String::new(),
                 locked: false,
             },
             webapi::Branch {
                 name: "testing".to_owned(),
-                build_id: 25_586_667,
+                build_id: 20_000_740,
                 description: String::new(),
                 locked: true,
             },
         ];
-        assert_eq!(live_now(&branches, "Testing", 25_586_667), Live::Confirmed);
+        assert_eq!(live_now(&branches, "Testing", 20_000_740), Live::Confirmed);
         assert_eq!(
-            live_now(&branches, "testing", 25_586_700),
-            Live::Other(25_586_667)
+            live_now(&branches, "testing", 20_000_773),
+            Live::Other(20_000_740)
         );
-        assert_eq!(live_now(&branches, "beta", 25_586_667), Live::Missing);
+        assert_eq!(live_now(&branches, "beta", 20_000_740), Live::Missing);
     }
 
     #[test]
@@ -976,17 +976,17 @@ mod tests {
         };
         // As Steam listed Falcon Ridge Overseer's: two uploads of one commit, newest first.
         let builds = [
-            build(25_585_928, "0.1.0-test b4ca836e0512"),
-            build(25_585_877, "0.1.0-test b4ca836e0512"),
-            build(25_585_793, "0.1.0-test 9bbb5cb2f976"),
+            build(20_000_001, "0.1.0-test 0a1b2c3d4e5f"),
+            build(19_999_999, "0.1.0-test 0a1b2c3d4e5f"),
+            build(19_999_998, "0.1.0-test 5f4e3d2c1b0a"),
         ];
         assert_eq!(
-            uploaded_as(&builds, "0.1.0-test b4ca836e0512"),
-            Some(25_585_928)
+            uploaded_as(&builds, "0.1.0-test 0a1b2c3d4e5f"),
+            Some(20_000_001)
         );
         assert_eq!(
-            uploaded_as(&builds, "0.1.0-test 9bbb5cb2f976"),
-            Some(25_585_793)
+            uploaded_as(&builds, "0.1.0-test 5f4e3d2c1b0a"),
+            Some(19_999_998)
         );
         assert_eq!(uploaded_as(&builds, "0.1.0-test"), None);
     }

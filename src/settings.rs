@@ -618,7 +618,7 @@ mod tests {
         \t\t\"store_tags\"\n\t\t{\n\t\t}\n\
         \t}\n\
         \t\"config\"\n\t{\n\
-        \t\t\"installdir\"\t\t\"FGM\"\n\
+        \t\t\"installdir\"\t\t\"FalconRidge\"\n\
         \t\t\"launch\"\n\t\t{\n\
         \t\t\t\"0\"\n\t\t\t{\n\
         \t\t\t\t\"executable\"\t\t\"falcon-ridge-overseer.exe\"\n\
@@ -633,7 +633,7 @@ mod tests {
         \t\t}\n\
         \t\t\"workshopdepot\"\t\t\"1000010\"\n\
         \t\t\"branches\"\n\t\t{\n\t\t\t\"public\"\n\t\t\t{\n\
-        \t\t\t\t\"buildid\"\t\t\"25585928\"\n\t\t\t}\n\t\t}\n\
+        \t\t\t\t\"buildid\"\t\t\"20000001\"\n\t\t\t}\n\t\t}\n\
         \t\t\"privatebranches\"\t\t\"1\"\n\
         \t}\n\
         \t\"ufs\"\n\t{\n\t\t\"quota\"\t\t\"1073741824\"\n\t}\n\
@@ -953,7 +953,7 @@ mod tests {
              \t\t\"osarch\"\t\t\"64\"\n\
              \t}\n\
              \t\"config\"\n\t{\n\
-             \t\t\"installdir\"\t\t\"FGM\"\n\
+             \t\t\"installdir\"\t\t\"FalconRidge\"\n\
              \t\t\"launch\"\n\t\t{\n\
              \t\t\t\"0\"\n\t\t\t{\n\
              \t\t\t\t\"executable\"\t\t\"falcon-ridge-overseer.exe\"\n\
@@ -1015,7 +1015,7 @@ mod tests {
             )
         };
         assert_eq!(folder("TidalMillInn"), None);
-        assert_eq!(folder("FGM2"), None);
+        assert_eq!(folder("FalconRidge2"), None);
         assert_eq!(
             install_folder(&from_console(CONSOLE, 1_000_010).unwrap()),
             None
@@ -1089,12 +1089,12 @@ mod tests {
     #[test]
     fn drift_is_named_by_its_path_the_files_first_then_steams() {
         let file = vdf::parse(
-            "\"config\" { \"installdir\" \"FGM\" \"launch\" { \"0\" { \"executable\" \"a.exe\" } } \
+            "\"config\" { \"installdir\" \"FalconRidge\" \"launch\" { \"0\" { \"executable\" \"a.exe\" } } \
              \"gone\" \"1\" } \"ufs\" { \"quota\" \"1\" }",
         )
         .unwrap();
         let steam = vdf::parse(
-            "\"CONFIG\" { \"installdir\" \"FGM\" \"launch\" { \"0\" { \"executable\" \"b.exe\" } \
+            "\"CONFIG\" { \"installdir\" \"FalconRidge\" \"launch\" { \"0\" { \"executable\" \"b.exe\" } \
              \"1\" { } } } \"ufs\" \"none\" \"extra\" \"x\"",
         )
         .unwrap();

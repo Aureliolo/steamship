@@ -1232,7 +1232,7 @@ fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_
     // With a key, the build is looked up by the description it was uploaded with.
     let builds: &'static str = Box::leak(
         format!(
-            r#"{{"response": {{"builds": {{"25585928": {{"Description": "{description}"}}}}}}}}"#
+            r#"{{"response": {{"builds": {{"20000001": {{"Description": "{description}"}}}}}}}}"#
         )
         .into_boxed_str(),
     );
@@ -1245,9 +1245,9 @@ fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_
     );
     assert_eq!(keyed, Some(1_i32), "{keyed_out}{keyed_err}");
     for said in [
-        "app 1000: built as BuildID 25585928, then steamcmd failed",
+        "app 1000: built as BuildID 20000001, then steamcmd failed",
         "\"SetLive\" names \"testing\": Steam sets no build live on a branch the app does not have",
-        "set it live with steamship promote 1000 --build 25585928 --branch testing",
+        "set it live with steamship promote 1000 --build 20000001 --branch testing",
     ] {
         assert!(keyed_err.contains(said), "{said:?} in {keyed_err}");
     }
@@ -1526,7 +1526,7 @@ fn ci_outside_a_repository_asks_for_the_script_and_exits_2() {
 #[test]
 fn ci_checks_the_scripts_alone_before_the_build_exists_but_needs_a_github_origin_and_exits_2() {
     let (project, _) = project(true);
-    let root = project.path().join("fgm gate (x86) 1a2b");
+    let root = project.path().join("gate (x86) 1a2b");
     fs::remove_dir_all(root.join("content")).unwrap();
     let home = tempfile::tempdir().unwrap();
     let (code, stdout, stderr) = steamship_in(&root, &["ci"], Some(home.path()), &[]);
@@ -1553,7 +1553,7 @@ fn ci_checks_the_scripts_alone_before_the_build_exists_but_needs_a_github_origin
 #[test]
 fn ci_with_several_scripts_and_nobody_to_ask_names_them_and_exits_2() {
     let (project, _) = project(true);
-    let root = project.path().join("fgm gate (x86) 1a2b");
+    let root = project.path().join("gate (x86) 1a2b");
     let _: u64 = fs::copy(
         root.join("steam/app_build.vdf"),
         root.join("steam/app_build_demo.vdf"),
@@ -1581,7 +1581,7 @@ fn ci_writes_the_checked_login_to_a_file_for_another_ci() {
         0,
     );
     let (project, _) = project(true);
-    let root = project.path().join("fgm gate (x86) 1a2b");
+    let root = project.path().join("gate (x86) 1a2b");
     let output = project.path().join("login.txt");
     let (code, stdout, stderr) = steamship_in(
         &root,
@@ -1609,7 +1609,7 @@ fn ci_with_no_saved_login_says_to_log_in_first_and_exits_3() {
     let home = answering("", 0);
     fs::write(home.path().join("account"), "build_bot\n").unwrap();
     let (project, _) = project(true);
-    let root = project.path().join("fgm gate (x86) 1a2b");
+    let root = project.path().join("gate (x86) 1a2b");
     let output = project.path().join("login.txt");
     let (code, _, stderr) = steamship_in(
         &root,
@@ -1628,7 +1628,7 @@ fn ci_with_no_saved_login_says_to_log_in_first_and_exits_3() {
 /// The game's repository from [`project`], cloned from GitHub as far as its `origin` says.
 fn github_project() -> (tempfile::TempDir, PathBuf) {
     let (project, _) = project(true);
-    let root = project.path().join("fgm gate (x86) 1a2b");
+    let root = project.path().join("gate (x86) 1a2b");
     git(
         &root,
         &[
@@ -2788,7 +2788,7 @@ fn git(folder: &Path, args: &[&str]) {
 /// A game's scripts and content, committed or not, in a folder named the way a gate worktree is.
 fn project(committed: bool) -> (tempfile::TempDir, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
-    let root = temp.path().join("fgm gate (x86) 1a2b");
+    let root = temp.path().join("gate (x86) 1a2b");
     let put = |relative: &str, contents: &str| {
         let path = root.join(relative);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -2875,7 +2875,7 @@ fn upload_runs_check_first_and_exits_2_on_a_refusal() {
     fs::write(
         project
             .path()
-            .join("fgm gate (x86) 1a2b/content/steam_appid.txt"),
+            .join("gate (x86) 1a2b/content/steam_appid.txt"),
         "1000",
     )
     .unwrap();
@@ -3879,13 +3879,13 @@ fn builds_and_promote_use_the_key_set_and_say_what_steam_answered() {
 
 /// `GetAppBetas` and `GetAppBuilds` as Steam answered them for Falcon Ridge Overseer, the builds
 /// trimmed to two and their depots left out.
-const FGM_BETAS: &str = r#"{"response":{"betas":{"public":{"BuildID":25585928,"Description":"Public default branch","ReqPassword":0,"ReqLocalCS":0},"testing":{"BuildID":25913268,"Description":"0.1.0 (960e328)","ReqPassword":1,"ReqLocalCS":0}},"result":1,"message":""}}"#;
-const FGM_BUILDS: &str = r#"{"response":{"builds":{"25913268":{"BuildID":25913268,"CreationTime":1791910891,"Description":"0.1.0 960e3285f582","AccountIDCreator":100556863},"25911651":{"BuildID":25911651,"CreationTime":1791906331,"Description":"0.1.0 d442c9cf02ff","AccountIDCreator":100556863}},"result":1,"message":""}}"#;
+const SAMPLE_BETAS: &str = r#"{"response":{"betas":{"public":{"BuildID":20000001,"Description":"Public default branch","ReqPassword":0,"ReqLocalCS":0},"testing":{"BuildID":20000003,"Description":"0.1.0 (a1b2c3d)","ReqPassword":1,"ReqLocalCS":0}},"result":1,"message":""}}"#;
+const SAMPLE_BUILDS: &str = r#"{"response":{"builds":{"20000003":{"BuildID":20000003,"CreationTime":1791910891,"Description":"0.1.0 a1b2c3d4e5f6","AccountIDCreator":123456789},"20000002":{"BuildID":20000002,"CreationTime":1791906331,"Description":"0.1.0 f6e5d4c3b2a1","AccountIDCreator":123456789}},"result":1,"message":""}}"#;
 
 #[test]
 fn builds_json_prints_the_branches_and_builds_alone_on_standard_output() {
     let home = tempfile::tempdir().unwrap();
-    let (host, _requests) = web_api(vec![("200 OK", FGM_BETAS), ("200 OK", FGM_BUILDS)]);
+    let (host, _requests) = web_api(vec![("200 OK", SAMPLE_BETAS), ("200 OK", SAMPLE_BUILDS)]);
     let set = [
         ("STEAMSHIP_WEB_API_KEY", KEY),
         ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
@@ -3902,18 +3902,18 @@ fn builds_json_prints_the_branches_and_builds_alone_on_standard_output() {
         serde_json::json!({
             "app": 1_000_010_u32,
             "branches": [
-                {"name": "default", "build_id": 25_585_928_u64,
+                {"name": "default", "build_id": 20_000_001_u64,
                  "description": "Public default branch", "password": false},
-                {"name": "testing", "build_id": 25_913_268_u64,
-                 "description": "0.1.0 (960e328)", "password": true},
+                {"name": "testing", "build_id": 20_000_003_u64,
+                 "description": "0.1.0 (a1b2c3d)", "password": true},
             ],
             "builds": [
-                {"build_id": 25_913_268_u64, "created": "2026-10-13T17:01:31Z",
-                 "description": "0.1.0 960e3285f582", "version": "0.1.0",
-                 "commit": "960e3285f582", "live_on": ["testing"]},
-                {"build_id": 25_911_651_u64, "created": "2026-10-13T15:45:31Z",
-                 "description": "0.1.0 d442c9cf02ff", "version": "0.1.0",
-                 "commit": "d442c9cf02ff", "live_on": []},
+                {"build_id": 20_000_003_u64, "created": "2026-10-13T17:01:31Z",
+                 "description": "0.1.0 a1b2c3d4e5f6", "version": "0.1.0",
+                 "commit": "a1b2c3d4e5f6", "live_on": ["testing"]},
+                {"build_id": 20_000_002_u64, "created": "2026-10-13T15:45:31Z",
+                 "description": "0.1.0 f6e5d4c3b2a1", "version": "0.1.0",
+                 "commit": "f6e5d4c3b2a1", "live_on": []},
             ],
         })
     );
@@ -4487,17 +4487,17 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
     assert!(failure.contains("Steam answered HTTP 500"), "{failure}");
 }
 
-/// `GetSchemaForGame` for Tidal Mill Inn's first cellar in English, as Steam answered it, its
+/// `GetSchemaForGame` for Tidal Mill Inn's first sluice in English, as Steam answered it, its
 /// icons trimmed.
 const CELLAR: &str = r#"{"game": {"gameName": "Tidal Mill Inn", "availableGameStats": {
-    "achievements": [{"name": "FIRST_ANCHOR", "displayName": "Down in the Cellar", "hidden": 0,
-     "description": "Dig an inn's first cellar.", "icon": "https://cdn/c.jpg",
+    "achievements": [{"name": "FIRST_ANCHOR", "displayName": "Down by the Wheel", "hidden": 0,
+     "description": "Drain a mill's first sluice.", "icon": "https://cdn/c.jpg",
      "icongray": "https://cdn/c_bw.jpg"}]}}}"#;
 
 /// The same in German.
 const KELLER: &str = r#"{"game": {"gameName": "Tidal Mill Inn", "availableGameStats": {
-    "achievements": [{"name": "FIRST_ANCHOR", "displayName": "Unten im Keller", "hidden": 0,
-     "description": "Grabe den ersten Keller einer Herberge.", "icon": "https://cdn/c.jpg",
+    "achievements": [{"name": "FIRST_ANCHOR", "displayName": "Hinab zum Rad", "hidden": 0,
+     "description": "Gib die erste Schleuse eines Mahlwerks frei.", "icon": "https://cdn/c.jpg",
      "icongray": "https://cdn/c_bw.jpg"}]}}}"#;
 
 #[test]
@@ -4521,8 +4521,8 @@ fn achievements_are_checked_in_each_language_a_localisation_has() {
     let records = files.path().join("achievements.json");
     fs::write(
         &records,
-        r#"[{"type": "achievement", "steam": "FIRST_ANCHOR", "name": "Down in the Cellar",
-            "description": "Dig an inn's first cellar."}]"#,
+        r#"[{"type": "achievement", "steam": "FIRST_ANCHOR", "name": "Down by the Wheel",
+            "description": "Drain a mill's first sluice."}]"#,
     )
     .unwrap();
     let localisation = files.path().join("localisation.csv");
@@ -4530,8 +4530,8 @@ fn achievements_are_checked_in_each_language_a_localisation_has() {
         &localisation,
         "api_name (required; must match an api_name from the definitions CSV),\
          field (name or description),english,german\n\
-         FIRST_ANCHOR,name,Down in the Cellar,Unten im Keller\n\
-         FIRST_ANCHOR,description,Dig an inn's first cellar.,Grabe den ersten Keller einer Herberge.\n",
+         FIRST_ANCHOR,name,Down by the Wheel,Hinab zum Rad\n\
+         FIRST_ANCHOR,description,Drain a mill's first sluice.,Gib die erste Schleuse eines Mahlwerks frei.\n",
     )
     .unwrap();
     let args = [
@@ -4584,8 +4584,8 @@ fn achievements_are_checked_in_each_language_a_localisation_has() {
     fs::write(
         &localisation,
         "api_name,field,english\n\
-         FIRST_ANCHOR,name,Down in the Cellar\n\
-         FIRST_ANCHOR,description,Dig an inn's first cellar.\n",
+         FIRST_ANCHOR,name,Down by the Wheel\n\
+         FIRST_ANCHOR,description,Drain a mill's first sluice.\n",
     )
     .unwrap();
     let (alone, english, _) = steamship(&args, Some(home.path()), &set);
@@ -4612,10 +4612,10 @@ const INN_RECORDS: &str = r#"[
     {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
     {"type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar"},
     {"type": "achievement", "id": "base:five_levels", "steam": "FIVE_LEVELS",
-     "name": "Five Floors Up", "description": "Stand an inn five floors above its taproom.",
+     "name": "Five Turns Round", "description": "Spin the wheel five times in a tide.",
      "stat": "floors", "at": 5, "icon": "icons/five_levels.png"},
     {"type": "achievement", "id": "base:first_anchor", "steam": "FIRST_ANCHOR",
-     "name": "Down in the Cellar", "description": "Dig an inn's first cellar.",
+     "name": "Down by the Wheel", "description": "Drain a mill's first sluice.",
      "set": "cellar", "icon": "icons/first_anchor.png",
      "icon_locked": "icons/first_anchor_locked.png"}
 ]"#;
@@ -4624,10 +4624,10 @@ const INN_RECORDS: &str = r#"[
 const INN_GERMAN: &str = "msgid \"\"\nmsgstr \"Language: de\\n\"\n\n\
     msgctxt \"achievement.name\"\nmsgid \"base:five_levels\"\nmsgstr \"F\u{fc}nf Stock hoch\"\n\n\
     msgctxt \"achievement.description\"\nmsgid \"base:five_levels\"\n\
-    msgstr \"Stelle eine Herberge f\u{fc}nf Stock \u{fc}ber ihre Schankstube.\"\n\n\
-    msgctxt \"achievement.name\"\nmsgid \"base:first_anchor\"\nmsgstr \"Unten im Keller\"\n\n\
+    msgstr \"Drehe das Rad f\u{fc}nf Mal in einer Flut.\"\n\n\
+    msgctxt \"achievement.name\"\nmsgid \"base:first_anchor\"\nmsgstr \"Hinab zum Rad\"\n\n\
     msgctxt \"achievement.description\"\nmsgid \"base:first_anchor\"\n\
-    msgstr \"Grabe den ersten Keller einer Herberge.\"\n\n\
+    msgstr \"Gib die erste Schleuse eines Mahlwerks frei.\"\n\n\
     msgctxt \"achievement_set.name\"\nmsgid \"base:cellar\"\nmsgstr \"Der Keller\"\n";
 
 /// A square icon of `size` pixels: a field of `shade` with a light square in its middle.
@@ -4740,7 +4740,7 @@ fn the_achievement_editors_files_are_written_from_records_catalogues_and_icons()
     ));
     assert!(
         read("1000050-achievements-localization.csv")
-            .contains("\nFIRST_ANCHOR,name,Down in the Cellar,Unten im Keller\n")
+            .contains("\nFIRST_ANCHOR,name,Down by the Wheel,Hinab zum Rad\n")
     );
     assert_eq!(
         read("1000050-achievement-sets-localization.csv"),
@@ -4809,8 +4809,11 @@ fn an_achievement_reworded_without_new_icons_is_named_to_look_at_them() {
     let (first, said, why) = write_inn(game.path(), false);
     assert_eq!(first, Some(0_i32), "{said}{why}");
     let reworded = INN_RECORDS
-        .replace("Down in the Cellar", "Under the Taproom")
-        .replace("Dig an inn's first cellar.", "Dig under an inn's taproom.");
+        .replace("Down by the Wheel", "Under the Taproom")
+        .replace(
+            "Drain a mill's first sluice.",
+            "Dig under an inn's taproom.",
+        );
     fs::write(&records, &reworded).unwrap();
     let (code, _, noted) = write_inn(game.path(), false);
     assert_eq!(code, Some(0_i32), "{noted}");
@@ -4909,24 +4912,27 @@ fn a_file_written_otherwise_or_left_over_is_named_and_rewritten_or_removed() {
     assert_eq!(write_inn(game.path(), true).0, Some(0_i32));
 }
 
-/// [`TTI_SCHEMA`] holding [`INN_RECORDS`]' stat and achievements, with Steam's images of five
+/// [`INN_SCHEMA`] holding [`INN_RECORDS`]' stat and achievements, with Steam's images of five
 /// floors' icon and the cellar's two named by `icons` in turn.
 fn inn_schema(icons: [&str; 3]) -> &'static str {
     let [five_levels, first_anchor, first_anchor_locked] = icons;
-    TTI_SCHEMA
+    INN_SCHEMA
         .replace(
-            r#",{"name":"staff","defaultvalue":0,"displayName":"Staff working in the inn"}"#,
+            r#",{"name":"staff","defaultvalue":0,"displayName":"Staff working the stones"}"#,
             "",
         )
         .replace("LONG_JOURNEY", "FIVE_LEVELS")
-        .replace("Room to Grow", "Five Floors Up")
+        .replace("Rising Water", "Five Turns Round")
         .replace(
-            "Build a second floor of guest rooms.",
-            "Stand an inn five floors above its taproom.",
+            "Bring the millpond up to its brim.",
+            "Spin the wheel five times in a tide.",
         )
         .replace("CRAFTED_ALONE", "FIRST_ANCHOR")
-        .replace("Brick by Brick", "Down in the Cellar")
-        .replace("Build a floor by hand.", "Dig an inn's first cellar.")
+        .replace("Bushel by Bushel", "Down by the Wheel")
+        .replace(
+            "Bag a sack of flour by hand.",
+            "Drain a mill's first sluice.",
+        )
         .replace("f895e737db45e18257a61fac5b6d409aa6872b82", five_levels)
         .replace("41373b0acc59cfbe2c973699975640bc1db1026a", first_anchor)
         .replace(
@@ -5009,7 +5015,7 @@ fn inn_served(game: &Path, icons: [&'static str; 3]) -> Vec<(&'static str, Vec<u
         .collect()
 }
 
-/// The names [`TTI_SCHEMA`] gives Steam's images of five floors' icon and the cellar's two, as
+/// The names [`INN_SCHEMA`] gives Steam's images of five floors' icon and the cellar's two, as
 /// the inn's first import made them.
 const FIRST_IMPORT: [&str; 3] = [
     "f895e737db45e18257a61fac5b6d409aa6872b82",
@@ -5421,7 +5427,7 @@ fn the_achievement_editors_files_are_refused_as_the_editor_would_refuse_them() {
         "{twice}"
     );
 
-    fs::write(&german, INN_GERMAN.replace("\"Unten im Keller\"", "\"\"")).unwrap();
+    fs::write(&german, INN_GERMAN.replace("\"Hinab zum Rad\"", "\"\"")).unwrap();
     let untranslated = write(&[&records, &german]);
     assert!(
         untranslated.contains(
@@ -5552,15 +5558,15 @@ fn achievements_are_checked_in_each_language_a_catalogue_is_in() {
     fs::write(
         &records,
         r#"[{"type": "achievement", "id": "base:first_anchor", "steam": "FIRST_ANCHOR",
-            "name": "Down in the Cellar", "description": "Dig an inn's first cellar."}]"#,
+            "name": "Down by the Wheel", "description": "Drain a mill's first sluice."}]"#,
     )
     .unwrap();
     let german = files.path().join("de.po");
     fs::write(
         &german,
-        "msgctxt \"achievement.name\"\nmsgid \"base:first_anchor\"\nmsgstr \"Unten im Keller\"\n\
+        "msgctxt \"achievement.name\"\nmsgid \"base:first_anchor\"\nmsgstr \"Hinab zum Rad\"\n\
          msgctxt \"achievement.description\"\nmsgid \"base:first_anchor\"\n\
-         msgstr \"Grabe den ersten Keller einer Herberge.\"\n",
+         msgstr \"Gib die erste Schleuse eines Mahlwerks frei.\"\n",
     )
     .unwrap();
     let args = [
@@ -5971,7 +5977,7 @@ fn a_check_with_drift_in_its_stats_still_says_its_achievements_match() {
 
 /// `GetSchemaForGame` as Steam answered it for Tidal Mill Inn, trimmed to two stats and two
 /// achievements.
-const TTI_SCHEMA: &str = r#"{"game":{"gameName":"Tidal Mill Inn","gameVersion":"2","availableGameStats":{"stats":[{"name":"floors","defaultvalue":0,"displayName":"Floors standing above the taproom"},{"name":"staff","defaultvalue":0,"displayName":"Staff working in the inn"}],"achievements":[{"name":"LONG_JOURNEY","defaultvalue":0,"displayName":"Room to Grow","hidden":0,"description":"Build a second floor of guest rooms.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/f895e737db45e18257a61fac5b6d409aa6872b82.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/a25a9ca72da3dae23b05f2fb6f712527cf3634d9.jpg"},{"name":"CRAFTED_ALONE","defaultvalue":0,"displayName":"Brick by Brick","hidden":0,"description":"Build a floor by hand.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/41373b0acc59cfbe2c973699975640bc1db1026a.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/c4d7c246b05fc3bacc39c9106295794b52faee45.jpg"}]}}}"#;
+const INN_SCHEMA: &str = r#"{"game":{"gameName":"Tidal Mill Inn","gameVersion":"2","availableGameStats":{"stats":[{"name":"floors","defaultvalue":0,"displayName":"Floodwater held behind the sluice"},{"name":"staff","defaultvalue":0,"displayName":"Staff working the stones"}],"achievements":[{"name":"LONG_JOURNEY","defaultvalue":0,"displayName":"Rising Water","hidden":0,"description":"Bring the millpond up to its brim.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/f895e737db45e18257a61fac5b6d409aa6872b82.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/a25a9ca72da3dae23b05f2fb6f712527cf3634d9.jpg"},{"name":"CRAFTED_ALONE","defaultvalue":0,"displayName":"Bushel by Bushel","hidden":0,"description":"Bag a sack of flour by hand.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/41373b0acc59cfbe2c973699975640bc1db1026a.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/c4d7c246b05fc3bacc39c9106295794b52faee45.jpg"}]}}}"#;
 
 /// What Steam answers for Tidal Mill Inn when asked for the totals of its stats, which it keeps
 /// none of, naming each in turn.
@@ -5988,7 +5994,7 @@ const TTI_UNAGGREGATED: [(&str, &str); 2] = [
 
 /// Steam's answers to two checks of Tidal Mill Inn's records.
 fn tti_checked_twice() -> Vec<(&'static str, &'static str)> {
-    let once = iter::once(("200 OK", TTI_SCHEMA)).chain(TTI_UNAGGREGATED);
+    let once = iter::once(("200 OK", INN_SCHEMA)).chain(TTI_UNAGGREGATED);
     once.clone().chain(once).collect()
 }
 
@@ -6011,10 +6017,10 @@ fn games_kits_records_are_checked_saying_what_steam_does_not_give() {
                 {{"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"}},
                 {{"type": "stat", "id": "base:staff", "steam": "staff", "kind": "int"}},
                 {{"type": "achievement", "id": "base:long_journey", "steam": "LONG_JOURNEY",
-                  "name": "Room to Grow", "description": "Build a second floor of guest rooms.",
+                  "name": "Rising Water", "description": "Bring the millpond up to its brim.",
                   "stat": "base:floors", "at": 2}},
                 {{"type": "achievement", "id": "base:crafted_alone", "steam": "CRAFTED_ALONE",
-                  "name": "Brick by Brick", "description": "{by_hand}"}}
+                  "name": "Bushel by Bushel", "description": "{by_hand}"}}
             ]"#
             ),
         )
@@ -6022,7 +6028,7 @@ fn games_kits_records_are_checked_saying_what_steam_does_not_give() {
         path.to_string_lossy().into_owned()
     };
 
-    let matching = records("Build a floor by hand.");
+    let matching = records("Bag a sack of flour by hand.");
     let (matched, said, _) = steamship(
         &["achievements", "1000050", "--check", &matching],
         Some(home.path()),
@@ -6042,7 +6048,7 @@ fn games_kits_records_are_checked_saying_what_steam_does_not_give() {
         "{said}"
     );
 
-    let drifted = records("Lay a floor yourself.");
+    let drifted = records("Bag the flour yourself.");
     let (refused, _, why) = steamship(
         &["achievements", "1000050", "--check", &drifted],
         Some(home.path()),
@@ -6051,8 +6057,8 @@ fn games_kits_records_are_checked_saying_what_steam_does_not_give() {
     assert_eq!(refused, Some(2_i32), "{why}");
     assert!(
         why.contains(
-            "CRAFTED_ALONE: the description is \"Build a floor by hand.\" on Steam and \"Lay a \
-             floor yourself.\" in the file"
+            "CRAFTED_ALONE: the description is \"Bag a sack of flour by hand.\" on Steam and \"Bag \
+             the flour yourself.\" in the file"
         ) && why.contains("1 of 2 achievements match: 1 differs\n"),
         "{why}"
     );
@@ -6079,13 +6085,13 @@ fn records_split_over_several_files_are_checked_as_one_and_none_may_repeat() {
     );
     let building = file(
         "building.json",
-        r#"[{"type": "achievement", "steam": "LONG_JOURNEY", "name": "Room to Grow",
-             "description": "Build a second floor of guest rooms."}]"#,
+        r#"[{"type": "achievement", "steam": "LONG_JOURNEY", "name": "Rising Water",
+             "description": "Bring the millpond up to its brim."}]"#,
     );
     let by_hand = file(
         "by_hand.json",
-        r#"[{"type": "achievement", "steam": "CRAFTED_ALONE", "name": "Brick by Brick",
-             "description": "Build a floor by hand."}]"#,
+        r#"[{"type": "achievement", "steam": "CRAFTED_ALONE", "name": "Bushel by Bushel",
+             "description": "Bag a sack of flour by hand."}]"#,
     );
 
     for args in [
@@ -6516,8 +6522,8 @@ fn a_leaderboards_file_that_is_not_one_is_refused_before_steam_and_create_needs_
 
 /// `GetAppBetas` as Steam answered for Falcon Ridge Overseer.
 const DESCRIBED: &str = r#"{"response": {"betas": {
-    "public": {"BuildID": 25585928, "Description": "Public default branch", "ReqPassword": 0},
-    "testing": {"BuildID": 25609118, "Description": "test1", "ReqPassword": 1}
+    "public": {"BuildID": 20000001, "Description": "Public default branch", "ReqPassword": 0},
+    "testing": {"BuildID": 20000099, "Description": "test1", "ReqPassword": 1}
 }, "result": 1, "message": ""}}"#;
 
 /// `UpdateAppBranchDescription` as Steam answered it.

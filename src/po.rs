@@ -280,14 +280,14 @@ mod tests {
         #. The achievement's name.\n\
         msgctxt \"achievement.name\"\n\
         msgid \"base:first_anchor\"\n\
-        msgstr \"Unten im Keller\"\n\
+        msgstr \"Hinab zum Rad\"\n\
         \n\
         #, fuzzy\n\
         msgctxt \"achievement.description\"\n\
         msgid \"base:first_anchor\"\n\
         msgstr \"\"\n\
-        \"Grabe den \\\"ersten\\\" Keller\\n\"\n\
-        \"einer Herberge.\"\n\
+        \"Gib die \\\"erste\\\" Schleuse\\n\"\n\
+        \"eines Mahlwerks frei.\"\n\
         \n\
         msgid \"guest\"\n\
         msgid_plural \"guests\"\n\
@@ -306,13 +306,13 @@ mod tests {
                 Entry {
                     context: Some("achievement.name".to_owned()),
                     id: "base:first_anchor".to_owned(),
-                    text: "Unten im Keller".to_owned(),
+                    text: "Hinab zum Rad".to_owned(),
                     fuzzy: false,
                 },
                 Entry {
                     context: Some("achievement.description".to_owned()),
                     id: "base:first_anchor".to_owned(),
-                    text: "Grabe den \"ersten\" Keller\neiner Herberge.".to_owned(),
+                    text: "Gib die \"erste\" Schleuse\neines Mahlwerks frei.".to_owned(),
                     fuzzy: true,
                 },
                 Entry {
@@ -327,7 +327,7 @@ mod tests {
             catalogue
                 .find("achievement.name", "base:first_anchor")
                 .map(|entry| entry.text.as_str()),
-            Some("Unten im Keller")
+            Some("Hinab zum Rad")
         );
         assert_eq!(catalogue.find("achievement.name", "guest"), None);
     }

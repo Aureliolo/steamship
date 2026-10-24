@@ -517,10 +517,10 @@ mod tests {
         {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
         {"type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar"},
         {"type": "achievement", "id": "base:five_levels", "steam": "FIVE_LEVELS",
-         "name": "Five Floors Up", "description": "Stand an inn five floors above its taproom.",
+         "name": "Five Turns Round", "description": "Spin the wheel five times in a tide.",
          "stat": "base:floors", "at": 5},
         {"type": "achievement", "id": "base:first_anchor", "steam": "FIRST_ANCHOR",
-         "name": "Down in the Cellar", "description": "Dig an inn's \"first\" cellar, at last.",
+         "name": "Down by the Wheel", "description": "Drain a mill's\"first\" sluice, at last.",
          "set": "base:cellar", "archived": true, "hidden": true, "permission": "game_server"}
     ]"#;
 
@@ -782,10 +782,10 @@ mod tests {
             table(&written, "-achievements-localization.csv"),
             "api_name (required; must match an api_name from the definitions CSV),field (name or \
              description),english\n\
-             FIVE_LEVELS,name,Five Floors Up\n\
-             FIVE_LEVELS,description,Stand an inn five floors above its taproom.\n\
-             FIRST_ANCHOR,name,Down in the Cellar\n\
-             FIRST_ANCHOR,description,\"Dig an inn's \"\"first\"\" cellar, at last.\"\n"
+             FIVE_LEVELS,name,Five Turns Round\n\
+             FIVE_LEVELS,description,Spin the wheel five times in a tide.\n\
+             FIRST_ANCHOR,name,Down by the Wheel\n\
+             FIRST_ANCHOR,description,\"Drain a mill's\"\"first\"\" sluice, at last.\"\n"
         );
         assert_eq!(
             table(&written, "-achievement-sets-localization.csv"),
@@ -797,12 +797,12 @@ mod tests {
     fn each_language_is_a_column_of_both_texts_and_of_the_sets_names() {
         let mut listed = inn();
         let german = "msgctxt \"achievement.name\"\nmsgid \"base:five_levels\"\n\
-            msgstr \"F\u{fc}nf Stock hoch\"\n\
+            msgstr \"F\u{fc}nf Runden\"\n\
             msgctxt \"achievement.description\"\nmsgid \"base:five_levels\"\n\
-            msgstr \"Stelle eine Herberge f\u{fc}nf Stock \u{fc}ber ihre Schankstube.\"\n\
-            msgctxt \"achievement.name\"\nmsgid \"base:first_anchor\"\nmsgstr \"Unten im Keller\"\n\
+            msgstr \"Drehe das Rad f\u{fc}nf Mal in einer Flut.\"\n\
+            msgctxt \"achievement.name\"\nmsgid \"base:first_anchor\"\nmsgstr \"Hinab zum Rad\"\n\
             msgctxt \"achievement.description\"\nmsgid \"base:first_anchor\"\n\
-            msgstr \"Grabe den ersten Keller einer Herberge.\"\n\
+            msgstr \"Gib die erste Schleuse eines Mahlwerks frei.\"\n\
             msgctxt \"achievement_set.name\"\nmsgid \"base:cellar\"\nmsgstr \"Der Keller\"\n";
         achievements::translate(
             &mut listed,
@@ -823,7 +823,7 @@ mod tests {
         );
         assert_eq!(
             localisation.get(1).copied(),
-            Some("FIVE_LEVELS,name,Five Floors Up,F\u{fc}nf Stock hoch")
+            Some("FIVE_LEVELS,name,Five Turns Round,F\u{fc}nf Runden")
         );
         assert_eq!(localisation.len(), 5);
         assert_eq!(

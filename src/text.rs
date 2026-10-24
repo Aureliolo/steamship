@@ -844,7 +844,7 @@ msgid "Made with AI assistance for coding."
 msgstr "Mit KI-Hilfe beim Programmieren gemacht."
 
 msgctxt "steam workshop"
-msgid "Mods for your cauldron"
+msgid "Mods for your mill"
 msgstr "Mods in deinem Kessel"
 
 msgctxt "steam workshop"
@@ -1202,7 +1202,7 @@ msgstr "Die Erlenhexe"
         let english = English {
             workshop: Some(
                 workshop(
-                    r#"{"title": "Mods for your cauldron", "description": "Made by other players."}"#,
+                    r#"{"title": "Mods for your mill", "description": "Made by other players."}"#,
                 )
                 .unwrap(),
             ),
@@ -1214,7 +1214,7 @@ msgstr "Die Erlenhexe"
             "{\n  \"language\": \"german\",\n  \"title\": \"Mods in deinem Kessel\",\n  \
              \"description\": \"Von anderen Spielern gemacht.\"\n}\n"
         );
-        assert!(file(&files, "workshop/english.json").contains("\"Mods for your cauldron\""));
+        assert!(file(&files, "workshop/english.json").contains("\"Mods for your mill\""));
         assert_eq!(
             workshop(r#"{"title": "a", "description": "b", "tags": "c"}"#),
             Err(

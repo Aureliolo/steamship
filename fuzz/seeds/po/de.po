@@ -8,18 +8,18 @@ msgstr ""
 #. The achievement's name.
 msgctxt "achievement.name"
 msgid "base:first_anchor"
-msgstr "Unten im Keller"
+msgstr "Hinab zum Rad"
 
 #, fuzzy
 msgctxt "achievement.description"
 msgid "base:first_anchor"
 msgstr ""
-"Grabe den \"ersten\" Keller\n"
-"einer Herberge."
+"Gib die \"erste\" Schleuse\n"
+"eines Mahlwerks frei."
 
 msgctxt "achievement_set.name"
 msgid "base:cellar"
-msgstr "Der Keller"
+msgstr "Die Schleuse"
 
 msgid "guest"
 msgid_plural "guests"

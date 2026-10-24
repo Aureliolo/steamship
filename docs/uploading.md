@@ -229,7 +229,7 @@ made before:
 {
   "app": 1000070,
   "items": {
-    "example": 3821807235
+    "example": 3000000001
   }
 }
 ```
@@ -247,7 +247,7 @@ error:
 ```json
 {
   "app": 1000070,
-  "item": 3821807235,
+  "item": 3000000001,
   "log": "/home/you/.local/share/steamship/workshop/1000070/example/steamcmd.log",
   "name": "example",
   "outcome": "made"
@@ -319,9 +319,9 @@ standard error:
     {
       "build_id": 12345678,
       "created": "2026-10-13T17:01:31Z",
-      "description": "0.3.0 960e3285f582",
+      "description": "0.3.0 a1b2c3d4e5f6",
       "version": "0.3.0",
-      "commit": "960e3285f582",
+      "commit": "a1b2c3d4e5f6",
       "live_on": ["testing"]
     }
   ]
@@ -535,8 +535,8 @@ in which those typed `achievement` and `stat` are read as above, by the API name
     "type": "achievement",
     "id": "base:long_journey",
     "steam": "LONG_JOURNEY",
-    "name": "Room to Grow",
-    "description": "Build a second floor of guest rooms.",
+    "name": "Rising Water",
+    "description": "Bring the millpond up to its brim.",
     "stat": "base:floors",
     "at": 2
   }
@@ -572,8 +572,8 @@ steamship needs of them.
 
 ```text
 api_name,field,english,german
-FIRST_ANCHOR,name,Down in the Cellar,Unten im Keller
-FIRST_ANCHOR,description,Dig an inn's first cellar.,Grabe den ersten Keller einer Herberge.
+FIRST_ANCHOR,name,Down by the Wheel,Hinab zum Rad
+FIRST_ANCHOR,description,Drain a mill's first sluice.,Gib die erste Schleuse eines Mahlwerks frei.
 ```
 
 `--check` then asks Steam for the achievements in each of its languages too, and names each
@@ -767,7 +767,7 @@ in Valve's own format, one per language, with the same Web API key as `builds`:
     "Tokens"
     {
         "#menu"             "At the menu"
-        "#running"          "Running the %guild% guild in {#season_%season%}"
+        "#running"          "Grinding at %mill% in {#season_%season%}"
         "#season_rainy"    "Autumn"
     }
 }

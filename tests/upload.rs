@@ -20,7 +20,7 @@ struct Project {
 impl Project {
     fn new() -> Self {
         let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("fgm gate (x86) 1a2b");
+        let root = temp.path().join("gate (x86) 1a2b");
         let home = temp.path().join("home");
         fs::create_dir_all(&root).unwrap();
         Self {

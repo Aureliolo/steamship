@@ -121,14 +121,14 @@ mod tests {
     use super::*;
 
     /// Falcon Ridge Overseer's `steam/rich_presence_english.vdf`, trimmed.
-    const FGM: &str = "\"lang\"\n{\n\t\"Language\"\t\"english\"\n\t\"Tokens\"\n\t{\n\
+    const FALCON_RIDGE: &str = "\"lang\"\n{\n\t\"Language\"\t\"english\"\n\t\"Tokens\"\n\t{\n\
         \t\t\"#menu\"\t\"At the menu\"\n\
-        \t\t\"#running\"\t\"Running the %guild% guild: {#season_%season%} of year %year%\"\n\
+        \t\t\"#running\"\t\"Grinding at %mill%: {#season_%season%}, year %year%\"\n\
         \t\t\"#season_rainy\"\t\"Autumn\"\n\t}\n}\n";
 
     #[test]
     fn a_file_is_read_as_valve_writes_it() {
-        let language = read(FGM).unwrap();
+        let language = read(FALCON_RIDGE).unwrap();
         assert_eq!(language.language, "english");
         assert_eq!(
             language.tokens,
@@ -136,7 +136,7 @@ mod tests {
                 ("#menu".to_owned(), "At the menu".to_owned()),
                 (
                     "#running".to_owned(),
-                    "Running the %guild% guild: {#season_%season%} of year %year%".to_owned()
+                    "Grinding at %mill%: {#season_%season%}, year %year%".to_owned()
                 ),
                 ("#season_rainy".to_owned(), "Autumn".to_owned()),
             ]
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn the_request_holds_every_language_and_token() {
-        let english = read(FGM).unwrap();
+        let english = read(FALCON_RIDGE).unwrap();
         let german = Language {
             language: "german".to_owned(),
             tokens: vec![("#menu".to_owned(), "Im Men\u{fc}".to_owned())],
@@ -204,7 +204,7 @@ mod tests {
                 {"language": "english", "tokens": [
                     {"token": "#menu", "value": "At the menu"},
                     {"token": "#running",
-                     "value": "Running the %guild% guild: {#season_%season%} of year %year%"},
+                     "value": "Grinding at %mill%: {#season_%season%}, year %year%"},
                     {"token": "#season_rainy", "value": "Autumn"},
                 ]},
                 {"language": "german", "tokens": [{"token": "#menu", "value": "Im Men\u{fc}"}]},

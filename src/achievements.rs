@@ -1377,7 +1377,7 @@ mod tests {
         // Shaped as Falcon Ridge Overseer's steam/achievements.json.
         let listed = read(
             r#"{"app": 1000010, "achievements": [
-                {"api_name": "early_win", "name": "Open for business",
+                {"api_name": "early_win", "name": "Opening day",
                  "description": "A guild's first job came home done.", "hidden": false,
                  "glyph": "scroll-unfurled"},
                 {"api_name": "secret", "name": "Hush", "hidden": true}
@@ -1390,7 +1390,7 @@ mod tests {
             [
                 Wanted {
                     description: "A guild's first job came home done.".to_owned(),
-                    ..wanted("early_win", "Open for business")
+                    ..wanted("early_win", "Opening day")
                 },
                 Wanted {
                     description: String::new(),
@@ -1504,7 +1504,7 @@ mod tests {
                 {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
                 {"type": "building", "id": "base:taproom"},
                 {"type": "achievement", "id": "base:long_journey", "steam": "LONG_JOURNEY",
-                 "name": "Room to Grow", "description": "Build a second floor of guest rooms.",
+                 "name": "Rising Water", "description": "Bring the millpond up to its brim.",
                  "stat": "base:floors", "at": 2},
                 {"type": "achievement", "id": "base:secret", "steam": "SECRET",
                  "name": "Hush", "hidden": true, "icon": "res://icons/secret.png"},
@@ -1519,7 +1519,7 @@ mod tests {
             listed.achievements,
             [
                 Wanted {
-                    description: "Build a second floor of guest rooms.".to_owned(),
+                    description: "Bring the millpond up to its brim.".to_owned(),
                     id: "base:long_journey".to_owned(),
                     defined: Definition {
                         progress: Some(Progress {
@@ -1528,7 +1528,7 @@ mod tests {
                         }),
                         ..Definition::default()
                     },
-                    ..wanted("LONG_JOURNEY", "Room to Grow")
+                    ..wanted("LONG_JOURNEY", "Rising Water")
                 },
                 Wanted {
                     description: String::new(),
@@ -1711,10 +1711,10 @@ mod tests {
         {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
         {"type": "achievement_set", "id": "base:cellar", "steam": 1, "name": "The Cellar"},
         {"type": "achievement", "id": "base:long_journey", "steam": "LONG_JOURNEY",
-         "name": "Room to Grow", "description": "Build a second floor of guest rooms.",
+         "name": "Rising Water", "description": "Bring the millpond up to its brim.",
          "stat": "floors", "at": 2, "icon": "icons/long_journey.png"},
         {"type": "achievement", "id": "base:first_anchor", "steam": "FIRST_ANCHOR",
-         "name": "Down in the Cellar", "description": "Dig an inn's first cellar.",
+         "name": "Down by the Wheel", "description": "Drain a mill's first sluice.",
          "set": "cellar", "archived": true, "permission": "game_server", "hidden": true}
     ]"#;
 
@@ -2023,19 +2023,19 @@ mod tests {
     }
 
     const GERMAN: &str = "msgctxt \"achievement.name\"\nmsgid \"base:long_journey\"\n\
-        msgstr \"Platz zum Wachsen\"\n\
+        msgstr \"Pegelstand\"\n\
         msgctxt \"achievement.description\"\nmsgid \"base:long_journey\"\n\
         msgstr \"Baue einen zweiten Stock mit G\u{e4}stezimmern.\"\n\
-        msgctxt \"achievement.name\"\nmsgid \"base:first_anchor\"\nmsgstr \"Unten im Keller\"\n\
+        msgctxt \"achievement.name\"\nmsgid \"base:first_anchor\"\nmsgstr \"Hinab zum Rad\"\n\
         msgctxt \"achievement.description\"\nmsgid \"base:first_anchor\"\n\
-        msgstr \"Grabe den ersten Keller einer Herberge.\"\n\
+        msgstr \"Gib die erste Schleuse eines Mahlwerks frei.\"\n\
         msgctxt \"achievement_set.name\"\nmsgid \"base:cellar\"\nmsgstr \"Der Keller\"\n";
 
     #[test]
     fn catalogues_translate_each_achievement_and_set_by_its_id_in_alphabetical_order() {
         let mut whole = together(vec![("inn.json".to_owned(), read(INN).unwrap())]).unwrap();
         let french = GERMAN
-            .replace("Platz zum Wachsen", "De la place pour grandir")
+            .replace("Pegelstand", "Des eaux qui montent")
             .replace("Der Keller", "La cave");
         translate(
             &mut whole,
@@ -2052,7 +2052,7 @@ mod tests {
             room.texts.last().unwrap(),
             &Translation {
                 language: "german".to_owned(),
-                name: "Platz zum Wachsen".to_owned(),
+                name: "Pegelstand".to_owned(),
                 description: "Baue einen zweiten Stock mit G\u{e4}stezimmern.".to_owned(),
             }
         );
@@ -2061,11 +2061,7 @@ mod tests {
                 .iter()
                 .map(|text| text.name.as_str())
                 .collect::<Vec<_>>(),
-            [
-                "Room to Grow",
-                "De la place pour grandir",
-                "Platz zum Wachsen"
-            ]
+            ["Rising Water", "Des eaux qui montent", "Pegelstand"]
         );
         assert_eq!(
             whole.set_names,
@@ -2089,7 +2085,7 @@ mod tests {
         let whole = together(vec![("inn.json".to_owned(), read(INN).unwrap())]).unwrap();
         for (text, why) in [
             (
-                GERMAN.replace("\"Unten im Keller\"", "\"\""),
+                GERMAN.replace("\"Hinab zum Rad\"", "\"\""),
                 "de.po has no name of FIRST_ANCHOR, under msgctxt \"achievement.name\" and msgid \
                  \"base:first_anchor\"",
             ),
@@ -2446,10 +2442,10 @@ mod tests {
     fn a_localisation_is_read_as_each_achievements_name_and_description_in_each_language() {
         let text = localisation(
             "english,german",
-            "LONG_JOURNEY,name,Room to Grow,Platz zum Wachsen\n\
-             LONG_JOURNEY,description,\"Build a second floor, of guest rooms.\",\"Sag \"\"Hallo\"\"\"\n\
+            "LONG_JOURNEY,name,Rising Water,Pegelstand\n\
+             LONG_JOURNEY,description,\"Bring the millpond, up to its brim.\",\"Sag \"\"Hallo\"\"\"\n\
              FIVE_LEVELS,description,Up.,Hoch.\n\
-             FIVE_LEVELS,name,Five Floors Up,\n",
+             FIVE_LEVELS,name,Five Turns Round,\n",
         );
         let listed = read_localisation(&text).unwrap();
         assert_eq!(
@@ -2460,16 +2456,16 @@ mod tests {
                     &[
                         (
                             "english",
-                            "Room to Grow",
-                            "Build a second floor, of guest rooms."
+                            "Rising Water",
+                            "Bring the millpond, up to its brim."
                         ),
-                        ("german", "Platz zum Wachsen", "Sag \"Hallo\""),
+                        ("german", "Pegelstand", "Sag \"Hallo\""),
                     ]
                 ),
                 translated(
                     "FIVE_LEVELS",
                     &[
-                        ("english", "Five Floors Up", "Up."),
+                        ("english", "Five Turns Round", "Up."),
                         ("german", "", "Hoch.")
                     ]
                 ),

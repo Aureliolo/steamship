@@ -1376,7 +1376,7 @@ mod tests {
     fn branches_are_read_from_a_map_or_a_list_in_any_capitals() {
         let map = answer(
             r#"{"response": {"result": 1, "betas": {
-                "testing": {"BuildID": 1234, "Description": "0.1.0 9b3d543", "ReqPassword": true},
+                "testing": {"BuildID": 1234, "Description": "0.1.0 7a6b5c4", "ReqPassword": true},
                 "default": {"BuildID": "1200", "Description": "0.0.9", "ReqPassword": false}
             }}}"#,
         );
@@ -1390,14 +1390,14 @@ mod tests {
             Branch {
                 name: "testing".to_owned(),
                 build_id: 1234,
-                description: "0.1.0 9b3d543".to_owned(),
+                description: "0.1.0 7a6b5c4".to_owned(),
                 locked: true,
             },
         ];
         assert_eq!(branches_from(&map).unwrap(), expected);
         let list = answer(
             r#"{"response": {"betas": [
-                {"name": "testing", "buildid": 1234, "description": "0.1.0 9b3d543", "reqpassword": 1},
+                {"name": "testing", "buildid": 1234, "description": "0.1.0 7a6b5c4", "reqpassword": 1},
                 {"Name": "default", "BuildId": 1200, "Description": "0.0.9"},
                 {"description": "a branch with no name is left out"}
             ]}}"#,
@@ -1533,12 +1533,12 @@ mod tests {
         assert_eq!(branch_line(&bare), "default: BuildID 1200");
         let build = Build {
             build_id: 1234,
-            description: "0.1.0 9b3d543".to_owned(),
+            description: "0.1.0 7a6b5c4".to_owned(),
             created: 1_790_553_599,
         };
         assert_eq!(
             build_line(&build, &branches),
-            "2026-09-27, 0.1.0 9b3d543, live on testing and staging"
+            "2026-09-27, 0.1.0 7a6b5c4, live on testing and staging"
         );
         let older = Build {
             build_id: 1100,
@@ -1725,20 +1725,20 @@ mod tests {
         // As Steam's Web API answered for Falcon Ridge Overseer.
         let public = Branch {
             description: "Public default branch".to_owned(),
-            ..branch("public", 25_585_928, false)
+            ..branch("public", 20_000_001, false)
         };
         assert_eq!(
             branch_line(&public),
-            "default: BuildID 25585928, Public default branch"
+            "default: BuildID 20000001, Public default branch"
         );
         let build = Build {
-            build_id: 25_585_928,
-            description: "0.1.0-test b4ca836e0512".to_owned(),
+            build_id: 20_000_001,
+            description: "0.1.0-test 0a1b2c3d4e5f".to_owned(),
             created: 0,
         };
         assert_eq!(
             build_line(&build, &[public]),
-            "1970-01-01, 0.1.0-test b4ca836e0512, live on default"
+            "1970-01-01, 0.1.0-test 0a1b2c3d4e5f, live on default"
         );
         assert_eq!(shown_name("Public"), "default");
         assert_eq!(shown_name("testing"), "testing");
@@ -2220,7 +2220,7 @@ mod tests {
     #[test]
     fn only_a_description_upload_wrote_gives_a_version_and_commit() {
         for (description, expected) in [
-            ("0.1.0 960e3285f582", Some(("0.1.0", "960e3285f582"))),
+            ("0.1.0 a1b2c3d4e5f6", Some(("0.1.0", "a1b2c3d4e5f6"))),
             ("1.4.0 beta 2 abc1234", Some(("1.4.0 beta 2", "abc1234"))),
             (
                 "v2 0123456789abcdef0123456789abcdef01234567",
@@ -2229,9 +2229,9 @@ mod tests {
             ("0.1.0", None),
             ("0.1.0 abc123", None),
             ("0.1.0 0123456789abcdef0123456789abcdef012345678", None),
-            ("0.1.0 960E3285F582", None),
+            ("0.1.0 A1B2C3D4E5F6", None),
             ("0.1.0 960e3285g582", None),
-            (" 960e3285f582", None),
+            (" a1b2c3d4e5f6", None),
             ("Public default branch", None),
         ] {
             assert_eq!(version_and_commit(description), expected, "{description:?}");
@@ -2243,7 +2243,7 @@ mod tests {
         let schema = Schema {
             achievements: vec![Achievement {
                 api_name: "early_win".to_owned(),
-                name: "Open for business".to_owned(),
+                name: "Opening day".to_owned(),
                 description: String::new(),
                 hidden: false,
                 icon: "https://cdn/w.jpg".to_owned(),
@@ -2260,7 +2260,7 @@ mod tests {
         assert_eq!(
             schema.json(1_000_010, &Global::default()),
             json!({"app": 1_000_010_u32, "achievements": [{
-                "api_name": "early_win", "name": "Open for business", "description": "",
+                "api_name": "early_win", "name": "Opening day", "description": "",
                 "hidden": false, "icon": "https://cdn/w.jpg", "icon_locked": null, "percent": null,
             }], "stats": [
                 {"api_name": "NumGames", "name": "", "default": 0.0_f64, "total": null},
