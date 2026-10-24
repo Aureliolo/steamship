@@ -778,4 +778,8 @@ token taken out of a file is gone from Steam after the next upload, and language
 are left as they are. Every file is checked before anything is sent, and one that names no
 language, holds no tokens, has a token that does not start with `#` or is there twice, or a
 text that refers to tokens (`{#season_%season%}`) that none starts as, is refused with exit 2;
-so are two files for the same language. `--preview` checks the files and sends nothing.
+so are two files for the same language. So is a text holding a slot Steam cannot fill, which
+it would show as written: Steam fills `%field%` and `{#Token}` or `{#Token_%field%}` alone, so
+`{guild}`, `{0}` or a lone `}` is refused, and so is a `%` that starts no field, as in `50%`;
+write "per cent" instead. A game's `check` reads its files the same way. `--preview` checks the
+files and sends nothing.

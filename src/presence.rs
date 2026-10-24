@@ -34,8 +34,8 @@ pub fn not_language(name: &str) -> String {
 /// # Errors
 ///
 /// When the text is not such a file, names no language or one that is not a single lowercase
-/// word, holds no tokens, a token does not start with `#` or is there twice, or a text refers to
-/// tokens (`{#season_%season%}`) that no token starts as.
+/// word, holds no tokens, a token does not start with `#` or is there twice, a text holds a slot
+/// Steam cannot fill, or refers to tokens (`{#season_%season%}`) that no token starts as.
 pub fn read(text: &str) -> Result<Language, String> {
     let document = vdf::parse(text).map_err(|error| error.to_string())?;
     let lang = document.block("lang").ok_or("there is no \"lang\" block")?;
@@ -67,6 +67,7 @@ pub fn read(text: &str) -> Result<Language, String> {
         return Err("\"Tokens\" is empty, which would take every token off Steam".to_owned());
     }
     for (token, value) in &tokens {
+        fillable(value).map_err(|why| format!("{token}: {why}"))?;
         for prefix in references(value) {
             let named = tokens.iter().any(|(other, _)| {
                 other
@@ -81,6 +82,74 @@ pub fn read(text: &str) -> Result<Language, String> {
         }
     }
     Ok(Language { language, tokens })
+}
+
+/// Refuses a slot Steam cannot fill.
+///
+/// Steam fills `%field%` with the value set for `field`, and `{#Token_%field%}` with the line of
+/// the token that names, and shows the rest as written, so a
+/// `{...}` of any other shape, a lone `}`, or a `%` that starts no `%field%` would show its
+/// player's friends broken text.
+///
+/// # Errors
+///
+/// When `value` holds such a slot, quoting it.
+pub fn fillable(value: &str) -> Result<(), String> {
+    let word = |letter: char| letter.is_ascii_alphanumeric() || letter == '_';
+    let mut rest = value;
+    while let Some(at) = rest.find(['%', '{', '}']) {
+        let (_, from) = rest.split_at(at);
+        let slot = if from.starts_with('%') {
+            let field = from.get(1..).unwrap_or_default();
+            let end = field.find(|letter: char| !word(letter));
+            match end {
+                Some(end)
+                    if end > 0 && field.get(end..).is_some_and(|after| after.starts_with('%')) =>
+                {
+                    end.saturating_add(2)
+                }
+                _ => {
+                    return Err(format!(
+                        "{from:?} holds a % that starts no %field%, which Steam reads as one: \
+                         write the word, such as \"per cent\""
+                    ));
+                }
+            }
+        } else if from.starts_with("{#") {
+            let inner = from.get(2..).unwrap_or_default();
+            let close = inner.find('}').unwrap_or(inner.len());
+            let reference = inner.get(..close).unwrap_or_default();
+            // Split at each %, a reference alternates name text and fields: the name and every
+            // field need a word, while the text after a field may be empty.
+            let parts: Vec<&str> = reference.split('%').collect();
+            let shaped = inner
+                .get(close..)
+                .is_some_and(|after| after.starts_with('}'))
+                && !parts.len().is_multiple_of(2)
+                && parts.iter().enumerate().all(|(index, part)| {
+                    part.chars().all(word)
+                        && (!part.is_empty() || (index > 0 && index.is_multiple_of(2)))
+                });
+            if !shaped {
+                return Err(format!(
+                    "{from:?} holds a reference Steam cannot fill: write {{#Token}} or \
+                     {{#Token_%field%}}"
+                ));
+            }
+            close.saturating_add(3)
+        } else {
+            let end = from
+                .find('}')
+                .map_or(from.len(), |end| end.saturating_add(1));
+            return Err(format!(
+                "{:?} is a slot Steam cannot fill: Steam fills %field% and {{#Token_%field%}} \
+                 alone",
+                from.get(..end).unwrap_or(from)
+            ));
+        };
+        rest = from.get(slot..).unwrap_or_default();
+    }
+    Ok(())
 }
 
 /// The token names a text refers to, such as `#season_` in `{#season_%season%}`: up to the first
@@ -180,6 +249,48 @@ mod tests {
             let error = read(&text).unwrap_err();
             assert!(error.starts_with(why), "{text}: {error}");
         }
+    }
+
+    #[test]
+    fn a_line_holds_only_slots_steam_fills() {
+        for line in [
+            "At the menu",
+            "Grinding at %mill%: {#season_%season%}, year %year%",
+            "{#menu}",
+            "{#Status_%place%_%time%_day}",
+            "%a%%b%",
+        ] {
+            assert_eq!(fillable(line), Ok(()), "{line}");
+        }
+        for (line, why) in [
+            ("Leading {guild}", "\"{guild}\" is a slot Steam cannot fill"),
+            ("Day {0}", "\"{0}\" is a slot Steam cannot fill"),
+            ("A } alone", "\"}\" is a slot Steam cannot fill"),
+            ("{ open", "\"{ open\" is a slot Steam cannot fill"),
+            ("50% done", "\"% done\" holds a % that starts no %field%"),
+            ("%a b%", "\"%a b%\" holds a % that starts no %field%"),
+            ("%%", "\"%%\" holds a % that starts no %field%"),
+            ("ends %mill", "\"%mill\" holds a % that starts no %field%"),
+            ("{#}", "\"{#}\" holds a reference Steam cannot fill"),
+            ("{#x", "\"{#x\" holds a reference Steam cannot fill"),
+            ("{#a b}", "\"{#a b}\" holds a reference Steam cannot fill"),
+            ("{#a_%b}", "\"{#a_%b}\" holds a reference Steam cannot fill"),
+            ("{#a_%%}", "\"{#a_%%}\" holds a reference Steam cannot fill"),
+            ("{#%b%}", "\"{#%b%}\" holds a reference Steam cannot fill"),
+        ] {
+            let error = fillable(line).unwrap_err();
+            assert!(error.starts_with(why), "{line}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_line_steam_cannot_fill_is_refused_with_its_token() {
+        let text = "\"lang\" { \"Language\" \"english\" \"Tokens\" { \"#a\" \"In {guild}\" } }";
+        assert_eq!(
+            read(text).unwrap_err(),
+            "#a: \"{guild}\" is a slot Steam cannot fill: Steam fills %field% and \
+             {#Token_%field%} alone"
+        );
     }
 
     #[test]

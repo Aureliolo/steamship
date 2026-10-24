@@ -325,8 +325,9 @@ pub enum Command {
     /// Sends Valve's rich presence files, one per language, through Steam's partner Web API with
     /// the publisher key as `builds` finds it. Each language's tokens on Steam are replaced by the
     /// file's, so a token taken out of the file is gone from Steam after the upload. Files are
-    /// checked first: a token that does not start with `#`, a token twice, or a text referring to
-    /// tokens that none starts as, and nothing is sent while one is wrong. With neither the app
+    /// checked first: a token that does not start with `#`, a token twice, a text referring to
+    /// tokens that none starts as, or a text holding a slot Steam cannot fill, anything but
+    /// `%field%` and `{#Token_%field%}`, and nothing is sent while one is wrong. With neither the app
     /// nor files, in a game's folder, sends every `rich_presence_<language>.vdf` beside its build
     /// scripts, refused unless the tree is pushed, as for `upload`.
     #[command(name = "rich-presence")]
