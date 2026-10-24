@@ -168,7 +168,15 @@ fn run(command: Command) -> ExitCode {
 /// neither.
 fn check_in(script: Option<&Path>, scripts_only: bool, demo: bool) -> ExitCode {
     match script {
-        Some(folder) if folder.is_dir() => run_check_folder(folder, scripts_only),
+        Some(folder) if folder.is_dir() => run_check_folder(folder, scripts_only, demo),
+        Some(script) if demo => fail(
+            &format!(
+                "{} is an app build script, which names its own app; give --demo a build's \
+                 folder, or nothing in the game's folder",
+                script.display()
+            ),
+            REFUSED,
+        ),
         Some(script) => run_check(script, scripts_only, None),
         None => either(try_game_check(demo)),
     }
@@ -2594,15 +2602,17 @@ fn run_check(script: &Path, scripts_only: bool, game: Option<&Project>) -> ExitC
     }
 }
 
-fn run_check_folder(folder: &Path, scripts_only: bool) -> ExitCode {
+fn run_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> ExitCode {
     show::title("check");
     show::field("folder", &folder.display().to_string());
-    either(try_check_folder(folder, scripts_only))
+    either(try_check_folder(folder, scripts_only, demo))
 }
 
 /// Checks the build in `folder` on its own, as soon as it is built. In a game's folder its
-/// Windows files are judged against the redistributables its settings snapshot ticks.
-fn try_check_folder(folder: &Path, scripts_only: bool) -> Result<ExitCode, ExitCode> {
+/// Windows files are judged against the redistributables its settings snapshot ticks: the demo's
+/// with `demo`, or when only the demo's depots ship the folder, as a demo can tick fewer than the
+/// full game.
+fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<ExitCode, ExitCode> {
     if scripts_only {
         return Err(fail(
             &format!(
@@ -2615,10 +2625,16 @@ fn try_check_folder(folder: &Path, scripts_only: bool) -> Result<ExitCode, ExitC
     }
     let here = env::current_dir()
         .map_err(|error| fail(&format!("the current folder: {error}"), FAILED))?;
+    let mut report = check::folder(folder, None);
     let (app, snapshot) = match Project::find(&here).map_err(|why| fail(&why, REFUSED))? {
         Some(game) => {
             game.pinned(env!("CARGO_PKG_VERSION"))
                 .map_err(|why| fail(&why, REFUSED))?;
+            let game = if demo || demos_alone(&game, &here, &report) {
+                game.demo().map_err(|why| fail(&why, REFUSED))?
+            } else {
+                game
+            };
             // The build is checked before the app exists too, so an app script naming none is
             // left to the commands that upload.
             if let Some(app) = scripts::app_named(&game.script) {
@@ -2637,9 +2653,19 @@ fn try_check_folder(folder: &Path, scripts_only: bool) -> Result<ExitCode, ExitC
                 (None, None)
             }
         }
+        None if demo => {
+            return Err(fail(
+                &format!(
+                    "{} is in no game's folder, so it has no demo; run the check in the game's \
+                     folder, or leave out --demo",
+                    here.display()
+                ),
+                REFUSED,
+            ));
+        }
         None => (None, None),
     };
-    let mut report = check::folder(folder, app);
+    report.app_id = app;
     if let (Some(app), Some(settings)) = (app, &snapshot) {
         report
             .problems
@@ -2671,6 +2697,28 @@ fn try_check_folder(folder: &Path, scripts_only: bool) -> Result<ExitCode, ExitC
     )?;
     show::success("nothing refused", "");
     Ok(ExitCode::SUCCESS)
+}
+
+/// Whether the build `found` in a folder under `here` is the demo's alone: some of its files are
+/// shipped by the depots of `game`'s demo, and none by the full game's.
+fn demos_alone(game: &Project, here: &Path, found: &check::Report) -> bool {
+    let Some(demo) = &game.demo else {
+        return false;
+    };
+    let files: Vec<PathBuf> = found
+        .depots
+        .iter()
+        .flat_map(|build| &build.files)
+        .map(|file| scripts::resolve(here, &file.to_string_lossy()))
+        .collect();
+    let ships = |script: &Path| {
+        scripts::load(script).is_ok_and(|app| {
+            files
+                .iter()
+                .any(|file| app.depots.iter().any(|depot| check::ships(depot, file)))
+        })
+    };
+    ships(&demo.script) && !ships(&game.script)
 }
 
 /// The key set in `STEAMSHIP_WEB_API_KEY`, where an empty one is none, as for the account.

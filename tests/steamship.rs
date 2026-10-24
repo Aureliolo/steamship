@@ -9012,6 +9012,86 @@ fn a_demo_bundling_its_own_steam_input_configuration_goes_up_only_with_its_actio
 }
 
 #[test]
+fn a_demos_build_folder_is_judged_against_the_demos_own_settings() {
+    let (_temp, root) = pushed_game(None);
+    with_demo(&root, "../../export/demo/", DEMO_TYPED);
+    fs::write(
+        root.join("steam").join("demo").join("settings.vdf"),
+        format!(
+            "\"1000070\"\n{{\n\t\"common\"\n\t{{\n{DEMO_TYPED}\t}}\n\t\"config\"\n\t{{\n\
+             \t\t\"installdir\"\t\t\"InnDemo\"\n\
+             \t\t\"steamcontrollertemplateindex\"\t\t\"13\"\n\
+             \t\t\"steaminputmanifestpath\"\t\t\"steam_input/action_manifest.vdf\"\n\t}}\n}}\n"
+        ),
+    )
+    .unwrap();
+    let build = root.join("export").join("demo").join("windows");
+    fs::create_dir_all(&build).unwrap();
+    fs::write(build.join("inn.pck"), "pack").unwrap();
+    let folder = Path::new("export").join("demo").join("windows");
+    let folder = folder.to_str().unwrap();
+    let unshipped = "has no \"steam_input/action_manifest.vdf\", which app 1000070's settings name \
+                     as its Steam Input action manifest";
+    let snapshot = |said: &str, demo: bool| {
+        let mut path = Path::new("steam").to_path_buf();
+        if demo {
+            path.push("demo");
+        }
+        said.lines().any(|line| {
+            line.strip_prefix("  file      ")
+                .is_some_and(|file| Path::new(file).ends_with(path.join("settings.vdf")))
+        })
+    };
+
+    let (passed, said, why) = in_game(&root, &["check", folder]);
+    assert_eq!(
+        passed,
+        Some(0_i32),
+        "the full game's depots ship it too: {said}{why}"
+    );
+    assert!(snapshot(&said, false), "{said}");
+
+    let (refused, shown, reason) = in_game(&root, &["check", "--demo", folder]);
+    assert_eq!(refused, Some(2_i32), "{shown}{reason}");
+    assert!(reason.contains(unshipped), "{reason}");
+    assert!(snapshot(&shown, true), "{shown}");
+
+    fs::write(
+        root.join("steam").join("depot.vdf"),
+        r#""DepotBuild" { "DepotID" "1000051" "FileMapping" { "LocalPath" "windows/*" "DepotPath" "." "Recursive" "1" } }"#,
+    )
+    .unwrap();
+    let (alone, judged, unmet) = in_game(&root, &["check", folder]);
+    assert_eq!(
+        alone,
+        Some(2_i32),
+        "only the demo's depots ship it: {judged}{unmet}"
+    );
+    assert!(unmet.contains(unshipped), "{unmet}");
+
+    let (scripted, titled, named) =
+        in_game(&root, &["check", "--demo", "steam/demo/app_build.vdf"]);
+    assert_eq!(scripted, Some(2_i32), "{titled}{named}");
+    assert_eq!(
+        failure(&named),
+        "steam/demo/app_build.vdf is an app build script, which names its own app; give --demo a \
+         build's folder, or nothing in the game's folder"
+    );
+
+    let outside = tempfile::tempdir().unwrap();
+    fs::create_dir_all(outside.path().join("build")).unwrap();
+    let (gameless, headed, told) = in_game(outside.path(), &["check", "--demo", "build"]);
+    assert_eq!(gameless, Some(2_i32), "{headed}{told}");
+    assert!(
+        failure(&told).ends_with(
+            " is in no game's folder, so it has no demo; run the check in the game's folder, or \
+             leave out --demo"
+        ),
+        "{told}"
+    );
+}
+
+#[test]
 fn a_godot_export_ships_only_in_the_app_its_demo_feature_says_it_is_for() {
     let (_temp, root) = pushed_game(None);
     with_demo(&root, "../../export/", DEMO_TYPED);
