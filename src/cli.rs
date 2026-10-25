@@ -461,7 +461,7 @@ pub struct Leaderboards {
     /// The app, by its ID or its app build script; in a game's folder, its own.
     pub app: Option<String>,
     /// JSON files of the leaderboards the app should have, each with its `name`, `sort`,
-    /// `display`, `trusted_writes` and `friends_only`; or lists of games-kit's records, those
+    /// `display`, `trusted_writes`, `friends_only` and `period`; or lists of games-kit's records, those
     /// typed `leaderboard` read the same way by the name in `steam`. Each leaderboard is in one
     /// file only.
     #[arg(long, value_name = "FILE", num_args = 0..)]

@@ -4908,7 +4908,14 @@ fn leaderboards_file(path: &Path, app: u32) -> Result<leaderboards::Listed, Exit
         &format!(
             "{}, {}",
             path.display(),
-            show::counted(listed.leaderboards.len(), "leaderboard")
+            match listed.templates.len() {
+                0 => show::counted(listed.leaderboards.len(), "leaderboard"),
+                templates => format!(
+                    "{}, {}",
+                    show::counted(listed.leaderboards.len(), "leaderboard"),
+                    show::counted(templates, "dated template")
+                ),
+            }
         ),
     );
     Ok(listed)
@@ -4950,7 +4957,7 @@ fn try_leaderboards(
     if changes.delete_missing {
         let gone: Vec<String> = held
             .iter()
-            .filter(|leaderboard| wants.iter().all(|wanted| wanted.name != leaderboard.name))
+            .filter(|leaderboard| !wants.holds(&leaderboard.name))
             .map(|leaderboard| leaderboard.name.clone())
             .collect();
         if !gone.is_empty() {
@@ -4976,7 +4983,7 @@ fn try_leaderboards(
         }
     }
     if changes.create {
-        for wanted in &wants {
+        for wanted in &wants.leaderboards {
             if held
                 .iter()
                 .any(|leaderboard| leaderboard.name == wanted.name)
