@@ -6565,6 +6565,59 @@ fn a_leaderboard_the_file_no_longer_holds_is_deleted_only_while_the_app_is_unrel
 }
 
 #[test]
+fn a_dated_board_a_template_made_is_checked_against_it_and_never_made_or_deleted() {
+    // No steamcmd is installed in the home: asking whether the app is released would fail.
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let records = files.path().join("boards.json");
+    fs::write(
+        &records,
+        r#"[{"type": "leaderboard", "steam": "gold", "sort": "descending", "display": "numeric",
+             "trusted_writes": true},
+            {"type": "leaderboard", "steam": "DAILY", "sort": "descending", "display": "numeric",
+             "period": "day", "details": 5}]"#,
+    )
+    .unwrap();
+    let records = records.to_string_lossy().into_owned();
+    let dated = r#"{"response": {"result": 1, "leaderboards": [
+        {"id": 7, "name": "gold", "entries": 12, "sortmethod": "Descending",
+         "displaytype": "Numeric", "onlytrustedwrites": true, "onlyfriendsreads": false},
+        {"id": 9, "name": "DAILY_20261025", "entries": 3, "sortmethod": "Descending",
+         "displaytype": "Numeric", "onlytrustedwrites": false, "onlyfriendsreads": false}
+    ]}}"#;
+    let (host, requests) = web_api(vec![("200 OK", dated)]);
+    let (code, said, stderr) = steamship(
+        &[
+            "leaderboards",
+            "480",
+            "--check",
+            &records,
+            "--create",
+            "--delete-missing",
+        ],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!(code, Some(0_i32), "{said}{stderr}");
+    assert!(
+        said.contains(&format!("{records}, 1 leaderboard, 1 dated template\n"))
+            && said.contains("Steam's leaderboards match the file")
+            && !said.contains("made")
+            && !said.contains("deleted"),
+        "{said}"
+    );
+    drop(requests.recv_timeout(Duration::from_secs(10)).unwrap());
+    assert!(
+        requests.recv_timeout(Duration::from_secs(1)).is_err(),
+        "Steam is asked for the leaderboards alone"
+    );
+}
+
+#[test]
 fn delete_missing_with_nothing_to_delete_asks_steamcmd_nothing() {
     // No steamcmd is installed in the home: asking whether the app is released would fail.
     let home = tempfile::tempdir().unwrap();

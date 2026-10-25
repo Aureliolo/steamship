@@ -756,6 +756,16 @@ several files, after it or each after its own `--check`, so the files given to `
 steamship leaderboards 1000050 --check mods/base/data/achievements.json mods/base/data/boards.json
 ```
 
+A leaderboard with a `period` of `day`, `week` or `month` is a template: the game makes one
+board each period on first use, named after the template and the UTC date, as `DAILY_20261025`,
+`WEEKLY_2026W43` (the ISO week) or `MONTHLY_202610`, with the template's sort and display. No
+board has the template's own name, so `--create` makes none and its absence is no difference.
+Each dated board on Steam is compared with its template, and is never reported as missing from
+the file nor deleted by `--delete-missing`. A template is refused with `trusted_writes` or
+`friends_only`, which Steamworks sets board by board, when its name and the date would pass
+Steam's 128 bytes, or when another leaderboard has a name it would make. `period` is `none` when
+left out, and steamship's own file takes it too.
+
 ## Rich presence
 
 ```sh
