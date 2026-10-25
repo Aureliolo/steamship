@@ -1170,6 +1170,19 @@ impl Api {
         )?)
     }
 
+    /// Deletes `app`'s leaderboard named `name`, and every score on it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Api::branches`], and when Steam's result says the call failed.
+    pub fn delete_leaderboard(&self, app: u32, name: &str) -> Result<(), Error> {
+        let answer = self.post(
+            "ISteamLeaderboards/DeleteLeaderboard/v1",
+            &[("appid", app.to_string()), ("name", name.to_owned())],
+        )?;
+        succeeded(field(&answer, &["result"]).ok_or(Error::Unreadable("result"))?)
+    }
+
     fn post(&self, method: &str, form: &[(&str, String)]) -> Result<Value, Error> {
         let response = self.answered(|| {
             self.agent

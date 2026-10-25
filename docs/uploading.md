@@ -704,6 +704,7 @@ run `--unchanged` without Steam. Keep the receipt with the records.
 steamship leaderboards 480
 steamship leaderboards 480 --check steam/leaderboards.json
 steamship leaderboards 480 --check steam/leaderboards.json --create
+steamship leaderboards 480 --check steam/leaderboards.json --create --delete-missing
 ```
 
 `leaderboards` lists those Steam holds for the app, with the same Web API key as `builds`.
@@ -712,11 +713,16 @@ is in the file but not on Steam or the other way round, and each setting that di
 `--create` too, the file's leaderboards that Steam lacks are made first, as the file has them,
 so a release can bring in a new one before the build that uses it.
 
-Steam keeps an existing leaderboard's settings and its scores: asked to make one that is already
-there, it answers with the one it has. So steamship never changes, remakes or deletes a
-leaderboard. A setting that differs is changed in Steamworks, under Stats & Achievements,
-Leaderboards, and one on Steam but not in the file is left for you to delete there or add to
-the file.
+With `--delete-missing`, the leaderboards on Steam that the file does not hold are deleted first,
+and their scores with them, so a renamed leaderboard leaves no old one behind. steamship deletes
+one only while steamcmd's app info shows the build account the app unreleased, as for setting
+the default branch live: once players have the game, it exits 2 naming the leaderboards, which
+are then deleted in Steamworks, under Stats & Achievements, Leaderboards, or put back in the
+file. With nothing to delete, steamcmd is not asked.
+
+Steam keeps an existing leaderboard's settings: asked to make one that is already there, it
+answers with the one it has. So steamship never changes or remakes a leaderboard, and a setting
+that differs is changed in Steamworks, under Stats & Achievements, Leaderboards.
 
 ```json
 {

@@ -109,8 +109,9 @@ Each command run in a game takes from it whatever is not given:
 - `steamship achievements --check` and `--write` with no files read the game's records and
   catalogues. `--check` compares the icons with the receipt once there is one, and
   `--imported` alone writes it.
-- `steamship leaderboards --check` with no files, or `--create` alone, reads the game's
-  leaderboard records.
+- `steamship leaderboards --check` with no files, `--create` or `--delete-missing` alone, reads
+  the game's leaderboard records. A leaderboard renamed in the records is made with `--create`,
+  and the old one deleted with `--delete-missing` while the game is unreleased.
 - `steamship rich-presence` with neither the app nor files sends every language's file, from a
   pushed tree only; `--preview` checks them and sends nothing.
 - `steamship workshop` uploads every example mod, or the one `--name` names, from a pushed tree

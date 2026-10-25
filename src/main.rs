@@ -135,7 +135,7 @@ fn run(command: Command) -> ExitCode {
             check.map(Snapshot::given),
             named(account.as_deref()),
         )),
-        Command::Leaderboards { app, check, create } => either(leaderboards_in(app, check, create)),
+        Command::Leaderboards(request) => either(leaderboards_in(request)),
         Command::RichPresence {
             app,
             demo,
@@ -567,7 +567,7 @@ fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> {
             &format!("no leaderboard records in {}", records()),
         );
     } else {
-        codes.push(either(try_leaderboards(app, &boards, false)));
+        codes.push(either(try_leaderboards(app, &boards, Changes::default())));
     }
     compared_presence(game, app, codes)
 }
@@ -893,13 +893,30 @@ fn settings_in(
     )
 }
 
-/// `leaderboards` with whatever is not given taken from the game.
-fn leaderboards_in(
-    app: Option<String>,
-    check: Option<Vec<PathBuf>>,
+/// What `leaderboards` changes on Steam before it compares.
+#[derive(Debug, Clone, Copy, Default)]
+struct Changes<'command> {
     create: bool,
-) -> Result<ExitCode, ExitCode> {
-    let own = check.as_ref().is_none_or(Vec::is_empty) && (check.is_some() || create);
+    delete_missing: bool,
+    account: Option<&'command str>,
+}
+
+/// `leaderboards` with whatever is not given taken from the game.
+fn leaderboards_in(request: cli::Leaderboards) -> Result<ExitCode, ExitCode> {
+    let cli::Leaderboards {
+        app,
+        check,
+        create,
+        delete_missing,
+        account,
+    } = request;
+    let changes = Changes {
+        create,
+        delete_missing,
+        account: named(account.as_deref()),
+    };
+    let own =
+        check.as_ref().is_none_or(Vec::is_empty) && (check.is_some() || create || delete_missing);
     let game = (app.is_none() || own).then(game).transpose()?;
     let mut files = check.unwrap_or_default();
     if let Some(game) = game.as_ref().filter(|_| own) {
@@ -913,7 +930,7 @@ fn leaderboards_in(
             ));
         }
     }
-    try_leaderboards(&app_given_or(app, game.as_ref()), &files, create)
+    try_leaderboards(&app_given_or(app, game.as_ref()), &files, changes)
 }
 
 /// `rich-presence` with whatever is not given taken from the game: every language's file, sent
@@ -1943,7 +1960,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
     // Asked for on every upload by a game's tools, the default branch is left once the game is
     // released, and the upload goes on to its own branch as ever.
     let default = if request.default {
-        let asked = unreleased(&home, &account, prepared.app_id, packed.as_ref());
+        let asked = default_unreleased(&home, &account, prepared.app_id, packed.as_ref());
         if asked.is_err() {
             install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
         }
@@ -4718,16 +4735,26 @@ fn app_info(
     }
 }
 
-/// Whether steamship may set `app`'s default branch live: only while Steam shows `account` that
-/// nobody can buy the app yet, asked through steamcmd run from `home`. A build live on a released
-/// app's default branch is the one its players get, and Valve then asks for a Steam Mobile
-/// confirmation, given in Steamworks. Answers why not when it may not, and fails when Steam could
+/// The default branch, as [`unreleased`] leaves it: a build live on a released app's default
+/// branch is the one its players get, and Valve then asks for a Steam Mobile confirmation, given in
+/// Steamworks.
+const DEFAULT_RELEASED: (&str, &str) = (
+    "its default branch is set live in Steamworks, where Valve asks for a Steam Mobile \
+     confirmation",
+    "its default branch",
+);
+
+/// Whether steamship may do what is only safe before players have the app: only while Steam
+/// shows `account` that nobody can buy it yet, asked through steamcmd run from `home`. `left`
+/// says what happens instead once the app is released, and what steamship leaves to Steamworks
+/// when Steam shows no release state. Answers why not when it may not, and fails when Steam could
 /// not be asked.
 fn unreleased(
     home: &Path,
     account: &Account,
     app: u32,
     packed: Option<&ci::Login>,
+    (released, left): (&str, &str),
 ) -> Result<Result<(), String>, ExitCode> {
     let (console, spinner) = app_info(
         home,
@@ -4744,16 +4771,13 @@ fn unreleased(
         }
         Ok(Some(state)) => {
             spinner.failed(&format!("released, as Steam shows it ({state})"));
-            Ok(Err(format!(
-                "app {app} is released, so its default branch is set live in Steamworks, where \
-                 Valve asks for a Steam Mobile confirmation"
-            )))
+            Ok(Err(format!("app {app} is released, so {released}")))
         }
         Ok(None) => {
             spinner.failed("not shown");
             Ok(Err(format!(
-                "Steam shows no release state for app {app}, so steamship leaves its default \
-                 branch to Steamworks"
+                "Steam shows no release state for app {app}, so steamship leaves {left} to \
+                 Steamworks"
             )))
         }
         Err(why) => {
@@ -4761,6 +4785,36 @@ fn unreleased(
             Err(fail(why, FAILED))
         }
     }
+}
+
+/// Whether steamship may set `app`'s default branch live, as [`unreleased`] answers.
+fn default_unreleased(
+    home: &Path,
+    account: &Account,
+    app: u32,
+    packed: Option<&ci::Login>,
+) -> Result<Result<(), String>, ExitCode> {
+    unreleased(home, account, app, packed, DEFAULT_RELEASED)
+}
+
+/// Refuses, as [`unreleased`] says why, unless Steam shows the build account named `asked_as`,
+/// or the CI login's, that `app` is unreleased.
+fn refused_once_released(
+    home: &Path,
+    app: u32,
+    asked_as: Option<&str>,
+    left: (&str, &str),
+) -> Result<(), ExitCode> {
+    let packed = packed_login()?;
+    let account = match (&packed, asked_as) {
+        (Some(packed), None) => packed.account().clone(),
+        _ => account(asked_as, false)?.0,
+    };
+    let (held, _, manifest) = ready()?;
+    restore(packed.as_ref(), home)?;
+    let asked = unreleased(home, &account, app, packed.as_ref(), left);
+    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    asked?.map_err(|why| fail(&why, REFUSED))
 }
 
 /// `app`'s settings, as Steam shows them to `account` through steamcmd.
@@ -4860,7 +4914,11 @@ fn leaderboards_file(path: &Path, app: u32) -> Result<leaderboards::Listed, Exit
     Ok(listed)
 }
 
-fn try_leaderboards(app: &str, check: &[PathBuf], create: bool) -> Result<ExitCode, ExitCode> {
+fn try_leaderboards(
+    app: &str,
+    check: &[PathBuf],
+    changes: Changes<'_>,
+) -> Result<ExitCode, ExitCode> {
     show::title("leaderboards");
     let app_id = app_named(app)?;
     let mut files = Vec::with_capacity(check.len());
@@ -4889,7 +4947,35 @@ fn try_leaderboards(app: &str, check: &[PathBuf], create: bool) -> Result<ExitCo
         );
         return Ok(ExitCode::SUCCESS);
     }
-    if create {
+    if changes.delete_missing {
+        let gone: Vec<String> = held
+            .iter()
+            .filter(|leaderboard| wants.iter().all(|wanted| wanted.name != leaderboard.name))
+            .map(|leaderboard| leaderboard.name.clone())
+            .collect();
+        if !gone.is_empty() {
+            let released = format!(
+                "deleting {} would take its players' scores with it: delete it in Steamworks, \
+                 under Stats & Achievements, Leaderboards, or put it back in the file",
+                gone.join(", ")
+            );
+            refused_once_released(
+                &home,
+                app_id,
+                changes.account,
+                (&released, "deleting its leaderboards"),
+            )?;
+        }
+        for name in gone {
+            let spinner = Spinner::start("steam", &format!("deleting {name}"), false);
+            if let Err(error) = api.delete_leaderboard(app_id, &name) {
+                return Err(web_api_failed(spinner, &error));
+            }
+            spinner.done(&format!("deleted {name}"));
+            held.retain(|leaderboard| leaderboard.name != name);
+        }
+    }
+    if changes.create {
         for wanted in &wants {
             if held
                 .iter()
@@ -5002,17 +5088,12 @@ fn try_promote(request: &cli::Promote) -> Result<ExitCode, ExitCode> {
     let home = home()?;
     let (api, from) = web_api(&home)?;
     if default {
-        let packed = packed_login()?;
-        let asked_as = named(request.account.as_deref());
-        let account = match (&packed, asked_as) {
-            (Some(packed), None) => packed.account().clone(),
-            _ => account(asked_as, false)?.0,
-        };
-        let (held, _, manifest) = ready()?;
-        restore(packed.as_ref(), &home)?;
-        let asked = unreleased(&home, &account, app_id, packed.as_ref());
-        install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
-        asked?.map_err(|why| fail(&why, REFUSED))?;
+        refused_once_released(
+            &home,
+            app_id,
+            named(request.account.as_deref()),
+            DEFAULT_RELEASED,
+        )?;
     }
     let spinner = Spinner::start("steam", "setting it live", false);
     if let Err(error) = api.set_live(app_id, build, key) {

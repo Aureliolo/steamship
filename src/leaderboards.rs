@@ -160,7 +160,11 @@ impl fmt::Display for Drift {
                     "{name}: in the file, not on Steam; --create makes it"
                 )
             }
-            Self::NotInFile(name) => write!(formatter, "{name}: on Steam, not in the file"),
+            Self::NotInFile(name) => write!(
+                formatter,
+                "{name}: on Steam, not in the file; --delete-missing deletes it while the app is \
+                 unreleased"
+            ),
             Self::Differs {
                 name,
                 field,
@@ -495,7 +499,8 @@ mod tests {
                 "fastest_season: trusted writes only is \"yes\" on Steam and \"no\" in the file",
                 "fastest_season: friends only is \"yes\" on Steam and \"no\" in the file",
                 "gold: in the file, not on Steam; --create makes it",
-                "old: on Steam, not in the file",
+                "old: on Steam, not in the file; --delete-missing deletes it while the app is \
+                 unreleased",
             ]
         );
     }
