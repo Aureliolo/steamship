@@ -247,8 +247,8 @@ fn help_lists_every_command_with_one_short_line() {
          uploaded\n",
         "  drm-wrap       Wrap a Windows executable in Steam DRM, before it is uploaded\n",
         "  settings       Show an app's settings in Steamworks, or check them against a snapshot\n",
-        "  leaderboards   Show an app's leaderboards, or check them against a file and make those \
-         missing\n",
+        "  leaderboards   Show an app's leaderboards, or check them against a file, making or \
+         deleting the rest\n",
         "  rich-presence  Upload an app's rich presence localisation\n",
         "  text           Write a game's store, Workshop and rich presence text in every language \
          it speaks\n",
@@ -6462,6 +6462,135 @@ fn leaderboards_are_listed_and_checked_and_those_missing_are_made_as_the_file_ha
                  &createifnotfound=true&onlytrustedwrites=false&onlyfriendsreads=true"
             ),
         "only the one Steam lacks, as the file has it: {creating}"
+    );
+}
+
+/// `DeleteLeaderboard` answering that it deleted the one asked for, as Steam answered in a trial.
+#[cfg(unix)]
+const DELETED: &str = r#"{"result": {"result": 1}}"#;
+
+/// A leaderboards file for app 1000 holding `fastest_season` alone, as [`MADE`] makes it.
+#[cfg(unix)]
+fn without_gold(folder: &Path) -> String {
+    let path = folder.join("leaderboards.json");
+    fs::write(
+        &path,
+        r#"{"app": 1000, "leaderboards": [
+            {"name": "fastest_season", "sort": "ascending", "display": "seconds",
+             "friends_only": true}
+        ]}"#,
+    )
+    .unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+#[cfg(unix)]
+#[test]
+fn a_leaderboard_the_file_no_longer_holds_is_deleted_only_while_the_app_is_unreleased() {
+    let files = tempfile::tempdir().unwrap();
+    let file = without_gold(files.path());
+    let command = [
+        "leaderboards",
+        "1000",
+        "--check",
+        &file,
+        "--create",
+        "--delete-missing",
+    ];
+    let unreleased = faked_with(&released_as("prerelease"));
+    saved_login(unreleased.path());
+    let (host, requests) = web_api(vec![
+        ("200 OK", LEADERBOARDS),
+        ("200 OK", DELETED),
+        ("200 OK", MADE),
+    ]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let (code, said, stderr) = steamship(&command, Some(unreleased.path()), &set);
+    assert_eq!(code, Some(0_i32), "{said}{stderr}");
+    for line in [
+        "unreleased, as Steam shows it (prerelease)",
+        "  steam     \u{2713} deleted gold\n",
+        "  steam     \u{2713} made fastest_season\n",
+        "Steam's leaderboards match the file",
+    ] {
+        assert!(said.contains(line), "{line:?} in {said}");
+    }
+    drop(requests.recv_timeout(Duration::from_secs(10)).unwrap());
+    let deleting = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        deleting.starts_with("POST /ISteamLeaderboards/DeleteLeaderboard/v1/ ")
+            && deleting.ends_with("appid=1000&name=gold"),
+        "{deleting}"
+    );
+
+    let released = faked_with(&released_as("released"));
+    saved_login(released.path());
+    let (asked, _unasked) = web_api(vec![("200 OK", LEADERBOARDS)]);
+    let (refused, kept, why) = steamship(
+        &command,
+        Some(released.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &asked),
+        ],
+    );
+    assert_eq!(refused, Some(2_i32), "{kept}{why}");
+    assert_eq!(
+        failure(&why),
+        "app 1000 is released, so deleting gold would take its players' scores with it: delete \
+         it in Steamworks, under Stats & Achievements, Leaderboards, or put it back in the file"
+    );
+    assert!(!kept.contains("deleted"), "{kept}");
+
+    let (refusing, _refused_requests) = web_api(vec![
+        ("200 OK", LEADERBOARDS),
+        ("200 OK", r#"{"result": {"result": 2}}"#),
+    ]);
+    let (failed, _, unsaid) = steamship(
+        &command,
+        Some(unreleased.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &refusing),
+        ],
+    );
+    assert_eq!(failed, Some(1_i32), "{unsaid}");
+    assert!(unsaid.contains("result 2"), "{unsaid}");
+}
+
+#[test]
+fn delete_missing_with_nothing_to_delete_asks_steamcmd_nothing() {
+    // No steamcmd is installed in the home: asking whether the app is released would fail.
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let file = leaderboards_file(files.path(), true);
+    let (host, _requests) = web_api(vec![("200 OK", LEADERBOARDS), ("200 OK", MADE)]);
+    let (code, said, stderr) = steamship(
+        &[
+            "leaderboards",
+            "480",
+            "--check",
+            &file,
+            "--create",
+            "--delete-missing",
+        ],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!(code, Some(0_i32), "{said}{stderr}");
+    assert!(
+        said.contains("Steam's leaderboards match the file") && !said.contains("deleted"),
+        "{said}"
     );
 }
 

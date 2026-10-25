@@ -53,6 +53,8 @@ Everything a person reads counts: messages, help text, docs, comments, commit me
   app info shows the build account the app unreleased; it never sends the SteamID a released
   app's default needs. It never describes the default branch, which Valve keeps to the
   Steamworks site. `check` refuses a script whose `SetLive` names it, which steamcmd cannot do.
+- steamship deletes a leaderboard, and its scores, only while steamcmd's app info shows the build
+  account the app unreleased, and never changes one's settings.
 - Every line steamcmd or Steam is expected to print, in code or a test fixture, is copied from a
   real run, never guessed.
 - In scope: getting a game's builds, content and configuration into Steamworks, and checking

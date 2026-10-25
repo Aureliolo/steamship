@@ -299,28 +299,18 @@ pub enum Command {
         #[arg(long, env = ACCOUNT)]
         account: Option<String>,
     },
-    /// Show an app's leaderboards, or check them against a file and make those missing.
+    /// Show an app's leaderboards, or check them against a file, making or deleting the rest.
     ///
     /// Lists the leaderboards Steam holds for the app, through Steam's partner Web API with the
     /// publisher key as `builds` finds it. With `--check`, compares them with a file by name, and
     /// exits 2 naming every leaderboard missing on either side and every setting that differs.
     /// With `--create` too, those in the files that Steam lacks are made first, as the files have
-    /// them. Steam keeps an existing leaderboard's settings and scores, so none is ever changed,
-    /// made again or deleted. In a game's folder, `--check` with no files, or `--create` alone,
-    /// reads the games-kit records in `mods/base/data` holding leaderboards.
-    Leaderboards {
-        /// The app, by its ID or its app build script; in a game's folder, its own.
-        app: Option<String>,
-        /// JSON files of the leaderboards the app should have, each with its `name`, `sort`,
-        /// `display`, `trusted_writes` and `friends_only`; or lists of games-kit's records, those
-        /// typed `leaderboard` read the same way by the name in `steam`. Each leaderboard is in
-        /// one file only.
-        #[arg(long, value_name = "FILE", num_args = 0..)]
-        check: Option<Vec<PathBuf>>,
-        /// Make the file's leaderboards that Steam lacks, before checking.
-        #[arg(long)]
-        create: bool,
-    },
+    /// them. With `--delete-missing`, those on Steam that the files no longer hold are deleted
+    /// first, with their scores, but only while steamcmd's app info shows the build account the
+    /// app unreleased. Steam keeps an existing leaderboard's settings, so none is ever changed or
+    /// made again. In a game's folder, `--check` with no files, `--create` or `--delete-missing`
+    /// alone reads the games-kit records in `mods/base/data` holding leaderboards.
+    Leaderboards(Leaderboards),
     /// Upload an app's rich presence localisation.
     ///
     /// Sends Valve's rich presence files, one per language, through Steam's partner Web API with
@@ -463,6 +453,30 @@ pub enum Command {
         /// The shell to complete in.
         shell: clap_complete::Shell,
     },
+}
+
+/// The leaderboards `leaderboards` lists, checks, makes or deletes.
+#[derive(Debug, Clone, Args)]
+pub struct Leaderboards {
+    /// The app, by its ID or its app build script; in a game's folder, its own.
+    pub app: Option<String>,
+    /// JSON files of the leaderboards the app should have, each with its `name`, `sort`,
+    /// `display`, `trusted_writes` and `friends_only`; or lists of games-kit's records, those
+    /// typed `leaderboard` read the same way by the name in `steam`. Each leaderboard is in one
+    /// file only.
+    #[arg(long, value_name = "FILE", num_args = 0..)]
+    pub check: Option<Vec<PathBuf>>,
+    /// Make the file's leaderboards that Steam lacks, before checking.
+    #[arg(long)]
+    pub create: bool,
+    /// Delete the leaderboards on Steam that the files do not hold, before checking; refused
+    /// once the app is released, as their players' scores would go with them.
+    #[arg(long)]
+    pub delete_missing: bool,
+    /// The build account that asks Steam whether the app is released, if not the one the last
+    /// login remembered.
+    #[arg(long, env = ACCOUNT)]
+    pub account: Option<String>,
 }
 
 /// What `text` writes, checks or prints.
