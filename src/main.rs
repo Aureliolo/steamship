@@ -4032,8 +4032,9 @@ fn try_self_check() -> Result<ExitCode, ExitCode> {
         show::field("release's", &digest::hex(&listed));
         return Err(fail(
             &format!(
-                "{} is not the {target} binary of steamship {version}'s release: install the \
-                 release again, from {}",
+                "{} is not the {target} binary of steamship {version}'s release: it was built \
+                 from source, as `cargo install` builds it, or elsewhere, or altered since. \
+                 Install the release's own binary, from {} or with `cargo binstall steamship`",
                 path.display(),
                 update::LATEST
             ),
