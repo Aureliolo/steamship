@@ -231,7 +231,8 @@ fn game() -> Result<Project, ExitCode> {
             fail(
                 &format!(
                     "there is no game in {}: no {} or steam/app_build.vdf in it or a folder \
-                     above, so name the app and its files, or run steamship in the game's folder",
+                     above. Run steamship in the game's folder, start one here with \
+                     `steamship init <app ID>`, or name the app and its files",
                     here.display(),
                     project::FILE
                 ),
