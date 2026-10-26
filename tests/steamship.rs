@@ -4405,7 +4405,7 @@ fn upload_asks_steam_which_redistributables_the_app_ticks_when_the_build_needs_o
 }
 
 #[test]
-fn builds_and_promote_that_steam_does_not_answer_say_so_and_exit_1() {
+fn builds_and_promote_that_steam_answers_with_an_error_say_its_status_and_exit_1() {
     let home = tempfile::tempdir().unwrap();
     // The second answer is for what `builds` asks after a 500: which apps the key holds.
     let (host, _requests) = web_api(vec![
@@ -4425,11 +4425,31 @@ fn builds_and_promote_that_steam_does_not_answer_say_so_and_exit_1() {
         let (code, stdout, stderr) = steamship(args, Some(home.path()), &set);
         assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
         assert!(
-            stdout.contains("  steam     \u{2717} no answer\n"),
+            stdout.contains("  steam     \u{2717} HTTP 500\n"),
             "{stdout}"
         );
         assert!(!stdout.contains("live on"), "{stdout}");
     }
+
+    let refusing = web_api(vec![("403 Forbidden", "")]).0;
+    let (code, stdout, stderr) = steamship(
+        &["builds", "1000010"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &refusing),
+        ],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  steam     \u{2717} key refused\n"),
+        "{stdout}"
+    );
+    assert!(
+        failure(&stderr).starts_with("Steam refused the Web API key; "),
+        "{stderr}"
+    );
 }
 
 /// `GetSchemaForGame` as Steam answered it for Spacewar, trimmed to two achievements.
