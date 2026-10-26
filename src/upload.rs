@@ -483,6 +483,11 @@ const NO_CONNECTION_AT_BUILD: &str = "ERROR! Failed to initialize build on serve
 const DISCONNECTED: &str =
     "steamcmd has been disconnected from steam with result 3 (No Connection)";
 
+/// What steamcmd says when Steam does not send it the client config it asks for on connecting,
+/// before any login. Seen in CI on all five systems within one minute, on runs between others
+/// that connected.
+const NO_CLIENT_CONFIG: &str = "ERROR! Failed to load platform info";
+
 /// Why a build failed that may pass when steamcmd runs again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Retry {
@@ -492,6 +497,9 @@ pub enum Retry {
     NoConnection,
     /// For Steam dropping steamcmd's connection; it is tried once more, as for no connection.
     Disconnected,
+    /// For Steam not sending steamcmd its client config; it is tried once more, as for no
+    /// connection.
+    NoClientConfig,
 }
 
 /// Why steamcmd's build failed, from `console` and `log`, if running it again may pass.
@@ -507,6 +515,8 @@ pub fn retry(console: &str, log: Option<&str>) -> Option<Retry> {
             Some(Retry::NoConnection)
         } else if says(DISCONNECTED) {
             Some(Retry::Disconnected)
+        } else if says(NO_CLIENT_CONFIG) {
+            Some(Retry::NoClientConfig)
         } else {
             None
         }
@@ -818,11 +828,31 @@ mod tests {
          ERROR! (Timed out)\n\
          Unloading Steam API...OK\n";
 
+    /// The console of CI's anonymous preview of app 480 for which Steam sent steamcmd no client
+    /// config, as on every system within the same minute.
+    const NO_CLIENT_CONFIG_CONSOLE: &str = "Connecting anonymously to Steam Public...OK\n\
+         Waiting for client config...ERROR! Info request for AppId 7 returned error Timeout.\n\
+         OK\n\
+         ERROR! Failed to load platform info\n\
+         Unloading Steam API...OK\n";
+
     #[test]
     fn a_build_that_may_pass_when_steamcmd_runs_again_says_why() {
         let no_connection = Some(Retry::NoConnection);
         assert_eq!(retry(NO_CONNECTION_AT_BUILD_CONSOLE, None), no_connection);
         assert_eq!(retry(DISCONNECTED_CONSOLE, None), Some(Retry::Disconnected));
+        assert_eq!(
+            retry(NO_CLIENT_CONFIG_CONSOLE, None),
+            Some(Retry::NoClientConfig)
+        );
+        assert_eq!(
+            judge(480, Some(1_i32), NO_CLIENT_CONFIG_CONSOLE, None, true),
+            Outcome::Failed(vec![
+                "Info request for AppId 7 returned error Timeout.".to_owned(),
+                "Failed to load platform info".to_owned()
+            ]),
+            "a failure, so the build is tried again"
+        );
         assert_eq!(
             retry("", Some(DISCONNECTED_CONSOLE)),
             Some(Retry::Disconnected)

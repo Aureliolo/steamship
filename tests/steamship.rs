@@ -1015,6 +1015,18 @@ fn disconnected_then_built(failing: u32) -> String {
     )
 }
 
+/// A steamcmd whose first `failing` runs fail as steamcmd did on every system of one CI run
+/// within the same minute, Steam sending it no client config.
+#[cfg(unix)]
+fn no_client_config_then_built(failing: u32) -> String {
+    failing_then_built(
+        "echo 'Waiting for client config...ERROR! Info request for AppId 7 returned error Timeout.'\n\
+         echo 'OK'\n\
+         echo 'ERROR! Failed to load platform info'\n",
+        failing,
+    )
+}
+
 /// How many times the steamcmd of `failing_then_built` ran in `home`.
 #[cfg(unix)]
 fn runs(home: &Path) -> usize {
@@ -1113,6 +1125,28 @@ fn an_upload_runs_steamcmd_once_more_when_steam_disconnects_it() {
     assert_eq!(failed, Some(1_i32), "{said}{why}");
     assert_eq!(runs(dropped.path()), 2, "only once more");
     assert!(why.contains("Timed out"), "{why}");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_upload_runs_steamcmd_once_more_when_steam_sends_it_no_client_config() {
+    let home = faked_with(&no_client_config_then_built(1));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(runs(home.path()), 2);
+    for line in [
+        "  steam     \u{2717} Steam sent steamcmd no client config after ",
+        "  steam     \u{2713} uploaded in ",
+    ] {
+        assert!(stdout.contains(line), "{line:?} in {stdout}");
+    }
+
+    let unsent = faked_with(&no_client_config_then_built(99));
+    let (failed, said, why) = upload(&script, unsent.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(failed, Some(1_i32), "{said}{why}");
+    assert_eq!(runs(unsent.path()), 2, "only once more");
+    assert!(why.contains("Failed to load platform info"), "{why}");
 }
 
 /// The one line of JSON a `--json` command printed on standard output, which must be all there
