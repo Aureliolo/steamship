@@ -2110,15 +2110,19 @@ fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, Ex
                     }
                 }
             }
-            lost @ (upload::Retry::NoConnection | upload::Retry::Disconnected) => {
+            lost @ (upload::Retry::NoConnection
+            | upload::Retry::Disconnected
+            | upload::Retry::NoClientConfig) => {
                 if reconnected || runs == upload::RUNS {
                     break;
                 }
                 reconnected = true;
-                let what = if lost == upload::Retry::Disconnected {
-                    "Steam disconnected steamcmd"
-                } else {
-                    "no connection to Steam's build server"
+                let what = match lost {
+                    upload::Retry::Disconnected => "Steam disconnected steamcmd",
+                    upload::Retry::NoClientConfig => "Steam sent steamcmd no client config",
+                    upload::Retry::NoConnection | upload::Retry::Unserved(_) => {
+                        "no connection to Steam's build server"
+                    }
                 };
                 ran.spinner.failed(&format!("{what} after {}", ran.took));
             }
