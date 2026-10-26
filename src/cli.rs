@@ -509,8 +509,9 @@ pub enum Itself {
     /// Reads the SPDX SBOM published with this version's GitHub release, which lists the SHA-256
     /// of each system's binary, and compares this binary's with the one built for this system. A
     /// release cannot be changed once published, so a binary that differs was built elsewhere or
-    /// altered since: install the release again. A build from source, such as `cargo install`,
-    /// differs from every release's.
+    /// altered since: install the release's own binary, from its archive or with
+    /// `cargo binstall`. A build from source, such as `cargo install`, differs from every
+    /// release's.
     Check,
 }
 

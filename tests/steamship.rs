@@ -10030,8 +10030,10 @@ fn a_binary_that_differs_from_its_release_is_refused() {
     assert_eq!(code, Some(2_i32), "{said}{told}");
     assert!(
         told.contains(&format!(
-            "binary of steamship {}'s release: install the release again, from \
-             https://github.com/Aureliolo/steamship/releases/latest",
+            "binary of steamship {}'s release: it was built from source, as `cargo install` \
+             builds it, or elsewhere, or altered since. Install the release's own binary, from \
+             https://github.com/Aureliolo/steamship/releases/latest or with \
+             `cargo binstall steamship`",
             env!("CARGO_PKG_VERSION")
         )),
         "{told}"
