@@ -8656,7 +8656,7 @@ fn a_games_workshop_items_go_up_only_from_a_pushed_tree() {
 }
 
 #[test]
-fn outside_a_game_a_command_needing_one_says_to_name_the_app() {
+fn outside_a_game_a_command_needing_one_says_to_start_one_or_name_the_app() {
     let empty = tempfile::tempdir().unwrap();
     let (code, stdout, stderr) = steamship_in(
         empty.path(),
@@ -8667,8 +8667,9 @@ fn outside_a_game_a_command_needing_one_says_to_name_the_app() {
     assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
     assert!(
         failure(&stderr).ends_with(
-            ": no steamship.toml or steam/app_build.vdf in it or a folder above, so name the app \
-             and its files, or run steamship in the game's folder"
+            ": no steamship.toml or steam/app_build.vdf in it or a folder above. Run steamship \
+             in the game's folder, start one here with `steamship init <app ID>`, or name the \
+             app and its files"
         ),
         "{stderr}"
     );
