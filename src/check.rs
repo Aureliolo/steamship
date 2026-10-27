@@ -1014,4 +1014,30 @@ mod tests {
         assert!(!ships(&depot(&[("*", true)], &["demo/windows/*"]), &demo));
         assert!(!ships(&depot(&[("*", true)], &[]), Path::new("")));
     }
+
+    #[test]
+    fn a_file_is_installed_where_each_mapping_taking_it_puts_it() {
+        let top = Path::new("export").join("windows").join("sample.exe");
+        let inside = Path::new("export")
+            .join("windows")
+            .join("bin")
+            .join("sample.exe");
+        let at = |path: &[&str]| path.iter().map(|&part| part.to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            installed(&depot(&[("windows/*", false)], &[]), &top),
+            [at(&["sample.exe"])]
+        );
+        assert_eq!(
+            installed(&depot(&[("windows/*", false)], &[]), &inside),
+            Vec::<Vec<String>>::new()
+        );
+        assert_eq!(
+            installed(&depot(&[("windows/*", true)], &[]), &inside),
+            [at(&["bin", "sample.exe"])]
+        );
+        assert_eq!(
+            installed(&depot(&[("windows/*.pck", true)], &[]), &top),
+            Vec::<Vec<String>>::new()
+        );
+    }
 }

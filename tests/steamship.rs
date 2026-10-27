@@ -9459,6 +9459,10 @@ fn a_build_without_the_program_its_launch_option_starts_is_refused() {
     launching(&root, &[("inn.exe", "windows", None)]);
     let export = root.join("export");
     put_program(&export.join("old-inn.exe"));
+    // A library starts as a program does, and a folder of data is no macOS app: neither is named.
+    put_program(&export.join("steam_api64.dll"));
+    fs::create_dir_all(export.join("data")).unwrap();
+    fs::write(export.join("data").join("level.pck"), "pack").unwrap();
     let script = Path::new("steam").join("app_build.vdf");
     let script = script.to_str().unwrap();
 
@@ -9492,6 +9496,55 @@ fn a_build_without_the_program_its_launch_option_starts_is_refused() {
 }
 
 #[test]
+fn a_launch_option_naming_no_system_needs_its_program_on_each_system_a_depot_installs_on() {
+    let (_temp, root) = pushed_game(None);
+    let steam = root.join("steam");
+    fs::write(
+        steam.join("app_build.vdf"),
+        r#""AppBuild" { "AppID" "1000050" "ContentRoot" "../export/" "SetLive" "testing" "Depots" { "1000051" "depot.vdf" "1000052" "linux.vdf" } }"#,
+    )
+    .unwrap();
+    fs::write(
+        steam.join("depot.vdf"),
+        r#""DepotBuild" { "DepotID" "1000051" "FileMapping" { "LocalPath" "windows/*" "DepotPath" "." "Recursive" "1" } }"#,
+    )
+    .unwrap();
+    fs::write(
+        steam.join("linux.vdf"),
+        r#""DepotBuild" { "DepotID" "1000052" "FileMapping" { "LocalPath" "linux/*" "DepotPath" "." "Recursive" "1" } }"#,
+    )
+    .unwrap();
+    fs::write(
+        steam.join("settings.vdf"),
+        "\"1000050\"\n{\n\t\"config\"\n\t{\n\t\t\"installdir\"\t\t\"TidalMillInn\"\n\
+         \t\t\"launch\"\n\t\t{\n\t\t\t\"0\"\n\t\t\t{\n\t\t\t\t\"executable\"\t\t\"inn.exe\"\n\
+         \t\t\t}\n\t\t}\n\t}\n\t\"depots\"\n\t{\n\
+         \t\t\"1000051\"\n\t\t{\n\t\t\t\"config\"\n\t\t\t{\n\t\t\t\t\"oslist\"\t\t\"windows\"\n\
+         \t\t\t}\n\t\t}\n\
+         \t\t\"1000052\"\n\t\t{\n\t\t\t\"config\"\n\t\t\t{\n\t\t\t\t\"oslist\"\t\t\"linux\"\n\
+         \t\t\t}\n\t\t}\n\t}\n}\n",
+    )
+    .unwrap();
+    let export = root.join("export");
+    put_program(&export.join("windows").join("inn.exe"));
+    put_program(&export.join("linux").join("inn.x86_64"));
+
+    let (refused, said, why) = in_game(&root, &["check", "steam/app_build.vdf"]);
+    assert_eq!(refused, Some(2_i32), "{said}{why}");
+    assert!(
+        why.contains(
+            "starts \"inn.exe\" in app 1000050's launch option 0 on linux, which the build does \
+             not install: it installs only \"inn.x86_64\" in the install folder."
+        ),
+        "{why}"
+    );
+    assert!(
+        !why.contains(" on windows"),
+        "the Windows depot installs it: {why}"
+    );
+}
+
+#[test]
 fn on_linux_a_launch_options_program_matches_by_case_and_a_macos_app_is_its_folder() {
     let (_temp, root) = pushed_game(None);
     launching(
@@ -9517,6 +9570,8 @@ fn on_linux_a_launch_options_program_matches_by_case_and_a_macos_app_is_its_fold
             .join("MacOS")
             .join("Inn"),
     );
+    fs::create_dir_all(export.join("data")).unwrap();
+    fs::write(export.join("data").join("level.pck"), "pack").unwrap();
     let script = Path::new("steam").join("app_build.vdf");
     let script = script.to_str().unwrap();
 
