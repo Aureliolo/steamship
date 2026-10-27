@@ -65,6 +65,11 @@ steamship check steam/app_build.vdf
 - when the settings snapshot beside the scripts chooses a Custom Configuration as the Default
   Controller Configuration, a build that does not install its action manifest at the path the
   snapshot names, on each system the depots install on, or a snapshot naming no path;
+- a build that does not install the program a launch option in the settings snapshot starts, on
+  a system the option runs on, naming the program and those the build installs in its place.
+  Linux tells names apart by case, and Windows and macOS do not; a macOS app's folder is the
+  program. A system with content from a depot the build leaves out is not judged, nor an
+  option offered on a beta branch the build is not set live on;
 - a Linux or macOS program, or a script starting with `#!`, without its executable bit, where
   the file system has one;
 - a Windows program or library importing a DLL that neither Windows 10 and later, a depot that
@@ -89,7 +94,9 @@ A build's folder can be checked on its own as soon as it is built, before any sc
 a build tool does after exporting each platform. The files in it, and in every folder in it, are
 checked as a depot's are; in a game's folder, its Windows files are judged against the
 redistributables the game's settings snapshot ticks, and the build is refused without the Steam
-Input action manifest the snapshot names. That is the demo's snapshot when only the demo's
+Input action manifest the snapshot names, or when it holds a program but none that a launch
+option starts. A folder holding no program, such as a depot of data alone, is not judged by its
+launch options. That is the demo's snapshot when only the demo's
 depots ship the folder, or with `--demo`, since a demo can tick fewer redistributables than its
 game.
 

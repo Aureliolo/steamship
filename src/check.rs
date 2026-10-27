@@ -10,7 +10,7 @@ use crate::scripts::{self, AppScript, DepotScript, FileMapping, Problem};
 #[cfg(unix)]
 use crate::unix;
 use crate::vdf::Block;
-use crate::{pattern, pe, settings, vdf};
+use crate::{magic, pattern, pe, settings, vdf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
@@ -175,6 +175,7 @@ fn check_loaded(app: &AppScript, content: bool, settings: Option<&Block>) -> Rep
         unshipped_configurations(&depots, &mut problems);
         if let Some(settings) = settings {
             unshipped_manifest(app, settings, &mut problems);
+            unlaunchable(app, &depots, settings, &mut problems);
         }
     }
     Report {
@@ -320,15 +321,310 @@ pub fn folder_manifest(folder: &Path, app: u32, settings: &Block) -> Option<Prob
     })
 }
 
+/// The folders and file name of `written`, a path from the install folder or a depot's.
+fn parts(written: &str) -> Vec<String> {
+    scripts::native(written)
+        .split(is_separator)
+        .filter(|part| !part.is_empty() && *part != ".")
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Where `depot`'s mappings install `file`, one of its content's, each as its folders and name
+/// from the install folder.
+fn installed(depot: &DepotScript, file: &Path) -> Vec<Vec<String>> {
+    depot
+        .mappings
+        .iter()
+        .filter(|mapping| unmappable(mapping).is_none())
+        .filter_map(|mapping| {
+            let (folder, pattern) = split(mapping);
+            let rest: Vec<String> = file
+                .strip_prefix(depot.content_root.join(folder))
+                .ok()?
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                .collect();
+            let (name, folders) = rest.split_last()?;
+            if !(folders.is_empty() || mapping.recursive) || !pattern::matches(&pattern, name) {
+                return None;
+            }
+            let mut at = parts(&mapping.depot_path);
+            at.extend(rest);
+            Some(at)
+        })
+        .collect()
+}
+
+/// None when `on`, depots with their files, install `wanted`, a path's folders and name from the
+/// install folder, matched by case or, with `any_case`, in any; otherwise the programs and macOS
+/// apps they install in its folder instead.
+fn programs_beside(
+    on: &[(&DepotScript, &DepotFiles)],
+    wanted: &[String],
+    any_case: bool,
+) -> Option<BTreeSet<String>> {
+    let (_, folder) = wanted.split_last()?;
+    let same = |one: &String, other: &String| {
+        if any_case {
+            one.eq_ignore_ascii_case(other)
+        } else {
+            one == other
+        }
+    };
+    let mut beside: BTreeSet<String> = BTreeSet::new();
+    for (depot, built) in on {
+        for file in &built.files {
+            for at in installed(depot, file) {
+                // A macOS app is a folder, which a launch option names whole.
+                if at.len() >= wanted.len()
+                    && at.iter().zip(wanted).all(|(one, other)| same(one, other))
+                {
+                    return None;
+                }
+                match at.strip_prefix(folder) {
+                    Some([name]) if is_program(file, name) => {
+                        let _new: bool = beside.insert(name.clone());
+                    }
+                    Some([bundle, _, ..]) if is_bundle(bundle) => {
+                        let _new: bool = beside.insert(bundle.clone());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    Some(beside)
+}
+
+/// A problem for each launch option in `settings`, `app`'s, whose program the build does not
+/// install on a system the option runs on.
+///
+/// Steam starts the program from the install folder, where the depots' mappings put each file,
+/// so a build whose program was renamed without its launch option goes up unable to start.
+/// Linux alone tells names apart by case. A system whose content comes from a depot the build
+/// leaves out is not judged, nor an option offered only on a beta branch the build does not set
+/// live.
+fn unlaunchable(
+    app: &AppScript,
+    depots: &[DepotFiles],
+    settings: &Block,
+    problems: &mut Vec<Problem>,
+) {
+    let snapshot = app
+        .path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(settings::SNAPSHOT);
+    let uploaded: Vec<u32> = app.depots.iter().map(|depot| depot.depot_id).collect();
+    let mut all: Vec<Option<String>> = Vec::new();
+    for depot in &uploaded {
+        let on = settings::depot_systems(settings, *depot);
+        if on.is_empty() {
+            all = vec![None];
+            break;
+        }
+        for system in on {
+            if !all.contains(&Some(system.clone())) {
+                all.push(Some(system));
+            }
+        }
+    }
+    for option in settings::launch_options(settings) {
+        let offered = option.branch.as_deref().is_none_or(|branch| {
+            app.set_live
+                .as_deref()
+                .is_some_and(|live| live.trim().eq_ignore_ascii_case(branch))
+        });
+        if !offered {
+            continue;
+        }
+        let systems: Vec<Option<String>> = if option.systems.is_empty() {
+            all.clone()
+        } else {
+            option.systems.iter().cloned().map(Some).collect()
+        };
+        for system in systems {
+            let system = system.as_deref();
+            if settings::installs_beside(settings, system, &uploaded) {
+                continue;
+            }
+            let on: Vec<(&DepotScript, &DepotFiles)> = app
+                .depots
+                .iter()
+                .zip(depots)
+                .filter(|(depot, _)| {
+                    let installs_on = settings::depot_systems(settings, depot.depot_id);
+                    installs_on.is_empty()
+                        || system.is_none_or(|system| installs_on.iter().any(|each| each == system))
+                })
+                .collect();
+            if on.is_empty() {
+                continue;
+            }
+            let wanted = parts(&option.executable);
+            let Some((_, folder)) = wanted.split_last() else {
+                continue;
+            };
+            let Some(beside) = programs_beside(&on, &wanted, system != Some("linux")) else {
+                continue;
+            };
+            let on_system = system.map_or_else(String::new, |system| format!(" on {system}"));
+            let place = if folder.is_empty() {
+                "the install folder".to_owned()
+            } else {
+                format!("\"{}\"", folder.join("/"))
+            };
+            let instead = if beside.is_empty() {
+                format!("no program in {place}")
+            } else {
+                format!("only {} in {place}", quoted(&beside))
+            };
+            problems.push(Problem::new(
+                &snapshot,
+                format!(
+                    "starts \"{}\" in app {}'s launch option {}{on_system}, which the build does not \
+                     install: it installs {instead}. Name the build's program in the launch \
+                     option, under Installation, General Installation in Steamworks, and save \
+                     the settings again, or ship the program under that name",
+                    option.executable, app.app_id, option.key
+                ),
+            ));
+        }
+    }
+}
+
+/// Whether `file`, by its name `name`, is a program a launch option could start: one that starts
+/// as a program does and is not named as a library, which starts the same way.
+fn is_program(file: &Path, name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    let library = [".dll", ".so", ".dylib"]
+        .iter()
+        .any(|ending| name.ends_with(ending))
+        || name.contains(".so.");
+    !library && magic::looks_like_program(file).unwrap_or(false)
+}
+
+/// `items` as a list read aloud: a, b and c.
+fn listed(mut items: Vec<String>) -> String {
+    match items.pop() {
+        Some(last) if !items.is_empty() => format!("{} and {last}", items.join(", ")),
+        Some(last) => last,
+        None => String::new(),
+    }
+}
+
+/// `names`, each quoted, as a list read aloud: "a", "b" and "c".
+fn quoted<'name>(names: impl IntoIterator<Item = &'name String>) -> String {
+    listed(
+        names
+            .into_iter()
+            .map(|name| format!("\"{name}\""))
+            .collect(),
+    )
+}
+
+/// Whether `name` is a macOS app's folder.
+fn is_bundle(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+}
+
+/// Whether `folder` holds `wanted`, a path's folders and name, matching each by case or, with
+/// `any_case`, in any case.
+fn holds(folder: &Path, wanted: &[String], any_case: bool) -> bool {
+    let mut at = folder.to_path_buf();
+    for part in wanted {
+        let exact = at.join(part);
+        at = if exact.exists() {
+            exact
+        } else if any_case {
+            let Some(found) = fs::read_dir(&at)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .find(|entry| {
+                    entry
+                        .file_name()
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case(part)
+                })
+            else {
+                return false;
+            };
+            found.path()
+        } else {
+            return false;
+        };
+    }
+    true
+}
+
+/// A problem when the build in `folder`, app `app`'s, holds a program and none of the programs
+/// `settings` say its launch options start.
+///
+/// A build's folder is one system's, which the folder does not say, so any option's program will
+/// do; a folder holding no program, such as a depot of data alone, is not judged.
+#[must_use]
+pub fn folder_launch(folder: &Path, app: u32, settings: &Block) -> Option<Problem> {
+    let options: Vec<settings::Launch> = settings::launch_options(settings)
+        .into_iter()
+        .filter(|option| option.branch.is_none())
+        .collect();
+    let mut programs: BTreeSet<String> = BTreeSet::new();
+    for option in &options {
+        let wanted = parts(&option.executable);
+        let Some((_, inside)) = wanted.split_last() else {
+            continue;
+        };
+        let any_case =
+            option.systems.is_empty() || option.systems.iter().any(|system| system != "linux");
+        if holds(folder, &wanted, any_case) {
+            return None;
+        }
+        let place = inside
+            .iter()
+            .fold(folder.to_path_buf(), |place, part| place.join(part));
+        for entry in fs::read_dir(&place).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if (path.is_dir() && is_bundle(&name)) || (path.is_file() && is_program(&path, &name)) {
+                let mut found = inside.to_vec();
+                found.push(name);
+                let _new: bool = programs.insert(found.join("/"));
+            }
+        }
+    }
+    if programs.is_empty() {
+        return None;
+    }
+    let started: Vec<String> = options
+        .iter()
+        .map(|option| {
+            let on = if option.systems.is_empty() {
+                String::new()
+            } else {
+                format!(" on {}", option.systems.join(", "))
+            };
+            format!("\"{}\"{on}", option.executable)
+        })
+        .collect();
+    Some(Problem::new(
+        folder,
+        format!(
+            "is a build of app {app} holding {}, and none of the programs its launch options \
+             start: {}. Name the build's program in a launch option, under Installation, General \
+             Installation in Steamworks, and save the settings again, or ship the program under \
+             that name",
+            quoted(&programs),
+            listed(started)
+        ),
+    ))
+}
+
 /// Whether `depot` installs a file of its content at `path`, a path from the install folder.
 fn installs(depot: &DepotScript, path: &str) -> bool {
-    let parts = |written: &str| -> Vec<String> {
-        scripts::native(written)
-            .split(is_separator)
-            .filter(|part| !part.is_empty() && *part != ".")
-            .map(str::to_owned)
-            .collect()
-    };
     let wanted = parts(path);
     depot.mappings.iter().any(|mapping| {
         let Some(rest) = wanted.strip_prefix(parts(&mapping.depot_path).as_slice()) else {
@@ -717,5 +1013,31 @@ mod tests {
         assert!(!ships(&depot(&[("*/windows/*", true)], &[]), &demo));
         assert!(!ships(&depot(&[("*", true)], &["demo/windows/*"]), &demo));
         assert!(!ships(&depot(&[("*", true)], &[]), Path::new("")));
+    }
+
+    #[test]
+    fn a_file_is_installed_where_each_mapping_taking_it_puts_it() {
+        let top = Path::new("export").join("windows").join("sample.exe");
+        let inside = Path::new("export")
+            .join("windows")
+            .join("bin")
+            .join("sample.exe");
+        let at = |path: &[&str]| path.iter().map(|&part| part.to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            installed(&depot(&[("windows/*", false)], &[]), &top),
+            [at(&["sample.exe"])]
+        );
+        assert_eq!(
+            installed(&depot(&[("windows/*", false)], &[]), &inside),
+            Vec::<Vec<String>>::new()
+        );
+        assert_eq!(
+            installed(&depot(&[("windows/*", true)], &[]), &inside),
+            [at(&["bin", "sample.exe"])]
+        );
+        assert_eq!(
+            installed(&depot(&[("windows/*.pck", true)], &[]), &top),
+            Vec::<Vec<String>>::new()
+        );
     }
 }

@@ -2699,6 +2699,9 @@ fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<Exi
         report
             .problems
             .extend(check::folder_manifest(folder, app, settings));
+        report
+            .problems
+            .extend(check::folder_launch(folder, app, settings));
     }
     let presence_refused = presence_read(&presence).err();
     if !report.problems.is_empty() || presence_refused.is_some() {
