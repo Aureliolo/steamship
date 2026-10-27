@@ -8,6 +8,7 @@
 
 use std::fmt;
 
+use crate::redist::REDISTRIBUTABLES;
 use crate::vdf::{self, Block, Pair, Value};
 
 /// The snapshot's name, beside the build scripts.
@@ -449,6 +450,83 @@ pub fn unlaunched(settings: &Block) -> Vec<String> {
     systems
 }
 
+/// A launch option as `settings` show it under `config`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Launch {
+    /// Its key under `launch`, by which Steamworks numbers it from 0.
+    pub key: String,
+    /// The program it starts, by its path from the install folder.
+    pub executable: String,
+    /// The systems it runs on, by their names in `oslist`; none when it runs on every one.
+    pub systems: Vec<String>,
+    /// The beta branch it is offered on alone, if any.
+    pub branch: Option<String>,
+}
+
+/// Each launch option `settings` show that names a program.
+#[must_use]
+pub fn launch_options(settings: &Block) -> Vec<Launch> {
+    let Some(launch) = settings
+        .block("config")
+        .and_then(|config| config.block("launch"))
+    else {
+        return Vec::new();
+    };
+    launch
+        .pairs
+        .iter()
+        .filter_map(|pair| {
+            let Value::Block(option) = &pair.value else {
+                return None;
+            };
+            let executable = option.text("executable").map(str::trim)?;
+            let config = option.block("config");
+            (!executable.is_empty()).then(|| Launch {
+                key: pair.key.clone(),
+                executable: executable.to_owned(),
+                systems: systems_of(config),
+                branch: config
+                    .and_then(|config| config.text("betakey"))
+                    .map(str::trim)
+                    .filter(|branch| !branch.is_empty())
+                    .map(str::to_owned),
+            })
+        })
+        .collect()
+}
+
+/// Whether a player on `system`, or on any when none, installs content from a depot other than
+/// `uploaded`, as `settings` show the depots.
+///
+/// That is one of the app's own, or one another app shares with it. A Common Redistributable
+/// installs outside the install folder, and a DLC's depot only with the DLC, so neither counts.
+#[must_use]
+pub fn installs_beside(settings: &Block, system: Option<&str>, uploaded: &[u32]) -> bool {
+    let Some(depots) = settings.block("depots") else {
+        return false;
+    };
+    depots.pairs.iter().any(|pair| {
+        let Value::Block(depot) = &pair.value else {
+            return false;
+        };
+        let installs_on = || {
+            let on = systems_of(depot.block("config"));
+            on.is_empty() || system.is_none_or(|system| on.iter().any(|each| each == system))
+        };
+        let other = depot.text("depotfromapp").map_or_else(
+            || {
+                depot.text("dlcappid").is_none()
+                    && pair
+                        .key
+                        .parse::<u32>()
+                        .is_ok_and(|id| !uploaded.contains(&id))
+            },
+            |app| app != REDISTRIBUTABLES,
+        );
+        other && installs_on()
+    })
+}
+
 /// The depots of `depots`, an app build script's, that `settings` do not show as the app's own;
 /// none when they show no depot of its own at all, as before any is published.
 #[must_use]
@@ -691,6 +769,64 @@ mod tests {
             lines.push_str(&["\t\t\"", key, "\"\t\t\"", value, "\"\n"].concat());
         }
         demo(&DEMO.replace(installdir, &lines))
+    }
+
+    #[test]
+    fn each_launch_option_gives_its_program_systems_and_beta_branch() {
+        let game = from_console(CONSOLE, 1_000_010).unwrap();
+        assert_eq!(
+            launch_options(&game),
+            [Launch {
+                key: "0".to_owned(),
+                executable: "falcon-ridge-overseer.exe".to_owned(),
+                systems: Vec::new(),
+                branch: None,
+            }]
+        );
+        let beta = demo(&DEMO.replace(
+            "\"oslist\"\t\t\"windows\"\n\t\t\t\t}\n\t\t\t}\n\t\t}",
+            "\"oslist\"\t\t\"windows\"\n\t\t\t\t\t\"betakey\"\t\t\"experimental\"\n\t\t\t\t}\n\
+             \t\t\t}\n\t\t}",
+        ));
+        assert_eq!(
+            launch_options(&beta),
+            [Launch {
+                key: "0".to_owned(),
+                executable: "sample.exe".to_owned(),
+                systems: vec!["windows".to_owned()],
+                branch: Some("experimental".to_owned()),
+            }]
+        );
+        let unnamed =
+            demo(&DEMO.replace("\"executable\"\t\t\"sample.exe\"", "\"executable\"\t\t\"\""));
+        assert_eq!(launch_options(&unnamed), []);
+    }
+
+    #[test]
+    fn content_from_a_depot_left_out_of_the_build_is_found_by_its_system() {
+        let settings = demo(DEMO);
+        let both = [1_000_071, 1_000_072];
+        assert!(
+            !installs_beside(&settings, Some("windows"), &both),
+            "a Common Redistributable installs outside the install folder"
+        );
+        assert!(installs_beside(&settings, Some("linux"), &[1_000_071]));
+        assert!(!installs_beside(&settings, Some("windows"), &[1_000_071]));
+        assert!(installs_beside(&settings, None, &[1_000_071]));
+
+        let shared = demo(&DEMO.replace("\"228980\"", "\"1000050\""));
+        assert!(
+            installs_beside(&shared, Some("windows"), &both),
+            "another app's depot shared with this one"
+        );
+        let dlc = demo(&DEMO.replace(
+            "\"1000072\"\n\t\t{\n",
+            "\"1000072\"\n\t\t{\n\t\t\t\"dlcappid\"\t\t\"1000090\"\n",
+        ));
+        assert!(
+            !installs_beside(&dlc, Some("linux"), &[1_000_071]),
+            "a DLC's depot installs only with the DLC"
+        );
     }
 
     #[test]

@@ -123,7 +123,8 @@ Each command run in a game takes from it whatever is not given:
 - `steamship builds` and `steamship promote` take the game's app.
 - `steamship check export/windows` checks a build's folder as soon as it is built, judging its
   Windows files against the redistributables the snapshot ticks, and refusing it without the
-  Steam Input action manifest the snapshot names. A folder that only the demo's depots ship is
+  Steam Input action manifest the snapshot names, or holding none of the programs its launch
+  options start, as after renaming the game. A folder that only the demo's depots ship is
   judged against the demo's snapshot, and `--demo` asks for that whichever depots ship it. It
   reads the game's rich presence files as `rich-presence --preview` does, so a push gate refuses
   a line Steam cannot fill without asking Steam.
@@ -179,7 +180,7 @@ demo that bundles a Custom Configuration of its own has its defaults whatever th
 and goes up only with its action manifest at the path its snapshot names. For
 the demo and the game alike, a depot the script uploads that is not among the
 app's own is refused, and so is a system the app's depots install on that no launch option runs
-on.
+on, and a build without the program a launch option starts.
 
 When the game has Godot's `export_presets.cfg`, each preset's `export_path` is matched against
 the depots' mappings as steamcmd matches files, whether or not the export is there yet. The full
