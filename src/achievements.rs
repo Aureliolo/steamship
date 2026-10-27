@@ -587,8 +587,9 @@ fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String
 /// # Errors
 ///
 /// When an achievement, a stat or a set is in two of the files, or is translated in two, naming
-/// both; when an achievement and a stat share an API name; when there are translations, but not of every achievement, or of one no file lists;
-/// and when [`resolve`] refuses them.
+/// both; when an achievement and a stat share an API name, in any case; when there are
+/// translations, but not of every achievement, or of one no file lists; and when [`resolve`]
+/// refuses them.
 pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
     let mut whole = Listed::default();
     let mut achievements_from: BTreeMap<String, String> = BTreeMap::new();
@@ -639,21 +640,34 @@ pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
             }
         }
     }
-    if let Some((api_name, achievement_in, stat_in)) =
+    // Steam finds a stat by its API name in any case, and finds an achievement's name there too.
+    let stats_by_case: BTreeMap<String, (&String, &String)> = stats_from
+        .iter()
+        .map(|(api_name, file)| (api_name.to_ascii_lowercase(), (api_name, file)))
+        .collect();
+    if let Some((achievement, achievement_in, stat, stat_in)) =
         achievements_from.iter().find_map(|(api_name, file)| {
-            stats_from
-                .get(api_name)
-                .map(|stat_in| (api_name, file, stat_in))
+            stats_by_case
+                .get(&api_name.to_ascii_lowercase())
+                .map(|&(stat, stat_in)| (api_name, file, stat, stat_in))
         })
     {
+        if achievement != stat {
+            return Err(format!(
+                "stat {stat} in {stat_in} and achievement {achievement} in {achievement_in} \
+                 differ only in case: Steam finds a stat by its API name in any case, and \
+                 answers for {stat} as for the achievement, so whether the stat is aggregated \
+                 cannot be read; rename one"
+            ));
+        }
         let where_ = if achievement_in == stat_in {
             format!("both an achievement and a stat in {stat_in}")
         } else {
             format!("an achievement in {achievement_in} and a stat in {stat_in}")
         };
         return Err(format!(
-            "{api_name} is {where_}: Steamworks publishes no achievement and stat of one API \
-             name, so rename one"
+            "{stat} is {where_}: Steamworks publishes no achievement and stat of one API name, \
+             so rename one"
         ));
     }
     if let Some((api_name, file)) = translated_in
@@ -1706,6 +1720,26 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_achievement_and_a_stat_whose_names_differ_only_in_case_are_refused() {
+        let records = read(
+            r#"[{"type": "stat", "id": "base:doors", "steam": "doors_opened"},
+                {"type": "stat", "id": "base:keys", "steam": "keys_found"},
+                {"type": "achievement", "steam": "KEYS_ALL", "name": "Every Key",
+                 "stat": "base:keys", "at": 3},
+                {"type": "achievement", "steam": "DOORS_OPENED", "name": "Open House",
+                 "stat": "base:doors", "at": 10}]"#,
+        )
+        .unwrap();
+        assert_eq!(
+            together(vec![("base.json".to_owned(), records)]).unwrap_err(),
+            "stat doors_opened in base.json and achievement DOORS_OPENED in base.json differ \
+             only in case: Steam finds a stat by its API name in any case, and answers for \
+             doors_opened as for the achievement, so whether the stat is aggregated cannot be \
+             read; rename one"
+        );
+    }
+
     /// Tidal Mill Inn's records, as `read` takes them, with the cellar's achievements in a set.
     const INN: &str = r#"[
         {"type": "stat", "id": "base:floors", "steam": "floors", "kind": "int"},
@@ -1902,7 +1936,7 @@ mod tests {
             {"type": "achievement", "steam": "FIRST_DUEL", "name": "A", "stat": "duels", "at": 1},
             {"type": "achievement", "steam": "DUELLIST", "name": "A", "stat": "duels", "at": 100},
             {"type": "achievement", "steam": "NEXT_LAP", "name": "A", "stat": "laps", "at": 6},
-            {"type": "achievement", "steam": "LAPS", "name": "A", "stat": "laps", "at": 7},
+            {"type": "achievement", "steam": "SEVEN_LAPS", "name": "A", "stat": "laps", "at": 7},
             {"type": "achievement", "steam": "MILE", "name": "A", "stat": "miles", "at": 1}
         ]"#;
         let whole = together(vec![("a.json".to_owned(), read(records).unwrap())]).unwrap();
@@ -1923,7 +1957,7 @@ mod tests {
                 ("FIRST_DUEL", None),
                 ("DUELLIST", Some(("duels", 100.0_f64))),
                 ("NEXT_LAP", None),
-                ("LAPS", Some(("laps", 7.0_f64))),
+                ("SEVEN_LAPS", Some(("laps", 7.0_f64))),
                 ("MILE", Some(("miles", 1.0_f64))),
             ]
         );
