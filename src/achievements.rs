@@ -579,6 +579,53 @@ fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String
     })
 }
 
+/// Refuses an achievement and a stat of one API name, in any case, naming the files each is in.
+///
+/// # Errors
+///
+/// When they share one: Steamworks publishes no such pair, and where the names differ in case
+/// alone, Steam finds a stat by its API name in any case, finds an achievement's name there too,
+/// and answers for the stat as for the achievement.
+fn named_apart(
+    achievements_from: &BTreeMap<String, String>,
+    stats_from: &BTreeMap<String, String>,
+) -> Result<(), String> {
+    let stats_by_case: BTreeMap<String, (&String, &String)> = stats_from
+        .iter()
+        .map(|(api_name, file)| (api_name.to_ascii_lowercase(), (api_name, file)))
+        .collect();
+    let Some((achievement, achievement_in, stat, stat_in)) =
+        achievements_from.iter().find_map(|(api_name, file)| {
+            stats_by_case
+                .get(&api_name.to_ascii_lowercase())
+                .map(|&(stat, stat_in)| (api_name, file, stat, stat_in))
+        })
+    else {
+        return Ok(());
+    };
+    if achievement != stat {
+        let where_ = if achievement_in == stat_in {
+            format!("stat {stat} and achievement {achievement} in {stat_in}")
+        } else {
+            format!("stat {stat} in {stat_in} and achievement {achievement} in {achievement_in}")
+        };
+        return Err(format!(
+            "{where_} differ only in case: Steam finds a stat by its API name in any case, and \
+             answers for {stat} as for the achievement, so whether the stat is aggregated cannot \
+             be read; rename one"
+        ));
+    }
+    let where_ = if achievement_in == stat_in {
+        format!("both an achievement and a stat in {stat_in}")
+    } else {
+        format!("an achievement in {achievement_in} and a stat in {stat_in}")
+    };
+    Err(format!(
+        "{stat} is {where_}: Steamworks publishes no achievement and stat of one API name, so \
+         rename one"
+    ))
+}
+
 /// The `files`, each read and named, as one.
 ///
 /// That is the app the first that says names, the achievements and stats of each in turn, the
@@ -640,36 +687,7 @@ pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
             }
         }
     }
-    // Steam finds a stat by its API name in any case, and finds an achievement's name there too.
-    let stats_by_case: BTreeMap<String, (&String, &String)> = stats_from
-        .iter()
-        .map(|(api_name, file)| (api_name.to_ascii_lowercase(), (api_name, file)))
-        .collect();
-    if let Some((achievement, achievement_in, stat, stat_in)) =
-        achievements_from.iter().find_map(|(api_name, file)| {
-            stats_by_case
-                .get(&api_name.to_ascii_lowercase())
-                .map(|&(stat, stat_in)| (api_name, file, stat, stat_in))
-        })
-    {
-        if achievement != stat {
-            return Err(format!(
-                "stat {stat} in {stat_in} and achievement {achievement} in {achievement_in} \
-                 differ only in case: Steam finds a stat by its API name in any case, and \
-                 answers for {stat} as for the achievement, so whether the stat is aggregated \
-                 cannot be read; rename one"
-            ));
-        }
-        let where_ = if achievement_in == stat_in {
-            format!("both an achievement and a stat in {stat_in}")
-        } else {
-            format!("an achievement in {achievement_in} and a stat in {stat_in}")
-        };
-        return Err(format!(
-            "{stat} is {where_}: Steamworks publishes no achievement and stat of one API name, \
-             so rename one"
-        ));
-    }
+    named_apart(&achievements_from, &stats_from)?;
     if let Some((api_name, file)) = translated_in
         .iter()
         .find(|(api_name, _)| !achievements_from.contains_key(*api_name))
@@ -1733,10 +1751,21 @@ mod tests {
         .unwrap();
         assert_eq!(
             together(vec![("base.json".to_owned(), records)]).unwrap_err(),
-            "stat doors_opened in base.json and achievement DOORS_OPENED in base.json differ \
-             only in case: Steam finds a stat by its API name in any case, and answers for \
-             doors_opened as for the achievement, so whether the stat is aggregated cannot be \
-             read; rename one"
+            "stat doors_opened and achievement DOORS_OPENED in base.json differ only in case: \
+             Steam finds a stat by its API name in any case, and answers for doors_opened as for \
+             the achievement, so whether the stat is aggregated cannot be read; rename one"
+        );
+        let feats = read(r#"{"achievements": [{"api_name": "KEYS", "name": "K"}]}"#).unwrap();
+        let counters = read(r#"[{"type": "stat", "steam": "keys"}]"#).unwrap();
+        assert_eq!(
+            together(vec![
+                ("feats.json".to_owned(), feats),
+                ("counters.json".to_owned(), counters),
+            ])
+            .unwrap_err(),
+            "stat keys in counters.json and achievement KEYS in feats.json differ only in case: \
+             Steam finds a stat by its API name in any case, and answers for keys as for the \
+             achievement, so whether the stat is aggregated cannot be read; rename one"
         );
     }
 
