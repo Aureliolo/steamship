@@ -7823,7 +7823,7 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
     let for_windows = fs::read_to_string(home.path().join("args")).unwrap();
     assert!(
         for_windows.contains("+@sSteamCmdForcePlatformType windows +force_install_dir")
-            && for_windows.ends_with("+app_update 1000 validate +quit\n"),
+            && for_windows.ends_with("+app_update 1000 -beta public validate +quit\n"),
         "{for_windows}"
     );
     assert!(
@@ -7955,6 +7955,35 @@ fn a_fetch_steam_refuses_says_why() {
     assert!(
         stderr.contains("Failed to install app '1000' (No subscription)")
             && stderr.contains("the build account holds no licence for app 1000"),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fetch_steamcmd_gave_up_on_in_its_content_log_alone_says_why_from_there() {
+    // Where steamcmd keeps its logs, from the home it is given as `HOME`.
+    let log = steamcmd::state_folder(Path::new(""), Platform::THIS)
+        .join("logs")
+        .join("content_log.txt");
+    let home = faked_with(&format!(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+         echo 'AppID 1000 update canceled : Missing app info for 1000 (Missing configuration)' \
+         >> \"$HOME/{}\"\n\
+         exit 8\n",
+        log.display()
+    ));
+    saved_login(home.path());
+    let earlier = home.path().join(&log);
+    fs::create_dir_all(earlier.parent().unwrap()).unwrap();
+    fs::write(&earlier, "AppID 1000 update canceled : an earlier run's\n").unwrap();
+    let (code, _, stderr) = fetching(home.path(), &["1000"], &[]);
+    assert_eq!(code, Some(1_i32), "{stderr}");
+    assert!(
+        stderr.contains(
+            "steamcmd cancelled the download: Missing app info for 1000 (Missing configuration)"
+        ) && !stderr.contains("an earlier run's"),
         "{stderr}"
     );
 }

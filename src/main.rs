@@ -3170,13 +3170,19 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
     let branch = &fetching.branch.name;
+    let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
+    let marks = dump::Marks::take(&steamcmd_logs);
     let spinner = Spinner::start("steam", "downloading", true);
     let finished = run::run(
         &program,
         &steamcmd::fetch(
             &account,
             fetching.app,
-            (!webapi::is_default(branch)).then_some(branch.as_str()),
+            if webapi::is_default(branch) {
+                webapi::DEFAULT_KEY
+            } else {
+                branch
+            },
             fetch::system_name(fetching.system),
             fetching.folder,
         ),
@@ -3195,10 +3201,17 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
     let console = redactor.redact(&finished.output);
+    let log = marks
+        .added(&steamcmd_logs)
+        .into_iter()
+        .find(|(name, _)| name == "content_log.txt")
+        .map(|(_, added)| redactor.redact(&added))
+        .unwrap_or_default();
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     match fetch::judge(
         finished.code,
         &String::from_utf8_lossy(&console),
+        &String::from_utf8_lossy(&log),
         fetching.app,
     ) {
         fetch::Outcome::Fetched => spinner.done(&format!("downloaded in {took}")),

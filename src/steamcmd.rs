@@ -208,14 +208,16 @@ pub fn workshop(account: &Account, script: &Path) -> Vec<OsString> {
 /// The commands that log `account` in with the login steamcmd saved, fetch `app` into `folder`,
 /// and quit. Like [`upload`], it never waits at a prompt.
 ///
-/// The build is the one live on `branch`, or on the default branch, as Steam serves it to
-/// `system`, and every file of it already in the folder is checked. The system and the folder are
-/// set before logging in, which Valve's documentation asks of the folder.
+/// The build is the one live on `branch`, `public` for the default, as Steam serves it to
+/// `system`, and every file of it already in the folder is checked. The branch is always named:
+/// steamcmd keeps the build account's last choice of branch for each app, and without `-beta`
+/// fetches that one again. The system and the folder are set before logging in, which Valve's
+/// documentation asks of the folder.
 #[must_use]
 pub fn fetch(
     account: &Account,
     app: u32,
-    branch: Option<&str>,
+    branch: &str,
     system: &str,
     folder: &Path,
 ) -> Vec<OsString> {
@@ -233,10 +235,7 @@ pub fn fetch(
     args.push(folder.as_os_str().to_owned());
     args.extend(["+login", account.name(), "+app_update"].map(OsString::from));
     args.push(app.to_string().into());
-    if let Some(branch) = branch {
-        args.extend(["-beta", branch].map(OsString::from));
-    }
-    args.extend(["validate", "+quit"].map(OsString::from));
+    args.extend(["-beta", branch, "validate", "+quit"].map(OsString::from));
     args
 }
 
@@ -395,7 +394,7 @@ mod tests {
         let account = Account::parse("build_bot").unwrap();
         let folder = Path::new("home (x86)/fetched/480/testing-linux");
         assert_eq!(
-            fetch(&account, 480, Some("testing"), "linux", folder),
+            fetch(&account, 480, "testing", "linux", folder),
             [
                 "+@ShutdownOnFailedCommand",
                 "1",
@@ -415,9 +414,11 @@ mod tests {
                 "+quit"
             ]
         );
-        let default = fetch(&account, 480, None, "windows", folder);
+        let default = fetch(&account, 480, "public", "windows", folder);
         assert!(
-            default.ends_with(&["+app_update", "480", "validate", "+quit"].map(OsString::from)),
+            default.ends_with(
+                &["+app_update", "480", "-beta", "public", "validate", "+quit"].map(OsString::from)
+            ),
             "{default:?}"
         );
     }
