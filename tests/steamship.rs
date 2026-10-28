@@ -7912,6 +7912,32 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
         assert!(!home.path().join("args").exists(), "steamcmd was not run");
     }
     assert_eq!(fs::read_to_string(other.join("notes.txt")).unwrap(), "mine");
+
+    // A record that is there but cannot be read is a failure, not a folder of other files.
+    let unreadable = files.path().join("unreadable");
+    fs::create_dir_all(unreadable.join("steamapps").join("appmanifest_1000.acf")).unwrap();
+    let (code, _, stderr) = fetching(
+        home.path(),
+        &["1000", "--into", &unreadable.to_string_lossy()],
+        &[],
+    );
+    assert_eq!(code, Some(1_i32), "{stderr}");
+    assert!(!stderr.contains("holds files and no build"), "{stderr}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fetch_in_ci_is_done_as_the_account_handed_over() {
+    // No login saved and no account remembered: only what `steamship ci` packed.
+    let home = faked_with(FETCHES);
+    let (code, stdout, stderr) = fetching(
+        home.path(),
+        &["1000"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(args.contains("+login build_bot "), "{args}");
 }
 
 #[cfg(unix)]

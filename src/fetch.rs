@@ -436,9 +436,16 @@ mod tests {
                     .to_owned(),
             ])
         );
+        for code in [Some(8_i32), Some(0_i32)] {
+            assert_eq!(
+                judge(code, "ERROR! Failed to set beta 'testing'\n", 480),
+                Outcome::Failed(vec!["Failed to set beta 'testing'".to_owned()]),
+                "{code:?}"
+            );
+        }
         assert_eq!(
-            judge(Some(8_i32), "ERROR! Failed to set beta 'testing'\n", 480),
-            Outcome::Failed(vec!["Failed to set beta 'testing'".to_owned()])
+            judge(Some(8_i32), "Unloading Steam API...OK\n", 480),
+            Outcome::Failed(vec!["steamcmd exited 8 without saying why".to_owned()])
         );
     }
 
