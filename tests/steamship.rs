@@ -43,7 +43,7 @@ use steamship::webapi::STAND_IN;
 #[cfg(windows)]
 use steamship::windows::Terminal;
 #[cfg(unix)]
-use steamship::{ci, steamcmd};
+use steamship::{ci, fetch, steamcmd};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
@@ -7766,7 +7766,7 @@ fn fetching(
 fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with_it() {
     let home = faked_with(FETCHES);
     saved_login(home.path());
-    let system = steamship::fetch::system_name(Platform::THIS);
+    let system = fetch::system_name(Platform::THIS);
     let folder = home
         .path()
         .join("fetched")
@@ -7820,11 +7820,11 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
         &[],
     );
     assert_eq!(default, Some(0_i32), "{said}");
-    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    let for_windows = fs::read_to_string(home.path().join("args")).unwrap();
     assert!(
-        args.contains("+@sSteamCmdForcePlatformType windows +force_install_dir")
-            && args.ends_with("+app_update 1000 validate +quit\n"),
-        "{args}"
+        for_windows.contains("+@sSteamCmdForcePlatformType windows +force_install_dir")
+            && for_windows.ends_with("+app_update 1000 validate +quit\n"),
+        "{for_windows}"
     );
     assert!(
         said.contains("app 1000: build 4242 of the default branch is in"),
