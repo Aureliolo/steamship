@@ -15,6 +15,7 @@ pub mod drm;
 pub mod dump;
 pub mod editor;
 pub mod elf;
+pub mod fetch;
 pub mod init;
 pub mod install;
 pub mod itself;

@@ -120,7 +120,7 @@ Each command run in a game takes from it whatever is not given:
   which is given to the items being made alone: one already published keeps its own.
 - `steamship achievements` alone lists the game's achievements and stats on Steam, with the
   share of players who have each achievement and each aggregated stat's total.
-- `steamship builds` and `steamship promote` take the game's app.
+- `steamship builds`, `steamship promote` and `steamship fetch` take the game's app.
 - `steamship check export/windows` checks a build's folder as soon as it is built, judging its
   Windows files against the redistributables the snapshot ticks, and refusing it without the
   Steam Input action manifest the snapshot names, or holding none of the programs its launch
@@ -153,8 +153,8 @@ description = "testing"
 - `demo.feature`: the custom feature of the Godot export presets that make the demo, if not
   `demo`. The game tells it is the demo with `OS.has_feature("demo")`.
 
-`check`, `upload`, `builds`, `settings`, `rich-presence` and `promote` take `--demo` to work on
-the demo in place of the full game, each as it does for the game:
+`check`, `upload`, `builds`, `fetch`, `settings`, `rich-presence` and `promote` take `--demo` to
+work on the demo in place of the full game, each as it does for the game:
 
 ```sh
 steamship settings --save --demo   # the demo's snapshot, in steam/demo/settings.vdf

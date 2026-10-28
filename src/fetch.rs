@@ -1,0 +1,481 @@
+//! Fetching an app's build as Steam serves it to players, through steamcmd's `app_update` into a
+//! folder of its own, and reading back which build that folder holds.
+
+use std::path::{Path, PathBuf};
+
+use serde_json::{Value, json};
+
+use crate::platform::Platform;
+use crate::upload;
+use crate::vdf;
+use crate::webapi::{self, Branch};
+
+/// The systems a build is fetched for, in the order they are listed.
+const SYSTEMS: [Platform; 3] = [Platform::Windows, Platform::Linux, Platform::MacOs];
+
+/// The word steamcmd's `sSteamCmdForcePlatformType` takes for `platform`, which is also how it is
+/// given on the command line.
+#[must_use]
+pub const fn system_name(platform: Platform) -> &'static str {
+    match platform {
+        Platform::Windows => "windows",
+        Platform::Linux => "linux",
+        Platform::MacOs => "macos",
+    }
+}
+
+/// Reads a system given as its word, such as `linux`.
+///
+/// # Errors
+///
+/// When `text` is none of the words.
+pub fn system(text: &str) -> Result<Platform, String> {
+    SYSTEMS
+        .into_iter()
+        .find(|platform| system_name(*platform) == text)
+        .ok_or_else(|| "it is windows, linux or macos".to_owned())
+}
+
+/// The branch a fetch downloads from `app`'s `branches`: the one `branch` names, or else the one
+/// `build` is live on, the default first, or else the default.
+///
+/// # Errors
+///
+/// When there is no such branch, no build is live on it, it holds another build than `build`, or
+/// players need its password, which steamcmd takes only on its command line.
+pub fn chosen<'branches>(
+    branches: &'branches [Branch],
+    app: u32,
+    branch: Option<&str>,
+    build: Option<u64>,
+) -> Result<&'branches Branch, String> {
+    let found = match (branch, build) {
+        (Some(given), _) => branches
+            .iter()
+            .find(|found| named(given, &found.name))
+            .ok_or_else(|| {
+                format!(
+                    "app {app} has no branch {given}; its branches are {}",
+                    listed(branches)
+                )
+            })?,
+        (None, Some(build)) => branches
+            .iter()
+            .filter(|found| found.build_id == build)
+            .min_by_key(|found| (!webapi::is_default(&found.name), found.locked))
+            .ok_or_else(|| {
+                format!(
+                    "build {build} is live on no branch of app {app}, and Steam serves only a \
+                     branch's live build: set it live with `steamship promote --build {build} \
+                     --branch <branch>`, then fetch that branch"
+                )
+            })?,
+        (None, None) => branches
+            .iter()
+            .find(|found| webapi::is_default(&found.name))
+            .ok_or_else(|| format!("app {app} has no default branch"))?,
+    };
+    let shown = webapi::shown_name(&found.name);
+    if found.build_id == 0 {
+        return Err(format!("no build is live on app {app}'s {shown} branch"));
+    }
+    if let Some(build) = build.filter(|build| *build != found.build_id) {
+        return Err(format!(
+            "build {build} is not live on app {app}'s {shown} branch, which has build {}",
+            found.build_id
+        ));
+    }
+    if found.locked {
+        return Err(format!(
+            "app {app}'s {shown} branch takes a password, which steamcmd takes only on its \
+             command line, where steamship puts no secret; fetch a branch without one"
+        ));
+    }
+    Ok(found)
+}
+
+/// Whether the branch `given` on the command line is the one Steam calls `name`.
+fn named(given: &str, name: &str) -> bool {
+    if webapi::is_default(given) {
+        webapi::is_default(name)
+    } else {
+        given == name
+    }
+}
+
+/// The names of `branches`, as Steamworks shows them, in one line.
+fn listed(branches: &[Branch]) -> String {
+    let names: Vec<&str> = branches
+        .iter()
+        .map(|branch| webapi::shown_name(&branch.name))
+        .collect();
+    names.join(", ")
+}
+
+/// Where a fetch keeps `app`'s `branch` for `platform` in `home` when no folder is given: one
+/// folder each, so that fetching it again updates it in place and the others are left alone.
+#[must_use]
+pub fn folder(home: &Path, app: u32, branch: &str, platform: Platform) -> PathBuf {
+    home.join("fetched").join(app.to_string()).join(format!(
+        "{}-{}",
+        webapi::shown_name(branch),
+        system_name(platform)
+    ))
+}
+
+/// The file in which steamcmd records which build of `app` it put in `folder`.
+#[must_use]
+pub fn manifest(folder: &Path, app: u32) -> PathBuf {
+    folder
+        .join("steamapps")
+        .join(format!("appmanifest_{app}.acf"))
+}
+
+/// Which build a folder holds, as its app manifest records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Installed {
+    pub build_id: u64,
+    /// The branch, as Steamworks shows it: steamcmd records none for the default.
+    pub branch: String,
+}
+
+/// Reads an app manifest steamcmd wrote.
+///
+/// # Errors
+///
+/// When it is not one, or names no build.
+pub fn installed(text: &str) -> Result<Installed, String> {
+    let document = vdf::parse(text).map_err(|error| error.to_string())?;
+    let state = document
+        .block("AppState")
+        .ok_or("there is no \"AppState\" block")?;
+    let build_id = state
+        .text("buildid")
+        .and_then(|build| build.parse().ok())
+        .filter(|build| *build > 0)
+        .ok_or("it names no build")?;
+    let branch = ["MountedConfig", "UserConfig"]
+        .into_iter()
+        .find_map(|config| state.block(config)?.text("BetaKey"))
+        .filter(|branch| !branch.is_empty())
+        .map_or("default", webapi::shown_name);
+    Ok(Installed {
+        build_id,
+        branch: branch.to_owned(),
+    })
+}
+
+/// What came of a fetch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Outcome {
+    /// steamcmd said the app is installed, or was already.
+    Fetched,
+    /// Steam refused the saved login, for this reason.
+    NotLoggedIn(String),
+    /// The fetch failed, for every reason given.
+    Failed(Vec<String>),
+}
+
+/// Reads a fetch of `app` from steamcmd's exit `code` and its `console`.
+#[must_use]
+pub fn judge(code: Option<i32>, console: &str, app: u32) -> Outcome {
+    if let Some(reason) = upload::refused_login(console) {
+        return Outcome::NotLoggedIn(reason);
+    }
+    let finished = [
+        format!("Success! App '{app}' fully installed."),
+        format!("Success! App '{app}' already up to date."),
+    ];
+    let said = |line: &str| finished.iter().any(|done| line.trim() == done);
+    if code == Some(0_i32) && console.lines().any(said) {
+        return Outcome::Fetched;
+    }
+    if code == Some(0_i32) && !console.contains("ERROR!") {
+        return Outcome::Failed(vec![format!(
+            "steamcmd exited 0 without saying app {app} is installed"
+        )]);
+    }
+    let mut reasons = upload::reasons(code, console, None);
+    if reasons
+        .iter()
+        .any(|reason| reason.ends_with("(No subscription)"))
+    {
+        reasons.push(format!(
+            "the build account holds no licence for app {app}, so Steam serves it none of its \
+             builds"
+        ));
+    }
+    Outcome::Failed(reasons)
+}
+
+/// The build `folder` holds, as `fetch --json` prints it.
+#[must_use]
+pub fn json(app: u32, installed: &Installed, platform: Platform, folder: &Path) -> Value {
+    json!({
+        "app": app,
+        "branch": installed.branch,
+        "build_id": installed.build_id,
+        "system": system_name(platform),
+        "folder": folder.display().to_string(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn branch(name: &str, build_id: u64, locked: bool) -> Branch {
+        Branch {
+            name: name.to_owned(),
+            build_id,
+            description: String::new(),
+            locked,
+        }
+    }
+
+    fn branches() -> Vec<Branch> {
+        vec![
+            branch("beta", 7, true),
+            branch("public", 7, false),
+            branch("staging", 0, false),
+            branch("testing", 8, false),
+        ]
+    }
+
+    #[test]
+    fn a_system_is_given_by_the_word_steamcmd_takes_for_it() {
+        for platform in SYSTEMS {
+            assert_eq!(system(system_name(platform)), Ok(platform));
+        }
+        assert_eq!(
+            system("osx"),
+            Err("it is windows, linux or macos".to_owned())
+        );
+    }
+
+    #[test]
+    fn the_branch_fetched_is_the_one_named_or_the_default() {
+        let all = branches();
+        let name = |found: Result<&Branch, String>| found.map(|found| found.name.clone());
+        assert_eq!(
+            name(chosen(&all, 480, Some("testing"), None)),
+            Ok("testing".to_owned())
+        );
+        assert_eq!(name(chosen(&all, 480, None, None)), Ok("public".to_owned()));
+        assert_eq!(
+            name(chosen(&all, 480, Some("default"), Some(7))),
+            Ok("public".to_owned())
+        );
+        assert_eq!(
+            chosen(&all, 480, Some("nightly"), None),
+            Err(
+                "app 480 has no branch nightly; its branches are beta, default, staging, testing"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            chosen(&[branch("beta", 7, false)], 480, None, None),
+            Err("app 480 has no default branch".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_build_is_fetched_from_a_branch_it_is_live_on_the_default_first() {
+        let all = branches();
+        let name = |found: Result<&Branch, String>| found.map(|found| found.name.clone());
+        assert_eq!(
+            name(chosen(&all, 480, None, Some(7))),
+            Ok("public".to_owned())
+        );
+        assert_eq!(
+            name(chosen(&all, 480, None, Some(8))),
+            Ok("testing".to_owned())
+        );
+        let open_first = [branch("beta", 7, true), branch("open", 7, false)];
+        assert_eq!(
+            name(chosen(&open_first, 480, None, Some(7))),
+            Ok("open".to_owned())
+        );
+        assert_eq!(
+            chosen(&all, 480, None, Some(9)),
+            Err(
+                "build 9 is live on no branch of app 480, and Steam serves only a branch's live \
+                 build: set it live with `steamship promote --build 9 --branch <branch>`, then \
+                 fetch that branch"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            chosen(&all, 480, Some("testing"), Some(7)),
+            Err("build 7 is not live on app 480's testing branch, which has build 8".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_branch_with_no_build_or_a_password_is_refused() {
+        let all = branches();
+        assert_eq!(
+            chosen(&all, 480, Some("staging"), None),
+            Err("no build is live on app 480's staging branch".to_owned())
+        );
+        assert_eq!(
+            chosen(&all, 480, Some("beta"), None),
+            Err(
+                "app 480's beta branch takes a password, which steamcmd takes only on its \
+                 command line, where steamship puts no secret; fetch a branch without one"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn each_app_branch_and_system_has_its_own_folder() {
+        let home = Path::new("home");
+        assert_eq!(
+            folder(home, 480, "public", Platform::Linux),
+            home.join("fetched").join("480").join("default-linux")
+        );
+        assert_eq!(
+            folder(home, 480, "testing", Platform::Windows),
+            home.join("fetched").join("480").join("testing-windows")
+        );
+        assert_eq!(
+            manifest(home, 480),
+            home.join("steamapps").join("appmanifest_480.acf")
+        );
+    }
+
+    /// An app manifest laid out as steamcmd 1792617903 wrote one for a beta branch, its values
+    /// those of a sample app.
+    const ON_TESTING: &str = "\"AppState\"\n{\n\t\"appid\"\t\t\"480\"\n\t\"StateFlags\"\t\t\"4\"\n\
+        \t\"installdir\"\t\t\"Spacewar\"\n\t\"buildid\"\t\t\"1234567\"\n\
+        \t\"TargetBuildID\"\t\t\"1234567\"\n\t\"InstalledDepots\"\n\t{\n\t\t\"481\"\n\t\t{\n\
+        \t\t\t\"manifest\"\t\t\"42\"\n\t\t\t\"size\"\t\t\"1024\"\n\t\t}\n\t}\n\
+        \t\"UserConfig\"\n\t{\n\t\t\"BetaKey\"\t\t\"testing\"\n\t}\n\
+        \t\"MountedConfig\"\n\t{\n\t\t\"BetaKey\"\t\t\"testing\"\n\t}\n}\n";
+
+    #[test]
+    fn a_folder_holds_the_build_and_branch_its_app_manifest_records() {
+        assert_eq!(
+            installed(ON_TESTING),
+            Ok(Installed {
+                build_id: 1_234_567,
+                branch: "testing".to_owned()
+            })
+        );
+        let on_default = "\"AppState\"\n{\n\"buildid\" \"1234567\"\n}\n";
+        assert_eq!(
+            installed(on_default),
+            Ok(Installed {
+                build_id: 1_234_567,
+                branch: "default".to_owned()
+            })
+        );
+        let public =
+            "\"AppState\"\n{\n\"buildid\" \"5\"\n\"UserConfig\"\n{\n\"BetaKey\" \"public\"\n}\n}\n";
+        assert_eq!(
+            installed(public).map(|found| found.branch),
+            Ok("default".to_owned())
+        );
+        for (text, why) in [
+            ("\"Other\"\n{\n}\n", "there is no \"AppState\" block"),
+            (
+                "\"AppState\"\n{\n\"buildid\" \"0\"\n}\n",
+                "it names no build",
+            ),
+            (
+                "\"AppState\"\n{\n\"buildid\" \"x\"\n}\n",
+                "it names no build",
+            ),
+        ] {
+            assert_eq!(installed(text), Err(why.to_owned()), "{text}");
+        }
+        drop(installed("\"AppState\"\n{").unwrap_err());
+    }
+
+    /// steamcmd 1792617903's console fetching a build, then fetching it again.
+    const FETCHED: &str = "Logging in user 'build_bot' [U:1:1] to Steam Public...OK\n\
+        Waiting for user info...OK\n\
+        \u{20}Update state (0x61) downloading, progress: 62.17 (979400546 / 1575439958)\n\
+        \u{20}Update state (0x81) verifying update, progress: 88.50 (1394319538 / 1575439958)\n\
+        Success! App '480' fully installed.\n\
+        Unloading Steam API...OK\n";
+    const UP_TO_DATE: &str = "Waiting for user info...OK\n\
+        Success! App '480' already up to date.\n\
+        Unloading Steam API...OK\n";
+
+    #[test]
+    fn a_fetch_is_done_only_when_steamcmd_says_the_app_is_installed_and_exits_0() {
+        assert_eq!(judge(Some(0_i32), FETCHED, 480), Outcome::Fetched);
+        assert_eq!(judge(Some(0_i32), UP_TO_DATE, 480), Outcome::Fetched);
+        assert_eq!(
+            judge(Some(0_i32), FETCHED, 481),
+            Outcome::Failed(vec![
+                "steamcmd exited 0 without saying app 481 is installed".to_owned()
+            ])
+        );
+        assert!(matches!(
+            judge(Some(8_i32), FETCHED, 480),
+            Outcome::Failed(_)
+        ));
+        assert!(matches!(judge(None, FETCHED, 480), Outcome::Failed(_)));
+    }
+
+    #[test]
+    fn a_failed_fetch_says_steamcmds_reason_and_what_no_licence_means() {
+        assert_eq!(
+            judge(
+                Some(8_i32),
+                "ERROR! Failed to install app '480' (No subscription)\n",
+                480
+            ),
+            Outcome::Failed(vec![
+                "Failed to install app '480' (No subscription)".to_owned(),
+                "the build account holds no licence for app 480, so Steam serves it none of \
+                 its builds"
+                    .to_owned(),
+            ])
+        );
+        for code in [Some(8_i32), Some(0_i32)] {
+            assert_eq!(
+                judge(code, "ERROR! Failed to set beta 'testing'\n", 480),
+                Outcome::Failed(vec!["Failed to set beta 'testing'".to_owned()]),
+                "{code:?}"
+            );
+        }
+        assert_eq!(
+            judge(Some(8_i32), "Unloading Steam API...OK\n", 480),
+            Outcome::Failed(vec!["steamcmd exited 8 without saying why".to_owned()])
+        );
+    }
+
+    #[test]
+    fn a_refused_login_is_not_a_failed_fetch() {
+        assert!(matches!(
+            judge(
+                Some(5_i32),
+                "Logging in user 'build_bot' to Steam Public...FAILED (Invalid Password)\n",
+                480
+            ),
+            Outcome::NotLoggedIn(_)
+        ));
+    }
+
+    #[test]
+    fn json_gives_the_build_its_branch_system_and_folder() {
+        let found = Installed {
+            build_id: 7,
+            branch: "testing".to_owned(),
+        };
+        assert_eq!(
+            json(480, &found, Platform::Linux, Path::new("fetched")),
+            json!({
+                "app": 480_u32,
+                "branch": "testing",
+                "build_id": 7_u64,
+                "system": "linux",
+                "folder": "fetched",
+            })
+        );
+    }
+}

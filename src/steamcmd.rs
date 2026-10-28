@@ -205,6 +205,44 @@ pub fn workshop(account: &Account, script: &Path) -> Vec<OsString> {
     args
 }
 
+/// The commands that log `account` in with the login steamcmd saved, fetch `app` into `folder`,
+/// and quit. Like [`upload`], it never waits at a prompt.
+///
+/// The build is the one live on `branch`, or on the default branch, as Steam serves it to
+/// `system`, and every file of it already in the folder is checked. The system and the folder are
+/// set before logging in, which Valve's documentation asks of the folder.
+#[must_use]
+pub fn fetch(
+    account: &Account,
+    app: u32,
+    branch: Option<&str>,
+    system: &str,
+    folder: &Path,
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> = [
+        "+@ShutdownOnFailedCommand",
+        "1",
+        "+@NoPromptForPassword",
+        "1",
+        "+@sSteamCmdForcePlatformType",
+        system,
+        "+force_install_dir",
+    ]
+    .map(OsString::from)
+    .into();
+    args.push(folder.as_os_str().to_owned());
+    args.extend(["+login", account.name(), "+app_update"].map(OsString::from));
+    args.push(app.to_string().into());
+    if let Some(branch) = branch {
+        args.extend(["-beta", branch].map(OsString::from));
+    }
+    args.extend(["validate", "+quit"].map(OsString::from));
+    args
+}
+
+/// The longest a fetch may run: a large build over a slow line takes hours.
+pub const FETCH_LIMIT: Duration = Duration::from_hours(6);
+
 /// The longest a check of the saved login may run: logging in takes seconds.
 pub const CHECK_LIMIT: Duration = Duration::from_mins(2);
 
@@ -349,6 +387,38 @@ mod tests {
                 "home (x86)/workshop/480/workshop_item.vdf",
                 "+quit"
             ]
+        );
+    }
+
+    #[test]
+    fn fetches_a_branch_for_a_system_into_its_folder_and_never_waits_at_a_prompt() {
+        let account = Account::parse("build_bot").unwrap();
+        let folder = Path::new("home (x86)/fetched/480/testing-linux");
+        assert_eq!(
+            fetch(&account, 480, Some("testing"), "linux", folder),
+            [
+                "+@ShutdownOnFailedCommand",
+                "1",
+                "+@NoPromptForPassword",
+                "1",
+                "+@sSteamCmdForcePlatformType",
+                "linux",
+                "+force_install_dir",
+                "home (x86)/fetched/480/testing-linux",
+                "+login",
+                "build_bot",
+                "+app_update",
+                "480",
+                "-beta",
+                "testing",
+                "validate",
+                "+quit"
+            ]
+        );
+        let default = fetch(&account, 480, None, "windows", folder);
+        assert!(
+            default.ends_with(&["+app_update", "480", "validate", "+quit"].map(OsString::from)),
+            "{default:?}"
         );
     }
 
