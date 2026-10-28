@@ -22,7 +22,7 @@ use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::process::Child;
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
@@ -77,6 +77,50 @@ fn steamship_in(
     home: Option<&Path>,
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
+    outcome(&run::output(&mut set_up(folder, args, home, variables)).unwrap())
+}
+
+/// [`steamship`] in `home`, with `typed` piped to it as a script would type it.
+#[cfg(unix)]
+fn steamship_typing(
+    args: &[&str],
+    home: &Path,
+    variables: &[(&str, &str)],
+    typed: &str,
+) -> (Option<i32>, String, String) {
+    let mut command = set_up(Path::new("."), args, Some(home), variables);
+    let mut child = run::spawn(
+        command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(typed.as_bytes())
+        .unwrap();
+    outcome(&child.wait_with_output().unwrap())
+}
+
+/// Its exit code, and what it wrote to standard output and standard error.
+fn outcome(output: &Output) -> (Option<i32>, String, String) {
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// steamship with `args` in `folder`, as [`steamship`] runs it.
+fn set_up(
+    folder: &Path,
+    args: &[&str],
+    home: Option<&Path>,
+    variables: &[(&str, &str)],
+) -> Command {
     let mut command = steamship_command();
     let _: &mut Command = command.current_dir(folder);
     // The runner's own CI variables would make every test a CI run, writing to the job's real
@@ -93,13 +137,10 @@ fn steamship_in(
         None => command.env_clear(),
     };
     // After the environment may have been cleared, so that nothing reaches the session's store.
-    let _: &mut Command = command.envs(common::store::environment());
-    let output = run::output(command.envs(variables.iter().copied())).unwrap();
-    (
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    )
+    let _: &mut Command = command
+        .envs(common::store::environment())
+        .envs(variables.iter().copied());
+    command
 }
 
 /// The first failure steamship reported, without the cross before it; or, when it reported
@@ -7750,6 +7791,17 @@ fn fetching(
     args: &[&str],
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
+    fetching_typed(home, args, variables, None)
+}
+
+/// [`fetching`], with `typed`, when given, piped to it as a script would type it.
+#[cfg(unix)]
+fn fetching_typed(
+    home: &Path,
+    args: &[&str],
+    variables: &[(&str, &str)],
+    typed: Option<&str>,
+) -> (Option<i32>, String, String) {
     let (host, _requests) = web_api(vec![("200 OK", FETCHABLE)]);
     let mut all = vec![
         ("STEAMSHIP_WEB_API_KEY", KEY),
@@ -7759,7 +7811,10 @@ fn fetching(
     all.extend_from_slice(variables);
     let mut given = vec!["fetch"];
     given.extend_from_slice(args);
-    steamship(&given, Some(home), &all)
+    typed.map_or_else(
+        || steamship(&given, Some(home), &all),
+        |typed| steamship_typing(&given, home, &all, typed),
+    )
 }
 
 #[cfg(unix)]
@@ -7882,12 +7937,17 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
         "\"AppState\"\n{\n\"buildid\" \"4242\"\n\"MountedConfig\"\n{\n\"BetaKey\" \"testing\"\n}\n}\n",
     )
     .unwrap();
+    let needs_password = "app 1000's friends branch takes a password: set \
+                          STEAMSHIP_BRANCH_PASSWORD to it, or type it when fetch asks, which it \
+                          does without --json";
     for (args, said) in [
         (
             vec!["1000", "--branch", "friends"],
-            "app 1000's friends branch takes a password: set STEAMSHIP_BRANCH_PASSWORD to it, or \
-             fetch at a terminal to type it"
-                .to_owned(),
+            needs_password.to_owned(),
+        ),
+        (
+            vec!["1000", "--branch", "friends", "--json"],
+            needs_password.to_owned(),
         ),
         (
             vec!["1000", "--build", "4300"],
@@ -7909,12 +7969,24 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
             ),
         ),
     ] {
-        let (code, _, stderr) = fetching(home.path(), &args, &[]);
+        let (code, stdout, stderr) = fetching(home.path(), &args, &[]);
         assert_eq!(code, Some(2_i32), "{args:?}: {stderr}");
         assert!(stderr.contains(&said), "{said:?} in {stderr}");
         assert!(!home.path().join("args").exists(), "steamcmd was not run");
+        if args.contains(&"--json") {
+            assert!(stdout.is_empty(), "no prompt on standard output: {stdout}");
+        }
     }
     assert_eq!(fs::read_to_string(other.join("notes.txt")).unwrap(), "mine");
+
+    // An empty variable gives no password.
+    let (empty, _, empty_said) = fetching(
+        home.path(),
+        &["1000", "--branch", "friends"],
+        &[("STEAMSHIP_BRANCH_PASSWORD", "")],
+    );
+    assert_eq!(empty, Some(2_i32), "{empty_said}");
+    assert!(empty_said.contains(needs_password), "{empty_said}");
 
     // A record that is there but cannot be read is a failure, not a folder of other files.
     let unreadable = files.path().join("unreadable");
@@ -8027,6 +8099,69 @@ fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked(
 fn fetching_said(home: &Path, args: &[&str], variables: &[(&str, &str)]) -> (Option<i32>, String) {
     let (code, stdout, stderr) = fetching(home, args, variables);
     (code, format!("{stdout}{stderr}"))
+}
+
+#[cfg(unix)]
+#[test]
+fn a_typed_password_is_kept_on_enter_or_when_asked_and_not_on_n() {
+    let named = ["1000", "--branch", "friends"];
+    let keeping = ["1000", "--branch", "friends", "--keep-password"];
+    for (args, typed, kept) in [
+        (named.as_slice(), "open-sesame\n\n", true),
+        (named.as_slice(), "open-sesame\nn\n", false),
+        (keeping.as_slice(), "open-sesame\n", true),
+    ] {
+        let home = faked_with(TYPED_FETCHES);
+        saved_login(home.path());
+        let (code, stdout, stderr) = fetching_typed(home.path(), args, &[], Some(typed));
+        let said = format!("{stdout}{stderr}");
+        assert_eq!(code, Some(0_i32), "{typed:?}: {said}");
+        assert_eq!(
+            fs::read_to_string(home.path().join("typed")).unwrap(),
+            "app_update 1000 -beta friends -betapassword open-sesame validate"
+        );
+        assert!(!said.contains("open-sesame"), "{said}");
+        assert_eq!(said.contains("not kept"), !kept, "{typed:?}: {said}");
+        assert_eq!(
+            said.contains("Enter keeps the password"),
+            args.len() == named.len(),
+            "asked only without --keep-password: {said}"
+        );
+        let (again, again_stdout, again_stderr) = fetching(home.path(), &named, &[]);
+        assert_eq!(
+            again,
+            Some(if kept { 0_i32 } else { 2_i32 }),
+            "{typed:?}: {again_stdout}{again_stderr}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_typed_fetch_whose_steamcmd_will_never_reach_steam_is_stopped_at_once() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo 'unable to load trusted SSL root certificates'\n\
+         printf 'Steam>'\n\
+         sleep 600\n",
+    );
+    saved_login(home.path());
+    let started = Instant::now();
+    let (code, stdout, stderr) = fetching(
+        home.path(),
+        &["1000", "--branch", "friends"],
+        &[("STEAMSHIP_BRANCH_PASSWORD", "open-sesame")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("steamcmd found no certificates to check Steam's servers against"),
+        "{stderr}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "{:?}",
+        started.elapsed()
+    );
 }
 
 #[cfg(unix)]

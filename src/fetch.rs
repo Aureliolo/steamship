@@ -513,7 +513,8 @@ mod tests {
     #[test]
     fn the_fetch_is_typed_at_the_first_prompt_and_quit_at_the_next_with_the_password_hidden() {
         let mut output = Chunks(vec![
-            b"Waiting for user info...OK\r\n",
+            b"Waiting for user info...",
+            b"OK\r\n",
             b"\r\nSteam>",
             b"app_update 480 -beta",
             b" friends -betapassword open sesame validate\r\n",
@@ -538,6 +539,18 @@ mod tests {
                 "Steam>quit"
             ]
         );
+    }
+
+    #[test]
+    fn a_console_that_will_never_reach_steam_is_read_no_further() {
+        let mut output = Chunks(vec![
+            b"unable to load trusted SSL root certificates\r\n",
+            b"\r\nSteam>",
+        ]);
+        let mut input = Vec::new();
+        let lines = typed(&mut output, &mut input, "app_update 480", "", &["SSL root"]).unwrap();
+        assert_eq!(lines, ["unable to load trusted SSL root certificates"]);
+        assert_eq!(input, b"", "nothing typed");
     }
 
     /// steamcmd 1792617903's console refusing a branch's password typed at it.
@@ -747,6 +760,7 @@ mod tests {
             untokened("a token, token 12 and token 3x"),
             "a token, token <hidden> and token <hidden>x"
         );
+        assert_eq!(untokened("token x"), "token x");
     }
 
     #[test]

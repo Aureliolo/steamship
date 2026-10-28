@@ -385,7 +385,8 @@ account holds no licence for is a failure that says so.
 
 A branch that takes a password, as its Steamworks betas page shows, is opened with the password
 in `STEAMSHIP_BRANCH_PASSWORD`, or else the one kept for that app and branch in the system's
-credential store, or else one typed at the prompt. steamship types it into steamcmd's console,
+credential store, or else one typed at the prompt or piped in; with `--json` there is no prompt.
+steamship types it into steamcmd's console,
 where no other program on the machine sees it, and hides it in everything it prints. A password
 holding a space or a quote, which that console would split, is given on steamcmd's command line
 instead with `--password-on-command-line`, where any program on the machine can read it while

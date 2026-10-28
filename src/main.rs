@@ -3205,28 +3205,36 @@ fn branch_password(
             text,
             from: PasswordFrom::Kept,
         }
-    } else if io::stdin().is_terminal() && !show::diverted() {
+    } else {
+        let needed = || {
+            fail(
+                &format!(
+                    "app {app}'s {shown} branch takes a password: set {} to it, or type it when \
+                     fetch asks, which it does without --json",
+                    fetch::PASSWORD
+                ),
+                REFUSED,
+            )
+        };
+        // With --json, standard output holds the JSON alone, and the prompt would go there.
+        if show::diverted() {
+            return Err(needed());
+        }
         show::aside(&format!(
             "app {app}'s {shown} branch takes a password, the one its Steamworks betas page shows"
         ));
-        let text = typing::ask("password", Echo::Dots)
-            .map_err(|error| fail(&format!("the branch's password: {error}"), FAILED))?;
-        if text.is_empty() {
-            return Err(fail(&"no password typed", REFUSED));
-        }
+        let text = match typing::ask("password", Echo::Dots) {
+            Ok(text) if !text.is_empty() => text,
+            Ok(_) => return Err(needed()),
+            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Err(needed()),
+            Err(error) => {
+                return Err(fail(&format!("the branch's password: {error}"), FAILED));
+            }
+        };
         GivenPassword {
             text,
             from: PasswordFrom::Typed,
         }
-    } else {
-        return Err(fail(
-            &format!(
-                "app {app}'s {shown} branch takes a password: set {} to it, or fetch at a \
-                 terminal to type it",
-                fetch::PASSWORD
-            ),
-            REFUSED,
-        ));
     };
     match (on_command_line, fetch::typeable(&given.text)) {
         (true, _) => show::aside(
@@ -3270,23 +3278,7 @@ fn keep_branch_password(
     let keep = match password.from {
         PasswordFrom::Kept => false,
         PasswordFrom::Variable => asked,
-        PasswordFrom::Typed if asked => true,
-        PasswordFrom::Typed => {
-            show::aside(&format!(
-                "Enter keeps the password in {} for next time; n does not",
-                keychain::STORE
-            ));
-            let keep = typing::ask("keep it", Echo::Typed).is_ok_and(|answer| {
-                matches!(
-                    answer.trim().to_ascii_lowercase().as_str(),
-                    "" | "y" | "yes"
-                )
-            });
-            if !keep {
-                show::field("password", "not kept");
-            }
-            keep
-        }
+        PasswordFrom::Typed => asked || keeping_offered(),
     };
     if !keep {
         return;
@@ -3298,6 +3290,24 @@ fn keep_branch_password(
             show::failure(&error.to_string(), "", None);
         }
     }
+}
+
+/// Offers to keep a typed password, and answers whether Enter, or a yes, took the offer.
+fn keeping_offered() -> bool {
+    show::aside(&format!(
+        "Enter keeps the password in {} for next time; n does not",
+        keychain::STORE
+    ));
+    let keep = typing::ask("keep it", Echo::Typed).is_ok_and(|answer| {
+        matches!(
+            answer.trim().to_ascii_lowercase().as_str(),
+            "" | "y" | "yes"
+        )
+    });
+    if !keep {
+        show::field("password", "not kept");
+    }
+    keep
 }
 
 /// What `fetched` downloads, and as whom.
