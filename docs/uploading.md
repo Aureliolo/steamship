@@ -367,6 +367,46 @@ steamship calls does the same when called twice. When the second try fails too, 
 says why, such as the host name not being found, the connection refused or a timeout, and how
 long that try ran.
 
+## Fetching a build
+
+```sh
+steamship fetch 480
+steamship fetch 480 --branch testing --system linux
+steamship fetch 480 --build 12345678 --into play/spacewar --json
+```
+
+`fetch` downloads the build live on a branch exactly as Steam serves it to players, so that it
+can be started and checked before anyone is told it is ready. It asks the Web API, with the key
+as for `builds`, which build is live on the branch, the default unless `--branch` names
+another. With `--build`, that build is fetched from a branch it is live on, the default first;
+Steam serves only a branch's live build, so one live nowhere is refused, and `promote` sets it
+live. steamcmd then downloads it with the saved login, as the build account. A branch that takes
+a password is refused, since steamcmd takes the password only on its command line, and an app
+the build account holds no licence for is a failure that says so.
+
+The depots are the ones Steam installs on this system, or on the one `--system` names
+(`windows`, `linux` or `macos`). Each app, branch and system has its own folder under the
+steamship home, `fetched/<app>/<branch>-<system>`, or the one `--into` names; nothing goes into
+a Steam library, and no window opens. Fetching again checks each of the build's files in the
+folder and downloads only those that differ, so a folder kept between fetches costs only what
+changed. A folder holding another branch's build is refused, and so is one holding files but no
+build of the app.
+
+steamcmd records the build it put in the folder in `steamapps/appmanifest_<app>.acf`, and
+`fetch` fails unless that is the build the Web API showed live, as when a new one is set live
+while it downloads. It then prints the folder and the build; with `--json` as one line on
+standard output, here spread out:
+
+```json
+{
+  "app": 480,
+  "branch": "testing",
+  "build_id": 12345678,
+  "system": "linux",
+  "folder": "/home/you/.local/share/steamship/fetched/480/testing-linux"
+}
+```
+
 ## Settings in Steamworks
 
 ```sh

@@ -27,8 +27,8 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    achievements, assets, check, ci, conversation, digest, download, drm, dump, editor, init,
-    itself, keychain, leaderboards, likeness, magic, picture, po, presence, presets, redist,
+    achievements, assets, check, ci, conversation, digest, download, drm, dump, editor, fetch,
+    init, itself, keychain, leaderboards, likeness, magic, picture, po, presence, presets, redist,
     release, run, scripts, settings, steamcmd, storefront, text, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
@@ -103,6 +103,7 @@ fn run(command: Command) -> ExitCode {
             count,
             json,
         } => either(app_or_game(app, demo).and_then(|app| try_builds(&app, count, json))),
+        Command::Fetch(request) => either(try_fetch(&request)),
         Command::Achievements {
             app,
             check,
@@ -3029,6 +3030,195 @@ fn try_builds(app: &str, count: u32, json: bool) -> Result<ExitCode, ExitCode> {
         show::plain(&format!("{}\n", overview.json(app_id)));
     }
     Ok(ExitCode::SUCCESS)
+}
+
+fn try_fetch(request: &cli::Fetch) -> Result<ExitCode, ExitCode> {
+    if request.json {
+        show::divert();
+    }
+    show::title("fetch");
+    let app = app_or_game(request.app.clone(), request.demo)?;
+    let app_id = app_named(&app)?;
+    let home = home()?;
+    let branch = branch_to_fetch(&home, app_id, request)?;
+    let shown = webapi::shown_name(&branch.name);
+    let system = request.system.unwrap_or(Platform::THIS);
+    let given = request
+        .into
+        .clone()
+        .unwrap_or_else(|| fetch::folder(&home, app_id, &branch.name, system));
+    show::field("branch", shown);
+    show::field("system", fetch::system_name(system));
+    show::field("folder", &given.display().to_string());
+    let folder = fetch_folder(&given, app_id, shown)?;
+    let held = fetched(&Fetching {
+        app: app_id,
+        branch: &branch,
+        system,
+        folder: &folder,
+        named: named(request.account.as_deref()),
+    })?;
+    if held.build_id != branch.build_id || held.branch != shown {
+        return Err(fail(
+            &format!(
+                "steamcmd put build {} of the {} branch in {}, where Steam's Web API showed build \
+                 {} live on {shown}; if a build was set live meanwhile, fetch again",
+                held.build_id,
+                held.branch,
+                given.display(),
+                branch.build_id
+            ),
+            FAILED,
+        ));
+    }
+    show::success(
+        &format!(
+            "app {app_id}: build {} of the {shown} branch is in {}",
+            held.build_id,
+            given.display()
+        ),
+        "",
+    );
+    if request.json {
+        show::plain(&format!(
+            "{}\n",
+            fetch::json(app_id, &held, system, &folder)
+        ));
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The branch `request` asks to fetch of `app`, among the branches Steam's Web API shows.
+fn branch_to_fetch(
+    home: &Path,
+    app: u32,
+    request: &cli::Fetch,
+) -> Result<webapi::Branch, ExitCode> {
+    let (api, from) = web_api(home)?;
+    let spinner = Spinner::start("steam", "asking for the branches", false);
+    let branches = match api.branches(app) {
+        Ok(branches) => branches,
+        Err(error) => {
+            let why = why_unanswered(&api, app, &error);
+            let code = web_api_failed(spinner, &error);
+            if let Some(why) = &why {
+                show::note(why);
+            }
+            return Err(code);
+        }
+    };
+    spinner.done(&match branches.len() {
+        1 => "1 branch".to_owned(),
+        count => format!("{count} branches"),
+    });
+    offer_to_keep(home, &api, from);
+    fetch::chosen(&branches, app, request.branch.as_deref(), request.build)
+        .cloned()
+        .map_err(|why| fail(&why, REFUSED))
+}
+
+/// `folder` as a path from the root, made if it is not there. Refused when it holds `app`'s
+/// build of another branch than `branch`, or files and no build of `app`, which steamcmd would
+/// mix the build into.
+fn fetch_folder(folder: &Path, app: u32, branch: &str) -> Result<PathBuf, ExitCode> {
+    let refused = |why: &dyn Display| fail(&format!("{}: {why}", folder.display()), REFUSED);
+    let record = fetch::manifest(folder, app);
+    match fs::read_to_string(&record) {
+        Ok(text) => {
+            if let Ok(held) = fetch::installed(&text)
+                && held.branch != branch
+            {
+                return Err(refused(&format!(
+                    "holds app {app}'s {} branch; fetch {branch} into a folder of its own",
+                    held.branch
+                )));
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if fs::read_dir(folder).is_ok_and(|mut entries| entries.next().is_some()) {
+                return Err(refused(&format!(
+                    "holds files and no build of app {app}; fetch into an empty folder, or one a \
+                     fetch of {branch} made"
+                )));
+            }
+        }
+        Err(error) => return Err(fail(&format!("{}: {error}", record.display()), FAILED)),
+    }
+    fs::create_dir_all(folder).map_err(|error| refused(&error))?;
+    path::absolute(folder).map_err(|error| refused(&error))
+}
+
+/// What `fetched` downloads, and as whom.
+struct Fetching<'command> {
+    app: u32,
+    branch: &'command webapi::Branch,
+    system: Platform,
+    folder: &'command Path,
+    named: Option<&'command str>,
+}
+
+/// Has steamcmd download the build, and answers which one the folder then holds.
+fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
+    let packed = packed_login()?;
+    let account = match (&packed, fetching.named) {
+        (Some(packed), None) => packed.account().clone(),
+        _ => account(fetching.named, false)?.0,
+    };
+    let (held, home, manifest) = ready()?;
+    restore(packed.as_ref(), &home)?;
+    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
+    let root = home.join(install::FOLDER);
+    let program = steamcmd::program(&root, Platform::THIS);
+    let branch = &fetching.branch.name;
+    let spinner = Spinner::start("steam", "downloading", true);
+    let finished = run::run(
+        &program,
+        &steamcmd::fetch(
+            &account,
+            fetching.app,
+            (!webapi::is_default(branch)).then_some(branch.as_str()),
+            fetch::system_name(fetching.system),
+            fetching.folder,
+        ),
+        &steamcmd::environment(&home, Platform::THIS),
+        &root,
+        steamcmd::FETCH_LIMIT,
+        steamcmd::HOPELESS,
+    );
+    let took = show::took(spinner.elapsed());
+    let finished = match finished {
+        Ok(finished) => finished,
+        Err(error) => {
+            spinner.failed(&format!("could not start after {took}"));
+            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+        }
+    };
+    let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
+    let console = redactor.redact(&finished.output);
+    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    match fetch::judge(
+        finished.code,
+        &String::from_utf8_lossy(&console),
+        fetching.app,
+    ) {
+        fetch::Outcome::Fetched => spinner.done(&format!("downloaded in {took}")),
+        fetch::Outcome::NotLoggedIn(reason) => {
+            spinner.failed(&format!("refused after {took}"));
+            return Err(login_refused(&reason, packed.as_ref()));
+        }
+        fetch::Outcome::Failed(reasons) => {
+            spinner.failed(&format!("failed after {took}"));
+            for reason in &reasons {
+                show::failure(reason, "", None);
+            }
+            return Err(ExitCode::from(FAILED));
+        }
+    }
+    let record = fetch::manifest(fetching.folder, fetching.app);
+    fs::read_to_string(&record)
+        .map_err(|error| error.to_string())
+        .and_then(|text| fetch::installed(&text))
+        .map_err(|why| fail(&format!("{}: {why}", record.display()), FAILED))
 }
 
 /// The achievements file at `path`, read, and refused when it is not one or names another app

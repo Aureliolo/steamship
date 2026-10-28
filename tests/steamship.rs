@@ -241,6 +241,7 @@ fn help_lists_every_command_with_one_short_line() {
         "  upload         Check, build and upload, then print the build ID\n",
         "  workshop       Upload a Workshop item, then print its ID\n",
         "  builds         Show an app's branches and last builds\n",
+        "  fetch          Download a branch's build as Steam serves it, into a folder of its own\n",
         "  achievements   Show an app's achievements and stats, check them against files, or write \
          their import\n",
         "  assets         Check artwork and icons against Valve's sizes, before they are \
@@ -7709,6 +7710,227 @@ fn a_refused_wrap_says_why_and_a_file_that_is_no_windows_program_is_refused_firs
     assert_eq!(refused, Some(2_i32), "{stderr}");
     assert!(stderr.contains("is not a Windows executable"), "{stderr}");
     assert!(!home.path().join("args").exists(), "steamcmd was not run");
+}
+
+/// A steamcmd that fetches app 1000 as steamcmd 1792617903 did: it records the build,
+/// `STEAMSHIP_FAKE_BUILD` or 4242, and the branch `-beta` names in the folder it was given, and
+/// says the app is installed, keeping what it was started with in `args`.
+#[cfg(unix)]
+const FETCHES: &str = "#!/bin/sh\n\
+    echo \"$*\" > \"$HOME/args\"\n\
+    folder=; beta=\n\
+    while [ $# -gt 0 ]; do\n\
+      case \"$1\" in\n\
+        +force_install_dir) folder=\"$2\"; shift ;;\n\
+        -beta) beta=\"$2\"; shift ;;\n\
+      esac\n\
+      shift\n\
+    done\n\
+    echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+    mkdir -p \"$folder/steamapps\"\n\
+    printf '\"AppState\"\\n{\\n\"buildid\" \"%s\"\\n\"UserConfig\"\\n{\\n\"BetaKey\" \"%s\"\\n}\\n}\\n' \
+      \"${STEAMSHIP_FAKE_BUILD:-4242}\" \"$beta\" > \"$folder/steamapps/appmanifest_1000.acf\"\n\
+    echo \"Success! App '1000' fully installed.\"\n";
+
+/// `GetAppBetas` showing build 4242 live on the default branch and testing, and 4100 on a branch
+/// that takes a password.
+#[cfg(unix)]
+const FETCHABLE: &str = r#"{"response": {"result": 1, "betas": {
+    "public": {"BuildID": 4242},
+    "testing": {"BuildID": 4242, "Description": "0.3.0"},
+    "friends": {"BuildID": 4100, "ReqPassword": 1}
+}}}"#;
+
+/// `steamship fetch` with `args` from a home whose steamcmd is `home`'s, with the Web API
+/// answering [`FETCHABLE`] once, and `variables` set besides.
+#[cfg(unix)]
+fn fetching(
+    home: &Path,
+    args: &[&str],
+    variables: &[(&str, &str)],
+) -> (Option<i32>, String, String) {
+    let (host, _requests) = web_api(vec![("200 OK", FETCHABLE)]);
+    let mut all = vec![
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        (STAND_IN, host.as_str()),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+    ];
+    all.extend_from_slice(variables);
+    let mut given = vec!["fetch"];
+    given.extend_from_slice(args);
+    steamship(&given, Some(home), &all)
+}
+
+#[cfg(unix)]
+#[test]
+fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with_it() {
+    let home = faked_with(FETCHES);
+    saved_login(home.path());
+    let system = steamship::fetch::system_name(Platform::THIS);
+    let folder = home
+        .path()
+        .join("fetched")
+        .join("1000")
+        .join(format!("testing-{system}"));
+
+    let (code, stdout, stderr) =
+        fetching(home.path(), &["1000", "--branch", "testing", "--json"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert_eq!(
+        args.trim_end(),
+        format!(
+            "+@ShutdownOnFailedCommand 1 +@NoPromptForPassword 1 +@sSteamCmdForcePlatformType \
+             {system} +force_install_dir {} +login build_bot +app_update 1000 -beta testing \
+             validate +quit",
+            folder.display()
+        )
+    );
+    assert!(
+        stderr.contains(&format!(
+            "app 1000: build 4242 of the testing branch is in {}",
+            folder.display()
+        )),
+        "{stderr}"
+    );
+    let printed: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(
+        printed,
+        serde_json::json!({
+            "app": 1000_u32,
+            "branch": "testing",
+            "build_id": 4242_u64,
+            "system": system,
+            "folder": folder.display().to_string(),
+        })
+    );
+
+    // The default branch, for another system, into a folder of the caller's.
+    let into = tempfile::tempdir().unwrap();
+    let chosen = into.path().join("play");
+    let (default, said, _) = fetching(
+        home.path(),
+        &[
+            "1000",
+            "--system",
+            "windows",
+            "--into",
+            &chosen.to_string_lossy(),
+        ],
+        &[],
+    );
+    assert_eq!(default, Some(0_i32), "{said}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(
+        args.contains("+@sSteamCmdForcePlatformType windows +force_install_dir")
+            && args.ends_with("+app_update 1000 validate +quit\n"),
+        "{args}"
+    );
+    assert!(
+        said.contains("app 1000: build 4242 of the default branch is in"),
+        "{said}"
+    );
+
+    // Fetched again, the folder is checked and updated in place.
+    let (again, _, again_said) = fetching(
+        home.path(),
+        &[
+            "1000",
+            "--build",
+            "4242",
+            "--into",
+            &chosen.to_string_lossy(),
+        ],
+        &[],
+    );
+    assert_eq!(again, Some(0_i32), "{again_said}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fetch_that_got_another_build_than_steam_shows_live_fails() {
+    let home = faked_with(FETCHES);
+    saved_login(home.path());
+    let (code, stdout, stderr) = fetching(
+        home.path(),
+        &["1000", "--branch", "testing", "--json"],
+        &[("STEAMSHIP_FAKE_BUILD", "4243")],
+    );
+    assert_eq!(code, Some(1_i32), "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("steamcmd put build 4243 of the testing branch in")
+            && stderr.contains("where Steam's Web API showed build 4242 live on testing"),
+        "{stderr}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_not_its_own() {
+    let home = faked_with(FETCHES);
+    saved_login(home.path());
+    let files = tempfile::tempdir().unwrap();
+    let other = files.path().join("other");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join("notes.txt"), "mine").unwrap();
+    let on_testing = files.path().join("testing");
+    fs::create_dir_all(on_testing.join("steamapps")).unwrap();
+    fs::write(
+        on_testing.join("steamapps").join("appmanifest_1000.acf"),
+        "\"AppState\"\n{\n\"buildid\" \"4242\"\n\"MountedConfig\"\n{\n\"BetaKey\" \"testing\"\n}\n}\n",
+    )
+    .unwrap();
+    for (args, said) in [
+        (
+            vec!["1000", "--branch", "friends"],
+            "app 1000's friends branch takes a password".to_owned(),
+        ),
+        (
+            vec!["1000", "--build", "4300"],
+            "build 4300 is live on no branch of app 1000".to_owned(),
+        ),
+        (
+            vec!["1000", "--branch", "nightly"],
+            "app 1000 has no branch nightly; its branches are friends, default, testing".to_owned(),
+        ),
+        (
+            vec!["1000", "--into", other.to_str().unwrap()],
+            format!("{}: holds files and no build of app 1000", other.display()),
+        ),
+        (
+            vec!["1000", "--into", on_testing.to_str().unwrap()],
+            format!(
+                "{}: holds app 1000's testing branch; fetch default into a folder of its own",
+                on_testing.display()
+            ),
+        ),
+    ] {
+        let (code, _, stderr) = fetching(home.path(), &args, &[]);
+        assert_eq!(code, Some(2_i32), "{args:?}: {stderr}");
+        assert!(stderr.contains(&said), "{said:?} in {stderr}");
+        assert!(!home.path().join("args").exists(), "steamcmd was not run");
+    }
+    assert_eq!(fs::read_to_string(other.join("notes.txt")).unwrap(), "mine");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_fetch_steam_refuses_says_why() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+         echo \"ERROR! Failed to install app '1000' (No subscription)\"\n\
+         exit 8\n",
+    );
+    saved_login(home.path());
+    let (code, _, stderr) = fetching(home.path(), &["1000"], &[]);
+    assert_eq!(code, Some(1_i32), "{stderr}");
+    assert!(
+        stderr.contains("Failed to install app '1000' (No subscription)")
+            && stderr.contains("the build account holds no licence for app 1000"),
+        "{stderr}"
+    );
 }
 
 /// The start of a PNG `width` by `height`: its signature, header and end, which is all that is

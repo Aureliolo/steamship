@@ -7,7 +7,8 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-use crate::{ci, init, platform, show, update, webapi, workshop};
+use crate::platform::Platform;
+use crate::{ci, fetch, init, platform, show, update, webapi, workshop};
 
 /// Something failed; what, and why, is printed.
 pub const FAILED: u8 = 1;
@@ -184,6 +185,18 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Download a branch's build as Steam serves it, into a folder of its own.
+    ///
+    /// Asks Steam's partner Web API, with the publisher key as `builds` finds it, which build is
+    /// live on the branch, then has steamcmd download it with the saved login, as the build
+    /// account, for one system: this one unless `--system` names another. Each app, branch and
+    /// system has its own folder under the steamship home, or the one `--into` names, and Steam
+    /// installs nothing in a Steam library. A fetch into a folder that already holds a build of
+    /// the branch checks each of the build's files there and downloads only those that differ;
+    /// files the build does not have are left. The folder and the build it holds are printed once
+    /// steamcmd's record of it shows the build asked for. A branch that takes a password is
+    /// refused, as is a folder holding another branch.
+    Fetch(Fetch),
     /// Show an app's achievements and stats, check them against files, or write their import.
     ///
     /// Lists the achievements and stats Steam holds for the app, in English, through Steam's
@@ -588,6 +601,36 @@ pub struct Upload {
     /// Once steamcmd has run, print what came of it on standard output as one line of JSON:
     /// `outcome`, `app`, `build_id`, `branch`, `live`, `default` and `description`. Everything
     /// else goes to standard error.
+    #[arg(long)]
+    pub json: bool,
+}
+
+/// The build `fetch` downloads, and where to.
+#[derive(Debug, Args)]
+pub struct Fetch {
+    /// The app, by its ID or its app build script; in a game's folder, its own.
+    pub app: Option<String>,
+    /// In a game's folder, its demo.
+    #[arg(long, conflicts_with = "app")]
+    pub demo: bool,
+    /// The branch whose live build is fetched; the default branch unless `--build` names a build
+    /// live on another.
+    #[arg(long)]
+    pub branch: Option<String>,
+    /// The build, by its build ID, refused unless it is live on the branch, or on some branch.
+    #[arg(long)]
+    pub build: Option<u64>,
+    /// The system whose depots are fetched: windows, linux or macos; this one's by default.
+    #[arg(long, value_parser = fetch::system)]
+    pub system: Option<Platform>,
+    /// The folder the build is fetched into, which holds that one branch and system.
+    #[arg(long, value_name = "FOLDER")]
+    pub into: Option<PathBuf>,
+    /// The build account, if not the one the last login remembered.
+    #[arg(long, env = ACCOUNT)]
+    pub account: Option<String>,
+    /// Once the build is fetched, print `app`, `branch`, `build_id`, `system` and `folder` on
+    /// standard output as one line of JSON. Everything else goes to standard error.
     #[arg(long)]
     pub json: bool,
 }
