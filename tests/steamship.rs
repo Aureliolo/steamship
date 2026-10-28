@@ -7986,22 +7986,23 @@ fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked(
         fs::read_to_string(home.path().join("quit")).unwrap(),
         "quit"
     );
+    let said = format!("{stdout}{stderr}");
     assert!(
-        stderr.contains("from STEAMSHIP_BRANCH_PASSWORD")
-            && stderr.contains("app 1000: build 4100 of the friends branch is in")
-            && stderr.contains("kept in"),
-        "{stderr}"
+        said.contains("from STEAMSHIP_BRANCH_PASSWORD")
+            && said.contains("app 1000: build 4100 of the friends branch is in")
+            && said.contains("kept in")
+            && !said.contains("open-sesame"),
+        "{said}"
     );
-    assert!(!format!("{stdout}{stderr}").contains("open-sesame"));
 
     // The kept password opens the branch next time.
-    let (again, _, again_said) = fetching(home.path(), &friends[..3], &[]);
+    let (again, again_said) = fetching_said(home.path(), &friends[..3], &[]);
     assert_eq!(again, Some(0_i32), "{again_said}");
     assert!(again_said.contains("kept in"), "{again_said}");
 
     // A wrong one given is refused, and neither kept nor the kept one forgotten.
     let wrong = [("STEAMSHIP_BRANCH_PASSWORD", "open-barley")];
-    let (refused, _, refused_said) = fetching(home.path(), &friends, &wrong);
+    let (refused, refused_said) = fetching_said(home.path(), &friends, &wrong);
     assert_eq!(refused, Some(1_i32), "{refused_said}");
     assert!(
         refused_said.contains("Password check for AppId 1000 returned error Failure.")
@@ -8013,11 +8014,18 @@ fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked(
 
     // Once the branch takes another, the kept one Steam refuses is forgotten.
     let changed = [("STEAMSHIP_FAKE_PASSWORD", "open-millet")];
-    let (stale, _, stale_said) = fetching(home.path(), &friends[..3], &changed);
+    let (stale, stale_said) = fetching_said(home.path(), &friends[..3], &changed);
     assert_eq!(stale, Some(1_i32), "{stale_said}");
     assert!(stale_said.contains("is forgotten"), "{stale_said}");
-    let (none, _, none_said) = fetching(home.path(), &friends[..3], &changed);
+    let (none, none_said) = fetching_said(home.path(), &friends[..3], &changed);
     assert_eq!(none, Some(2_i32), "nothing kept to use: {none_said}");
+}
+
+/// [`fetching`], with everything it printed on either stream as one text.
+#[cfg(unix)]
+fn fetching_said(home: &Path, args: &[&str], variables: &[(&str, &str)]) -> (Option<i32>, String) {
+    let (code, stdout, stderr) = fetching(home, args, variables);
+    (code, format!("{stdout}{stderr}"))
 }
 
 #[cfg(unix)]
@@ -8039,15 +8047,16 @@ fn the_password_of_a_branch_goes_on_steamcmds_command_line_only_when_asked() {
         args.ends_with("+app_update 1000 -beta friends -betapassword open sesame validate +quit\n"),
         "{args}"
     );
+    let said = format!("{stdout}{stderr}");
     assert!(
-        stderr.contains("the password goes on steamcmd's command line"),
-        "{stderr}"
+        said.contains("the password goes on steamcmd's command line")
+            && !said.contains("open sesame"),
+        "{said}"
     );
-    assert!(!format!("{stdout}{stderr}").contains("open sesame"));
 
     // Without it, a password the console would split is refused before steamcmd runs.
     fs::remove_file(home.path().join("args")).unwrap();
-    let (split, _, split_said) = fetching(
+    let (split, split_said) = fetching_said(
         home.path(),
         &["1000", "--branch", "friends"],
         &[("STEAMSHIP_BRANCH_PASSWORD", "open sesame")],
