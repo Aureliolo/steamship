@@ -2,11 +2,14 @@
 
 use std::collections::BTreeMap;
 use std::env;
+use std::ffi::OsString;
 use std::fmt::Display;
 use std::fs;
 use std::io::{self, IsTerminal as _};
+use std::panic;
 use std::path::{self, Path, PathBuf};
 use std::process::{self, ExitCode};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -3051,13 +3054,28 @@ fn try_fetch(request: &cli::Fetch) -> Result<ExitCode, ExitCode> {
     show::field("system", fetch::system_name(system));
     show::field("folder", &given.display().to_string());
     let folder = fetch_folder(&given, app_id, shown)?;
+    let password = if branch.locked {
+        Some(branch_password(
+            &home,
+            app_id,
+            &branch.name,
+            request.password.on_command_line,
+        )?)
+    } else {
+        None
+    };
     let held = fetched(&Fetching {
         app: app_id,
         branch: &branch,
         system,
         folder: &folder,
         named: named(request.account.as_deref()),
+        password: password.as_ref(),
+        on_command_line: request.password.on_command_line,
     })?;
+    if let Some(password) = &password {
+        keep_branch_password(&home, app_id, &branch.name, password, request.password.keep);
+    }
     if held.build_id != branch.build_id || held.branch != shown {
         return Err(fail(
             &format!(
@@ -3148,6 +3166,140 @@ fn fetch_folder(folder: &Path, app: u32, branch: &str) -> Result<PathBuf, ExitCo
     path::absolute(folder).map_err(|error| refused(&error))
 }
 
+/// Where the password of a branch being fetched came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PasswordFrom {
+    Variable,
+    Kept,
+    Typed,
+}
+
+/// The password of a branch being fetched.
+struct GivenPassword {
+    text: Zeroizing<String>,
+    from: PasswordFrom,
+}
+
+/// The password of `app`'s `branch`: the one in the variable, or else the one kept for it, or
+/// else one typed at the prompt. Refused when none can be had, or when one bound for steamcmd's
+/// console, rather than its command line, is one the console would split.
+fn branch_password(
+    home: &Path,
+    app: u32,
+    branch: &str,
+    on_command_line: bool,
+) -> Result<GivenPassword, ExitCode> {
+    let shown = webapi::shown_name(branch);
+    let given = if let Some(text) = env::var_os(fetch::PASSWORD).filter(|text| !text.is_empty()) {
+        let text = text
+            .into_string()
+            .map_err(|_not_text| fail(&format!("{} is not text", fetch::PASSWORD), REFUSED))?;
+        show::field("password", &format!("from {}", fetch::PASSWORD));
+        GivenPassword {
+            text: Zeroizing::new(text),
+            from: PasswordFrom::Variable,
+        }
+    } else if let Some(text) = kept_branch_password(home, app, branch) {
+        show::field("password", &format!("kept in {}", keychain::STORE));
+        GivenPassword {
+            text,
+            from: PasswordFrom::Kept,
+        }
+    } else if io::stdin().is_terminal() && !show::diverted() {
+        show::aside(&format!(
+            "app {app}'s {shown} branch takes a password, the one its Steamworks betas page shows"
+        ));
+        let text = typing::ask("password", Echo::Dots)
+            .map_err(|error| fail(&format!("the branch's password: {error}"), FAILED))?;
+        if text.is_empty() {
+            return Err(fail(&"no password typed", REFUSED));
+        }
+        GivenPassword {
+            text,
+            from: PasswordFrom::Typed,
+        }
+    } else {
+        return Err(fail(
+            &format!(
+                "app {app}'s {shown} branch takes a password: set {} to it, or fetch at a \
+                 terminal to type it",
+                fetch::PASSWORD
+            ),
+            REFUSED,
+        ));
+    };
+    match (on_command_line, fetch::typeable(&given.text)) {
+        (true, _) => show::aside(
+            "the password goes on steamcmd's command line, where any program on this machine can \
+             read it while the fetch runs",
+        ),
+        (false, true) => {}
+        (false, false) => {
+            return Err(fail(
+                &"steamcmd's console splits a password at a space or a quote, so this one can \
+                  only be given with --password-on-command-line",
+                REFUSED,
+            ));
+        }
+    }
+    Ok(given)
+}
+
+/// The password kept for `app`'s `branch`, if one is and the store can be read; a store that
+/// fails is named, and the password asked for instead.
+fn kept_branch_password(home: &Path, app: u32, branch: &str) -> Option<Zeroizing<String>> {
+    match keychain::branch_password(home, app, branch) {
+        Ok(kept) => kept,
+        Err(keychain::Error::Unavailable(_)) => None,
+        Err(error) => {
+            show::note(&error.to_string());
+            None
+        }
+    }
+}
+
+/// Once Steam has taken `password` for `app`'s `branch`, keeps it: one given by the variable or
+/// typed when `asked`, and a typed one too when Enter answers the offer.
+fn keep_branch_password(
+    home: &Path,
+    app: u32,
+    branch: &str,
+    password: &GivenPassword,
+    asked: bool,
+) {
+    let keep = match password.from {
+        PasswordFrom::Kept => false,
+        PasswordFrom::Variable => asked,
+        PasswordFrom::Typed if asked => true,
+        PasswordFrom::Typed => {
+            show::aside(&format!(
+                "Enter keeps the password in {} for next time; n does not",
+                keychain::STORE
+            ));
+            let keep = typing::ask("keep it", Echo::Typed).is_ok_and(|answer| {
+                matches!(
+                    answer.trim().to_ascii_lowercase().as_str(),
+                    "" | "y" | "yes"
+                )
+            });
+            if !keep {
+                show::field("password", "not kept");
+            }
+            keep
+        }
+    };
+    if !keep {
+        return;
+    }
+    match keychain::keep_branch_password(home, app, branch, &password.text) {
+        Ok(()) => show::done("password", &format!("kept in {}", keychain::STORE)),
+        Err(error) => {
+            show::failed("password", "not kept");
+            show::failure(&error.to_string(), "", None);
+        }
+    }
+}
+
 /// What `fetched` downloads, and as whom.
 struct Fetching<'command> {
     app: u32,
@@ -3155,6 +3307,8 @@ struct Fetching<'command> {
     system: Platform,
     folder: &'command Path,
     named: Option<&'command str>,
+    password: Option<&'command GivenPassword>,
+    on_command_line: bool,
 }
 
 /// Has steamcmd download the build, and answers which one the folder then holds.
@@ -3169,28 +3323,13 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
-    let branch = &fetching.branch.name;
+    let secret = fetching
+        .password
+        .map_or_else(Zeroizing::default, |password| password.text.clone());
     let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
     let marks = dump::Marks::take(&steamcmd_logs);
     let spinner = Spinner::start("steam", "downloading", true);
-    let finished = run::run(
-        &program,
-        &steamcmd::fetch(
-            &account,
-            fetching.app,
-            if webapi::is_default(branch) {
-                webapi::DEFAULT_KEY
-            } else {
-                branch
-            },
-            fetch::system_name(fetching.system),
-            fetching.folder,
-        ),
-        &steamcmd::environment(&home, Platform::THIS),
-        &root,
-        steamcmd::FETCH_LIMIT,
-        steamcmd::HOPELESS,
-    );
+    let finished = run_fetch(fetching, &account, &home, &secret);
     let took = show::took(spinner.elapsed());
     let finished = match finished {
         Ok(finished) => finished,
@@ -3200,24 +3339,32 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
         }
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
-    let console = redactor.redact(&finished.output);
+    let console = fetch::hidden(
+        &String::from_utf8_lossy(&redactor.redact(&finished.output)),
+        &secret,
+    );
     let log = marks
         .added(&steamcmd_logs)
         .into_iter()
         .find(|(name, _)| name == "content_log.txt")
-        .map(|(_, added)| redactor.redact(&added))
+        .map(|(_, added)| {
+            fetch::hidden(&String::from_utf8_lossy(&redactor.redact(&added)), &secret)
+        })
         .unwrap_or_default();
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
-    match fetch::judge(
-        finished.code,
-        &String::from_utf8_lossy(&console),
-        &String::from_utf8_lossy(&log),
-        fetching.app,
-    ) {
+    match fetch::judge(finished.code, &console, &log, fetching.app) {
         fetch::Outcome::Fetched => spinner.done(&format!("downloaded in {took}")),
         fetch::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
             return Err(login_refused(&reason, packed.as_ref()));
+        }
+        fetch::Outcome::PasswordRefused(reasons) => {
+            spinner.failed(&format!("refused after {took}"));
+            for reason in &reasons {
+                show::failure(reason, "", None);
+            }
+            forget_refused_password(&home, fetching);
+            return Err(ExitCode::from(FAILED));
         }
         fetch::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
@@ -3232,6 +3379,113 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
         .map_err(|error| error.to_string())
         .and_then(|text| fetch::installed(&text))
         .map_err(|why| fail(&format!("{}: {why}", record.display()), FAILED))
+}
+
+/// Has steamcmd in `home` fetch as `account`, typing `secret`, the branch's password, into its
+/// console, or giving it on its command line when asked to.
+fn run_fetch(
+    fetching: &Fetching<'_>,
+    account: &Account,
+    home: &Path,
+    secret: &Zeroizing<String>,
+) -> io::Result<run::Finished> {
+    let root = home.join(install::FOLDER);
+    let program = steamcmd::program(&root, Platform::THIS);
+    let branch = if webapi::is_default(&fetching.branch.name) {
+        webapi::DEFAULT_KEY
+    } else {
+        &fetching.branch.name
+    };
+    let system = fetch::system_name(fetching.system);
+    let environment = steamcmd::environment(home, Platform::THIS);
+    if fetching.password.is_some() && !fetching.on_command_line {
+        return typed_fetch(
+            &program,
+            &steamcmd::fetch_console(account, system, fetching.folder),
+            &environment,
+            &root,
+            fetch::typed_command(fetching.app, branch, secret),
+            secret.clone(),
+        );
+    }
+    run::run(
+        &program,
+        &steamcmd::fetch(
+            account,
+            fetching.app,
+            branch,
+            fetching.password.map(|_| secret.as_str()),
+            system,
+            fetching.folder,
+        ),
+        &environment,
+        &root,
+        steamcmd::FETCH_LIMIT,
+        steamcmd::HOPELESS,
+    )
+}
+
+/// Forgets the branch's password Steam refused, when it was the one kept, so that the next fetch
+/// asks for the one the branch takes now.
+fn forget_refused_password(home: &Path, fetching: &Fetching<'_>) {
+    if !fetching
+        .password
+        .is_some_and(|password| password.from == PasswordFrom::Kept)
+    {
+        return;
+    }
+    match keychain::forget_branch_password(home, fetching.app, &fetching.branch.name) {
+        Ok(_) => show::note(&format!(
+            "the password kept in {} is forgotten; fetch again to give the one the branch takes \
+             now",
+            keychain::STORE
+        )),
+        Err(error) => show::failure(&error.to_string(), "", None),
+    }
+}
+
+/// Runs `program` with `args` at a console of its own and types `command` at its prompt, as
+/// [`fetch::typed`] does with `secret` hidden, within a fetch's time or it is stopped. A
+/// password typed there is seen by no other program, as one on the command line is.
+fn typed_fetch(
+    program: &Path,
+    args: &[OsString],
+    environment: &[(OsString, OsString)],
+    directory: &Path,
+    command: Zeroizing<String>,
+    secret: Zeroizing<String>,
+) -> io::Result<run::Finished> {
+    let (terminal, mut output, mut input) = Terminal::start(program, args, environment, directory)?;
+    let (ended, ending) = mpsc::channel();
+    let reading = thread::spawn(move || {
+        let read = fetch::typed(
+            &mut output,
+            &mut input,
+            &command,
+            &secret,
+            steamcmd::HOPELESS,
+        );
+        // The receiver has gone only once the limit passed, and then nothing waits to hear.
+        let _told = ended.send(());
+        read
+    });
+    let in_time = ending.recv_timeout(steamcmd::FETCH_LIMIT).is_ok();
+    // Dropping the terminal unwaited ends steamcmd, and with it the output being read.
+    let terminal = in_time.then_some(terminal);
+    let lines = reading
+        .join()
+        .unwrap_or_else(|panic| panic::resume_unwind(panic))?;
+    let given_up = lines
+        .last()
+        .is_some_and(|line| steamcmd::HOPELESS.iter().any(|words| line.contains(words)));
+    let code = match terminal {
+        Some(terminal) if !given_up => terminal.wait()?,
+        _ => None,
+    };
+    Ok(run::Finished {
+        code,
+        output: lines.join("\n").into_bytes(),
+    })
 }
 
 /// The achievements file at `path`, read, and refused when it is not one or names another app

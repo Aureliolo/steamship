@@ -211,16 +211,35 @@ pub fn workshop(account: &Account, script: &Path) -> Vec<OsString> {
 /// The build is the one live on `branch`, `public` for the default, as Steam serves it to
 /// `system`, and every file of it already in the folder is checked. The branch is always named:
 /// steamcmd keeps the build account's last choice of branch for each app, and without `-beta`
-/// fetches that one again. The system and the folder are set before logging in, which Valve's
-/// documentation asks of the folder.
+/// fetches that one again. A branch's `password` goes on the command line, where any program on
+/// the machine can read it while steamcmd runs; [`fetch_console`] keeps it off.
 #[must_use]
 pub fn fetch(
     account: &Account,
     app: u32,
     branch: &str,
+    password: Option<&str>,
     system: &str,
     folder: &Path,
 ) -> Vec<OsString> {
+    let mut args = fetch_console(account, system, folder);
+    args.push("+app_update".into());
+    args.push(app.to_string().into());
+    args.extend(["-beta", branch].map(OsString::from));
+    if let Some(password) = password {
+        args.extend(["-betapassword", password].map(OsString::from));
+    }
+    args.extend(["validate", "+quit"].map(OsString::from));
+    args
+}
+
+/// The commands that log `account` in as [`fetch`] does and leave steamcmd at its console, for
+/// the fetch to be typed there.
+///
+/// The `system` and the `folder` are set before logging in, which Valve's documentation asks of
+/// the folder.
+#[must_use]
+pub fn fetch_console(account: &Account, system: &str, folder: &Path) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "+@ShutdownOnFailedCommand",
         "1",
@@ -233,9 +252,7 @@ pub fn fetch(
     .map(OsString::from)
     .into();
     args.push(folder.as_os_str().to_owned());
-    args.extend(["+login", account.name(), "+app_update"].map(OsString::from));
-    args.push(app.to_string().into());
-    args.extend(["-beta", branch, "validate", "+quit"].map(OsString::from));
+    args.extend(["+login", account.name()].map(OsString::from));
     args
 }
 
@@ -394,7 +411,7 @@ mod tests {
         let account = Account::parse("build_bot").unwrap();
         let folder = Path::new("home (x86)/fetched/480/testing-linux");
         assert_eq!(
-            fetch(&account, 480, "testing", "linux", folder),
+            fetch(&account, 480, "testing", None, "linux", folder),
             [
                 "+@ShutdownOnFailedCommand",
                 "1",
@@ -414,13 +431,65 @@ mod tests {
                 "+quit"
             ]
         );
-        let default = fetch(&account, 480, "public", "windows", folder);
+        let default = fetch(&account, 480, "public", None, "windows", folder);
         assert!(
             default.ends_with(
                 &["+app_update", "480", "-beta", "public", "validate", "+quit"].map(OsString::from)
             ),
             "{default:?}"
         );
+    }
+
+    #[test]
+    fn a_password_given_for_the_command_line_follows_its_branch_there() {
+        let account = Account::parse("build_bot").unwrap();
+        let args = fetch(
+            &account,
+            480,
+            "friends",
+            Some("open sesame"),
+            "linux",
+            Path::new("f"),
+        );
+        assert!(
+            args.ends_with(
+                &[
+                    "+app_update",
+                    "480",
+                    "-beta",
+                    "friends",
+                    "-betapassword",
+                    "open sesame",
+                    "validate",
+                    "+quit"
+                ]
+                .map(OsString::from)
+            ),
+            "{args:?}"
+        );
+    }
+
+    #[test]
+    fn a_fetch_typed_at_the_console_logs_in_where_the_fetch_would_and_waits_there() {
+        let account = Account::parse("build_bot").unwrap();
+        let folder = Path::new("home (x86)/fetched/480/friends-linux");
+        let console = fetch_console(&account, "linux", folder);
+        assert_eq!(
+            console,
+            [
+                "+@ShutdownOnFailedCommand",
+                "1",
+                "+@NoPromptForPassword",
+                "1",
+                "+@sSteamCmdForcePlatformType",
+                "linux",
+                "+force_install_dir",
+                "home (x86)/fetched/480/friends-linux",
+                "+login",
+                "build_bot"
+            ]
+        );
+        assert!(fetch(&account, 480, "friends", None, "linux", folder).starts_with(&console));
     }
 
     #[test]

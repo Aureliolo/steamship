@@ -84,6 +84,7 @@ fn steamship_in(
     let _: &mut Command = command
         .args(args)
         .env_remove("STEAMSHIP_ACCOUNT")
+        .env_remove("STEAMSHIP_BRANCH_PASSWORD")
         .env_remove("CI")
         .env_remove("GITHUB_ACTIONS")
         .env_remove("GITHUB_OUTPUT");
@@ -7884,7 +7885,9 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
     for (args, said) in [
         (
             vec!["1000", "--branch", "friends"],
-            "app 1000's friends branch takes a password".to_owned(),
+            "app 1000's friends branch takes a password: set STEAMSHIP_BRANCH_PASSWORD to it, or \
+             fetch at a terminal to type it"
+                .to_owned(),
         ),
         (
             vec!["1000", "--build", "4300"],
@@ -7923,6 +7926,138 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
     );
     assert_eq!(code, Some(1_i32), "{stderr}");
     assert!(!stderr.contains("holds files and no build"), "{stderr}");
+}
+
+/// A steamcmd that logs in, waits at its console for a command as steamcmd 1792617903 does, and
+/// echoes it there as that console does. Typed the fetch of app 1000's friends branch with the
+/// password `STEAMSHIP_FAKE_PASSWORD` or `open-sesame`, it records build 4100 of that branch in
+/// its folder and says the app is installed; with any other, it refuses the password in
+/// steamcmd's words. It then waits at the
+/// console again, and keeps what it was started with in `args`, what was typed in `typed`, and
+/// what was typed last in `quit`.
+#[cfg(unix)]
+const TYPED_FETCHES: &str = "#!/bin/sh\n\
+    echo \"$*\" > \"$HOME/args\"\n\
+    folder=\n\
+    while [ $# -gt 0 ]; do\n\
+      case \"$1\" in\n\
+        +force_install_dir) folder=\"$2\"; shift ;;\n\
+      esac\n\
+      shift\n\
+    done\n\
+    echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+    printf 'Steam>'\n\
+    read -r typed\n\
+    printf '%s' \"$typed\" > \"$HOME/typed\"\n\
+    echo \"$typed\"\n\
+    taken=\"app_update 1000 -beta friends -betapassword ${STEAMSHIP_FAKE_PASSWORD:-open-sesame} \
+    validate\"\n\
+    if [ \"$typed\" = \"$taken\" ]; then\n\
+      mkdir -p \"$folder/steamapps\"\n\
+      printf '\"AppState\"\\n{\\n\"buildid\" \"4100\"\\n\"UserConfig\"\\n{\\n\"BetaKey\" \"friends\"\\n}\\n}\\n' \
+        > \"$folder/steamapps/appmanifest_1000.acf\"\n\
+      echo \"Success! App '1000' fully installed.\"\n\
+    else\n\
+      echo 'ERROR! Password check for AppId 1000 returned error Failure.'\n\
+    fi\n\
+    printf 'Steam>'\n\
+    read -r quit\n\
+    printf '%s' \"$quit\" > \"$HOME/quit\"\n";
+
+#[cfg(unix)]
+#[test]
+fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked() {
+    let home = faked_with(TYPED_FETCHES);
+    saved_login(home.path());
+    let password = [("STEAMSHIP_BRANCH_PASSWORD", "open-sesame")];
+    let friends = ["1000", "--branch", "friends", "--keep-password"];
+    let (code, stdout, stderr) = fetching(home.path(), &friends, &password);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(
+        args.trim_end().ends_with("+login build_bot"),
+        "steamcmd waits at its console: {args}"
+    );
+    assert_eq!(
+        fs::read_to_string(home.path().join("typed")).unwrap(),
+        "app_update 1000 -beta friends -betapassword open-sesame validate"
+    );
+    assert_eq!(
+        fs::read_to_string(home.path().join("quit")).unwrap(),
+        "quit"
+    );
+    assert!(
+        stderr.contains("from STEAMSHIP_BRANCH_PASSWORD")
+            && stderr.contains("app 1000: build 4100 of the friends branch is in")
+            && stderr.contains("kept in"),
+        "{stderr}"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("open-sesame"));
+
+    // The kept password opens the branch next time.
+    let (again, _, again_said) = fetching(home.path(), &friends[..3], &[]);
+    assert_eq!(again, Some(0_i32), "{again_said}");
+    assert!(again_said.contains("kept in"), "{again_said}");
+
+    // A wrong one given is refused, and neither kept nor the kept one forgotten.
+    let wrong = [("STEAMSHIP_BRANCH_PASSWORD", "open-barley")];
+    let (refused, _, refused_said) = fetching(home.path(), &friends, &wrong);
+    assert_eq!(refused, Some(1_i32), "{refused_said}");
+    assert!(
+        refused_said.contains("Password check for AppId 1000 returned error Failure.")
+            && refused_said.contains("Steam refused the branch's password")
+            && !refused_said.contains("forgotten")
+            && !refused_said.contains("open-barley"),
+        "{refused_said}"
+    );
+
+    // Once the branch takes another, the kept one Steam refuses is forgotten.
+    let changed = [("STEAMSHIP_FAKE_PASSWORD", "open-millet")];
+    let (stale, _, stale_said) = fetching(home.path(), &friends[..3], &changed);
+    assert_eq!(stale, Some(1_i32), "{stale_said}");
+    assert!(stale_said.contains("is forgotten"), "{stale_said}");
+    let (none, _, none_said) = fetching(home.path(), &friends[..3], &changed);
+    assert_eq!(none, Some(2_i32), "nothing kept to use: {none_said}");
+}
+
+#[cfg(unix)]
+#[test]
+fn the_password_of_a_branch_goes_on_steamcmds_command_line_only_when_asked() {
+    let home = faked_with(FETCHES);
+    saved_login(home.path());
+    let (code, stdout, stderr) = fetching(
+        home.path(),
+        &["1000", "--branch", "friends", "--password-on-command-line"],
+        &[
+            ("STEAMSHIP_BRANCH_PASSWORD", "open sesame"),
+            ("STEAMSHIP_FAKE_BUILD", "4100"),
+        ],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(
+        args.ends_with("+app_update 1000 -beta friends -betapassword open sesame validate +quit\n"),
+        "{args}"
+    );
+    assert!(
+        stderr.contains("the password goes on steamcmd's command line"),
+        "{stderr}"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("open sesame"));
+
+    // Without it, a password the console would split is refused before steamcmd runs.
+    fs::remove_file(home.path().join("args")).unwrap();
+    let (split, _, split_said) = fetching(
+        home.path(),
+        &["1000", "--branch", "friends"],
+        &[("STEAMSHIP_BRANCH_PASSWORD", "open sesame")],
+    );
+    assert_eq!(split, Some(2_i32), "{split_said}");
+    assert!(
+        split_said.contains("only be given with --password-on-command-line"),
+        "{split_said}"
+    );
+    assert!(!home.path().join("args").exists(), "steamcmd was not run");
 }
 
 #[cfg(unix)]
