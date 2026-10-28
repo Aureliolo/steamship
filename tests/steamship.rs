@@ -7937,17 +7937,13 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
         "\"AppState\"\n{\n\"buildid\" \"4242\"\n\"MountedConfig\"\n{\n\"BetaKey\" \"testing\"\n}\n}\n",
     )
     .unwrap();
-    let needs_password = "app 1000's friends branch takes a password: set \
-                          STEAMSHIP_BRANCH_PASSWORD to it, or type it when fetch asks, which it \
-                          does without --json";
+    let refusal = "app 1000's friends branch takes a password: set STEAMSHIP_BRANCH_PASSWORD to \
+                   it, or type it when fetch asks, which it does without --json";
     for (args, said) in [
-        (
-            vec!["1000", "--branch", "friends"],
-            needs_password.to_owned(),
-        ),
+        (vec!["1000", "--branch", "friends"], refusal.to_owned()),
         (
             vec!["1000", "--branch", "friends", "--json"],
-            needs_password.to_owned(),
+            refusal.to_owned(),
         ),
         (
             vec!["1000", "--build", "4300"],
@@ -7986,7 +7982,7 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
         &[("STEAMSHIP_BRANCH_PASSWORD", "")],
     );
     assert_eq!(empty, Some(2_i32), "{empty_said}");
-    assert!(empty_said.contains(needs_password), "{empty_said}");
+    assert!(empty_said.contains(refusal), "{empty_said}");
 
     // A record that is there but cannot be read is a failure, not a folder of other files.
     let unreadable = files.path().join("unreadable");
