@@ -380,9 +380,23 @@ can be started and checked before anyone is told it is ready. It asks the Web AP
 as for `builds`, which build is live on the branch, the default unless `--branch` names
 another. With `--build`, that build is fetched from a branch it is live on, the default first;
 Steam serves only a branch's live build, so one live nowhere is refused, and `promote` sets it
-live. steamcmd then downloads it with the saved login, as the build account. A branch that takes
-a password is refused, since steamcmd takes the password only on its command line, and an app
-the build account holds no licence for is a failure that says so.
+live. steamcmd then downloads it with the saved login, as the build account. An app the build
+account holds no licence for is a failure that says so.
+
+A branch that takes a password, as its Steamworks betas page shows, is opened with the password
+in `STEAMSHIP_BRANCH_PASSWORD`, or else the one kept for that app and branch in the system's
+credential store, or else one typed at the prompt or piped in; with `--json` there is no prompt.
+steamship types it into steamcmd's console,
+where no other program on the machine sees it, and hides it in everything it prints. A password
+holding a space or a quote, which that console would split, is given on steamcmd's command line
+instead with `--password-on-command-line`, where any program on the machine can read it while
+the fetch runs. Once Steam has taken a typed password, Enter keeps it for the next fetch;
+`--keep-password` keeps it, or the one from the variable, without asking. A kept password Steam
+refuses is forgotten, so the next fetch asks for the one the branch takes now.
+
+```sh
+steamship fetch 480 --branch testing --keep-password
+```
 
 The depots are the ones Steam installs on this system, or on the one `--system` names
 (`windows`, `linux` or `macos`). Each app, branch and system has its own folder under the

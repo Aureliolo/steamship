@@ -898,31 +898,37 @@ fn not_found(error: &io::Error) -> bool {
     error.raw_os_error() == i32::try_from(ERROR_NOT_FOUND).ok()
 }
 
-/// The generic credential the Web API key for the steamship home `account` is kept as.
-fn key_target(account: &str) -> Vec<u16> {
-    wide(OsStr::new(&format!("steamship:web-api-key:{account}")))
+/// The name of the generic credential `item` is kept as, such as
+/// `steamship:web-api-key:<home>`.
+fn target_name(item: &keychain::Item) -> String {
+    format!("steamship:{}:{}", item.kind, item.account())
+}
+
+/// [`target_name`], as Windows takes it.
+fn target(item: &keychain::Item) -> Vec<u16> {
+    wide(OsStr::new(&target_name(item)))
 }
 
 fn store_failed(error: &io::Error) -> keychain::Error {
     keychain::Error::Failed(error.to_string())
 }
 
-/// Whether the Credential Manager keeps a secret for the steamship home `account`.
+/// Whether the Credential Manager keeps `item`.
 ///
 /// # Errors
 ///
 /// When the Credential Manager cannot be read.
-pub fn has_secret(account: &str) -> Result<bool, keychain::Error> {
-    Ok(kept_secret(account)?.is_some())
+pub fn has_secret(item: &keychain::Item) -> Result<bool, keychain::Error> {
+    Ok(kept_secret(item)?.is_some())
 }
 
-/// The secret the Credential Manager keeps for `account`, if it keeps one.
+/// The secret the Credential Manager keeps as `item`, if it keeps one.
 ///
 /// # Errors
 ///
 /// When the Credential Manager cannot be read.
-pub fn kept_secret(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, keychain::Error> {
-    let target = key_target(account);
+pub fn kept_secret(item: &keychain::Item) -> Result<Option<Zeroizing<Vec<u8>>>, keychain::Error> {
+    let target = target(item);
     let mut found: *mut CREDENTIALW = ptr::null_mut();
     // SAFETY: `target` is NUL-terminated and outlives the call; on success Windows points `found`
     // at a credential it allocated.
@@ -966,20 +972,20 @@ impl Drop for Credential {
     }
 }
 
-/// Keeps `secret` for `account`, in place of any kept before, for this user on this machine only.
+/// Keeps `secret` as `item`, in place of any kept before, for this user on this machine only.
 ///
 /// # Errors
 ///
 /// When the Credential Manager refuses it.
-pub fn keep_secret(account: &str, secret: &[u8]) -> Result<(), keychain::Error> {
-    let mut target = key_target(account);
-    let mut label = wide(OsStr::new(keychain::LABEL));
+pub fn keep_secret(item: &keychain::Item, secret: &[u8]) -> Result<(), keychain::Error> {
+    let mut target = target(item);
+    let mut label = wide(OsStr::new(item.label));
     let credential = CREDENTIALW {
         Type: CRED_TYPE_GENERIC,
         TargetName: target.as_mut_ptr(),
         CredentialBlobSize: u32::try_from(secret.len())
             .ok()
-            .ok_or_else(|| keychain::Error::Failed("the key is too long".to_owned()))?,
+            .ok_or_else(|| keychain::Error::Failed("the secret is too long".to_owned()))?,
         CredentialBlob: secret.as_ptr().cast_mut(),
         // Kept for this user on this machine, never carried along with a roaming profile.
         Persist: CRED_PERSIST_LOCAL_MACHINE,
@@ -995,13 +1001,13 @@ pub fn keep_secret(account: &str, secret: &[u8]) -> Result<(), keychain::Error> 
     }
 }
 
-/// Removes the secret kept for `account`, and says whether there was one.
+/// Removes `item`, and says whether it was kept.
 ///
 /// # Errors
 ///
 /// When the Credential Manager refuses.
-pub fn forget_secret(account: &str) -> Result<bool, keychain::Error> {
-    let target = key_target(account);
+pub fn forget_secret(item: &keychain::Item) -> Result<bool, keychain::Error> {
+    let target = target(item);
     // SAFETY: `target` is NUL-terminated and outlives the call.
     if unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) } == 0_i32 {
         let error = io::Error::last_os_error();
@@ -1866,19 +1872,32 @@ mod tests {
     #[test]
     fn a_credential_windows_cannot_hold_is_an_error_not_one_missing() {
         // Longer than any generic credential's name may be.
-        let account = "x".repeat(40_000);
+        let item = keychain::Item::key(Path::new(&"x".repeat(40_000)));
         assert!(matches!(
-            kept_secret(&account),
+            kept_secret(&item),
             Err(keychain::Error::Failed(_))
         ));
         assert!(matches!(
-            forget_secret(&account),
+            forget_secret(&item),
             Err(keychain::Error::Failed(_))
         ));
         assert!(matches!(
-            keep_secret(&account, b"0123"),
+            keep_secret(&item, b"0123"),
             Err(keychain::Error::Failed(_))
         ));
+    }
+
+    #[test]
+    fn each_secret_is_a_generic_credential_named_for_its_kind_and_whose_it_is() {
+        let home = Path::new(r"C:\Users\a\AppData\Local\steamship");
+        assert_eq!(
+            target_name(&keychain::Item::key(home)),
+            r"steamship:web-api-key:C:\Users\a\AppData\Local\steamship"
+        );
+        assert_eq!(
+            target_name(&keychain::Item::branch(home, 480, "testing")),
+            r"steamship:branch-password:C:\Users\a\AppData\Local\steamship:480:testing"
+        );
     }
 
     #[test]
@@ -1893,17 +1912,20 @@ mod tests {
             .unwrap();
         store.lock().unwrap();
         let home = tempfile::tempdir().unwrap();
-        let account = home.path().display().to_string();
-        keep_secret(&account, b"0123456789abcdef0123456789abcdef").unwrap();
-        let listed = run::output(
-            run::command("cmdkey").arg(format!("/list:steamship:web-api-key:{account}")),
-        )
-        .unwrap();
-        assert!(forget_secret(&account).unwrap());
-        let listed = String::from_utf8_lossy(&listed.stdout);
-        assert!(
-            listed.contains(&format!("User: {}", keychain::LABEL)),
-            "{listed}"
-        );
+        for item in [
+            keychain::Item::key(home.path()),
+            keychain::Item::branch(home.path(), 480, "testing"),
+        ] {
+            keep_secret(&item, b"0123456789abcdef0123456789abcdef").unwrap();
+            let listed =
+                run::output(run::command("cmdkey").arg(format!("/list:{}", target_name(&item))))
+                    .unwrap();
+            assert!(forget_secret(&item).unwrap());
+            let listed = String::from_utf8_lossy(&listed.stdout);
+            assert!(
+                listed.contains(&format!("User: {}", item.label)),
+                "{listed}"
+            );
+        }
     }
 }

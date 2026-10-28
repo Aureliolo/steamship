@@ -1,11 +1,14 @@
 //! Fetching an app's build as Steam serves it to players, through steamcmd's `app_update` into a
 //! folder of its own, and reading back which build that folder holds.
 
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde_json::{Value, json};
+use zeroize::Zeroizing;
 
 use crate::platform::Platform;
+use crate::terminal::{Event, Reader};
 use crate::upload;
 use crate::vdf;
 use crate::webapi::{self, Branch};
@@ -37,12 +40,12 @@ pub fn system(text: &str) -> Result<Platform, String> {
 }
 
 /// The branch a fetch downloads from `app`'s `branches`: the one `branch` names, or else the one
-/// `build` is live on, the default first, or else the default.
+/// `build` is live on, the default first and one without a password before one with, or else the
+/// default.
 ///
 /// # Errors
 ///
-/// When there is no such branch, no build is live on it, it holds another build than `build`, or
-/// players need its password, which steamcmd takes only on its command line.
+/// When there is no such branch, no build is live on it, or it holds another build than `build`.
 pub fn chosen<'branches>(
     branches: &'branches [Branch],
     app: u32,
@@ -85,13 +88,104 @@ pub fn chosen<'branches>(
             found.build_id
         ));
     }
-    if found.locked {
-        return Err(format!(
-            "app {app}'s {shown} branch takes a password, which steamcmd takes only on its \
-             command line, where steamship puts no secret; fetch a branch without one"
-        ));
-    }
     Ok(found)
+}
+
+/// Where a branch's password is read from before it is asked for.
+pub const PASSWORD: &str = "STEAMSHIP_BRANCH_PASSWORD";
+
+/// Whether `password` can be typed into steamcmd's console, which splits what is typed at each
+/// space and reads quotes as its own.
+#[must_use]
+pub fn typeable(password: &str) -> bool {
+    !password.is_empty()
+        && !password
+            .chars()
+            .any(|character| character.is_whitespace() || character == '"')
+}
+
+/// The command typed into steamcmd's console that fetches `app`'s `branch` with its `password`.
+#[must_use]
+pub fn typed_command(app: u32, branch: &str, password: &str) -> Zeroizing<String> {
+    Zeroizing::new(format!(
+        "app_update {app} -beta {branch} -betapassword {password} validate"
+    ))
+}
+
+/// `text` with every `secret` in it hidden, and whatever follows `-betapassword` on each line, as
+/// steamcmd's console echoes what is typed into it.
+#[must_use]
+pub fn hidden(text: &str, secret: &str) -> String {
+    let lines: Vec<String> = text
+        .split('\n')
+        .map(|line| {
+            let line = line.split_once("-betapassword").map_or_else(
+                || line.to_owned(),
+                |(before, _)| format!("{before}-betapassword <password>"),
+            );
+            if secret.is_empty() {
+                line
+            } else {
+                line.replace(secret, "<password>")
+            }
+        })
+        .collect();
+    lines.join("\n")
+}
+
+/// Types `command` at steamcmd's first `Steam>` prompt and `quit` at each one after, and answers
+/// each line of its console with `secret` hidden.
+///
+/// The console is read from `output` to its end, or to a line holding one of `hopeless`, and typed
+/// into through `input`. A prompt is seen again each time more output arrives before the line
+/// ends; it is answered once.
+///
+/// # Errors
+///
+/// When the output cannot be read or the input written.
+pub fn typed<Output, Input>(
+    output: &mut Output,
+    input: &mut Input,
+    command: &str,
+    secret: &str,
+    hopeless: &[&str],
+) -> io::Result<Vec<String>>
+where
+    Output: Read,
+    Input: Write,
+{
+    let mut reader = Reader::default();
+    let mut chunk = [0_u8; 4096];
+    let mut lines = Vec::new();
+    let mut answered = false;
+    let mut next = command;
+    loop {
+        let length = output.read(&mut chunk)?;
+        if length == 0 {
+            break;
+        }
+        for event in reader.read(chunk.get(..length).unwrap_or_default()) {
+            match event {
+                Event::Line(line) => {
+                    answered = false;
+                    let given_up = hopeless.iter().any(|words| line.contains(words));
+                    lines.push(hidden(&line, secret));
+                    if given_up {
+                        return Ok(lines);
+                    }
+                }
+                Event::Waiting(prompt) if !answered && prompt.trim_end().ends_with("Steam>") => {
+                    answered = true;
+                    input.write_all(next.as_bytes())?;
+                    input.write_all(b"\r")?;
+                    input.flush()?;
+                    next = "quit";
+                }
+                Event::Waiting(_) => {}
+            }
+        }
+    }
+    Ok(lines)
 }
 
 /// Whether the branch `given` on the command line is the one Steam calls `name`.
@@ -172,6 +266,8 @@ pub enum Outcome {
     Fetched,
     /// Steam refused the saved login, for this reason.
     NotLoggedIn(String),
+    /// Steam refused the branch's password, as steamcmd said.
+    PasswordRefused(Vec<String>),
     /// The fetch failed, for every reason given.
     Failed(Vec<String>),
 }
@@ -202,6 +298,11 @@ pub fn judge(code: Option<i32>, console: &str, log: &str, app: u32) -> Outcome {
         )]);
     }
     let mut reasons = upload::reasons(code, console, None);
+    let checked = format!("Password check for AppId {app} returned error");
+    if console.lines().any(|line| line.contains(&checked)) {
+        reasons.push("Steam refused the branch's password".to_owned());
+        return Outcome::PasswordRefused(reasons);
+    }
     reasons.extend(logged);
     if reasons
         .iter()
@@ -227,10 +328,28 @@ fn logged(log: &str, app: u32) -> Vec<String> {
                 Some(format!("steamcmd cancelled the download: {}", why.trim()))
             } else {
                 line.split_once(&warned)
-                    .map(|(_, said)| format!("AppID {app} {}", said.trim()))
+                    .map(|(_, said)| format!("AppID {app} {}", untokened(said.trim())))
             }
         })
         .collect()
+}
+
+/// `said` with the number of each `token` it names hidden, which steamcmd gives beside a branch
+/// password it found wrong.
+fn untokened(said: &str) -> String {
+    let mut shown = String::new();
+    let mut rest = said;
+    while let Some((before, after)) = rest.split_once("token ") {
+        let number = after.trim_start_matches(|character: char| character.is_ascii_digit());
+        shown.push_str(before);
+        shown.push_str("token ");
+        if number.len() < after.len() {
+            shown.push_str("<hidden>");
+        }
+        rest = number;
+    }
+    shown.push_str(rest);
+    shown
 }
 
 /// The build `folder` holds, as `fetch --json` prints it.
@@ -337,20 +456,122 @@ mod tests {
     }
 
     #[test]
-    fn a_branch_with_no_build_or_a_password_is_refused() {
+    fn a_branch_with_no_build_is_refused_and_one_with_a_password_chosen() {
         let all = branches();
         assert_eq!(
             chosen(&all, 480, Some("staging"), None),
             Err("no build is live on app 480's staging branch".to_owned())
         );
+        assert!(chosen(&all, 480, Some("beta"), None).is_ok_and(|found| found.locked));
+    }
+
+    #[test]
+    fn the_command_typed_names_the_branch_and_its_password() {
         assert_eq!(
-            chosen(&all, 480, Some("beta"), None),
-            Err(
-                "app 480's beta branch takes a password, which steamcmd takes only on its \
-                 command line, where steamship puts no secret; fetch a branch without one"
-                    .to_owned()
-            )
+            typed_command(480, "friends", "open sesame").as_str(),
+            "app_update 480 -beta friends -betapassword open sesame validate"
         );
+        assert!(typeable("Open-Sesame!42"));
+        for split in ["", "open sesame", "open\tsesame", "open\"sesame"] {
+            assert!(!typeable(split), "{split}");
+        }
+    }
+
+    #[test]
+    fn a_password_is_hidden_wherever_it_shows_and_after_its_option() {
+        assert_eq!(
+            hidden(
+                "Steam>app_update 480 -beta friends -betapassword open sesame validate\nopen \
+                 sesame\nfine",
+                "open sesame"
+            ),
+            "Steam>app_update 480 -beta friends -betapassword <password>\n<password>\nfine"
+        );
+        assert_eq!(
+            hidden("-betapassword x\nfine", ""),
+            "-betapassword <password>\nfine"
+        );
+        assert_eq!(hidden("fine\n", ""), "fine\n");
+    }
+
+    /// Hands out one chunk on each read, as a terminal does when the program pauses.
+    struct Chunks(Vec<&'static [u8]>);
+
+    impl Read for Chunks {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.0.is_empty() {
+                return Ok(0);
+            }
+            let chunk = self.0.remove(0);
+            buf.get_mut(..chunk.len())
+                .ok_or_else(|| io::Error::other("chunk too large"))?
+                .copy_from_slice(chunk);
+            Ok(chunk.len())
+        }
+    }
+
+    #[test]
+    fn the_fetch_is_typed_at_the_first_prompt_and_quit_at_the_next_with_the_password_hidden() {
+        let mut output = Chunks(vec![
+            b"Waiting for user info...",
+            b"OK\r\n",
+            b"\r\nSteam>",
+            b"app_update 480 -beta",
+            b" friends -betapassword open sesame validate\r\n",
+            b"Success! App '480' fully installed.\r\n\r\nSteam>",
+            b"quit\r\n",
+        ]);
+        let mut input = Vec::new();
+        let command = typed_command(480, "friends", "open sesame");
+        let lines = typed(&mut output, &mut input, &command, "open sesame", &[]).unwrap();
+        assert_eq!(
+            String::from_utf8(input).unwrap(),
+            "app_update 480 -beta friends -betapassword open sesame validate\rquit\r"
+        );
+        assert_eq!(
+            lines,
+            [
+                "Waiting for user info...OK",
+                "",
+                "Steam>app_update 480 -beta friends -betapassword <password>",
+                "Success! App '480' fully installed.",
+                "",
+                "Steam>quit"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_console_that_will_never_reach_steam_is_read_no_further() {
+        let mut output = Chunks(vec![
+            b"unable to load trusted SSL root certificates\r\n",
+            b"\r\nSteam>",
+        ]);
+        let mut input = Vec::new();
+        let lines = typed(&mut output, &mut input, "app_update 480", "", &["SSL root"]).unwrap();
+        assert_eq!(lines, ["unable to load trusted SSL root certificates"]);
+        assert_eq!(input, b"", "nothing typed");
+    }
+
+    /// steamcmd 1792617903's console refusing a branch's password typed at it.
+    const WRONG_PASSWORD: &str = "ERROR! Password check for AppId 480 returned error Failure.\n";
+
+    #[test]
+    fn a_refused_password_is_told_apart_from_a_failed_fetch() {
+        for code in [Some(0_i32), Some(8_i32)] {
+            assert_eq!(
+                judge(code, WRONG_PASSWORD, "", 480),
+                Outcome::PasswordRefused(vec![
+                    "Password check for AppId 480 returned error Failure.".to_owned(),
+                    "Steam refused the branch's password".to_owned(),
+                ]),
+                "{code:?}"
+            );
+        }
+        assert!(matches!(
+            judge(Some(8_i32), WRONG_PASSWORD, "", 481),
+            Outcome::Failed(_)
+        ));
     }
 
     #[test]
@@ -513,6 +734,33 @@ mod tests {
             ),
             Outcome::Failed(reasons) if reasons.len() == 3
         ));
+    }
+
+    #[test]
+    fn the_token_steamcmd_logs_beside_a_wrong_password_is_hidden() {
+        let log = "[2026-10-28 17:05:27] WARNING! AppID 480 has missing info (Invalid Password, \
+                   token 1234567890123456789) for private beta \"testing\" set, falling back to \
+                   public\n";
+        assert_eq!(
+            judge(Some(8_i32), "", log, 480),
+            Outcome::Failed(vec![
+                "AppID 480 has missing info (Invalid Password, token <hidden>) for private beta \
+                 \"testing\" set, falling back to public"
+                    .to_owned()
+            ])
+        );
+        assert_eq!(
+            judge(Some(0_i32), WRONG_PASSWORD, log, 480),
+            Outcome::PasswordRefused(vec![
+                "Password check for AppId 480 returned error Failure.".to_owned(),
+                "Steam refused the branch's password".to_owned(),
+            ])
+        );
+        assert_eq!(
+            untokened("a token, token 12 and token 3x"),
+            "a token, token <hidden> and token <hidden>x"
+        );
+        assert_eq!(untokened("token x"), "token x");
     }
 
     #[test]

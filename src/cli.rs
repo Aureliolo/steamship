@@ -40,9 +40,9 @@ pub const EXIT_CODES: [(u8, &str); 5] = [
 /// The build account, when it is not the one `login` remembered.
 pub const ACCOUNT: &str = "STEAMSHIP_ACCOUNT";
 
-/// Every environment variable steamship reads, and what it is for. There is no password among
-/// them, nor anywhere else.
-pub const VARIABLES: [(&str, &str); 5] = [
+/// Every environment variable steamship reads, and what it is for. The Steam account's password
+/// is never among them, nor anywhere else; a beta branch's, which every player let in shares, is.
+pub const VARIABLES: [(&str, &str); 6] = [
     (
         platform::HOME,
         "Where steamcmd, its token and build output live; a per-user folder by default",
@@ -58,6 +58,10 @@ pub const VARIABLES: [(&str, &str); 5] = [
     (
         webapi::KEY,
         "The publisher Web API key, for `builds` and the other Web API commands, before any kept one",
+    ),
+    (
+        fetch::PASSWORD,
+        "The password of the beta branch `fetch` downloads, before any kept one",
     ),
     (
         update::OPT_OUT,
@@ -194,8 +198,14 @@ pub enum Command {
     /// installs nothing in a Steam library. A fetch into a folder that already holds a build of
     /// the branch checks each of the build's files there and downloads only those that differ;
     /// files the build does not have are left. The folder and the build it holds are printed once
-    /// steamcmd's record of it shows the build asked for. A branch that takes a password is
-    /// refused, as is a folder holding another branch.
+    /// steamcmd's record of it shows the build asked for. A folder holding another branch is
+    /// refused.
+    ///
+    /// A branch that takes a password is opened with the one in `STEAMSHIP_BRANCH_PASSWORD`, or
+    /// else the one kept for it in the system's credential store, or else one typed at the
+    /// prompt, which can then be kept. steamship types it into steamcmd's console, where no other
+    /// program sees it, unless `--password-on-command-line` asks for steamcmd's own way. A
+    /// password Steam refuses is forgotten if it was kept.
     Fetch(Fetch),
     /// Show an app's achievements and stats, check them against files, or write their import.
     ///
@@ -629,10 +639,25 @@ pub struct Fetch {
     /// The build account, if not the one the last login remembered.
     #[arg(long, env = ACCOUNT)]
     pub account: Option<String>,
+    #[command(flatten)]
+    pub password: BranchPassword,
     /// Once the build is fetched, print `app`, `branch`, `build_id`, `system` and `folder` on
     /// standard output as one line of JSON. Everything else goes to standard error.
     #[arg(long)]
     pub json: bool,
+}
+
+/// How `fetch` handles the password of a branch that takes one.
+#[derive(Debug, Clone, Copy, Args)]
+pub struct BranchPassword {
+    /// Give steamcmd the branch's password on its command line, where any program on this
+    /// machine can read it while the fetch runs, rather than typing it into steamcmd's console.
+    #[arg(long = "password-on-command-line")]
+    pub on_command_line: bool,
+    /// Keep the branch's password, given in `STEAMSHIP_BRANCH_PASSWORD` or typed, in the
+    /// system's credential store once Steam has taken it, without asking.
+    #[arg(long = "keep-password")]
+    pub keep: bool,
 }
 
 /// The build `promote` sets live, and where.
@@ -731,7 +756,7 @@ mod tests {
     }
 
     #[test]
-    fn every_variable_is_one_steamship_reads_and_none_is_a_password() {
+    fn every_variable_is_one_steamship_reads_and_the_only_password_that_of_a_branch() {
         let names: Vec<&str> = VARIABLES.iter().map(|&(name, _)| name).collect();
         assert_eq!(
             names,
@@ -740,9 +765,14 @@ mod tests {
                 "STEAMSHIP_ACCOUNT",
                 "STEAMSHIP_LOGIN",
                 "STEAMSHIP_WEB_API_KEY",
+                "STEAMSHIP_BRANCH_PASSWORD",
                 "STEAMSHIP_NO_UPDATE_CHECK"
             ]
         );
-        assert!(names.iter().all(|name| !name.contains("PASSWORD")));
+        let passwords: Vec<&str> = names
+            .into_iter()
+            .filter(|name| name.contains("PASSWORD"))
+            .collect();
+        assert_eq!(passwords, ["STEAMSHIP_BRANCH_PASSWORD"]);
     }
 }

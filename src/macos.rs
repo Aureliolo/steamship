@@ -9,7 +9,7 @@ use security_framework::passwords::{
 };
 use zeroize::Zeroizing;
 
-use crate::keychain::{Error, LABEL};
+use crate::keychain::{Error, Item};
 
 /// The Keychain's errSecItemNotFound.
 const NOT_FOUND: i32 = -25_300;
@@ -35,56 +35,58 @@ fn answered<Found>(answer: Result<Found, Status>, missing: Found) -> Result<Foun
     }
 }
 
-/// Whether the Keychain keeps a secret for the steamship home `account`.
+/// Whether the Keychain keeps `item`: a generic password whose service is the item's label and
+/// whose account is the item's own name.
 ///
 /// # Errors
 ///
 /// When the Keychain cannot be searched.
-pub fn has_secret(account: &str) -> Result<bool, Error> {
+pub fn has_secret(item: &Item) -> Result<bool, Error> {
     // Attributes alone, never the secret, so the Keychain has nothing to ask permission for.
     let found = ItemSearchOptions::new()
         .class(ItemClass::generic_password())
-        .service(LABEL)
-        .account(account)
+        .service(item.label)
+        .account(&item.account())
         .load_attributes(true)
         .limit(1)
         .search();
     answered(found.map(|items| !items.is_empty()), false)
 }
 
-/// The secret the Keychain keeps for `account`, if it keeps one.
+/// The secret the Keychain keeps as `item`, if it keeps one.
 ///
 /// # Errors
 ///
 /// When the Keychain cannot be read.
-pub fn kept_secret(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
+pub fn kept_secret(item: &Item) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
     answered(
-        get_generic_password(LABEL, account).map(|secret| Some(Zeroizing::new(secret))),
+        get_generic_password(item.label, &item.account())
+            .map(|secret| Some(Zeroizing::new(secret))),
         None,
     )
 }
 
-/// Keeps `secret` for `account`, in place of any kept before.
+/// Keeps `secret` as `item`, in place of any kept before.
 ///
 /// # Errors
 ///
 /// When the Keychain refuses it.
-pub fn keep_secret(account: &str, secret: &[u8]) -> Result<(), Error> {
-    let mut options = PasswordOptions::new_generic_password(LABEL, account);
-    options.set_label(LABEL);
+pub fn keep_secret(item: &Item, secret: &[u8]) -> Result<(), Error> {
+    let mut options = PasswordOptions::new_generic_password(item.label, &item.account());
+    options.set_label(item.label);
     // Kept on this Mac alone, never synchronised to iCloud.
     options.set_access_synchronized(Some(false));
     set_generic_password_options(secret, options).map_err(failed)
 }
 
-/// Removes the secret kept for `account`, and says whether there was one.
+/// Removes `item`, and says whether it was kept.
 ///
 /// # Errors
 ///
 /// When the Keychain refuses.
-pub fn forget_secret(account: &str) -> Result<bool, Error> {
+pub fn forget_secret(item: &Item) -> Result<bool, Error> {
     answered(
-        delete_generic_password(LABEL, account).map(|()| true),
+        delete_generic_password(item.label, &item.account()).map(|()| true),
         false,
     )
 }

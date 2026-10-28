@@ -12,7 +12,7 @@ use zeroize::Zeroizing;
 
 use crate::dbus::session::Connection;
 use crate::dbus::{self, Value};
-use crate::keychain::{Error, LABEL};
+use crate::keychain::{Error, Item};
 
 const SERVICE: &str = "org.freedesktop.secrets";
 const ROOT: &str = "/org/freedesktop/secrets";
@@ -52,13 +52,20 @@ fn failed(error: &dbus::Error) -> Error {
     }
 }
 
-/// The attributes the key for the steamship home `account` is found by.
-fn attributes(account: &str) -> Value {
-    Value::texts(&[
+/// The attributes `item` is found by: steamship's, its kind, its home, and what tells it apart
+/// within the home.
+fn attributes(item: &Item) -> Value {
+    let mut pairs = vec![
         ("application", "steamship"),
-        ("kind", "web-api-key"),
-        ("home", account),
-    ])
+        ("kind", item.kind),
+        ("home", item.home.as_str()),
+    ];
+    pairs.extend(
+        item.within
+            .iter()
+            .map(|(name, value)| (*name, value.as_str())),
+    );
+    Value::texts(&pairs)
 }
 
 /// The Secret Service, with a session open to carry secrets in. The session is "plain": the
@@ -121,9 +128,9 @@ impl Service {
             .map_err(|error| failed(&error))
     }
 
-    /// The items kept for `account`: those unlocked, then those locked.
-    fn search(&mut self, account: &str) -> Result<(Vec<String>, Vec<String>), Error> {
-        let answer = self.call(ROOT, SECRETS, "SearchItems", &[attributes(account)])?;
+    /// The entries kept as `item`: those unlocked, then those locked.
+    fn search(&mut self, item: &Item) -> Result<(Vec<String>, Vec<String>), Error> {
+        let answer = self.call(ROOT, SECRETS, "SearchItems", &[attributes(item)])?;
         let list = |at: usize| {
             answer
                 .get(at)
@@ -160,23 +167,23 @@ impl Service {
         Ok(())
     }
 
-    fn has(&mut self, account: &str) -> Result<bool, Error> {
-        let (unlocked, locked) = self.search(account)?;
+    fn has(&mut self, item: &Item) -> Result<bool, Error> {
+        let (unlocked, locked) = self.search(item)?;
         Ok(!unlocked.is_empty() || !locked.is_empty())
     }
 
-    fn kept(&mut self, account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
-        let (unlocked, locked) = self.search(account)?;
-        let item = if let Some(item) = unlocked.first() {
-            item.clone()
-        } else if let Some(item) = locked.first() {
-            self.unlock(slice::from_ref(item))?;
-            item.clone()
+    fn kept(&mut self, item: &Item) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
+        let (unlocked, locked) = self.search(item)?;
+        let entry = if let Some(entry) = unlocked.first() {
+            entry.clone()
+        } else if let Some(entry) = locked.first() {
+            self.unlock(slice::from_ref(entry))?;
+            entry.clone()
         } else {
             return Ok(None);
         };
         let session = Value::Path(self.session.clone());
-        let answer = self.call(&item, ITEM, "GetSecret", &[session])?;
+        let answer = self.call(&entry, ITEM, "GetSecret", &[session])?;
         match answer.into_iter().next() {
             Some(Value::Struct(fields)) => match fields.into_iter().nth(2) {
                 Some(Value::Bytes(secret)) => Ok(Some(secret)),
@@ -186,7 +193,7 @@ impl Service {
         }
     }
 
-    fn keep(&mut self, account: &str, secret: &[u8]) -> Result<(), Error> {
+    fn keep(&mut self, item: &Item, secret: &[u8]) -> Result<(), Error> {
         let answer = self.call(
             ROOT,
             SECRETS,
@@ -209,8 +216,8 @@ impl Service {
         let properties = Value::Array(
             "{sv}".to_owned(),
             vec![
-                property("Label", Value::Str(LABEL.to_owned())),
-                property("Attributes", attributes(account)),
+                property("Label", Value::Str(item.label.to_owned())),
+                property("Attributes", attributes(item)),
             ],
         );
         let secret = Value::Struct(vec![
@@ -228,14 +235,14 @@ impl Service {
         self.prompt(created.get(1).and_then(Value::path).unwrap_or(NONE))
     }
 
-    fn forget(&mut self, account: &str) -> Result<bool, Error> {
-        let (unlocked, locked) = self.search(account)?;
-        let items: Vec<String> = unlocked.into_iter().chain(locked).collect();
-        for item in &items {
-            let answer = self.call(item, ITEM, "Delete", &[])?;
+    fn forget(&mut self, item: &Item) -> Result<bool, Error> {
+        let (unlocked, locked) = self.search(item)?;
+        let entries: Vec<String> = unlocked.into_iter().chain(locked).collect();
+        for entry in &entries {
+            let answer = self.call(entry, ITEM, "Delete", &[])?;
             self.prompt(answer.first().and_then(Value::path).unwrap_or(NONE))?;
         }
-        Ok(!items.is_empty())
+        Ok(!entries.is_empty())
     }
 }
 
@@ -243,41 +250,40 @@ fn service() -> Result<Service, Error> {
     Service::open(|name| env::var_os(name))
 }
 
-/// Whether the Secret Service keeps a secret for the steamship home `account`, found out without
-/// unlocking anything.
+/// Whether the Secret Service keeps `item`, found out without unlocking anything.
 ///
 /// # Errors
 ///
 /// When the Secret Service cannot be reached or searched.
-pub fn has_secret(account: &str) -> Result<bool, Error> {
-    service()?.has(account)
+pub fn has_secret(item: &Item) -> Result<bool, Error> {
+    service()?.has(item)
 }
 
-/// The secret kept for `account`, if there is one, unlocking it first if need be.
+/// The secret kept as `item`, if there is one, unlocking it first if need be.
 ///
 /// # Errors
 ///
 /// When the Secret Service cannot be reached or read, or unlocking it was refused.
-pub fn kept_secret(account: &str) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
-    service()?.kept(account)
+pub fn kept_secret(item: &Item) -> Result<Option<Zeroizing<Vec<u8>>>, Error> {
+    service()?.kept(item)
 }
 
-/// Keeps `secret` for `account` in the default keyring, in place of any kept before.
+/// Keeps `secret` as `item` in the default keyring, in place of any kept before.
 ///
 /// # Errors
 ///
 /// When the Secret Service cannot be reached, has no default keyring, or refuses.
-pub fn keep_secret(account: &str, secret: &[u8]) -> Result<(), Error> {
-    service()?.keep(account, secret)
+pub fn keep_secret(item: &Item, secret: &[u8]) -> Result<(), Error> {
+    service()?.keep(item, secret)
 }
 
-/// Removes every secret kept for `account`, and says whether there was one.
+/// Removes every entry kept as `item`, and says whether there was one.
 ///
 /// # Errors
 ///
 /// When the Secret Service cannot be reached, or refuses.
-pub fn forget_secret(account: &str) -> Result<bool, Error> {
-    service()?.forget(account)
+pub fn forget_secret(item: &Item) -> Result<bool, Error> {
+    service()?.forget(item)
 }
 
 #[cfg(test)]
@@ -286,6 +292,7 @@ mod tests {
     use std::iter;
     use std::os::linux::net::SocketAddrExt as _;
     use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
+    use std::path::Path;
     use std::process;
     use std::sync::Mutex;
     use std::thread::{self, JoinHandle};
@@ -293,6 +300,35 @@ mod tests {
     use super::*;
     use crate::dbus::session::LOGIN_LINE;
     use crate::dbus::{Kind, Message};
+    use crate::keychain;
+
+    /// The key kept for the home `/home`.
+    fn home() -> Item {
+        Item::key(Path::new("/home"))
+    }
+
+    #[test]
+    fn a_branch_password_is_found_by_its_home_app_and_branch_too() {
+        let password = Item::branch(Path::new("/home"), 480, "testing");
+        assert_eq!(
+            attributes(&password),
+            Value::texts(&[
+                ("application", "steamship"),
+                ("kind", "branch-password"),
+                ("home", "/home"),
+                ("app", "480"),
+                ("branch", "testing"),
+            ])
+        );
+        assert_eq!(
+            attributes(&home()),
+            Value::texts(&[
+                ("application", "steamship"),
+                ("kind", "web-api-key"),
+                ("home", "/home"),
+            ])
+        );
+    }
 
     const KEY: &[u8] = b"0123456789abcdef0123456789abcdef";
 
@@ -541,7 +577,7 @@ mod tests {
             }
         });
         let mut service = opened(&address).unwrap();
-        assert_eq!(service.kept("/home").unwrap().unwrap().as_slice(), KEY);
+        assert_eq!(service.kept(&home()).unwrap().unwrap().as_slice(), KEY);
         drop(service);
         let calls = serving.join().unwrap();
         assert_eq!(
@@ -559,7 +595,7 @@ mod tests {
         );
         let call = |at: usize| calls.get(at).expect("the call");
         assert_eq!(call(1).body, [Value::Str("default".to_owned())]);
-        assert_eq!(call(3).body, [attributes("/home")]);
+        assert_eq!(call(3).body, [attributes(&home())]);
         let rule = call(5).body.first().and_then(Value::text).unwrap();
         assert!(rule.contains("path='/prompt/1'"), "{rule}");
         assert_eq!(call(7).path.as_deref(), Some("/item/1"));
@@ -588,7 +624,7 @@ mod tests {
             }
         });
         let mut service = opened(&address).unwrap();
-        assert!(service.kept("/home").unwrap().is_some());
+        assert!(service.kept(&home()).unwrap().is_some());
         drop(service);
         drop(serving.join().unwrap());
     }
@@ -617,7 +653,7 @@ mod tests {
         });
         let mut service = opened(&address).unwrap();
         assert_eq!(
-            service.keep("/home", KEY),
+            service.keep(&home(), KEY),
             Err(Error::Failed(
                 "the prompt to unlock it was dismissed".to_owned()
             ))
@@ -655,7 +691,7 @@ mod tests {
             }
         });
         let mut service = opened(&address).unwrap();
-        service.keep("/home", KEY).unwrap();
+        service.keep(&home(), KEY).unwrap();
         drop(service);
         let calls = serving.join().unwrap();
         assert_eq!(
@@ -683,8 +719,8 @@ mod tests {
                 Value::Array(
                     "{sv}".to_owned(),
                     vec![
-                        property("Label", Value::Str(LABEL.to_owned())),
-                        property("Attributes", attributes("/home")),
+                        property("Label", Value::Str(keychain::LABEL.to_owned())),
+                        property("Attributes", attributes(&home())),
                     ]
                 ),
                 Value::Struct(vec![
@@ -709,7 +745,7 @@ mod tests {
         });
         let mut service = opened(&address).unwrap();
         assert_eq!(
-            service.keep("/home", KEY),
+            service.keep(&home(), KEY),
             Err(Error::Failed("there is no default keyring".to_owned()))
         );
         drop(service);
@@ -726,8 +762,8 @@ mod tests {
             }
         });
         let mut service = opened(&address).unwrap();
-        assert!(service.has("/home").unwrap());
-        assert!(service.forget("/home").unwrap());
+        assert!(service.has(&home()).unwrap());
+        assert!(service.forget(&home()).unwrap());
         drop(service);
         let calls = serving.join().unwrap();
         let deleted: Vec<&str> = calls
@@ -747,9 +783,9 @@ mod tests {
             }
         });
         let mut service = opened(&address).unwrap();
-        assert!(!service.has("/home").unwrap());
-        assert!(service.kept("/home").unwrap().is_none());
-        assert!(!service.forget("/home").unwrap());
+        assert!(!service.has(&home()).unwrap());
+        assert!(service.kept(&home()).unwrap().is_none());
+        assert!(!service.forget(&home()).unwrap());
         drop(service);
         drop(serving.join().unwrap());
     }
@@ -789,7 +825,7 @@ mod tests {
                     _ => found(&["/item/1"], &[]),
                 }
             });
-            let result = opened(&address).and_then(|mut service| service.kept("/home"));
+            let result = opened(&address).and_then(|mut service| service.kept(&home()));
             assert_eq!(result, Err(Error::Failed(why.to_owned())), "{member}");
             drop(serving.join().unwrap());
         }
@@ -812,7 +848,7 @@ mod tests {
             }
         });
         assert_eq!(
-            opened(&elsewhere).and_then(|mut service| service.has("/home")),
+            opened(&elsewhere).and_then(|mut service| service.has(&home())),
             Err(Error::Failed(
                 "org.freedesktop.Secret.Error.IsLocked: the stand-in says no".to_owned()
             ))
@@ -842,7 +878,7 @@ mod tests {
                 _ => Answer::Return(Vec::new()),
             }
         });
-        let result = opened(&elsewhere).and_then(|mut service| service.kept("/home"));
+        let result = opened(&elsewhere).and_then(|mut service| service.kept(&home()));
         assert!(
             matches!(&result, Err(Error::Failed(why)) if why.starts_with("the session bus: ")),
             "{result:?}"
@@ -861,7 +897,7 @@ mod tests {
         });
         let mut service = opened(&address).unwrap();
         assert_eq!(
-            service.has("/home"),
+            service.has(&home()),
             Err(Error::Failed(
                 "a message from the session bus: an answer to another call".to_owned()
             ))

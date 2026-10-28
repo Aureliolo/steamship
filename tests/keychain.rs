@@ -88,13 +88,51 @@ fn a_key_is_kept_replaced_read_back_and_forgotten_for_its_home_alone() {
 fn what_is_kept_that_is_not_a_key_is_refused_not_used() {
     store();
     let home = forgetting_home();
-    let account = home.path().display().to_string();
+    let item = keychain::Item::key(home.path());
     for kept in [&b"not a key"[..], &[0xff, 0xfe][..]] {
-        platform::keep_secret(&account, kept).unwrap();
+        platform::keep_secret(&item, kept).unwrap();
         assert_eq!(
             keychain::kept(home.path()).unwrap_err(),
             keychain::Error::NotAKey
         );
     }
     assert!(keychain::forget(home.path()).unwrap());
+}
+
+#[test]
+fn a_branch_password_is_kept_for_its_app_and_branch_apart_from_the_key() {
+    store();
+    let home = common::store::Home::new(|home| {
+        drop(keychain::forget(home));
+        drop(keychain::forget_branch_password(home, 480, "testing"));
+    });
+    let home = home.path();
+    assert!(
+        keychain::branch_password(home, 480, "testing")
+            .unwrap()
+            .is_none()
+    );
+    keychain::keep_branch_password(home, 480, "testing", "open sesame").unwrap();
+    assert_eq!(
+        keychain::branch_password(home, 480, "testing")
+            .unwrap()
+            .unwrap()
+            .as_str(),
+        "open sesame"
+    );
+    for (app, branch) in [(480, "staging"), (481, "testing")] {
+        assert!(
+            keychain::branch_password(home, app, branch)
+                .unwrap()
+                .is_none(),
+            "{app} {branch}"
+        );
+    }
+    assert!(!keychain::has(home).unwrap(), "the key is kept apart");
+    assert!(keychain::forget_branch_password(home, 480, "testing").unwrap());
+    assert!(
+        keychain::branch_password(home, 480, "testing")
+            .unwrap()
+            .is_none()
+    );
 }
