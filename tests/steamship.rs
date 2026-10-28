@@ -7970,6 +7970,7 @@ fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked(
     let home = faked_with(TYPED_FETCHES);
     saved_login(home.path());
     let password = [("STEAMSHIP_BRANCH_PASSWORD", "open-sesame")];
+    let named = ["1000", "--branch", "friends"];
     let friends = ["1000", "--branch", "friends", "--keep-password"];
     let (code, stdout, stderr) = fetching(home.path(), &friends, &password);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
@@ -7996,7 +7997,7 @@ fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked(
     );
 
     // The kept password opens the branch next time.
-    let (again, again_said) = fetching_said(home.path(), &friends[..3], &[]);
+    let (again, again_said) = fetching_said(home.path(), &named, &[]);
     assert_eq!(again, Some(0_i32), "{again_said}");
     assert!(again_said.contains("kept in"), "{again_said}");
 
@@ -8014,10 +8015,10 @@ fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked(
 
     // Once the branch takes another, the kept one Steam refuses is forgotten.
     let changed = [("STEAMSHIP_FAKE_PASSWORD", "open-millet")];
-    let (stale, stale_said) = fetching_said(home.path(), &friends[..3], &changed);
+    let (stale, stale_said) = fetching_said(home.path(), &named, &changed);
     assert_eq!(stale, Some(1_i32), "{stale_said}");
     assert!(stale_said.contains("is forgotten"), "{stale_said}");
-    let (none, none_said) = fetching_said(home.path(), &friends[..3], &changed);
+    let (none, none_said) = fetching_said(home.path(), &named, &changed);
     assert_eq!(none, Some(2_i32), "nothing kept to use: {none_said}");
 }
 

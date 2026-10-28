@@ -292,6 +292,7 @@ mod tests {
     use std::iter;
     use std::os::linux::net::SocketAddrExt as _;
     use std::os::unix::net::{SocketAddr, UnixListener, UnixStream};
+    use std::path::Path;
     use std::process;
     use std::sync::Mutex;
     use std::thread::{self, JoinHandle};
@@ -303,12 +304,12 @@ mod tests {
 
     /// The key kept for the home `/home`.
     fn home() -> Item {
-        Item::key(std::path::Path::new("/home"))
+        Item::key(Path::new("/home"))
     }
 
     #[test]
     fn a_branch_password_is_found_by_its_home_app_and_branch_too() {
-        let password = Item::branch(std::path::Path::new("/home"), 480, "testing");
+        let password = Item::branch(Path::new("/home"), 480, "testing");
         assert_eq!(
             attributes(&password),
             Value::texts(&[
