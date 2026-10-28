@@ -176,9 +176,10 @@ pub enum Outcome {
     Failed(Vec<String>),
 }
 
-/// Reads a fetch of `app` from steamcmd's exit `code` and its `console`.
+/// Reads a fetch of `app` from steamcmd's exit `code`, its `console`, and what it added to its
+/// content `log` meanwhile.
 #[must_use]
-pub fn judge(code: Option<i32>, console: &str, app: u32) -> Outcome {
+pub fn judge(code: Option<i32>, console: &str, log: &str, app: u32) -> Outcome {
     if let Some(reason) = upload::refused_login(console) {
         return Outcome::NotLoggedIn(reason);
     }
@@ -190,12 +191,18 @@ pub fn judge(code: Option<i32>, console: &str, app: u32) -> Outcome {
     if code == Some(0_i32) && console.lines().any(said) {
         return Outcome::Fetched;
     }
-    if code == Some(0_i32) && !console.contains("ERROR!") {
+    let logged = logged(log, app);
+    let errors = console.contains("ERROR!");
+    if !errors && !logged.is_empty() {
+        return Outcome::Failed(logged);
+    }
+    if code == Some(0_i32) && !errors {
         return Outcome::Failed(vec![format!(
             "steamcmd exited 0 without saying app {app} is installed"
         )]);
     }
     let mut reasons = upload::reasons(code, console, None);
+    reasons.extend(logged);
     if reasons
         .iter()
         .any(|reason| reason.ends_with("(No subscription)"))
@@ -206,6 +213,24 @@ pub fn judge(code: Option<i32>, console: &str, app: u32) -> Outcome {
         ));
     }
     Outcome::Failed(reasons)
+}
+
+/// Why steamcmd's content `log` says it gave up on `app`: it says so there alone, as when it
+/// cancelled a fetch of a beta branch it remembered whose password it lacked, with an exit code of
+/// 8 and nothing on its console.
+fn logged(log: &str, app: u32) -> Vec<String> {
+    let cancelled = format!("AppID {app} update canceled : ");
+    let warned = format!("WARNING! AppID {app} ");
+    log.lines()
+        .filter_map(|line| {
+            if let Some((_, why)) = line.split_once(&cancelled) {
+                Some(format!("steamcmd cancelled the download: {}", why.trim()))
+            } else {
+                line.split_once(&warned)
+                    .map(|(_, said)| format!("AppID {app} {}", said.trim()))
+            }
+        })
+        .collect()
 }
 
 /// The build `folder` holds, as `fetch --json` prints it.
@@ -406,19 +431,19 @@ mod tests {
 
     #[test]
     fn a_fetch_is_done_only_when_steamcmd_says_the_app_is_installed_and_exits_0() {
-        assert_eq!(judge(Some(0_i32), FETCHED, 480), Outcome::Fetched);
-        assert_eq!(judge(Some(0_i32), UP_TO_DATE, 480), Outcome::Fetched);
+        assert_eq!(judge(Some(0_i32), FETCHED, "", 480), Outcome::Fetched);
+        assert_eq!(judge(Some(0_i32), UP_TO_DATE, "", 480), Outcome::Fetched);
         assert_eq!(
-            judge(Some(0_i32), FETCHED, 481),
+            judge(Some(0_i32), FETCHED, "", 481),
             Outcome::Failed(vec![
                 "steamcmd exited 0 without saying app 481 is installed".to_owned()
             ])
         );
         assert!(matches!(
-            judge(Some(8_i32), FETCHED, 480),
+            judge(Some(8_i32), FETCHED, "", 480),
             Outcome::Failed(_)
         ));
-        assert!(matches!(judge(None, FETCHED, 480), Outcome::Failed(_)));
+        assert!(matches!(judge(None, FETCHED, "", 480), Outcome::Failed(_)));
     }
 
     #[test]
@@ -427,6 +452,7 @@ mod tests {
             judge(
                 Some(8_i32),
                 "ERROR! Failed to install app '480' (No subscription)\n",
+                "",
                 480
             ),
             Outcome::Failed(vec![
@@ -438,15 +464,55 @@ mod tests {
         );
         for code in [Some(8_i32), Some(0_i32)] {
             assert_eq!(
-                judge(code, "ERROR! Failed to set beta 'testing'\n", 480),
+                judge(code, "ERROR! Failed to set beta 'testing'\n", "", 480),
                 Outcome::Failed(vec!["Failed to set beta 'testing'".to_owned()]),
                 "{code:?}"
             );
         }
         assert_eq!(
-            judge(Some(8_i32), "Unloading Steam API...OK\n", 480),
+            judge(Some(8_i32), "Unloading Steam API...OK\n", "", 480),
             Outcome::Failed(vec!["steamcmd exited 8 without saying why".to_owned()])
         );
+    }
+
+    /// What steamcmd 1792617903 added to its content log, and nothing to its console, cancelling a
+    /// fetch of the default branch while it remembered a beta branch whose password it lacked;
+    /// another app's lines among them.
+    const CANCELLED: &str = "[2026-10-28 16:33:50] AppID 480 App update changed : Running Update,Reconfiguring,\n\
+        [2026-10-28 16:33:50] WARNING! AppID 480 has missing cached password for private beta \
+        \"testing\" set, falling back to public\n\
+        [2026-10-28 16:33:50] AppID 480 beta changed: public\n\
+        [2026-10-28 16:33:50] AppID 480 update canceled : Missing app info for 480 (Missing \
+        configuration)\n\
+        [2026-10-28 16:33:50] AppID 481 update canceled : Missing app info for 481 (Missing \
+        configuration)\n";
+
+    #[test]
+    fn a_fetch_steamcmd_gave_up_on_in_its_log_alone_says_why_from_there() {
+        let gave_up = Outcome::Failed(vec![
+            "AppID 480 has missing cached password for private beta \"testing\" set, falling back \
+             to public"
+                .to_owned(),
+            "steamcmd cancelled the download: Missing app info for 480 (Missing configuration)"
+                .to_owned(),
+        ]);
+        assert_eq!(
+            judge(Some(8_i32), "Unloading Steam API...OK\n", CANCELLED, 480),
+            gave_up
+        );
+        assert_eq!(
+            judge(Some(0_i32), "Unloading Steam API...OK\n", CANCELLED, 480),
+            gave_up
+        );
+        assert!(matches!(
+            judge(
+                Some(8_i32),
+                "ERROR! Failed to set beta 'testing'\n",
+                CANCELLED,
+                480,
+            ),
+            Outcome::Failed(reasons) if reasons.len() == 3
+        ));
     }
 
     #[test]
@@ -455,6 +521,7 @@ mod tests {
             judge(
                 Some(5_i32),
                 "Logging in user 'build_bot' to Steam Public...FAILED (Invalid Password)\n",
+                CANCELLED,
                 480
             ),
             Outcome::NotLoggedIn(_)

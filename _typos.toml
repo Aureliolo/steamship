@@ -22,6 +22,7 @@ extend-ignore-re = [
   ':\s*center\b',
   'Failed to initialize build on server',
   'Unable to find specificed betakey',
+  'update canceled : ',
   '-color\b',
   '(?m)^  color: ',
   'CARGO_TERM_COLOR',
