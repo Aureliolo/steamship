@@ -3223,14 +3223,10 @@ fn branch_password(
         show::aside(&format!(
             "app {app}'s {shown} branch takes a password, the one its Steamworks betas page shows"
         ));
-        let text = match typing::ask("password", Echo::Dots) {
-            Ok(text) if !text.is_empty() => text,
-            Ok(_) => return Err(needed()),
-            Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => return Err(needed()),
-            Err(error) => {
-                return Err(fail(&format!("the branch's password: {error}"), FAILED));
-            }
-        };
+        let text = typing::ask("password", Echo::Dots)
+            .ok()
+            .filter(|text| !text.is_empty())
+            .ok_or_else(needed)?;
         GivenPassword {
             text,
             from: PasswordFrom::Typed,

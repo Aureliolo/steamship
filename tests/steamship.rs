@@ -7984,6 +7984,17 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
     assert_eq!(empty, Some(2_i32), "{empty_said}");
     assert!(empty_said.contains(refusal), "{empty_said}");
 
+    // Nor does Enter alone at the prompt.
+    let (entered, _, entered_said) = fetching_typed(
+        home.path(),
+        &["1000", "--branch", "friends"],
+        &[],
+        Some("\n"),
+    );
+    assert_eq!(entered, Some(2_i32), "{entered_said}");
+    assert!(entered_said.contains(refusal), "{entered_said}");
+    assert!(!home.path().join("args").exists(), "steamcmd was not run");
+
     // A record that is there but cannot be read is a failure, not a folder of other files.
     let unreadable = files.path().join("unreadable");
     fs::create_dir_all(unreadable.join("steamapps").join("appmanifest_1000.acf")).unwrap();
@@ -8139,7 +8150,7 @@ fn a_typed_fetch_whose_steamcmd_will_never_reach_steam_is_stopped_at_once() {
         "#!/bin/sh\n\
          echo 'unable to load trusted SSL root certificates'\n\
          printf 'Steam>'\n\
-         sleep 600\n",
+         sleep 30\n",
     );
     saved_login(home.path());
     let started = Instant::now();
@@ -8154,8 +8165,8 @@ fn a_typed_fetch_whose_steamcmd_will_never_reach_steam_is_stopped_at_once() {
         "{stderr}"
     );
     assert!(
-        started.elapsed() < Duration::from_secs(60),
-        "{:?}",
+        started.elapsed() < Duration::from_secs(20),
+        "not waited for: {:?}",
         started.elapsed()
     );
 }
