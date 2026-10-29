@@ -257,7 +257,10 @@ lists gets its `alt`, or an empty one, which clears what the store held, such as
 decorative image.
 
 The upload carries no screenshot's alt text, so the screenshots' go into `screenshots.json`, as
-`german 1` for the first one in German, to be typed into their panel.
+`german 1` for the first one in German, to be typed into their panel. That panel keeps an `&`
+as `&amp;` and a straight double quote as `&quot;`, which screen readers then read out, so a
+screenshot's alt text holding either, in any language, is refused: write the language's word
+for "and", and its own quotation marks.
 
 Items in a row make one list. A `field` is any other text Steam shows in the player's language,
 such as a system requirement, by its name on the form. Until the `itemid` is set no store upload

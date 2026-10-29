@@ -565,18 +565,21 @@ pub fn entries(english: &English) -> Result<Vec<Entry>, Vec<String>> {
             add(PRESENCE_CONTEXT, &token.id, PRESENCE_NOTE, None);
         }
     }
-    let past: Vec<String> = said
+    let mut past: Vec<String> = english
+        .store
         .iter()
-        .filter_map(|entry| {
-            let most = entry.most?;
-            let file = if entry.context == WORKSHOP_CONTEXT {
-                WORKSHOP
-            } else {
-                STORE
-            };
-            past_room(file, "english", &entry.english, most)
-        })
+        .flat_map(|store| store.screenshots.iter().enumerate())
+        .flat_map(|(index, alt)| escaped(STORE, "english", index.saturating_add(1), alt))
         .collect();
+    past.extend(said.iter().filter_map(|entry| {
+        let most = entry.most?;
+        let file = if entry.context == WORKSHOP_CONTEXT {
+            WORKSHOP
+        } else {
+            STORE
+        };
+        past_room(file, "english", &entry.english, most)
+    }));
     if !past.is_empty() {
         return Err(past);
     }
@@ -657,6 +660,30 @@ fn past_room(file: &str, language: &str, text: &str, most: usize) -> Option<Stri
     })
 }
 
+/// Why screenshot `number`'s alt text `alt`, in `language` as `file` gives it, would reach a screen
+/// reader as other than written, if it would.
+///
+/// The Store Page tab's Edit Accessibility Text panel keeps an ampersand and a straight double
+/// quote as the HTML escapes `&amp;` and `&quot;`, which is what a screen reader then reads out.
+fn escaped(file: &str, language: &str, number: usize, alt: &str) -> Vec<String> {
+    let mut why = Vec::new();
+    let said = format!("{file}: screenshot {number}'s alt text in {language}, {alt:?},");
+    if alt.contains('&') {
+        why.push(format!(
+            "{said} holds \"&\", which Steamworks' Edit Accessibility Text panel keeps as \"&amp;\" \
+             and a screen reader reads out: write the word for \"and\" in {language} instead"
+        ));
+    }
+    if alt.contains('"') {
+        why.push(format!(
+            "{said} holds a straight double quote, which Steamworks' Edit Accessibility Text panel \
+             keeps as \"&quot;\" and a screen reader reads out: use {language}'s own quotation \
+             marks instead, such as \u{201c} \u{201d} or \u{ab} \u{bb}"
+        ));
+    }
+    why
+}
+
 /// Every file of the text in English and in each language of `translations`, by its path from
 /// the build scripts' folder, with what it holds; or every translation missing from them.
 ///
@@ -675,8 +702,10 @@ pub fn written(
     let mut disclosed = Vec::new();
     let mut recommended = Vec::new();
     let mut screenshots = Vec::new();
+    let mut escapes = Vec::new();
     for each in languages {
         let language = each.map_or("english", |catalogued| catalogued.language);
+        let file = each.map_or(STORE, |catalogued| catalogued.file.as_str());
         let mut said = |context: &str, id: &str| {
             each.map_or_else(
                 || id.to_owned(),
@@ -693,10 +722,10 @@ pub fn written(
                 disclosed.push((language, said(STORE_CONTEXT, &store.disclosure)));
             }
             for (index, alt) in store.screenshots.iter().enumerate() {
-                screenshots.push((
-                    format!("{language} {}", index.saturating_add(1)),
-                    said(STORE_CONTEXT, alt),
-                ));
+                let number = index.saturating_add(1);
+                let alt = said(STORE_CONTEXT, alt);
+                escapes.extend(escaped(file, language, number, &alt));
+                screenshots.push((format!("{language} {number}"), alt));
             }
             if !store.item.is_empty() {
                 let (typed, fields): (Vec<_>, Vec<_>) = store_fields(store, &mut said)
@@ -757,6 +786,7 @@ pub fn written(
     sheet(&mut files, DISCLOSURE, &disclosed);
     sheet(&mut files, BASIC_INFO, &recommended);
     sheet(&mut files, SCREENSHOTS, &screenshots);
+    wrong.extend(escapes);
     wrong.extend(past_rooms(&files, translations));
     if wrong.is_empty() {
         files.sort();
@@ -1284,6 +1314,52 @@ msgstr "Die Erlenhexe"
             !file(&files, "store/german.json").contains("Abend"),
             "{files:?}"
         );
+    }
+
+    #[test]
+    fn a_screenshots_alt_text_holding_what_steamworks_escapes_is_refused_in_any_language() {
+        let page = STORE_PAGE.replacen(
+            '{',
+            r#"{ "screenshots": ["A duel at dusk.", "The bells ring."],"#,
+            1,
+        );
+        let english = English {
+            store: Some(store(&page).unwrap()),
+            ..English::default()
+        };
+        let translated = GERMAN.replace("Die Glocken klingen.", "Glocken & \\\"Abend\\\"");
+        let said = "de.po: screenshot 2's alt text in german, \"Glocken & \\\"Abend\\\"\",";
+        assert_eq!(
+            written(&english, &[german(&translated)]),
+            Err(vec![
+                format!(
+                    "{said} holds \"&\", which Steamworks' Edit Accessibility Text panel keeps as \
+                     \"&amp;\" and a screen reader reads out: write the word for \"and\" in \
+                     german instead"
+                ),
+                format!(
+                    "{said} holds a straight double quote, which Steamworks' Edit Accessibility \
+                     Text panel keeps as \"&quot;\" and a screen reader reads out: use german's \
+                     own quotation marks instead, such as \u{201c} \u{201d} or \u{ab} \u{bb}"
+                ),
+            ])
+        );
+
+        let in_english = STORE_PAGE.replacen('{', r#"{ "screenshots": ["Duel & dusk."],"#, 1);
+        let written_in_english = English {
+            store: Some(store(&in_english).unwrap()),
+            ..English::default()
+        };
+        let refused = format!(
+            "{STORE}: screenshot 1's alt text in english, \"Duel & dusk.\", holds \"&\", which \
+             Steamworks' Edit Accessibility Text panel keeps as \"&amp;\" and a screen reader \
+             reads out: write the word for \"and\" in english instead"
+        );
+        assert_eq!(
+            written(&written_in_english, &[]),
+            Err(vec![refused.clone()])
+        );
+        assert_eq!(entries(&written_in_english), Err(vec![refused]));
     }
 
     #[test]
