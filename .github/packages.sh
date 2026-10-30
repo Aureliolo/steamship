@@ -183,7 +183,7 @@ cat > "${out}/winget/Aureliolo.steamship.locale.en-GB.yaml" << LOCALE
 PackageIdentifier: Aureliolo.steamship
 PackageVersion: ${version}
 PackageLocale: en-GB
-Publisher: Aureliolo
+Publisher: Aurelio Amoroso
 PublisherUrl: https://github.com/Aureliolo
 PublisherSupportUrl: ${repository}/issues
 PackageName: steamship
