@@ -54,7 +54,7 @@ const SETTINGS: [&str; 11] = [
     "workshop",
     "demo",
 ];
-const WORKSHOP: [&str; 3] = ["mods", "items", "footer"];
+const WORKSHOP: [&str; 4] = ["mods", "items", "footer", "held_until_launch"];
 const DEMO: [&str; 5] = ["script", "build", "branch", "description", "feature"];
 
 /// The custom feature that marks a Godot export preset as the demo's when `steamship.toml` names
@@ -128,6 +128,9 @@ pub struct Project {
     pub items: PathBuf,
     /// Text set below every example mod's own description on the Workshop.
     pub footer: Option<String>,
+    /// Whether no Workshop item for the game's app goes up while Steam shows the game unreleased,
+    /// but on the run given `--for-launch`.
+    pub held_until_launch: bool,
     /// The game's demo, its own app on Steam, when it has one.
     pub demo: Option<Demo>,
     /// The full game's app build script, when this is the game seen as its demo.
@@ -213,6 +216,7 @@ impl Project {
             mods: Given::laid_out(root.join("modding")),
             items: scripts.join("workshop_items.json"),
             footer: None,
+            held_until_launch: false,
             demo: under(root, DEMO_SCRIPT).is_file().then(|| Demo {
                 script: under(root, DEMO_SCRIPT),
                 build: Vec::new(),
@@ -326,6 +330,12 @@ impl Project {
             }
             if let Some(footer) = workshop.get("footer") {
                 project.footer = Some(text_of(footer, "workshop.footer")?.to_owned());
+            }
+            if let Some(held) = workshop.get("held_until_launch") {
+                project.held_until_launch = held.as_bool().ok_or(
+                    "`workshop.held_until_launch` is not true or false: write true to hold the \
+                     Workshop items until launch, or leave it out",
+                )?;
             }
         }
         if let Some(section) = table.get("demo") {
@@ -995,6 +1005,7 @@ mod tests {
         assert_eq!(project.snapshot(), Path::new("game/steam/settings.vdf"));
         assert_eq!(project.import, Path::new("game/steam/achievements"));
         assert_eq!(project.items, Path::new("game/steam/workshop_items.json"));
+        assert!(!project.held_until_launch);
         assert_eq!(project.build, Vec::<String>::new());
         assert_eq!(project.pin, None);
         assert_eq!(project.branch, "testing");
@@ -1041,9 +1052,11 @@ mod tests {
             mods = "examples"
             items = "ship/items.json"
             footer = "Free to copy."
+            held_until_launch = true
             "#,
         )
         .unwrap();
+        assert!(project.held_until_launch);
         assert!(project.configured);
         assert_eq!(project.pin.as_deref(), Some("1.2.3"));
         assert_eq!(project.script, Path::new("game/ship/app.vdf"));
@@ -1167,7 +1180,12 @@ mod tests {
             (
                 "[workshop]\nmod = \"x\"",
                 "`workshop.mod` is no setting steamship takes; it takes `workshop.mods`, \
-                 `workshop.items`, `workshop.footer`",
+                 `workshop.items`, `workshop.footer`, `workshop.held_until_launch`",
+            ),
+            (
+                "[workshop]\nheld_until_launch = \"yes\"",
+                "`workshop.held_until_launch` is not true or false: write true to hold the \
+                 Workshop items until launch, or leave it out",
             ),
             (
                 "steamship = 1",

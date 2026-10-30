@@ -69,6 +69,8 @@ footer = "The game's own example mod, dedicated to the public domain under CC0 1
 - `workshop.items`: the file the items' IDs are kept in, if not `workshop_items.json` beside the
   scripts.
 - `workshop.footer`: text set below every example mod's own description.
+- `workshop.held_until_launch`: `true` to send no Workshop item for the game's app while Steam
+  shows the game unreleased. The run that readies the launch gives `--for-launch`.
 
 A folder or file the file names has to be there.
 
@@ -117,7 +119,10 @@ Each command run in a game takes from it whatever is not given:
 - `steamship workshop` uploads every example mod, or the one `--name` names, from a pushed tree
   only. Its title, description and version come from its `manifest.json`, and its preview is
   the `preview.png` beside it, which every example mod needs. A new item needs `--visibility`,
-  which is given to the items being made alone: one already published keeps its own.
+  which is given to the items being made alone: one already published keeps its own. A game
+  that sets `workshop.held_until_launch` has steamship ask Steam first, and refuse any item for
+  its app, given by its fields or a script too, until Steam shows it released, unless
+  `--for-launch` is given.
 - `steamship achievements` alone lists the game's achievements and stats on Steam, with the
   share of players who have each achievement and each aggregated stat's total.
 - `steamship builds`, `steamship promote` and `steamship fetch` take the game's app.
