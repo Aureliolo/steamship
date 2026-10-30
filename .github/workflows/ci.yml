@@ -235,7 +235,15 @@ jobs:
 
       - name: Test
         if: '!cancelled()'
-        run: cargo test --locked
+        run: |
+          set -euo pipefail
+          cargo test --locked --no-run
+          echo "cores: $(nproc 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-?}")"
+          for threads in 4 8 16; do
+            started=${SECONDS}
+            cargo test --locked --test steamship -q -- --test-threads "${threads}" > /dev/null
+            echo "threads ${threads}: $((SECONDS - started)) s"
+          done
 
       # The Linux release binary is the static musl build, so it is tested as such on every change
       # rather than first at a release. musl-gcc, for the C and assembly in ring, comes from the
