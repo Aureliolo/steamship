@@ -197,14 +197,17 @@ jobs:
       # The dist profile, optimised as a whole program, where `cargo install` keeps to the
       # quicker release profile. Windows' flags come from .cargo/config.toml, which CI's tests
       # are built with too. The docs generator, which writes the archive's man pages and
-      # completions, is built beside it in a target folder of its own, on the cores the
-      # whole-program optimisation leaves idle; the pack step then only runs it.
+      # completions, is built beside it on the cores the whole-program optimisation leaves idle;
+      # the pack step then only runs it. Its target folder is outside target/: cargo makes each
+      # target folder from a temporary one renamed into place, and with one inside the other,
+      # the two builds making theirs at the same moment can lose the inner one's temporary folder.
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
+          DOCS_TARGET: ${{ runner.temp }}/docs-target
         run: |
           set -euo pipefail
-          cargo build --locked -p steamship-docs-site --target-dir target/docs \
+          cargo build --locked -p steamship-docs-site --target-dir "${DOCS_TARGET}" \
             > "${RUNNER_TEMP}/docs-build.txt" 2>&1 &
           docs=$!
           cargo auditable build --locked --profile dist --target "${TARGET}"
@@ -230,7 +233,7 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
           # Where the build step built the docs generator; the binary is read from target/ by
           # its path, whatever this says.
-          CARGO_TARGET_DIR: target/docs
+          CARGO_TARGET_DIR: ${{ runner.temp }}/docs-target
         run: |
           set -euo pipefail
           archive="$(.github/pack.sh "${VERSION}" "${TARGET}" dist)"
