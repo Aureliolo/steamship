@@ -280,12 +280,14 @@ pub const HOPELESS: &[&str] = &[NO_CERTIFICATES];
 /// See [`HOPELESS`].
 pub const NO_CERTIFICATES: &str = "unable to load trusted SSL root certificates";
 
-/// The commands that log `account` in with the login steamcmd saved, build `script` and quit.
+/// The commands that log `account` in with the login steamcmd saved, print the info of the app
+/// `info_of` names, as [`app_info`] does, build `script` and quit.
 ///
-/// With no saved login, or an expired one, steamcmd fails rather than asking for a password
-/// nobody is there to type.
+/// The info is asked in the same run because each login to Steam takes seconds. With no saved
+/// login, or an expired one, steamcmd fails rather than asking for a password nobody is there to
+/// type.
 #[must_use]
-pub fn upload(account: &Account, script: &Path) -> Vec<OsString> {
+pub fn upload(account: &Account, script: &Path, info_of: Option<u32>) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "+@ShutdownOnFailedCommand",
         "1",
@@ -293,10 +295,14 @@ pub fn upload(account: &Account, script: &Path) -> Vec<OsString> {
         "1",
         "+login",
         account.name(),
-        "+run_app_build",
     ]
     .map(OsString::from)
     .into();
+    if let Some(app) = info_of {
+        args.extend(["+app_info_update", "1", "+app_info_print"].map(OsString::from));
+        args.push(OsString::from(app.to_string()));
+    }
+    args.push(OsString::from("+run_app_build"));
     args.push(script.as_os_str().to_owned());
     args.push(OsString::from("+quit"));
     args
@@ -340,7 +346,7 @@ mod tests {
         let account = Account::parse("build_bot").unwrap();
         let script = Path::new("home (x86)/apps/1/app_build.vdf");
         assert_eq!(
-            upload(&account, script),
+            upload(&account, script, None),
             [
                 "+@ShutdownOnFailedCommand",
                 "1",
@@ -348,6 +354,24 @@ mod tests {
                 "1",
                 "+login",
                 "build_bot",
+                "+run_app_build",
+                "home (x86)/apps/1/app_build.vdf",
+                "+quit"
+            ]
+        );
+        assert_eq!(
+            upload(&account, script, Some(1)),
+            [
+                "+@ShutdownOnFailedCommand",
+                "1",
+                "+@NoPromptForPassword",
+                "1",
+                "+login",
+                "build_bot",
+                "+app_info_update",
+                "1",
+                "+app_info_print",
+                "1",
                 "+run_app_build",
                 "home (x86)/apps/1/app_build.vdf",
                 "+quit"

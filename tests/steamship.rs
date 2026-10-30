@@ -772,19 +772,21 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
 }
 
 /// A steamcmd that, asked for app 1000's info, prints it as [`app_info`] does with the
-/// `ReleaseState` `state`, and otherwise has Valve build the upload as `BuildID` 4242, as [`BUILT`]
-/// does, adding a line to `builds` in the home.
+/// `ReleaseState` `state`, and asked to build, in the same run or alone, has Valve build the upload
+/// as `BuildID` 4242, as [`BUILT`] does, adding a line to `builds` in the home. Each run adds its
+/// arguments to `runs` there.
 #[cfg(unix)]
 fn released_as(state: &str) -> String {
     format!(
         "#!/bin/sh\n\
+         echo \"$*\" >> \"$HOME/runs\"\n\
          case \" $* \" in *' +app_info_print '*)\n\
          echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
          echo 'AppID : 1000, change number : 5/5, last change : Tue Sep 29 20:07:48 2026 '\n\
          printf '\"1000\"\\n{{\\n\\t\"common\"\\n\\t{{\\n\\t\\t\"name\"\\t\\t\"Spacewar\"\\n'\n\
          printf '\\t\\t\"ReleaseState\"\\t\\t\"{state}\"\\n\\t}}\\n}}\\n'\n\
          echo 'Unloading Steam API...OK'\n\
-         exit 0;;\n\
+         case \" $* \" in *' +run_app_build '*) ;; *) exit 0;; esac;;\n\
          esac\n\
          echo built >> \"$HOME/builds\"\n\
          output=\"$HOME/apps/1000/output\"\n\
@@ -812,6 +814,13 @@ fn an_upload_asked_for_default_too_is_set_live_there_while_steam_shows_the_app_u
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    // One login: the build's own run asks whether the app is released.
+    let runs = fs::read_to_string(home.path().join("runs")).unwrap();
+    assert_eq!(runs.lines().count(), 1, "{runs}");
+    assert!(
+        runs.contains("+app_info_print 1000 +run_app_build "),
+        "{runs}"
+    );
     assert!(
         stdout.contains("\"default\":true")
             && stdout.contains("\"live\":true")
@@ -4418,7 +4427,7 @@ const TICKING_ON_STEAM: &str = "#!/bin/sh\n\
     echo 'AppID : 1000, change number : 5/5, last change : Tue Sep 29 20:07:48 2026 '\n\
     cat \"$HOME/app_info\"\n\
     echo 'Unloading Steam API...OK'\n\
-    exit 0;;\n\
+    case \" $* \" in *' +run_app_build '*) ;; *) exit 0;; esac;;\n\
     esac\n\
     echo built >> \"$HOME/builds\"\n\
     output=\"$HOME/apps/1000/output\"\n\
@@ -10521,7 +10530,7 @@ const INN_STEAMCMD: &str = "#!/bin/sh\n\
     printf '\\t\\t\"ReleaseState\"\\t\\t\"unavailable\"\\n\\t}\\n'\n\
     printf '\\t\"config\"\\n\\t{\\n\\t\\t\"installdir\"\\t\\t\"TidalMillInn\"\\n\\t}\\n}\\n'\n\
     echo 'Unloading Steam API...OK'\n\
-    exit 0;;\n\
+    case \" $* \" in *' +run_app_build '*) ;; *) exit 0;; esac;;\n\
     esac\n\
     for arg in \"$@\"; do [ \"$previous\" = +run_app_build ] && script=\"$arg\"; previous=\"$arg\"; done\n\
     finished='build (BuildID 4242).'\n\
