@@ -197,14 +197,17 @@ jobs:
       # The dist profile, optimised as a whole program, where `cargo install` keeps to the
       # quicker release profile. Windows' flags come from .cargo/config.toml, which CI's tests
       # are built with too. The docs generator, which writes the archive's man pages and
-      # completions, is built beside it in a target folder of its own, on the cores the
-      # whole-program optimisation leaves idle; the pack step then only runs it.
+      # completions, is built beside it on the cores the whole-program optimisation leaves idle;
+      # the pack step then only runs it. Its target folder is outside target/: cargo makes each
+      # target folder from a temporary one renamed into place, and with one inside the other,
+      # the two builds making theirs at the same moment can lose the inner one's temporary folder.
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
+          DOCS_TARGET: ${{ runner.temp }}/docs-target
         run: |
           set -euo pipefail
-          cargo build --locked -p steamship-docs-site --target-dir target/docs \
+          cargo build --locked -p steamship-docs-site --target-dir "${DOCS_TARGET}" \
             > "${RUNNER_TEMP}/docs-build.txt" 2>&1 &
           docs=$!
           cargo auditable build --locked --profile dist --target "${TARGET}"
@@ -230,7 +233,7 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
           # Where the build step built the docs generator; the binary is read from target/ by
           # its path, whatever this says.
-          CARGO_TARGET_DIR: target/docs
+          CARGO_TARGET_DIR: ${{ runner.temp }}/docs-target
         run: |
           set -euo pipefail
           archive="$(.github/pack.sh "${VERSION}" "${TARGET}" dist)"
@@ -246,38 +249,19 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The .deb and the .rpm, from the Linux archive just built, so they hold that very binary.
-  linux-packages:
-    name: linux packages
-    needs: [verify, build]
-    runs-on: ubuntu-26.04
-    timeout-minutes: 30
-    permissions:
-      contents: read # Reads the tagged scripts that build and check the packages.
-
-    steps:
-      - name: Checkout tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Download the Linux archive
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: release-x86_64-unknown-linux-musl
-          path: dist
-
-      - name: Verify it
-        run: (cd dist && sha256sum --check --strict ./*.sha256)
-
-      - name: Build, lint and install the packages
+      # The .deb and the .rpm, from the Linux archive just packed, so they hold that very binary.
+      # Built here rather than in a job of their own, which would wait for the slower systems'
+      # builds as well.
+      - name: Build, lint and install the Linux packages
+        if: endsWith(matrix.target, '-musl')
         uses: ./.github/actions/linux-packages # zizmor: ignore[self-repository]
         with:
           version: ${{ needs.verify.outputs.version }}
-          archive: dist/steamship-${{ needs.verify.outputs.version }}-x86_64-linux-musl.tar.gz
+          archive: dist/${{ steps.pack.outputs.archive }}
           out: packages
 
-      - name: Upload the packages
+      - name: Upload the Linux packages
+        if: endsWith(matrix.target, '-musl')
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-linux-packages
@@ -292,7 +276,7 @@ jobs:
   # SBOM says what it should, because an SBOM that lists nothing looks exactly like a passing step.
   sbom:
     name: sbom
-    needs: [verify, build, linux-packages]
+    needs: [verify, build]
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
