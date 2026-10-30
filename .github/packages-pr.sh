@@ -89,9 +89,20 @@ open_pr() {
 wait_for() {
   local pr="$1"
   local deadline=$((SECONDS + 100 * 60))
-  local view state head held failed decision merge
+  local view state head held failed decision merge unanswered=0
   while ((SECONDS < deadline)); do
-    view="$(gh pr view "${pr}" --json state,mergeStateStatus,reviewDecision,headRefOid,statusCheckRollup)"
+    # GitHub sometimes cuts a reply short (gh then says "unexpected end of JSON input"). Over a
+    # wait this long one such reply is likely, so it is asked again next round; only a run of
+    # them ends the wait, rather than leaving the release's packages off main.
+    if ! view="$(gh pr view "${pr}" --json state,mergeStateStatus,reviewDecision,headRefOid,statusCheckRollup)" \
+      || ! jq -e . <<< "${view}" > /dev/null 2>&1; then
+      unanswered=$((unanswered + 1))
+      if ((unanswered >= 10)); then
+        fail "GitHub did not answer about pull request #${pr} ten times in a row."
+      fi
+      sleep 30
+      continue
+    fi
     state="$(jq -r .state <<< "${view}")"
     case "${state}" in
       MERGED)
@@ -103,8 +114,16 @@ wait_for() {
       *) fail "Pull request #${pr} is in a state GitHub does not document: ${state}." ;;
     esac
     head="$(jq -r .headRefOid <<< "${view}")"
-    held="$(gh api "repos/${GH_REPO}/actions/runs?head_sha=${head}" \
-      --jq '[.workflow_runs[] | select(.status == "action_required")] | length')"
+    if ! held="$(gh api "repos/${GH_REPO}/actions/runs?head_sha=${head}" \
+      --jq '[.workflow_runs[] | select(.status == "action_required")] | length')"; then
+      unanswered=$((unanswered + 1))
+      if ((unanswered >= 10)); then
+        fail "GitHub did not answer about pull request #${pr}'s workflow runs ten times in a row."
+      fi
+      sleep 30
+      continue
+    fi
+    unanswered=0
     if [[ "${held}" != 0 ]]; then
       fail "Pull request #${pr}'s checks are waiting for someone to approve them, which happens when it is not opened as the packaging app."
     fi
