@@ -1972,23 +1972,11 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
             .hold_back_set_live()
             .map_err(|error| fail(&error, FAILED))?;
     }
-    // Asked for on every upload by a game's tools, the default branch is left once the game is
-    // released, and the upload goes on to its own branch as ever.
-    let default = if request.default {
-        let asked = default_unreleased(&home, &account, prepared.app_id, packed.as_ref());
-        if asked.is_err() {
-            install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
-        }
-        match asked? {
-            Ok(()) => Some(web_api(&home)?),
-            Err(why) => {
-                show::note(&format!("{why}; the build goes up without it"));
-                None
-            }
-        }
-    } else {
-        None
-    };
+    let (default, in_run) = default_key(
+        request.default,
+        (&held, &home, &manifest),
+        (&account, prepared.app_id, packed.as_ref()),
+    )?;
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
     let saved = prepared.output.join("steamcmd.log");
@@ -2000,6 +1988,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         root: &root,
         saved: &saved,
         preview: request.preview,
+        info_of: in_run.then_some(prepared.app_id),
     };
     let (doing, again) = if request.preview {
         ("computing the build", "computing the build again")
@@ -2013,8 +2002,15 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         spinner,
         took,
         redactor,
+        info,
         ..
     } = build_retrying(&steam, doing, again)?;
+    let (default, spinner) = shown_unreleased(
+        default,
+        &outcome,
+        info.as_deref(),
+        (prepared.app_id, spinner, doing),
+    );
     let outcome = found_on_steam(outcome, &prepared, &description);
     let reporting = Reporting {
         spinner,
@@ -2045,6 +2041,78 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
     Ok((code, prepared.held_back))
 }
 
+/// The key an upload `asked` for the default branch too sets it live with, and whether the build's
+/// own steamcmd run is to show first that `app` is unreleased.
+///
+/// Asked for on every upload by a game's tools, the default branch is left once the game is
+/// released, and the upload goes on to its own branch as ever. With a key at hand Steam is asked
+/// in the build's run, saving a login; without one it is asked here, so a key that is needed is
+/// asked for before anything goes up.
+fn default_key(
+    asked: bool,
+    (held, home, manifest): (&install::Held, &Path, &Manifest),
+    (account, app, packed): (&Account, u32, Option<&ci::Login>),
+) -> Result<(Option<(webapi::Api, KeyFrom)>, bool), ExitCode> {
+    if !asked {
+        return Ok((None, false));
+    }
+    if key_variable().is_some() || keychain::has(home).unwrap_or(false) {
+        return Ok((Some(web_api(home)?), true));
+    }
+    let shown = default_unreleased(home, account, app, packed);
+    if shown.is_err() {
+        install::verify(held, manifest).map_err(|error| steamcmd_failed(&error))?;
+    }
+    Ok(match shown? {
+        Ok(()) => (Some(web_api(home)?), false),
+        Err(why) => {
+            show::note(&format!("{why}; the build goes up without it"));
+            (None, false)
+        }
+    })
+}
+
+/// The `default` key to set the default branch live with, kept, when the build's own steamcmd run
+/// printed the app's `info`, only while that shows `app` unreleased, said while the build's
+/// `spinner`, `doing` so, waits; nothing is said for a build that never reached Steam.
+fn shown_unreleased<Key>(
+    default: Option<Key>,
+    outcome: &upload::Outcome,
+    info: Option<&str>,
+    (app, spinner, doing): (u32, Spinner, &str),
+) -> (Option<Key>, Spinner) {
+    let Some(info) = info else {
+        return (default, spinner);
+    };
+    let Some(key) = default else {
+        return (None, spinner);
+    };
+    if !matches!(
+        outcome,
+        upload::Outcome::Built { .. } | upload::Outcome::BuiltThenFailed { .. }
+    ) {
+        return (None, spinner);
+    }
+    let shown = settings::info_from_console(info, app).ok();
+    let (judged, said) = release_judged(
+        shown.as_ref().and_then(release::state),
+        app,
+        DEFAULT_RELEASED,
+    );
+    let spinner = spinner.around(
+        || match &judged {
+            Ok(()) => show::done("steam", &said),
+            Err(why) => {
+                show::failed("steam", &said);
+                show::note(&format!("{why}; the build goes up without it"));
+            }
+        },
+        doing,
+        true,
+    );
+    (judged.is_ok().then_some(key), spinner)
+}
+
 /// The logs of a failed upload, steamcmd's console saved at `saved` among them, as
 /// [`dump_in_actions`] shows them with what steamcmd `added` to its own.
 fn dump_failed(
@@ -2071,6 +2139,8 @@ struct Steam<'upload> {
     /// Where steamcmd's console is written, redacted.
     saved: &'upload Path,
     preview: bool,
+    /// The app whose info the first run prints before it builds.
+    info_of: Option<u32>,
 }
 
 /// What one run of steamcmd for an upload came to, its spinner still turning.
@@ -2081,13 +2151,16 @@ struct Ran {
     spinner: Spinner,
     took: String,
     redactor: Redactor,
+    /// What steamcmd printed of the app's info, when it was asked to.
+    info: Option<String>,
 }
 
 /// Runs steamcmd's build, saying it is `doing` so, and runs it `again` while it fails in a way
 /// that may pass: once Steam's CDN serves a manifest it did not, and once more for no connection
 /// to Steam's build server.
 fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, ExitCode> {
-    let mut ran = build(steam, doing)?;
+    let mut ran = build(steam, doing, steam.info_of)?;
+    let info = ran.info.take();
     let mut runs = 1_u32;
     let mut patience = upload::CDN_PATIENCE;
     let mut reconnected = false;
@@ -2143,19 +2216,21 @@ fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, Ex
             }
         }
         runs = runs.saturating_add(1);
-        ran = build(steam, again)?;
+        ran = build(steam, again, None)?;
     }
+    ran.info = info;
     Ok(ran)
 }
 
-/// Runs steamcmd's build once, saying it is `doing` so, and reads what it came to.
-fn build(steam: &Steam<'_>, doing: &str) -> Result<Ran, ExitCode> {
+/// Runs steamcmd's build once, printing first the info of the app `info_of` names, saying it is
+/// `doing` so, and reads what it came to.
+fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, ExitCode> {
     upload::clear_log(steam.prepared).map_err(|error| fail(&error, FAILED))?;
     let before = Redactor::for_home(steam.home).map_err(|error| fail(&error, FAILED))?;
     let spinner = Spinner::start("steam", doing, true);
     let finished = run::run(
         steam.program,
-        &steamcmd::upload(steam.account, &steam.prepared.script),
+        &steamcmd::upload(steam.account, &steam.prepared.script, info_of),
         &steamcmd::environment(steam.home, Platform::THIS),
         steam.root,
         steamcmd::UPLOAD_LIMIT,
@@ -2180,7 +2255,14 @@ fn build(steam: &Steam<'_>, doing: &str) -> Result<Ran, ExitCode> {
     let log = fs::read(steam.prepared.log())
         .ok()
         .map(|log| redactor.redact(&log));
-    let console = String::from_utf8_lossy(&console);
+    let mut console = String::from_utf8_lossy(&console).into_owned();
+    // The info is read apart, as text anyone can write into an app's settings could pass for a
+    // line of the build.
+    let info = info_of.map(|app| {
+        settings::info_at(&console, app)
+            .map(|at| console.drain(at).collect::<String>())
+            .unwrap_or_default()
+    });
     let log = log.as_deref().map(String::from_utf8_lossy);
     let outcome = upload::judge(
         steam.prepared.app_id,
@@ -2200,6 +2282,7 @@ fn build(steam: &Steam<'_>, doing: &str) -> Result<Ran, ExitCode> {
         spinner,
         took,
         redactor,
+        info,
     })
 }
 
@@ -5246,23 +5329,38 @@ fn unreleased(
     (released, left): (&str, &str),
 ) -> Result<Result<(), String>, ExitCode> {
     let (state, spinner) = release_shown(home, account, app, packed)?;
-    Ok(match state.as_deref() {
+    let (judged, said) = release_judged(state.as_deref(), app, (released, left));
+    if judged.is_ok() {
+        spinner.done(&said);
+    } else {
+        spinner.failed(&said);
+    }
+    Ok(judged)
+}
+
+/// Whether Steam's release `state` for `app` shows it unreleased, as [`unreleased`] answers, with
+/// what the step that asked says.
+fn release_judged(
+    state: Option<&str>,
+    app: u32,
+    (released, left): (&str, &str),
+) -> (Result<(), String>, String) {
+    match state {
         Some(state) if release::unreleased(state) => {
-            spinner.done(&format!("unreleased, as Steam shows it ({state})"));
-            Ok(())
+            (Ok(()), format!("unreleased, as Steam shows it ({state})"))
         }
-        Some(state) => {
-            spinner.failed(&format!("released, as Steam shows it ({state})"));
-            Err(format!("app {app} is released, so {released}"))
-        }
-        None => {
-            spinner.failed("not shown");
+        Some(state) => (
+            Err(format!("app {app} is released, so {released}")),
+            format!("released, as Steam shows it ({state})"),
+        ),
+        None => (
             Err(format!(
                 "Steam shows no release state for app {app}, so steamship leaves {left} to \
                  Steamworks"
-            ))
-        }
-    })
+            )),
+            "not shown".to_owned(),
+        ),
+    }
 }
 
 /// Whether a Workshop item for `app`, whose game's settings `file` holds its items until launch,

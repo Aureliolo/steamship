@@ -7,6 +7,7 @@
 //! the app there, and not after every upload.
 
 use std::fmt;
+use std::ops::Range;
 
 use crate::redist::REDISTRIBUTABLES;
 use crate::vdf::{self, Block, Pair, Value};
@@ -76,6 +77,26 @@ pub fn info_from_console(console: &str, app: u32) -> Result<Block, String> {
         ));
     }
     Ok(shown.clone())
+}
+
+/// Where in steamcmd's `console` the info `app_info_print` printed for `app` lies, so what the
+/// other commands of the same run printed is read apart from it; none when steamcmd printed none.
+#[must_use]
+pub fn info_at(console: &str, app: u32) -> Option<Range<usize>> {
+    let named = format!("\"{app}\"");
+    let mut at = 0_usize;
+    let mut start = None;
+    for line in console.split_inclusive('\n') {
+        let end = at.saturating_add(line.len());
+        let trimmed = line.trim_end();
+        match start {
+            Some(start) if trimmed == "}" => return Some(start..end),
+            None if trimmed == named => start = Some(at),
+            _ => {}
+        }
+        at = end;
+    }
+    None
 }
 
 /// What of `shown` is kept: see the module's description.
@@ -681,6 +702,7 @@ fn shown(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::release;
 
     /// steamcmd's console as it printed Falcon Ridge Overseer's app info, trimmed.
     const CONSOLE: &str = "Logging in user 'ACCOUNT' [U:1:1] to Steam Public...OK\n\
@@ -1197,6 +1219,32 @@ mod tests {
                 .unwrap_err()
                 .starts_with("steamcmd printed settings for app 1 that cannot be read: ")
         );
+    }
+
+    #[test]
+    fn a_run_that_printed_the_info_then_built_is_cut_after_the_info() {
+        let built = "Building depot 1000011...\nSuccessfully finished AppID 1000010 build \
+                     (BuildID 4242).\n";
+        let console = format!("{CONSOLE}{built}");
+        let mut rest = console.clone();
+        let info: String = rest.drain(info_at(&console, 1_000_010).unwrap()).collect();
+        assert!(
+            info.starts_with("\"1000010\"\n{\n") && info.ends_with("\t}\n}\n"),
+            "{info}"
+        );
+        assert_eq!(
+            rest,
+            format!(
+                "Logging in user 'ACCOUNT' [U:1:1] to Steam Public...OK\n\
+                 AppID : 1000010, change number : 39317222/39317222, last change : Tue Sep 29 \
+                 2026 \nUnloading Steam API...OK\n{built}"
+            )
+        );
+        assert_eq!(
+            release::state(&info_from_console(&info, 1_000_010).unwrap()),
+            Some("unavailable")
+        );
+        assert_eq!(info_at(built, 1_000_010), None);
     }
 
     #[test]
