@@ -213,7 +213,7 @@ pkg-fmt = "zip"
 opt-level = 3
 
 # The release archives and `cargo install` alike. No link-time optimisation: fat LTO with one
-# codegen unit made the binary 3 % smaller for nearly four times the build, and thin LTO made it
-# both larger and slower to build.
+# codegen unit made the binary 3 % smaller for nearly four times the build, and thin LTO was
+# slower to build for at most half a percent less.
 [profile.release]
 strip = true
