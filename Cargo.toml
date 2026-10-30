@@ -207,6 +207,11 @@ pkg-fmt = "zip"
 pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ version }-{ target }.zip"
 pkg-fmt = "zip"
 
+# Unoptimised, SHA-256 runs at a fraction of its speed, and the tests hash whole programs, the
+# largest being a Linux build carrying its debug information.
+[profile.dev.package.sha2]
+opt-level = 3
+
 # `cargo install` builds with this profile, so it stays quick: whole-program optimisation nearly
 # triples the build for an 11% smaller binary. The release archives are built with `dist`, which
 # adds it; `cargo install --locked steamship --profile dist` builds the same from source.

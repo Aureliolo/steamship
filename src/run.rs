@@ -334,9 +334,14 @@ mod tests {
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "Add-Type -Name Console -Namespace Shown -MemberDefinition \
-                 '[DllImport(\"kernel32.dll\")] public static extern IntPtr GetConsoleWindow();'; \
-                 [Shown.Console]::GetConsoleWindow()",
+            // Declared through reflection, as the icon test in tests/steamship.rs says why.
+            "$type = [AppDomain]::CurrentDomain.DefineDynamicAssembly( \
+                 [Reflection.AssemblyName]::new('Shown'), 'Run').DefineDynamicModule( \
+                 'Shown').DefineType('Console', 'Public'); \
+             $type.DefinePInvokeMethod('GetConsoleWindow', 'kernel32.dll', 'Public, Static', \
+                 'Standard', [IntPtr], [Type[]] @(), 'Winapi', \
+                 'Auto').SetImplementationFlags('PreserveSig'); \
+             ($type.CreateType())::GetConsoleWindow()",
         ]))
         .unwrap();
         println!(
