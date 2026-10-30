@@ -4131,7 +4131,10 @@ fn check_asks_steam_whether_the_live_branch_exists_when_a_key_is_at_hand() {
 #[test]
 fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
     let home = tempfile::tempdir().unwrap();
-    let (host, _requests) = web_api(vec![("500 Internal Server Error", "")]);
+    let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", ""),
+        ("500 Internal Server Error", ""),
+    ]);
     let (_folder, script) = setting_live("beta2");
     let script = script.to_string_lossy().into_owned();
     let (unanswered, said, _) = steamship(
