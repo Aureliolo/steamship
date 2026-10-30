@@ -10,8 +10,8 @@ Everything a person reads counts: messages, help text, docs, comments, commit me
 - British English: colour, behaviour, licence as the noun. `typos` checks it with the en-gb
   locale.
 - No em or en dashes anywhere. Use a colon, semicolon, comma, full stop or brackets. The
-  `dashes` job fails on either.
-- No marketing filler. The words in `.github/hype-words.txt` fail the `hype` job. Say what
+  static checks fail on either.
+- No marketing filler. The words in `.github/hype-words.txt` fail the static checks. Say what
   steamship does, and give a number only when it was measured.
 - Describe steamship as it is meant to be: no status lines, "not yet" or caveats for a gap that
   is about to close.
