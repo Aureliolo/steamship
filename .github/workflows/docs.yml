@@ -26,6 +26,13 @@ concurrency:
 jobs:
   site:
     name: site
+    # A release's Homebrew and Scoop pull request, opened by the packaging app on a branch of this
+    # repository, changes nothing the site shows. A skipped job counts as passed for a required
+    # check.
+    if: >-
+      ${{ !(github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:

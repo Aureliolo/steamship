@@ -34,8 +34,14 @@ concurrency:
 
 jobs:
   mutants:
-    # A pull request's one job for each system keeps the name its required check is known by.
+    # A pull request's one job for each system is named by the system alone.
     name: mutants (${{ matrix.platform }}${{ github.event_name != 'pull_request' && format(' {0}/8', matrix.shard) || '' }})
+    # A release's Homebrew and Scoop pull request, opened by the packaging app on a branch of this
+    # repository, changes no code to mutate. The passed job below counts a skipped one as passed.
+    if: >-
+      ${{ !(github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -147,3 +153,19 @@ jobs:
           name: mutants-${{ matrix.platform }}-${{ matrix.shard }}
           path: mutants.out/
           if-no-files-found: ignore
+
+  # The one check the ruleset requires of this workflow, as ci.yml's passed job explains.
+  passed:
+    name: mutants passed
+    if: always()
+    needs: [mutants]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every system's run to have passed or been skipped
+        env:
+          RESULT: ${{ needs.mutants.result }}
+        run: |
+          echo "mutants: ${RESULT}"
+          [[ "${RESULT}" == success || "${RESULT}" == skipped ]]

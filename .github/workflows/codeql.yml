@@ -18,6 +18,12 @@ concurrency:
 jobs:
   analyse:
     name: codeql (${{ matrix.language }})
+    # A release's Homebrew and Scoop pull request, opened by the packaging app on a branch of this
+    # repository, changes no code to analyse. The passed job below counts a skipped one as passed.
+    if: >-
+      ${{ !(github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -45,3 +51,19 @@ jobs:
         uses: github/codeql-action/analyze@977e6ceaea7361825998245d787fa3b4d6b9e5df # codeql-bundle-v2.27.0
         with:
           category: /language:${{ matrix.language }}
+
+  # The one check the ruleset requires of this workflow, as ci.yml's passed job explains.
+  passed:
+    name: codeql passed
+    if: always()
+    needs: [analyse]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every language's analysis to have passed or been skipped
+        env:
+          RESULT: ${{ needs.analyse.result }}
+        run: |
+          echo "codeql: ${RESULT}"
+          [[ "${RESULT}" == success || "${RESULT}" == skipped ]]
