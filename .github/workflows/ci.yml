@@ -138,13 +138,14 @@ jobs:
       - name: Measure
         run: cargo llvm-cov --locked --fail-under-lines 97
 
-  # Spelling in British English everywhere, the code included.
-  typos:
-    name: typos
+  # The checks that take seconds share one runner rather than each waiting for its own, every one
+  # run whatever an earlier one found, so a pull request sees all its failures at once.
+  static:
+    name: static checks
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
-      contents: read # Reads the files it checks.
+      contents: read # Reads the files, manifests and pins it checks.
 
     steps:
       - name: Checkout
@@ -152,24 +153,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # Spelling in British English everywhere, the code included.
       - name: Check spelling
         uses: crate-ci/typos@7f9d0819ca1c008ade73f4b41fa9d258d48f605b # v1.51.1
 
-  # No em dash anywhere, and no en dash standing in for one.
-  dashes:
-    name: dashes
-    runs-on: ubuntu-26.04
-    timeout-minutes: 10
-    permissions:
-      contents: read # Reads the files it checks.
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
+      # No em dash anywhere, and no en dash standing in for one.
       - name: Check for dashes
+        if: '!cancelled()'
         # The dashes are built from their UTF-8 bytes, so this file holds none for the search to
         # find and the pattern does not depend on the runner's locale.
         run: |
@@ -181,28 +174,99 @@ jobs:
             exit 1
           fi
 
-  # No marketing filler. The words are listed in .github/hype-words.txt, one to a line, matched
-  # whole and in any case; the list is the one file left out of the search.
-  hype:
-    name: hype
-    runs-on: ubuntu-26.04
-    timeout-minutes: 10
-    permissions:
-      contents: read # Reads the files it checks.
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
+      # No marketing filler. The words are listed in .github/hype-words.txt, one to a line, matched
+      # whole and in any case; the list is the one file left out of the search.
       - name: Check for hype
+        if: '!cancelled()'
         run: |
           set -euo pipefail
           if git grep -n -I -i -w -F -f .github/hype-words.txt -- . ':!.github/hype-words.txt'; then
             echo "::error::Say what steamship does, plainly, without the words in .github/hype-words.txt."
             exit 1
           fi
+
+      - name: Lint the Markdown
+        if: '!cancelled()'
+        uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34 # v25.0.0
+
+      # Claude Code reads AGENTS.md only where no CLAUDE.md sits beside it, so one added anywhere,
+      # as `claude /init` writes one, would quietly stop the project's instructions loading there.
+      - name: Keep the instructions in AGENTS.md
+        if: '!cancelled()'
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -iE '(^|/)CLAUDE\.md$'; then
+            echo "::error::The project's instructions live in AGENTS.md; fold this into it instead."
+            exit 1
+          fi
+
+      # Each pin against the manifest Valve serves now. At the same version they must be the same
+      # bytes: a Renovate raise moves only the version, and pins.yml finishes it on Renovate's
+      # branch, so a pin that still differs is one that was not finished. When Valve is ahead,
+      # Renovate raises the pin, so that is a notice rather than a failure.
+      - name: Compare the pins with Valve's manifests
+        if: '!cancelled()'
+        run: |
+          set -euo pipefail
+          version() { grep -m1 -oE '"version"[[:space:]]+"[0-9]+"' "$1" | grep -oE '[0-9]+'; }
+          failed=0
+          for system in win64 linux osx; do
+            pinned="pins/steam_cmd_${system}.vdf"
+            live="${RUNNER_TEMP}/steam_cmd_${system}"
+            curl -fsS --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${live}" \
+              "https://cdn.steamstatic.com/client/steam_cmd_${system}"
+            if [ "$(version "${pinned}")" != "$(version "${live}")" ]; then
+              echo "::notice file=${pinned}::Valve serves steamcmd $(version "${live}") for ${system}; the pin is $(version "${pinned}"), and Renovate raises it."
+            elif ! cmp -s "${pinned}" "${live}"; then
+              echo "::error file=${pinned}::${pinned} names Valve's current version but not its packages. Run 'cargo run --example pins' and commit what it writes."
+              failed=1
+            fi
+          done
+          exit "${failed}"
+
+      - name: Install cargo-machete
+        if: '!cancelled()'
+        env:
+          # renovate: datasource=github-release-attachments depName=bnjbvr/cargo-machete versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          CARGO_MACHETE_TAG: v0.9.2
+          CARGO_MACHETE_SHA256: 48200087f54c55aabcd4db4af1e25742b49846c02a1b1bfa134711945b35b2e9
+        run: |
+          set -euo pipefail
+          name="cargo-machete-${CARGO_MACHETE_TAG}-x86_64-unknown-linux-musl"
+          archive="${RUNNER_TEMP}/${name}.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
+            "https://github.com/bnjbvr/cargo-machete/releases/download/${CARGO_MACHETE_TAG}/${name}.tar.gz"
+          echo "${CARGO_MACHETE_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/${name}" >> "${GITHUB_PATH}"
+
+      # A dependency the code no longer uses is attack surface for nothing.
+      - name: Check for unused dependencies
+        if: '!cancelled()'
+        run: cargo machete
+
+      # The release archive, refused unless it matches the digest written here.
+      - name: Install cargo-deny
+        if: '!cancelled()'
+        env:
+          # renovate: datasource=github-release-attachments depName=EmbarkStudios/cargo-deny versioning=semver
+          CARGO_DENY_TAG: 0.20.2
+          CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+        run: |
+          set -euo pipefail
+          name="cargo-deny-${CARGO_DENY_TAG}-x86_64-unknown-linux-musl"
+          archive="${RUNNER_TEMP}/${name}.tar.gz"
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_TAG}/${name}.tar.gz"
+          echo "${CARGO_DENY_SHA256}  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}/${name}" >> "${GITHUB_PATH}"
+
+      # Licences, advisories, duplicate crates and where every crate comes from, across the whole
+      # workspace: without --workspace only the default member would be checked.
+      - name: Check the dependencies
+        if: '!cancelled()'
+        run: cargo deny --workspace --locked check --deny warnings
 
   # The .deb and the .rpm, from a Linux archive packed as the release packs it, linted and then
   # installed and used on bare Debian and Fedora, so a change that breaks them fails here rather
@@ -427,84 +491,12 @@ jobs:
           esac
           test -s "${STEAMSHIP_HOME}/${restored}"
 
-  # Each pin against the manifest Valve serves now. At the same version they must be the same bytes:
-  # a Renovate raise moves only the version, and pins.yml finishes it on Renovate's branch, so a
-  # pin that still differs is one that was not finished. When Valve is ahead, Renovate raises the
-  # pin, so that is a notice rather than a failure.
-  pins:
-    name: pins
-    runs-on: ubuntu-26.04
-    timeout-minutes: 10
-    permissions:
-      contents: read # Reads the pins it compares.
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Compare the pins with Valve's manifests
-        run: |
-          set -euo pipefail
-          version() { grep -m1 -oE '"version"[[:space:]]+"[0-9]+"' "$1" | grep -oE '[0-9]+'; }
-          failed=0
-          for system in win64 linux osx; do
-            pinned="pins/steam_cmd_${system}.vdf"
-            live="${RUNNER_TEMP}/steam_cmd_${system}"
-            curl -fsS --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${live}" \
-              "https://cdn.steamstatic.com/client/steam_cmd_${system}"
-            if [ "$(version "${pinned}")" != "$(version "${live}")" ]; then
-              echo "::notice file=${pinned}::Valve serves steamcmd $(version "${live}") for ${system}; the pin is $(version "${pinned}"), and Renovate raises it."
-            elif ! cmp -s "${pinned}" "${live}"; then
-              echo "::error file=${pinned}::${pinned} names Valve's current version but not its packages. Run 'cargo run --example pins' and commit what it writes."
-              failed=1
-            fi
-          done
-          exit "${failed}"
-
-  # A dependency the code no longer uses is attack surface for nothing.
-  machete:
-    name: machete
-    runs-on: ubuntu-26.04
-    timeout-minutes: 10
-    permissions:
-      contents: read # Reads the manifests it checks.
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install cargo-machete
-        env:
-          # renovate: datasource=github-release-attachments depName=bnjbvr/cargo-machete versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          CARGO_MACHETE_TAG: v0.9.2
-          CARGO_MACHETE_SHA256: 48200087f54c55aabcd4db4af1e25742b49846c02a1b1bfa134711945b35b2e9
-        run: |
-          set -euo pipefail
-          name="cargo-machete-${CARGO_MACHETE_TAG}-x86_64-unknown-linux-musl"
-          archive="${RUNNER_TEMP}/${name}.tar.gz"
-          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
-            "https://github.com/bnjbvr/cargo-machete/releases/download/${CARGO_MACHETE_TAG}/${name}.tar.gz"
-          echo "${CARGO_MACHETE_SHA256}  ${archive}" | sha256sum --check --strict
-          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
-          echo "${RUNNER_TEMP}/${name}" >> "${GITHUB_PATH}"
-
-      - name: Check for unused dependencies
-        run: cargo machete
-
   # The parsers read files and output steamship did not write, so each gets a minute of libFuzzer
-  # per run.
+  # per run, as many at once as the runner has cores: one build serves them all.
   # Linux only: on Windows the coverage instrumentation links only against the AddressSanitizer
   # runtime, and a sanitiser adds nothing here, where no fuzzed code is unsafe.
   fuzz:
-    name: fuzz (${{ matrix.target }})
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [vdf, elf, macho, pe, pattern, redact, terminal, dbus, picture, po, likeness, presets]
+    name: fuzz
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
@@ -526,83 +518,38 @@ jobs:
           CARGO_FUZZ_VERSION: 0.13.2
         run: cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
 
+      - name: Build the targets
+        run: cargo fuzz build --sanitizer none
+
+      # Each target's output goes to its own log, shown only when it fails, since the runs
+      # interleave. Every target runs to its minute whatever another finds.
       - name: Fuzz
-        env:
-          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          corpus="${GITHUB_WORKSPACE}/fuzz/corpus/${TARGET}"
-          seeds="${GITHUB_WORKSPACE}/fuzz/seeds/${TARGET}"
-          mkdir -p "${corpus}" "${seeds}"
-          cargo fuzz run --sanitizer none "${TARGET}" "${corpus}" "${seeds}" -- -max_total_time=60
+          export FUZZ_LOGS="${RUNNER_TEMP}/fuzz"
+          mkdir -p "${FUZZ_LOGS}"
+          fuzz() {
+            local target="$1"
+            local corpus="${GITHUB_WORKSPACE}/fuzz/corpus/${target}"
+            local seeds="${GITHUB_WORKSPACE}/fuzz/seeds/${target}"
+            mkdir -p "${corpus}" "${seeds}"
+            if ! cargo fuzz run --sanitizer none "${target}" "${corpus}" "${seeds}" -- -max_total_time=60 \
+              > "${FUZZ_LOGS}/${target}.log" 2>&1; then
+              echo "::group::${target}"
+              tail -n 80 "${FUZZ_LOGS}/${target}.log"
+              echo "::endgroup::"
+              echo "::error::The fuzz target ${target} failed; its input is in this run's failing-fuzz-inputs."
+              return 1
+            fi
+            echo "${target}: $(tail -n 1 "${FUZZ_LOGS}/${target}.log")"
+          }
+          export -f fuzz
+          cargo fuzz list | xargs -P "$(nproc)" -n 1 bash -c "fuzz \"\$1\"" fuzz
 
       - name: Keep the failing input
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: fuzz-${{ matrix.target }}
+          name: failing-fuzz-inputs
           path: fuzz/artifacts/
           if-no-files-found: ignore
-
-  # Licences, advisories, duplicate crates and where every crate comes from.
-  deny:
-    name: deny
-    runs-on: ubuntu-26.04
-    timeout-minutes: 10
-    permissions:
-      contents: read # Reads the lock file it checks.
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install Rust
-        run: rustup toolchain install
-
-      # The release archive, refused unless it matches the digest written here.
-      - name: Install cargo-deny
-        env:
-          # renovate: datasource=github-release-attachments depName=EmbarkStudios/cargo-deny versioning=semver
-          CARGO_DENY_TAG: 0.20.2
-          CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
-        run: |
-          set -euo pipefail
-          name="cargo-deny-${CARGO_DENY_TAG}-x86_64-unknown-linux-musl"
-          archive="${RUNNER_TEMP}/${name}.tar.gz"
-          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
-            "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_TAG}/${name}.tar.gz"
-          echo "${CARGO_DENY_SHA256}  ${archive}" | sha256sum --check --strict
-          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
-          echo "${RUNNER_TEMP}/${name}" >> "${GITHUB_PATH}"
-
-      # The whole workspace: without --workspace only the default member would be checked.
-      - name: Check
-        run: cargo deny --workspace --locked check --deny warnings
-
-  markdown:
-    name: markdown
-    runs-on: ubuntu-26.04
-    timeout-minutes: 10
-    permissions:
-      contents: read # Reads the Markdown it lints.
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Lint
-        uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34 # v25.0.0
-
-      # Claude Code reads AGENTS.md only where no CLAUDE.md sits beside it, so one added anywhere,
-      # as `claude /init` writes one, would quietly stop the project's instructions loading there.
-      - name: Keep the instructions in AGENTS.md
-        run: |
-          set -euo pipefail
-          if git ls-files | grep -iE '(^|/)CLAUDE\.md$'; then
-            echo "::error::The project's instructions live in AGENTS.md; fold this into it instead."
-            exit 1
-          fi
