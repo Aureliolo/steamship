@@ -235,7 +235,15 @@ jobs:
 
       - name: Test
         if: '!cancelled()'
-        run: cargo test --locked
+        run: |
+          set -euo pipefail
+          RUSTC_BOOTSTRAP=1 cargo test --locked -- -Z unstable-options --report-time \
+            | tee "${RUNNER_TEMP}/tests.txt"
+          echo "Slowest:"
+          sed -nE 's/^test (.*) \.\.\. ok <([0-9.]+)s>$/\2 \1/p' "${RUNNER_TEMP}/tests.txt" \
+            | sort -rn | head -25
+          awk '/ \.\.\. ok </ { gsub(/[<>s]/, "", $NF); sum += $NF } END { print "sum " sum }' \
+            "${RUNNER_TEMP}/tests.txt"
 
       # The Linux release binary is the static musl build, so it is tested as such on every change
       # rather than first at a release. musl-gcc, for the C and assembly in ring, comes from the
