@@ -175,10 +175,11 @@ jobs:
           fi
           curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${RUNNER_TEMP}/${archive}" \
             "https://github.com/rust-secure-code/cargo-auditable/releases/download/${tag}/${archive}"
-          if command -v sha256sum > /dev/null; then
-            echo "${digest}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
-          else
+          # macOS has a sha256sum of BSD's, which knows no --strict.
+          if [[ "${RUNNER_OS}" == macOS ]]; then
             echo "${digest}  ${RUNNER_TEMP}/${archive}" | shasum -a 256 --check
+          else
+            echo "${digest}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
           fi
           tool="${RUNNER_TEMP}/cargo-auditable"
           mkdir -p "${tool}"
