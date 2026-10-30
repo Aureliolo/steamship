@@ -37,11 +37,12 @@ jobs:
   prepare:
     name: prepare
     runs-on: ubuntu-26.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     # The app's key is a secret of this environment, which only main can deploy to.
     environment: release-prepare
     permissions:
       contents: read # Reads main, and whether a version's tag is taken; the app does the writing.
+      checks: read # Reads whether main's checks have passed.
 
     steps:
       - name: Refuse anyone but the repository's owner
@@ -64,6 +65,31 @@ jobs:
             echo "::error::The packaging app is not set up: the variable PACKAGING_APP_CLIENT_ID and the secret PACKAGING_APP_KEY in the release-prepare environment are needed. See .github/release-process.md." >&2
             exit 1
           fi
+
+      # The release pull request is not tested again, as it raises the version alone, so the
+      # commit it starts from must have passed on main. A run started just after a merge waits for
+      # those checks rather than failing.
+      - name: Wait for main's checks to pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for check in "ci passed" "codeql passed" "binskim passed"; do
+            while true; do
+              state="$(gh api -X GET "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" \
+                -f check_name="${check}" \
+                --jq '.check_runs | sort_by(.started_at) | last
+                  | if . == null or .status != "completed" then "pending" else .conclusion end')"
+              case "${state}" in
+                success) break ;;
+                pending) sleep 15 ;;
+                *)
+                  echo "::error::${check} ended in ${state} on main at ${GITHUB_SHA}. Fix main, then prepare the release again." >&2
+                  exit 1
+                  ;;
+              esac
+            done
+          done
 
       - name: Checkout main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
