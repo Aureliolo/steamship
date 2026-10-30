@@ -243,3 +243,115 @@ jobs:
           Scoop install --no-update-scoop aureliolo/steamship
           Check
           Scoop uninstall steamship
+
+  # winget's own validation installs a new package and starts its program with no arguments,
+  # failing one that exits otherwise than 0 within 10 seconds; this does the same before the
+  # manifests reach winget-pkgs.
+  winget:
+    name: packages (winget ${{ matrix.architecture }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x64
+            # renovate: datasource=github-runners depName=windows
+            runner: windows-2025
+          - architecture: arm64
+            runner: windows-11-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read # Reads the manifests, and the public release a pull request writes them from.
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # winget itself, installed over the older one the runner image carries so that the test
+      # runs the client winget-pkgs validates with. Raised by Renovate from the tag.
+      # renovate: datasource=github-releases depName=microsoft/winget-cli
+      WINGET_TAG: v1.29.380
+      WINGET_BUNDLE_SHA256: 65dea9c01ce08ee7b763366b27c0e651f97db857c11ca9b9c301826c10092f2e
+      WINGET_DEPENDENCIES_SHA256: ba875afe9d190f61218985ac0292a99d1db710bf93e13c68944ca9d89f0d82d1
+      WINGET_LICENSE: e53e159d00e04f729cc2180cffd1c02e_License1.xml
+      WINGET_LICENSE_SHA256: bcb15118ec47df24e3e6013a7006147c3a15b3a8104ed660fe87c8b4ed01f485
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Take the release's manifests
+        if: inputs.files != ''
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.files }}
+
+      # On a pull request no manifests are committed, so they are written as the next release
+      # writes them, from the signed checksums of the release the bucket names.
+      - name: Write the manifests for the release the bucket names
+        if: inputs.files == ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(jq -r .version bucket/steamship.json)"
+          mkdir release written
+          gh release download "v${version}" --repo "${GITHUB_REPOSITORY}" --dir release \
+            --pattern '*.sha256' --pattern "steamship-${version}.intoto.jsonl"
+          for sum in release/*.sha256; do
+            gh attestation verify "${sum}" --bundle "release/steamship-${version}.intoto.jsonl" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release-build.yml" \
+              --source-ref "refs/tags/v${version}" --deny-self-hosted-runners
+          done
+          bash .github/packages.sh "${version}" release written
+          mv written/winget winget
+
+      - name: Install winget at its pinned release
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = "https://github.com/microsoft/winget-cli/releases/download/$env:WINGET_TAG"
+          $files = @{
+            'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' = $env:WINGET_BUNDLE_SHA256
+            'DesktopAppInstaller_Dependencies.zip' = $env:WINGET_DEPENDENCIES_SHA256
+            $env:WINGET_LICENSE = $env:WINGET_LICENSE_SHA256
+          }
+          foreach ($name in $files.Keys) {
+            $path = "$env:RUNNER_TEMP\$name"
+            Invoke-WebRequest -Uri "$base/$name" -OutFile $path
+            $hash = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant()
+            if ($hash -ne $files[$name]) { throw "$name hashes to $hash, not the pinned $($files[$name])." }
+          }
+          Expand-Archive "$env:RUNNER_TEMP\DesktopAppInstaller_Dependencies.zip" "$env:RUNNER_TEMP\dependencies"
+          $machine = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+          $dependencies = Get-ChildItem "$env:RUNNER_TEMP\dependencies\$machine" -Filter *.appx | ForEach-Object FullName
+          Add-AppxProvisionedPackage -Online -PackagePath "$env:RUNNER_TEMP\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" `
+            -DependencyPackagePath $dependencies -LicensePath "$env:RUNNER_TEMP\$env:WINGET_LICENSE" | Out-Null
+          Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+          "$env:LOCALAPPDATA\Microsoft\WindowsApps" >> $env:GITHUB_PATH
+          $running = & "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe" --version
+          if ($running -ne $env:WINGET_TAG) { throw "winget is $running after installing the pinned $env:WINGET_TAG." }
+
+      - name: Install with winget, then start steamship as winget's validation does
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          winget --version
+          winget settings --enable LocalManifestFiles
+          winget install --manifest winget --architecture $env:ARCHITECTURE --disable-interactivity `
+            --accept-package-agreements --accept-source-agreements
+          $version = (Get-Content bucket/steamship.json -Raw | ConvertFrom-Json).version
+          $steamship = "$env:LOCALAPPDATA\Microsoft\WinGet\Links\steamship.exe"
+          $said = & $steamship --version
+          if ($said -ne "steamship $version") { throw "steamship said '$said' rather than version $version." }
+          $PSNativeCommandUseErrorActionPreference = $false
+          foreach ($attempt in 1..5) {
+            & $steamship | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "steamship with no arguments exited $LASTEXITCODE on attempt $attempt." }
+          }
+          $PSNativeCommandUseErrorActionPreference = $true
+          winget uninstall --manifest winget --disable-interactivity --accept-source-agreements
