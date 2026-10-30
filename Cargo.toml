@@ -212,13 +212,8 @@ pkg-fmt = "zip"
 [profile.dev.package.sha2]
 opt-level = 3
 
-# `cargo install` builds with this profile, so it stays quick: whole-program optimisation nearly
-# triples the build for an 11% smaller binary. The release archives are built with `dist`, which
-# adds it; `cargo install --locked steamship --profile dist` builds the same from source.
+# The release archives and `cargo install` alike. No link-time optimisation: fat LTO with one
+# codegen unit made the binary 3 % smaller for nearly four times the build, and thin LTO made it
+# both larger and slower to build.
 [profile.release]
 strip = true
-
-[profile.dist]
-inherits = "release"
-lto = "fat"
-codegen-units = 1
