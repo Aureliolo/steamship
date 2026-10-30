@@ -33,20 +33,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  mutants:
-    # A pull request's one job for each system is named by the system alone.
-    name: mutants (${{ matrix.platform }}${{ github.event_name != 'pull_request' && format(' {0}/8', matrix.shard) || '' }})
+  # A pull request that leaves a system's own module alone gives that system nothing to mutate,
+  # and macOS would still spend a scarce runner building cargo-mutants to find so.
+  plan:
+    name: mutants plan
     # A release's Homebrew and Scoop pull request, opened by the packaging app on a branch of this
     # repository, changes no code to mutate. The passed job below counts a skipped one as passed.
     if: >-
       ${{ !(github.event.pull_request.head.repo.full_name == github.repository
       && startsWith(github.head_ref, 'packages/v')
       && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read # Lists the files the pull request changes.
+    outputs:
+      exclude: ${{ steps.plan.outputs.exclude }}
+    steps:
+      - name: Leave out each system whose own module is unchanged
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PULL_REQUEST: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          exclude='[]'
+          if [[ -n "${PULL_REQUEST}" ]]; then
+            changed="$(gh api --paginate "repos/${REPOSITORY}/pulls/${PULL_REQUEST}/files" \
+              --jq '.[].filename')"
+            exclude="$(jq -cn --arg changed "${changed}" \
+              '($changed | split("\n")) as $changed
+               | [{platform: "windows", module: "src/windows.rs"},
+                  {platform: "macos", module: "src/macos.rs"}]
+               | map(select(.module as $module | $changed | index($module) | not)
+                     | {platform})')"
+          fi
+          echo "Left out: ${exclude}"
+          echo "exclude=${exclude}" >> "${GITHUB_OUTPUT}"
+
+  mutants:
+    # A pull request's one job for each system is named by the system alone.
+    name: mutants (${{ matrix.platform }}${{ github.event_name != 'pull_request' && format(' {0}/8', matrix.shard) || '' }})
+    needs: [plan]
     strategy:
       fail-fast: false
       matrix:
         platform: [linux, windows, macos]
         shard: ${{ fromJSON(github.event_name == 'pull_request' && '[0]' || '[0, 1, 2, 3, 4, 5, 6, 7]') }}
+        exclude: ${{ fromJSON(needs.plan.outputs.exclude) }}
         include:
           - platform: linux
             # renovate: datasource=github-runners depName=ubuntu
@@ -158,14 +193,15 @@ jobs:
   passed:
     name: mutants passed
     if: always()
-    needs: [mutants]
+    # The plan too: had it failed, the runs would be skipped rather than failed.
+    needs: [plan, mutants]
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: Require every system's run to have passed or been skipped
+      - name: Require the plan and every system's run to have passed or been skipped
         env:
-          RESULT: ${{ needs.mutants.result }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
-          echo "mutants: ${RESULT}"
-          [[ "${RESULT}" == success || "${RESULT}" == skipped ]]
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "${NEEDS}"
+          jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<< "${NEEDS}" > /dev/null
