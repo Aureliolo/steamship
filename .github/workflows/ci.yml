@@ -47,6 +47,9 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read # Reads the source it builds.
+    defaults:
+      run:
+        shell: bash
     env:
       # The release's C runtime, with Spectre mitigations, so that a runner without it fails
       # here rather than at a release; see .cargo/config.toml.
@@ -63,18 +66,157 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install
 
+      - name: Install the test prerequisites
+        uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
+
+      # The pinned steamcmd, installed for real from Valve's CDN on each system, then installed
+      # again, which must find it as pinned. These steps run first and in turn, each needing the
+      # one before; the checks after them run whatever these found.
+      - name: Install steamcmd, then verify it
+        run: |
+          set -euo pipefail
+          export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
+          cargo run --locked -- install | tee "${RUNNER_TEMP}/first.txt"
+          grep -q ', installed as pinned$' "${RUNNER_TEMP}/first.txt"
+          cargo run --locked -- install | tee "${RUNNER_TEMP}/second.txt"
+          grep -q ', pinned and verified$' "${RUNNER_TEMP}/second.txt"
+
+      # The whole of an upload but the login, against Valve's own test app: steamcmd run out of
+      # sight on this system, given the copy of the script, and refused by Steam, since an
+      # anonymous account may not build. Had steamcmd updated itself, the check after the run
+      # would exit 4 rather than 1.
+      - name: Upload a preview anonymously, which Steam refuses
+        # Refused within a minute; a steamcmd that hangs instead is stopped here, before the job's
+        # own limit, so that the step below still runs and shows where it stopped.
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
+          status=0
+          cargo run --locked -- upload tests/fixtures/spacewar/steam/app_build.vdf \
+            --version ci --account anonymous --preview 2> "${RUNNER_TEMP}/upload.txt" || status=$?
+          cat "${RUNNER_TEMP}/upload.txt"
+          test "${status}" -eq 1
+          grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/upload.txt"
+
+      # steamship shows steamcmd's logs itself when steamcmd fails, but not when steamcmd hangs and
+      # is stopped from outside. The account is anonymous, so the logs hold no login.
+      - name: Show steamcmd's logs when the upload did not end as it should
+        if: failure()
+        run: |
+          set -euo pipefail
+          home="${RUNNER_TEMP}/steamship home"
+          find "${home}" -path '*/logs/*' -type f | while IFS= read -r log; do
+            echo "::group::${log#"${home}"/}"
+            tail -n 100 "${log}"
+            echo "::endgroup::"
+          done
+
+      # steamcmd keeps its login in a config.vdf whose place differs by system. This is where each
+      # system shows the one it uses, which must be the one steamship reads to redact and to pack
+      # for CI, and writes a login handed over back to. And nothing of steamcmd's may land in the
+      # runner's own home, which would be the user's.
+      - name: Find steamcmd's login file where steamship looks, and nowhere else
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          home="${RUNNER_TEMP}/steamship home"
+          found="$(cd "${home}" && find . -path '*/config/config.vdf' | sed 's|^\./||')"
+          echo "config.vdf: ${found:-none}"
+          case "${PLATFORM}" in
+            windows*) expected=steamcmd/config/config.vdf ;;
+            linux) expected=Steam/config/config.vdf ;;
+            macos) expected="Library/Application Support/Steam/config/config.vdf" ;;
+          esac
+          if [[ "${found}" != "${expected}" ]]; then
+            echo "steamcmd kept its login in ${found:-no file}, where steamship looks in ${expected}." >&2
+            exit 1
+          fi
+          for leaked in "${HOME}/Steam" "${HOME}/.steam" "${HOME}/Library/Application Support/Steam"; do
+            if [[ -e "${leaked}" ]]; then
+              echo "steamcmd wrote to ${leaked}, outside the steamship home." >&2
+              exit 1
+            fi
+          done
+
+      # Steam's partner Web API, asked with a key of the right form that no publisher holds: it
+      # refuses the key, which `builds` says, exiting 1. The key travels in a header, so this is
+      # also where Steam shows it reads one there.
+      - name: Have the partner Web API refuse a key that is not one
+        if: matrix.platform == 'linux'
+        run: |
+          set -euo pipefail
+          status=0
+          STEAMSHIP_WEB_API_KEY=00000000000000000000000000000000 \
+            cargo run --locked -- builds 480 2> "${RUNNER_TEMP}/builds.txt" || status=$?
+          cat "${RUNNER_TEMP}/builds.txt"
+          test "${status}" -eq 1
+          grep -q '^  ✗ Steam refused the Web API key; ' "${RUNNER_TEMP}/builds.txt"
+
+      # A key kept as a Linux desktop keeps one: libsecret's own secret-tool stores it in GNOME
+      # Keyring, steamship finds it for its home and has Steam refuse it as above, then `logout`
+      # forgets it, which secret-tool must see too. The bus and the keyring are this step's own.
+      - name: Use a key GNOME Keyring keeps, then forget it
+        if: matrix.platform == 'linux'
+        run: |
+          dbus-run-session -- bash <<'SESSION'
+          set -euo pipefail
+          printf 'ci' | gnome-keyring-daemon --unlock --components=secrets --daemonize > /dev/null
+          # A home of its own: `logout` here must not take the anonymous login the next step packs.
+          export STEAMSHIP_HOME="${RUNNER_TEMP}/key home"
+          printf '00000000000000000000000000000000' | secret-tool store \
+            --label='steamship Web API key' \
+            application steamship kind web-api-key home "${STEAMSHIP_HOME}"
+          status=0
+          cargo run --locked -- builds 480 > "${RUNNER_TEMP}/kept.txt" 2>&1 || status=$?
+          cat "${RUNNER_TEMP}/kept.txt"
+          test "${status}" -eq 1
+          grep -q '^  api key   kept in the Secret Service$' "${RUNNER_TEMP}/kept.txt"
+          grep -q '^  ✗ Steam refused the Web API key; ' "${RUNNER_TEMP}/kept.txt"
+          cargo run --locked -- logout | tee "${RUNNER_TEMP}/logout.txt"
+          grep -q '^  api key   ✓ forgotten$' "${RUNNER_TEMP}/logout.txt"
+          if secret-tool lookup application steamship kind web-api-key home "${STEAMSHIP_HOME}"; then
+            echo "logout left the key in GNOME Keyring." >&2
+            exit 1
+          fi
+          SESSION
+
+      # The login the anonymous run saved, packed by `steamship ci` as for a CI secret, then handed
+      # to an upload in a home of its own through STEAMSHIP_LOGIN alone: the account comes from
+      # it, and steamcmd, given it back where it reads it, gets as far as Steam's refusal again.
+      - name: Pack the login for CI, then upload with nothing but it
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          script=tests/fixtures/spacewar/steam/app_build.vdf
+          login="${RUNNER_TEMP}/login.txt"
+          STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home" \
+            cargo run --locked -- ci --script "${script}" --account anonymous --output "${login}"
+          export STEAMSHIP_HOME="${RUNNER_TEMP}/ci home"
+          status=0
+          STEAMSHIP_LOGIN="$(cat "${login}")" cargo run --locked -- upload "${script}" \
+            --version ci --preview > "${RUNNER_TEMP}/ci.txt" 2>&1 || status=$?
+          rm -f "${login}"
+          cat "${RUNNER_TEMP}/ci.txt"
+          test "${status}" -eq 1
+          grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/ci.txt"
+          case "${PLATFORM}" in
+            windows*) restored=steamcmd/config/config.vdf ;;
+            linux) restored=Steam/config/config.vdf ;;
+            macos) restored="Library/Application Support/Steam/config/config.vdf" ;;
+          esac
+          test -s "${STEAMSHIP_HOME}/${restored}"
+
       - name: Check formatting
+        if: '!cancelled()'
         run: cargo fmt --all --check
 
       # The fuzz harness too, so the targets are held to the same lints as the crate.
       - name: Lint
         if: '!cancelled()'
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
-
-      # Run whenever the tests do, so a failed lint does not leave them without a keyring.
-      - name: Install the test prerequisites
-        if: '!cancelled()'
-        uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
 
       - name: Test
         if: '!cancelled()'
@@ -312,184 +454,6 @@ jobs:
           version: ${{ steps.pack.outputs.version }}
           archive: ${{ steps.pack.outputs.archive }}
           out: packages
-
-  # The pinned steamcmd, installed for real from Valve's CDN on each system, then installed again,
-  # which must find it as pinned. Nothing runs steamcmd here.
-  install:
-    name: install (${{ matrix.platform }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux
-            # renovate: datasource=github-runners depName=ubuntu
-            runner: ubuntu-26.04
-          - platform: windows
-            # renovate: datasource=github-runners depName=windows
-            runner: windows-2025
-          # Valve's x86 steamcmd, emulated by Windows on Arm, driven by steamship built for Arm.
-          - platform: windows-arm
-            runner: windows-11-arm
-          - platform: macos
-            # renovate: datasource=github-runners depName=macos
-            runner: macos-26
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
-    permissions:
-      contents: read # Reads the source it builds.
-    defaults:
-      run:
-        shell: bash
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install Rust
-        run: rustup toolchain install
-
-      - name: Install steamcmd, then verify it
-        run: |
-          set -euo pipefail
-          export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
-          cargo run --locked -- install | tee "${RUNNER_TEMP}/first.txt"
-          grep -q ', installed as pinned$' "${RUNNER_TEMP}/first.txt"
-          cargo run --locked -- install | tee "${RUNNER_TEMP}/second.txt"
-          grep -q ', pinned and verified$' "${RUNNER_TEMP}/second.txt"
-
-      # The whole of an upload but the login, against Valve's own test app: steamcmd run out of
-      # sight on this system, given the copy of the script, and refused by Steam, since an
-      # anonymous account may not build. Had steamcmd updated itself, the check after the run
-      # would exit 4 rather than 1.
-      - name: Upload a preview anonymously, which Steam refuses
-        # Refused within a minute; a steamcmd that hangs instead is stopped here, before the job's
-        # own limit, so that the step below still runs and shows where it stopped.
-        timeout-minutes: 8
-        run: |
-          set -euo pipefail
-          export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
-          status=0
-          cargo run --locked -- upload tests/fixtures/spacewar/steam/app_build.vdf \
-            --version ci --account anonymous --preview 2> "${RUNNER_TEMP}/upload.txt" || status=$?
-          cat "${RUNNER_TEMP}/upload.txt"
-          test "${status}" -eq 1
-          grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/upload.txt"
-
-      # steamship shows steamcmd's logs itself when steamcmd fails, but not when steamcmd hangs and
-      # is stopped from outside. The account is anonymous, so the logs hold no login.
-      - name: Show steamcmd's logs when the upload did not end as it should
-        if: failure()
-        run: |
-          set -euo pipefail
-          home="${RUNNER_TEMP}/steamship home"
-          find "${home}" -path '*/logs/*' -type f | while IFS= read -r log; do
-            echo "::group::${log#"${home}"/}"
-            tail -n 100 "${log}"
-            echo "::endgroup::"
-          done
-
-      # steamcmd keeps its login in a config.vdf whose place differs by system. This is where each
-      # system shows the one it uses, which must be the one steamship reads to redact and to pack
-      # for CI, and writes a login handed over back to. And nothing of steamcmd's may land in the
-      # runner's own home, which would be the user's.
-      - name: Find steamcmd's login file where steamship looks, and nowhere else
-        env:
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          set -euo pipefail
-          home="${RUNNER_TEMP}/steamship home"
-          found="$(cd "${home}" && find . -path '*/config/config.vdf' | sed 's|^\./||')"
-          echo "config.vdf: ${found:-none}"
-          case "${PLATFORM}" in
-            windows*) expected=steamcmd/config/config.vdf ;;
-            linux) expected=Steam/config/config.vdf ;;
-            macos) expected="Library/Application Support/Steam/config/config.vdf" ;;
-          esac
-          if [[ "${found}" != "${expected}" ]]; then
-            echo "steamcmd kept its login in ${found:-no file}, where steamship looks in ${expected}." >&2
-            exit 1
-          fi
-          for leaked in "${HOME}/Steam" "${HOME}/.steam" "${HOME}/Library/Application Support/Steam"; do
-            if [[ -e "${leaked}" ]]; then
-              echo "steamcmd wrote to ${leaked}, outside the steamship home." >&2
-              exit 1
-            fi
-          done
-
-      # Steam's partner Web API, asked with a key of the right form that no publisher holds: it
-      # refuses the key, which `builds` says, exiting 1. The key travels in a header, so this is
-      # also where Steam shows it reads one there.
-      - name: Have the partner Web API refuse a key that is not one
-        if: matrix.platform == 'linux'
-        run: |
-          set -euo pipefail
-          status=0
-          STEAMSHIP_WEB_API_KEY=00000000000000000000000000000000 \
-            cargo run --locked -- builds 480 2> "${RUNNER_TEMP}/builds.txt" || status=$?
-          cat "${RUNNER_TEMP}/builds.txt"
-          test "${status}" -eq 1
-          grep -q '^  ✗ Steam refused the Web API key; ' "${RUNNER_TEMP}/builds.txt"
-
-      - name: Install D-Bus and GNOME Keyring
-        if: matrix.platform == 'linux'
-        uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
-
-      # A key kept as a Linux desktop keeps one: libsecret's own secret-tool stores it in GNOME
-      # Keyring, steamship finds it for its home and has Steam refuse it as above, then `logout`
-      # forgets it, which secret-tool must see too. The bus and the keyring are this step's own.
-      - name: Use a key GNOME Keyring keeps, then forget it
-        if: matrix.platform == 'linux'
-        run: |
-          dbus-run-session -- bash <<'SESSION'
-          set -euo pipefail
-          printf 'ci' | gnome-keyring-daemon --unlock --components=secrets --daemonize > /dev/null
-          # A home of its own: `logout` here must not take the anonymous login the next step packs.
-          export STEAMSHIP_HOME="${RUNNER_TEMP}/key home"
-          printf '00000000000000000000000000000000' | secret-tool store \
-            --label='steamship Web API key' \
-            application steamship kind web-api-key home "${STEAMSHIP_HOME}"
-          status=0
-          cargo run --locked -- builds 480 > "${RUNNER_TEMP}/kept.txt" 2>&1 || status=$?
-          cat "${RUNNER_TEMP}/kept.txt"
-          test "${status}" -eq 1
-          grep -q '^  api key   kept in the Secret Service$' "${RUNNER_TEMP}/kept.txt"
-          grep -q '^  ✗ Steam refused the Web API key; ' "${RUNNER_TEMP}/kept.txt"
-          cargo run --locked -- logout | tee "${RUNNER_TEMP}/logout.txt"
-          grep -q '^  api key   ✓ forgotten$' "${RUNNER_TEMP}/logout.txt"
-          if secret-tool lookup application steamship kind web-api-key home "${STEAMSHIP_HOME}"; then
-            echo "logout left the key in GNOME Keyring." >&2
-            exit 1
-          fi
-          SESSION
-
-      # The login the anonymous run saved, packed by `steamship ci` as for a CI secret, then handed
-      # to an upload in a home of its own through STEAMSHIP_LOGIN alone: the account comes from
-      # it, and steamcmd, given it back where it reads it, gets as far as Steam's refusal again.
-      - name: Pack the login for CI, then upload with nothing but it
-        env:
-          PLATFORM: ${{ matrix.platform }}
-        run: |
-          set -euo pipefail
-          script=tests/fixtures/spacewar/steam/app_build.vdf
-          login="${RUNNER_TEMP}/login.txt"
-          STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home" \
-            cargo run --locked -- ci --script "${script}" --account anonymous --output "${login}"
-          export STEAMSHIP_HOME="${RUNNER_TEMP}/ci home"
-          status=0
-          STEAMSHIP_LOGIN="$(cat "${login}")" cargo run --locked -- upload "${script}" \
-            --version ci --preview > "${RUNNER_TEMP}/ci.txt" 2>&1 || status=$?
-          rm -f "${login}"
-          cat "${RUNNER_TEMP}/ci.txt"
-          test "${status}" -eq 1
-          grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/ci.txt"
-          case "${PLATFORM}" in
-            windows*) restored=steamcmd/config/config.vdf ;;
-            linux) restored=Steam/config/config.vdf ;;
-            macos) restored="Library/Application Support/Steam/config/config.vdf" ;;
-          esac
-          test -s "${STEAMSHIP_HOME}/${restored}"
 
   # The parsers read files and output steamship did not write, so each gets a minute of libFuzzer
   # per run, as many at once as the runner has cores: one build serves them all.
