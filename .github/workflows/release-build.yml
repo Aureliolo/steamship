@@ -90,27 +90,22 @@ jobs:
           - target: x86_64-unknown-linux-musl
             # renovate: datasource=github-runners depName=ubuntu
             runner: ubuntu-26.04
-            native: true
           - target: x86_64-pc-windows-msvc
             # renovate: datasource=github-runners depName=windows
             runner: windows-2025
-            native: true
             spectre: spectre
           # Windows on Arm, native, while steamcmd runs there as the x86 program it is, emulated by
           # Windows. There is no Arm Linux build: steamcmd for Linux is x86 alone. The Arm image
           # is not one Renovate tracks.
           - target: aarch64-pc-windows-msvc
             runner: windows-11-arm
-            native: true
             spectre: spectre
           - target: aarch64-apple-darwin
             # renovate: datasource=github-runners depName=macos
             runner: macos-26
-            native: true
           - target: x86_64-apple-darwin
             # renovate: datasource=github-runners depName=macos
             runner: macos-26
-            native: false
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     permissions:
@@ -153,21 +148,11 @@ jobs:
           CARGO_AUDITABLE_VERSION: 0.7.6
         run: cargo install cargo-auditable --version "${CARGO_AUDITABLE_VERSION}" --locked
 
-      - name: Install the test prerequisites
-        if: matrix.native
-        uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
-
-      # The tests again, on the tagged commit and the system each binary is for, where that
-      # system can run them.
-      - name: Test
-        if: matrix.native
-        env:
-          TARGET: ${{ matrix.target }}
-        run: cargo test --locked --target "${TARGET}"
-
+      # No tests here: main takes a pull request only once it is up to date and every check has
+      # passed, so the tagged tree is the one CI tested on each of these systems.
       # The dist profile, optimised as a whole program, where `cargo install` keeps to the
-      # quicker release profile. Windows' flags come from .cargo/config.toml, which the tests
-      # above were built with too.
+      # quicker release profile. Windows' flags come from .cargo/config.toml, which CI's tests
+      # are built with too.
       - name: Build
         env:
           TARGET: ${{ matrix.target }}
@@ -177,7 +162,7 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
-            echo "The tests or the build changed the checked-out release source." >&2
+            echo "The build changed the checked-out release source." >&2
             git status --short >&2
             exit 1
           fi
