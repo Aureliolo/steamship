@@ -9081,7 +9081,7 @@ fn a_steamship_toml_saying_what_steamship_does_not_take_is_refused_naming_the_fi
     assert!(
         failure(&stderr).ends_with(&format!(
             "{}: `workshop.mod` is no setting steamship takes; it takes `workshop.mods`, \
-             `workshop.items`, `workshop.footer`",
+             `workshop.items`, `workshop.footer`, `workshop.held_until_launch`",
             Path::new("inn").join("steamship.toml").display()
         )),
         "{stderr}"
@@ -10394,6 +10394,101 @@ fn a_games_workshop_run_gives_its_visibility_only_to_the_items_it_makes() {
     );
     let made = copy("fresh");
     assert!(made.contains("\"visibility\"\t\t\"2\""), "{made}");
+}
+
+/// A steamcmd for Tidal Mill Inn that, asked for the app's info, prints it with `release` among
+/// its common settings, and otherwise publishes the Workshop item it is sent, adding a line to
+/// `sent` in the home.
+#[cfg(unix)]
+fn workshop_released_as(release: &str) -> String {
+    format!(
+        "#!/bin/sh\n\
+         case \" $* \" in *' +app_info_print '*)\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+         echo 'AppID : 1000050, change number : 5/5, last change : Tue Sep 29 20:07:48 2026 '\n\
+         printf '\"1000050\"\\n{{\\n\\t\"common\"\\n\\t{{\\n\\t\\t\"name\"\\t\\t\"Tidal Mill Inn\"\\n'\n\
+         printf '{release}\\t}}\\n}}\\n'\n\
+         echo 'Unloading Steam API...OK'\n\
+         exit 0;;\n\
+         esac\n\
+         echo sent >> \"$HOME/sent\"\n\
+         printf '%s\\r\\n' 'Success.'\n"
+    )
+}
+
+/// Runs `steamship workshop` with `args` in Tidal Mill Inn, whose `steamship.toml` holds its
+/// Workshop items until launch, and whose steamcmd shows the app's info with `release`: what it
+/// exits with, its output, and whether an item was sent.
+#[cfg(unix)]
+fn workshop_held(release: &str, args: &[&str]) -> (Option<i32>, String, String, bool) {
+    let (_temp, root) = pushed_game(Some("[workshop]\nheld_until_launch = true\n"));
+    fs::write(
+        root.join("steam").join("workshop_items.json"),
+        r#"{"app": 1000050, "items": {"example": 5674}}"#,
+    )
+    .unwrap();
+    pushed(&root, "The example mod is item 5674");
+    let home = faked_with(&workshop_released_as(release));
+    saved_login(home.path());
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &[["workshop"].as_slice(), args].concat(),
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    (code, stdout, stderr, home.path().join("sent").exists())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_game_holding_its_workshop_items_until_launch_sends_none_while_steam_shows_it_unreleased() {
+    let state = "\\t\\t\"ReleaseState\"\\t\\t\"unavailable\"\\n";
+    let (code, stdout, stderr, sent) = workshop_held(state, &[]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(!sent, "{stdout}{stderr}");
+    assert!(
+        stdout.contains("unreleased, as Steam shows it (unavailable)"),
+        "{stdout}"
+    );
+    let refused = failure(&stderr);
+    assert!(
+        refused.starts_with("app 1000050 is unreleased, and ")
+            && refused.ends_with(
+                "steamship.toml holds the game's Workshop items until launch: give --for-launch \
+                 to the run that readies the launch"
+            ),
+        "{stderr}"
+    );
+
+    let (unknown, said, why, went) = workshop_held("", &[]);
+    assert_eq!(unknown, Some(2_i32), "{said}{why}");
+    assert!(!went, "{said}{why}");
+    assert!(
+        failure(&why).starts_with("Steam shows no release state for app 1000050, and "),
+        "{why}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_game_holding_its_workshop_items_until_launch_sends_them_for_launch_or_once_released() {
+    let unreleased = "\\t\\t\"ReleaseState\"\\t\\t\"unavailable\"\\n";
+    let (code, stdout, stderr, sent) = workshop_held(unreleased, &["--for-launch"]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(sent, "{stdout}{stderr}");
+    assert!(
+        !stdout.contains("asking whether the app is released"),
+        "{stdout}"
+    );
+
+    let released = "\\t\\t\"ReleaseState\"\\t\\t\"released\"\\n";
+    let (later, said, why, went) = workshop_held(released, &[]);
+    assert_eq!(later, Some(0_i32), "{said}{why}");
+    assert!(went, "{said}{why}");
+    assert!(
+        said.contains("released, as Steam shows it (released)"),
+        "{said}"
+    );
 }
 
 /// A steamcmd for Tidal Mill Inn, still unreleased, that prints the app's info when asked for it,

@@ -169,6 +169,9 @@ pub enum Command {
     /// the tree is pushed, as for `upload`. Its title, description and version come from the
     /// manifest, its preview is the `preview.png` each mod needs beside it, and each item's ID is
     /// kept in `steam/workshop_items.json`.
+    ///
+    /// In a game whose `steamship.toml` sets `held_until_launch` under `[workshop]`, an item for
+    /// the game's app goes up only once Steam shows the game released, or with `--for-launch`.
     Workshop(Workshop),
     /// Show an app's branches and last builds.
     ///
@@ -694,6 +697,10 @@ pub struct Workshop {
     /// Make a new item from CI, which is otherwise refused there.
     #[arg(long)]
     pub new: bool,
+    /// Upload an item for a game whose `steamship.toml` holds its Workshop items until launch,
+    /// while Steam still shows the game unreleased: for the run that readies the launch.
+    #[arg(long)]
+    pub for_launch: bool,
     /// Once steamcmd has run, print what came of it on standard output as one line of JSON:
     /// `outcome`, `app`, `item` and `name`. Everything else goes to standard error.
     #[arg(long)]

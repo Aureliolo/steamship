@@ -1024,6 +1024,7 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
             },
             account: request.account.clone(),
             new: request.new,
+            for_launch: request.for_launch,
             json: request.json,
         };
         let uploaded = either(try_workshop(&item));
@@ -5235,6 +5236,68 @@ fn unreleased(
     packed: Option<&ci::Login>,
     (released, left): (&str, &str),
 ) -> Result<Result<(), String>, ExitCode> {
+    let (state, spinner) = release_shown(home, account, app, packed)?;
+    Ok(match state.as_deref() {
+        Some(state) if release::unreleased(state) => {
+            spinner.done(&format!("unreleased, as Steam shows it ({state})"));
+            Ok(())
+        }
+        Some(state) => {
+            spinner.failed(&format!("released, as Steam shows it ({state})"));
+            Err(format!("app {app} is released, so {released}"))
+        }
+        None => {
+            spinner.failed("not shown");
+            Err(format!(
+                "Steam shows no release state for app {app}, so steamship leaves {left} to \
+                 Steamworks"
+            ))
+        }
+    })
+}
+
+/// Whether a Workshop item for `app`, whose game's settings `file` holds its items until launch,
+/// may go up: only once Steam shows `account` the app released. Answers why not when it may not,
+/// and fails when Steam could not be asked.
+fn launched(
+    home: &Path,
+    account: &Account,
+    app: u32,
+    packed: Option<&ci::Login>,
+    file: &Path,
+) -> Result<Result<(), String>, ExitCode> {
+    let (state, spinner) = release_shown(home, account, app, packed)?;
+    let held = format!(
+        "{} holds the game's Workshop items until launch: give --for-launch to the run that \
+         readies the launch",
+        file.display()
+    );
+    Ok(match state.as_deref() {
+        Some(state) if release::unreleased(state) => {
+            spinner.failed(&format!("unreleased, as Steam shows it ({state})"));
+            Err(format!("app {app} is unreleased, and {held}"))
+        }
+        Some(state) => {
+            spinner.done(&format!("released, as Steam shows it ({state})"));
+            Ok(())
+        }
+        None => {
+            spinner.failed("not shown");
+            Err(format!(
+                "Steam shows no release state for app {app}, and {held}"
+            ))
+        }
+    })
+}
+
+/// The release state Steam shows `account` for `app`, asked through steamcmd run from `home`, with
+/// the spinner that asked, for the caller to finish as the state is good or bad for it.
+fn release_shown(
+    home: &Path,
+    account: &Account,
+    app: u32,
+    packed: Option<&ci::Login>,
+) -> Result<(Option<String>, Spinner), ExitCode> {
     let (console, spinner) = app_info(
         home,
         account,
@@ -5242,26 +5305,11 @@ fn unreleased(
         packed,
         "asking whether the app is released",
     )?;
-    let info = settings::info_from_console(&console, app);
-    match info.as_ref().map(release::state) {
-        Ok(Some(state)) if release::unreleased(state) => {
-            spinner.done(&format!("unreleased, as Steam shows it ({state})"));
-            Ok(Ok(()))
-        }
-        Ok(Some(state)) => {
-            spinner.failed(&format!("released, as Steam shows it ({state})"));
-            Ok(Err(format!("app {app} is released, so {released}")))
-        }
-        Ok(None) => {
-            spinner.failed("not shown");
-            Ok(Err(format!(
-                "Steam shows no release state for app {app}, so steamship leaves {left} to \
-                 Steamworks"
-            )))
-        }
+    match settings::info_from_console(&console, app) {
+        Ok(info) => Ok((release::state(&info).map(str::to_owned), spinner)),
         Err(why) => {
             spinner.failed("not shown");
-            Err(fail(why, FAILED))
+            Err(fail(&why, FAILED))
         }
     }
 }
@@ -5289,11 +5337,45 @@ fn refused_once_released(
         (Some(packed), None) => packed.account().clone(),
         _ => account(asked_as, false)?.0,
     };
+    refused_unless(home, packed.as_ref(), || {
+        unreleased(home, &account, app, packed.as_ref(), left)
+    })
+}
+
+/// Refuses as `ask` says why, asked of Steam with the pinned steamcmd, held, restored to `packed`'s
+/// login in `home`, and verified once it has run.
+fn refused_unless(
+    home: &Path,
+    packed: Option<&ci::Login>,
+    ask: impl FnOnce() -> Result<Result<(), String>, ExitCode>,
+) -> Result<(), ExitCode> {
     let (held, _, manifest) = ready()?;
-    restore(packed.as_ref(), home)?;
-    let asked = unreleased(home, &account, app, packed.as_ref(), left);
+    restore(packed, home)?;
+    let asked = ask();
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     asked?.map_err(|why| fail(&why, REFUSED))
+}
+
+/// Refuses an item for `app` while Steam shows it unreleased, when the game the current folder is
+/// in holds its Workshop items until launch and `app` is the game's own.
+fn held_until_launch(
+    app: u32,
+    account: &Account,
+    packed: Option<&ci::Login>,
+) -> Result<(), ExitCode> {
+    let here = env::current_dir()
+        .map_err(|error| fail(&format!("the current folder: {error}"), FAILED))?;
+    let Some(game) = Project::find(&here).map_err(|why| fail(&why, REFUSED))? else {
+        return Ok(());
+    };
+    if !game.held_until_launch || scripts::app_named(&game.script) != Some(app) {
+        return Ok(());
+    }
+    let home = home()?;
+    let file = game.root.join(project::FILE);
+    refused_unless(&home, packed, || {
+        launched(&home, account, app, packed, &file)
+    })
 }
 
 /// `app`'s settings, as Steam shows them to `account` through steamcmd.
@@ -5627,6 +5709,9 @@ fn try_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
         _ => account(named, false)?.0,
     };
     let item = checked_item(&given, request.new)?;
+    if !request.for_launch {
+        held_until_launch(item.app_id, &account, packed.as_ref())?;
+    }
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let copy = match &given {
