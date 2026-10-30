@@ -31,5 +31,7 @@ jobs:
             Zlib, 0BSD, Unlicense, CC0-1.0, BSL-1.0, Python-2.0, MPL-2.0, Unicode-3.0,
             CDLA-Permissive-2.0
           # libFuzzer is LLVM's, under the NCSA licence, and reaches only the fuzz harness, which
-          # is never published or shipped.
-          allow-dependencies-licenses: pkg:cargo/libfuzzer-sys
+          # is never published or shipped. rust-cache, under the LGPL, runs in CI alone and is
+          # never shipped either.
+          allow-dependencies-licenses: >-
+            pkg:cargo/libfuzzer-sys, pkg:githubactions/Swatinem/rust-cache

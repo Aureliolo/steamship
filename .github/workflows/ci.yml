@@ -73,6 +73,14 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install
 
+      # The dependencies as main last compiled them, for this job and system. Only a run on main
+      # saves them, so a pull request reads what main built and writes nothing main reads; the
+      # release builds restore no cache at all.
+      - name: Restore the compiled dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Install the test prerequisites
         uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
 
@@ -272,6 +280,12 @@ jobs:
       - name: Install Rust
         run: rustup toolchain install
 
+      # As rust.
+      - name: Restore the compiled dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       - name: Install cargo-llvm-cov
         env:
           # renovate: datasource=github-release-attachments depName=taiki-e/cargo-llvm-cov versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
@@ -452,6 +466,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends musl-tools
 
+      # As rust.
+      - name: Restore the compiled dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
       # The release profile rather than the release's dist one, which only adds whole-program
       # optimisation and would triple the build.
       - name: Build and pack the Linux binary
@@ -496,6 +516,12 @@ jobs:
 
       - name: Install Rust
         run: rustup toolchain install
+
+      # As rust; cargo-fuzz too, which is installed into the cargo home it keeps.
+      - name: Restore the compiled dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # From source at an exact version, every dependency held to the hashes in its lock file.
       - name: Install cargo-fuzz
