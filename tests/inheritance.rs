@@ -33,7 +33,7 @@ fn a_program_inherits_only_the_handles_it_is_given() {
             "/d",
             "/s",
             "/c",
-            "echo.> started & ping -n 6 127.0.0.1 > nul",
+            "echo.> started & ping -n 3 127.0.0.1 > nul",
         ]
         .map(OsString::from);
         run(
@@ -49,12 +49,12 @@ fn a_program_inherits_only_the_handles_it_is_given() {
         thread::sleep(Duration::from_millis(20));
     }
     drop(writer);
-    // Had the program inherited the pipe, it would hold it open for the five seconds it waits.
+    // Had the program inherited the pipe, it would hold it open for the two seconds it waits.
     let started = Instant::now();
     let mut rest = Vec::new();
     let _: usize = reader.read_to_end(&mut rest).unwrap();
     assert!(
-        started.elapsed() < Duration::from_secs(3),
+        started.elapsed() < Duration::from_secs(1),
         "the pipe stayed open for {:?}",
         started.elapsed()
     );
