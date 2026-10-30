@@ -1,0 +1,53 @@
+name: winget
+
+# winget-pkgs deprecates older manifest versions on its own schedule and then refuses submissions
+# that use them, with nothing here changing, so the version the winget manifests are written in is
+# held to the newest schema winget-cli publishes weekly; a pull request that changes the manifests
+# or this workflow runs it too.
+on:
+  schedule:
+    - cron: '41 4 * * 3'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/packages.sh
+      - .github/workflows/winget.yml
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  schema:
+    name: winget schema
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # Reads packages.sh; the schemas are read from a public repository.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare the manifest version with winget's newest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ours="$(sed -n 's/^manifest_version=//p' .github/packages.sh)"
+          newest="$(gh api repos/microsoft/winget-cli/contents/schemas/JSON/manifests --jq \
+            '[.[].name | select(test("^v[0-9]+[.][0-9]+[.][0-9]+$")) | ltrimstr("v")]
+             | sort_by(split(".") | map(tonumber)) | last')"
+          if [[ -z "${ours}" || -z "${newest}" ]]; then
+            echo "::error::Could not read the manifest version (${ours:-none}) or winget's newest (${newest:-none})."
+            exit 1
+          fi
+          if [[ "${ours}" != "${newest}" ]]; then
+            echo "::error file=.github/packages.sh::The winget manifests are written in ${ours}, and winget-cli's newest schema is ${newest}: set manifest_version to ${newest}, which winget-pkgs will otherwise come to refuse."
+            exit 1
+          fi
+          echo "The winget manifests are written in ${newest}, winget-cli's newest schema."
