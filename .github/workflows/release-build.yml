@@ -141,12 +141,55 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends musl-tools
 
-      # From source at an exact version, every dependency held to the hashes in its lock file.
+      # The project's own build for the runner, refused unless it matches the digest written here,
+      # in seconds where building it from source took up to half a minute on each system.
       - name: Install cargo-auditable
         env:
-          # renovate: datasource=crate depName=cargo-auditable
-          CARGO_AUDITABLE_VERSION: 0.7.6
-        run: cargo install cargo-auditable --version "${CARGO_AUDITABLE_VERSION}" --locked
+          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          LINUX_X64_TAG: v0.7.7
+          LINUX_X64_SHA256: 7676443367c5e33d9fb22acef63cccb5e9202de12dae1b0579995eb3e2bc7a18
+          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          WINDOWS_X64_TAG: v0.7.7
+          WINDOWS_X64_SHA256: 717ba2d3ed7997c501e9987ee7c94bebf9d7219b18b185a03009420ec7029c7d
+          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          WINDOWS_ARM64_TAG: v0.7.7
+          WINDOWS_ARM64_SHA256: ad827b9c8e94de85930ba32a52d5ab5873e7b54148b4e415279b8d5f3f9eb917
+          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          MACOS_ARM64_TAG: v0.7.7
+          MACOS_ARM64_SHA256: a66ad6392861ca1abfe0b02b522622d91edf63e5d7b60f4d3088b5c23d240c72
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}-${RUNNER_ARCH}" in
+            Linux-X64) host=x86_64-unknown-linux-musl tag="${LINUX_X64_TAG}" digest="${LINUX_X64_SHA256}" ;;
+            Windows-X64) host=x86_64-pc-windows-msvc tag="${WINDOWS_X64_TAG}" digest="${WINDOWS_X64_SHA256}" ;;
+            Windows-ARM64) host=aarch64-pc-windows-msvc tag="${WINDOWS_ARM64_TAG}" digest="${WINDOWS_ARM64_SHA256}" ;;
+            macOS-ARM64) host=aarch64-apple-darwin tag="${MACOS_ARM64_TAG}" digest="${MACOS_ARM64_SHA256}" ;;
+            *)
+              echo "No cargo-auditable build is pinned for ${RUNNER_OS} on ${RUNNER_ARCH}." >&2
+              exit 1
+              ;;
+          esac
+          archive="cargo-auditable-${host}.tar.xz"
+          if [[ "${RUNNER_OS}" == Windows ]]; then
+            archive="cargo-auditable-${host}.zip"
+          fi
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/rust-secure-code/cargo-auditable/releases/download/${tag}/${archive}"
+          if command -v sha256sum > /dev/null; then
+            echo "${digest}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
+          else
+            echo "${digest}  ${RUNNER_TEMP}/${archive}" | shasum -a 256 --check
+          fi
+          tool="${RUNNER_TEMP}/cargo-auditable"
+          mkdir -p "${tool}"
+          # The Windows archives hold the program at their top; the others in a folder of the
+          # target's name.
+          if [[ "${RUNNER_OS}" == Windows ]]; then
+            unzip -q "${RUNNER_TEMP}/${archive}" -d "${tool}"
+          else
+            tar -xJf "${RUNNER_TEMP}/${archive}" -C "${tool}" --strip-components 1
+          fi
+          echo "${tool}" >> "${GITHUB_PATH}"
 
       # No tests here: main takes a pull request only once it is up to date and every check has
       # passed, so the tagged tree is the one CI tested on each of these systems.

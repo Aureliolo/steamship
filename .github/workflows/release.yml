@@ -67,23 +67,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
+        # Eight at a time, against Sigstore's trust root fetched once through its TUF repository:
+        # each verification fetching it for itself took over a minute one after another, and
+        # several at once trip over each other's copy.
         run: |
           set -euo pipefail
-          bundle="dist/steamship-${VERSION}.intoto.jsonl"
-          signer="${GITHUB_REPOSITORY}/.github/workflows/release-build.yml"
+          export bundle="dist/steamship-${VERSION}.intoto.jsonl"
+          export signer="${GITHUB_REPOSITORY}/.github/workflows/release-build.yml"
+          export root="${RUNNER_TEMP}/trusted-root.jsonl"
+          gh attestation trusted-root > "${root}"
           verify() {
-            gh attestation verify "$@" --bundle "${bundle}" \
+            gh attestation verify "$@" --bundle "${bundle}" --custom-trusted-root "${root}" \
               --repo "${GITHUB_REPOSITORY}" --signer-workflow "${signer}" \
               --source-ref "${GITHUB_REF}" --deny-self-hosted-runners
           }
+          export -f verify
+          subjects=()
           for subject in dist/steamship-* dist/steamship_* dist/steamship.json; do
             if [[ "${subject}" != "${bundle}" ]]; then
-              verify "${subject}"
+              subjects+=("${subject}")
             fi
           done
-          for archive in dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm; do
-            verify "${archive}" --predicate-type https://spdx.dev/Document/v2.3
-          done
+          printf '%s\0' "${subjects[@]}" | xargs -0 -n 1 -P 8 bash -c "verify \"\$1\"" verify
+          printf '%s\0' dist/*.tar.gz dist/*.zip dist/*.deb dist/*.rpm \
+            | xargs -0 -n 1 -P 8 bash -c \
+              "verify \"\$1\" --predicate-type https://spdx.dev/Document/v2.3" verify
 
       - name: Create the GitHub release
         env:
