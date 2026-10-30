@@ -54,7 +54,12 @@ fn main() -> ExitCode {
         .try_get_matches()
         .and_then(|matches| Cli::from_arg_matches(&matches));
     let command = match parsed {
-        Ok(parsed) => parsed.command,
+        Ok(parsed) => {
+            if parsed.times {
+                show::time_steps();
+            }
+            parsed.command
+        }
         Err(error) => error.exit(),
     };
     // Completion is text for a shell to load, often at every start, so it asks nothing online.

@@ -78,6 +78,9 @@ pub const VARIABLES: [(&str, &str); 6] = [
     styles = show::HELP
 )]
 pub struct Cli {
+    /// Show how long each step took, at the end of its line.
+    #[arg(long, global = true)]
+    pub times: bool,
     #[command(subcommand)]
     pub command: Command,
 }

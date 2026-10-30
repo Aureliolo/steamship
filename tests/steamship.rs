@@ -180,6 +180,25 @@ fn install_says_when_the_install_is_as_pinned() {
 }
 
 #[test]
+fn with_times_each_step_ends_with_how_long_it_took() {
+    let home = recorded("");
+    let (code, stdout, stderr) = steamship(&["install", "--times"], Some(home.path()), &[]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
+    let verified = stdout
+        .lines()
+        .find(|line| line.contains(", pinned and verified"))
+        .unwrap_or_else(|| panic!("{stdout}"));
+    let took = verified
+        .strip_suffix(" s)")
+        .and_then(|line| line.rsplit_once(", pinned and verified ("))
+        .map(|(_, took)| took);
+    assert!(
+        took.is_some_and(|took| took.parse::<f64>().is_ok() && took.contains('.')),
+        "{verified}"
+    );
+}
+
+#[test]
 fn install_names_what_changed_and_exits_4() {
     let home = recorded(&format!("file {} steamcmd.exe\n", "0".repeat(64)));
     let (code, stdout, stderr) = run(Some(home.path()));
@@ -270,7 +289,7 @@ fn steamship_run_with_nothing_says_what_it_does_and_exits_0_but_a_command_missin
     let (code, stdout, stderr) = steamship(&[], Some(Path::new(".")), &[]);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     assert!(
-        stdout.contains("Usage: steamship <COMMAND>\n")
+        stdout.contains("Usage: steamship [OPTIONS] <COMMAND>\n")
             && stdout
                 .contains("  upload         Check, build and upload, then print the build ID\n"),
         "{stdout}"
@@ -279,7 +298,10 @@ fn steamship_run_with_nothing_says_what_it_does_and_exits_0_but_a_command_missin
 
     let (unfinished, said, why) = steamship(&["self"], Some(Path::new(".")), &[]);
     assert_eq!(unfinished, Some(2_i32), "{said}{why}");
-    assert!(why.contains("Usage: steamship self <COMMAND>"), "{why}");
+    assert!(
+        why.contains("Usage: steamship self [OPTIONS] <COMMAND>"),
+        "{why}"
+    );
 }
 
 #[test]
@@ -291,8 +313,12 @@ fn help_lists_every_command_with_one_short_line() {
         "no banner in a log"
     );
     assert!(
-        stdout.contains("Usage: steamship <COMMAND>\n"),
+        stdout.contains("Usage: steamship [OPTIONS] <COMMAND>\n"),
         "named as it is typed, on Windows too: {stdout}"
+    );
+    assert!(
+        stdout.contains("      --times    Show how long each step took, at the end of its line\n"),
+        "{stdout}"
     );
     for line in [
         "  login          Log in to Steam, once, for uploads\n",
