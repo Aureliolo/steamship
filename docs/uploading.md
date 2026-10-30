@@ -169,6 +169,10 @@ steamship runs it once more.
 `--preview` is Valve's dry run: the whole build is computed and logged, nothing is uploaded and
 nothing is set live.
 
+`--times`, given to any command, ends each step's line with how long it took, such as
+`pinned and verified (0.2 s)`, to the tenth of a second up to two minutes, so a log shows where
+an upload's time went.
+
 For a script that runs steamship, `--json` prints what came of the upload on standard output as
 one line of JSON, here spread out, once steamcmd has run, and sends everything meant for a
 person to standard error:

@@ -44,6 +44,31 @@ pub fn diverted() -> bool {
     DIVERTED.load(Ordering::Relaxed)
 }
 
+/// Whether each step's line ends with how long it took, as `--times` asks.
+static TIMED: AtomicBool = AtomicBool::new(false);
+
+/// Ends the line of each step from now on with how long it took.
+pub fn time_steps() {
+    TIMED.store(true, Ordering::Relaxed);
+}
+
+/// What came of a step, with how long it took after it when steps are timed.
+fn ended(value: &str, elapsed: Duration, timed: bool) -> String {
+    if !timed {
+        return value.to_owned();
+    }
+    let took = if elapsed < Duration::from_secs(120) {
+        format!("{:.1} s", elapsed.as_secs_f64())
+    } else {
+        took(elapsed)
+    };
+    if value.is_empty() {
+        format!("({took})")
+    } else {
+        format!("{value} ({took})")
+    }
+}
+
 /// A line for a person, on standard output, or standard error once [`divert`]ed.
 macro_rules! say {
     ($($line:tt)*) => {
@@ -390,22 +415,30 @@ impl Spinner {
         mem::take(&mut self.label)
     }
 
+    /// What came of the step, timed when steps are.
+    fn ended(&self, value: &str) -> String {
+        ended(value, self.elapsed(), TIMED.load(Ordering::Relaxed))
+    }
+
     /// Ends the step as done.
     pub fn done(self, value: &str) {
+        let value = self.ended(value);
         let label = self.stop();
-        done(&label, value);
+        done(&label, &value);
     }
 
     /// Ends the step as failed.
     pub fn failed(self, value: &str) {
+        let value = self.ended(value);
         let label = self.stop();
-        failed(&label, value);
+        failed(&label, &value);
     }
 
     /// Ends a step that could not be taken, for a reason that is no fault.
     pub fn skipped(self, value: &str) {
+        let value = self.ended(value);
         let label = self.stop();
-        field(&label, value);
+        field(&label, &value);
     }
 
     /// Stops the spinner while something else is shown, and starts it again after.
@@ -469,6 +502,21 @@ mod tests {
         ];
         for (seconds, expected) in cases {
             assert_eq!(took(Duration::from_secs(seconds)), expected);
+        }
+    }
+
+    #[test]
+    fn a_timed_step_ends_with_its_time_to_a_tenth_up_to_two_minutes() {
+        let cases = [
+            ("shown", 230, true, "shown (0.2 s)"),
+            ("built in 21 s", 21_480, true, "built in 21 s (21.5 s)"),
+            ("", 119_940, true, "(119.9 s)"),
+            ("checked", 120_000, true, "checked (2 min)"),
+            ("uploaded", 271 * 60_000, true, "uploaded (271 min)"),
+            ("shown", 230, false, "shown"),
+        ];
+        for (value, millis, timed, expected) in cases {
+            assert_eq!(ended(value, Duration::from_millis(millis), timed), expected);
         }
     }
 
