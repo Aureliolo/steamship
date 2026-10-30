@@ -22,8 +22,9 @@ and then publishes and packages:
    request only once it is up to date and CI has passed on each of these systems. Each binary
    records every crate it was built from, at its exact version (`cargo auditable`). There is no
    Arm Linux build: Valve's steamcmd for Linux is x86 only.
-3. **linux packages** builds the `.deb` and the `.rpm` from the Linux archive with nFPM, then
-   lints each with its own system's linter and installs it on a bare Debian and Fedora, where it
+3. **linux packages**, in the Linux build's job once its archive is packed, so it waits for no
+   other system's build, builds the `.deb` and the `.rpm` from that archive with nFPM, then lints
+   each with its own system's linter and installs it on a bare Debian and Fedora, where it
    installs steamcmd and runs it.
 4. **sbom** reads an SPDX SBOM from the five binaries themselves, checks the two packages hold
    the Linux archive's binary byte for byte, then checks the SBOM lists every crate linked into
