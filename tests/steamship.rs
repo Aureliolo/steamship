@@ -443,14 +443,20 @@ fn completions_are_printed_for_each_shell_and_name_every_command() {
 #[cfg(windows)]
 #[test]
 fn the_windows_program_carries_its_icon_and_version_details() {
+    // ExtractIconExW is declared through reflection: Add-Type would compile C#, which takes
+    // seconds on a runner that has not compiled any yet, and half a minute on Windows on Arm.
     let script = "$ErrorActionPreference = 'Stop'
-        Add-Type -Namespace Shell -Name Icons -MemberDefinition '
-          [DllImport(\"shell32.dll\", CharSet = CharSet.Unicode)]
-          public static extern uint ExtractIconExW(string file, int index, IntPtr[] large, IntPtr[] small, uint count);'
+        $type = [AppDomain]::CurrentDomain.DefineDynamicAssembly(
+          [Reflection.AssemblyName]::new('Shell'), 'Run').DefineDynamicModule('Shell').DefineType(
+          'Icons', 'Public')
+        $type.DefinePInvokeMethod('ExtractIconExW', 'shell32.dll', 'Public, Static', 'Standard',
+          [uint32], [Type[]] @([string], [int], [IntPtr], [IntPtr], [uint32]), 'Winapi',
+          'Unicode').SetImplementationFlags('PreserveSig')
+        $icons = $type.CreateType()
         $v = (Get-Item -LiteralPath $env:PROGRAM).VersionInfo
         $v.CompanyName, $v.FileDescription, $v.ProductName, $v.ProductVersion,
           $v.FileVersionRaw.ToString(), $v.LegalCopyright, $v.OriginalFilename,
-          [Shell.Icons]::ExtractIconExW($env:PROGRAM, -1, $null, $null, 0)";
+          $icons::ExtractIconExW($env:PROGRAM, -1, [IntPtr]::Zero, [IntPtr]::Zero, 0)";
     let output = run::output(
         run::command("powershell.exe")
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
