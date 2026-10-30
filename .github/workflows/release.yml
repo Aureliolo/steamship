@@ -301,8 +301,8 @@ jobs:
         run: |
           set -euo pipefail
           bundle="steamship-${VERSION}.intoto.jsonl"
-          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --dir release \
-            --pattern '*.sha256' --pattern steamship.json --pattern "${bundle}"
+          bash .github/release-download.sh "${GITHUB_REF_NAME}" release '*.sha256' steamship.json \
+            "${bundle}"
           for subject in release/*.sha256 release/steamship.json; do
             gh attestation verify "${subject}" --bundle "release/${bundle}" \
               --repo "${GITHUB_REPOSITORY}" \

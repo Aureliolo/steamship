@@ -65,8 +65,8 @@ jobs:
           version="$(jq -r .version bucket/steamship.json)"
           tag="v${version}"
           mkdir release written
-          gh release download "${tag}" --repo "${GITHUB_REPOSITORY}" --dir release \
-            --pattern '*.sha256' --pattern "steamship-${version}.intoto.jsonl"
+          bash .github/release-download.sh "${tag}" release '*.sha256' \
+            "steamship-${version}.intoto.jsonl"
           for sum in release/*.sha256; do
             gh attestation verify "${sum}" --bundle "release/steamship-${version}.intoto.jsonl" \
               --repo "${GITHUB_REPOSITORY}" \
@@ -298,8 +298,8 @@ jobs:
           set -euo pipefail
           version="$(jq -r .version bucket/steamship.json)"
           mkdir release written
-          gh release download "v${version}" --repo "${GITHUB_REPOSITORY}" --dir release \
-            --pattern '*.sha256' --pattern "steamship-${version}.intoto.jsonl"
+          bash .github/release-download.sh "v${version}" release '*.sha256' \
+            "steamship-${version}.intoto.jsonl"
           for sum in release/*.sha256; do
             gh attestation verify "${sum}" --bundle "release/steamship-${version}.intoto.jsonl" \
               --repo "${GITHUB_REPOSITORY}" \
