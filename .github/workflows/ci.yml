@@ -478,8 +478,6 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      # The release profile rather than the release's dist one, which only adds whole-program
-      # optimisation and would triple the build.
       - name: Build and pack the Linux binary
         id: pack
         run: |

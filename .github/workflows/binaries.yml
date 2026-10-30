@@ -92,8 +92,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends musl-tools
 
-      # The release profile rather than the release's own whole-program build: the same flags
-      # and mitigations in a third of the time.
       - name: Build
         env:
           TARGET: ${{ matrix.target }}

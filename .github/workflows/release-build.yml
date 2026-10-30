@@ -194,11 +194,10 @@ jobs:
 
       # No tests here: main takes a pull request only once it is up to date and every check has
       # passed, so the tagged tree is the one CI tested on each of these systems.
-      # The dist profile, optimised as a whole program, where `cargo install` keeps to the
-      # quicker release profile. Windows' flags come from .cargo/config.toml, which CI's tests
-      # are built with too. The docs generator, which writes the archive's man pages and
-      # completions, is built beside it on the cores the whole-program optimisation leaves idle;
-      # the pack step then only runs it. Its target folder is outside target/: cargo makes each
+      # The release profile, as `cargo install` builds it. Windows' flags come from
+      # .cargo/config.toml, which CI's tests are built with too. The docs generator, which writes
+      # the archive's man pages and completions, is built beside it, filling the cores the
+      # binary's last crates leave idle; the pack step then only runs it. Its target folder is outside target/: cargo makes each
       # target folder from a temporary one renamed into place, and with one inside the other,
       # the two builds making theirs at the same moment can lose the inner one's temporary folder.
       - name: Build
@@ -210,7 +209,7 @@ jobs:
           cargo build --locked -p steamship-docs-site --target-dir "${DOCS_TARGET}" \
             > "${RUNNER_TEMP}/docs-build.txt" 2>&1 &
           docs=$!
-          cargo auditable build --locked --profile dist --target "${TARGET}"
+          cargo auditable build --locked --release --target "${TARGET}"
           if ! wait "${docs}"; then
             cat "${RUNNER_TEMP}/docs-build.txt"
             echo "The docs generator, which packing needs, did not build." >&2
@@ -236,7 +235,7 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/docs-target
         run: |
           set -euo pipefail
-          archive="$(.github/pack.sh "${VERSION}" "${TARGET}" dist)"
+          archive="$(.github/pack.sh "${VERSION}" "${TARGET}" release)"
           echo "archive=${archive}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload the archive
