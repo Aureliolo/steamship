@@ -18,11 +18,12 @@ concurrency:
 jobs:
   analyse:
     name: codeql (${{ matrix.language }})
-    # A release's Homebrew and Scoop pull request, opened by the packaging app on a branch of this
-    # repository, changes no code to analyse. The passed job below counts a skipped one as passed.
+    # A release's own pull requests, opened by the packaging app on a branch of this repository,
+    # change no code to analyse: they raise the version, or write the Homebrew and Scoop files.
+    # The passed job below counts a skipped one as passed.
     if: >-
       ${{ !(github.event.pull_request.head.repo.full_name == github.repository
-      && startsWith(github.head_ref, 'packages/v')
+      && (startsWith(github.head_ref, 'packages/v') || startsWith(github.head_ref, 'release/v'))
       && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     strategy:
       fail-fast: false
