@@ -1,0 +1,92 @@
+name: Rehearse the Linux packages in the build job
+
+# A measurement only, closed unmerged: the release's Linux build leg, as release-build.yml has it.
+on:
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: rehearse-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: rehearse linux build and packages
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install Rust
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Install musl-gcc
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+
+      - name: Install cargo-auditable
+        run: |
+          set -euo pipefail
+          archive=cargo-auditable-x86_64-unknown-linux-musl.tar.xz
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/rust-secure-code/cargo-auditable/releases/download/v0.7.7/${archive}"
+          echo "7676443367c5e33d9fb22acef63cccb5e9202de12dae1b0579995eb3e2bc7a18  ${RUNNER_TEMP}/${archive}" \
+            | sha256sum --check --strict
+          mkdir -p "${RUNNER_TEMP}/cargo-auditable"
+          tar -xJf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/cargo-auditable" --strip-components 1
+          echo "${RUNNER_TEMP}/cargo-auditable" >> "${GITHUB_PATH}"
+
+      - name: Build
+        env:
+          DOCS_TARGET: ${{ runner.temp }}/docs-target
+        run: |
+          set -euo pipefail
+          cargo build --locked -p steamship-docs-site --target-dir "${DOCS_TARGET}" \
+            > "${RUNNER_TEMP}/docs-build.txt" 2>&1 &
+          docs=$!
+          cargo auditable build --locked --profile dist --target x86_64-unknown-linux-musl
+          if ! wait "${docs}"; then
+            cat "${RUNNER_TEMP}/docs-build.txt"
+            exit 1
+          fi
+
+      - name: Pack
+        id: pack
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CARGO_TARGET_DIR: ${{ runner.temp }}/docs-target
+        run: |
+          set -euo pipefail
+          archive="$(.github/pack.sh "${VERSION}" x86_64-unknown-linux-musl dist)"
+          echo "archive=${archive}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build, lint and install the Linux packages
+        uses: ./.github/actions/linux-packages # zizmor: ignore[self-repository]
+        with:
+          version: ${{ steps.version.outputs.version }}
+          archive: dist/${{ steps.pack.outputs.archive }}
+          out: packages
+
+      - name: List the packages
+        run: ls -l packages
