@@ -17,10 +17,17 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Named by platform rather than by runner image: the name is what the branch ruleset requires,
-  # and an image raise must not rename a required check out from under it.
+  # Named by platform rather than by runner image, so an image raise leaves the name as it was.
   rust:
     name: rust (${{ matrix.platform }})
+    # A release's Homebrew and Scoop pull request, opened by the packaging app on a branch of this
+    # repository, changes those two files alone, and packages.yml checks them against the release's
+    # signed checksums; the code it leaves as it was is not tested again. The passed job at the
+    # end counts a skipped job as passed.
+    if: >-
+      ${{ !(github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +253,11 @@ jobs:
   # change that adds code without tests for it fails here.
   coverage:
     name: coverage
+    # As rust: not for a release's Homebrew and Scoop pull request.
+    if: >-
+      ${{ !(github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
@@ -415,6 +427,11 @@ jobs:
   # than at a release.
   linux-packages:
     name: linux packages
+    # As rust: not for a release's Homebrew and Scoop pull request.
+    if: >-
+      ${{ !(github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
@@ -461,6 +478,11 @@ jobs:
   # runtime, and a sanitiser adds nothing here, where no fuzzed code is unsafe.
   fuzz:
     name: fuzz
+    # As rust: not for a release's Homebrew and Scoop pull request.
+    if: >-
+      ${{ !(github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
@@ -517,3 +539,22 @@ jobs:
           name: failing-fuzz-inputs
           path: fuzz/artifacts/
           if-no-files-found: ignore
+
+  # The one check the ruleset requires of this workflow. A job skipped by its condition reports
+  # under its matrix's unexpanded name, which a required check of each system's name would wait
+  # for for ever; here a skipped job passes and any other result fails.
+  passed:
+    name: ci passed
+    if: always()
+    needs: [rust, coverage, static, linux-packages, fuzz]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every job to have passed or been skipped
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          jq -r 'to_entries[] | "\(.key): \(.value.result)"' <<< "${RESULTS}"
+          jq -e 'all(.[]; .result == "success" or .result == "skipped")' <<< "${RESULTS}" > /dev/null

@@ -25,6 +25,12 @@ env:
 jobs:
   binskim:
     name: binskim (${{ matrix.platform }})
+    # A release's Homebrew and Scoop pull request, opened by the packaging app on a branch of this
+    # repository, changes no code to build. The passed job below counts a skipped one as passed.
+    if: >-
+      ${{ !(github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -172,3 +178,19 @@ jobs:
           jq -r "${found}[] | \"\(.ruleId): \(.message.text)\"" binskim.sarif
           # Decided by jq's own exit status: its text ends in a carriage return on Windows.
           jq -e "${found} | length == 0" binskim.sarif > /dev/null
+
+  # The one check the ruleset requires of this workflow, as ci.yml's passed job explains.
+  passed:
+    name: binskim passed
+    if: always()
+    needs: [binskim]
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every system's look to have passed or been skipped
+        env:
+          RESULT: ${{ needs.binskim.result }}
+        run: |
+          echo "binskim: ${RESULT}"
+          [[ "${RESULT}" == success || "${RESULT}" == skipped ]]
