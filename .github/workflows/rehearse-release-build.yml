@@ -1,0 +1,197 @@
+name: Rehearse the release build
+
+# A measurement only, closed unmerged: the release's build job, unchanged, on a pull request.
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(cargo metadata --locked --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "steamship") | .version')"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: verify
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          # Linked statically against musl, so the binary runs on any x86-64 Linux whatever its
+          # glibc, and the runner it is built on sets no floor.
+          - target: x86_64-unknown-linux-musl
+            # renovate: datasource=github-runners depName=ubuntu
+            runner: ubuntu-26.04
+          - target: x86_64-pc-windows-msvc
+            # renovate: datasource=github-runners depName=windows
+            runner: windows-2025
+            spectre: spectre
+          # Windows on Arm, native, while steamcmd runs there as the x86 program it is, emulated by
+          # Windows. There is no Arm Linux build: steamcmd for Linux is x86 alone. The Arm image
+          # is not one Renovate tracks.
+          - target: aarch64-pc-windows-msvc
+            runner: windows-11-arm
+            spectre: spectre
+          - target: aarch64-apple-darwin
+            # renovate: datasource=github-runners depName=macos
+            runner: macos-26
+          - target: x86_64-apple-darwin
+            # renovate: datasource=github-runners depName=macos
+            runner: macos-26
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read # Reads the tagged source it builds.
+    defaults:
+      run:
+        shell: bash
+    env:
+      # On Windows, the C runtime linked in is Visual Studio's build of it with Spectre
+      # mitigations, which the runners have; see .cargo/config.toml.
+      VSCMD_ARG_VCVARS_SPECTRE: ${{ matrix.spectre }}
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup target add "${TARGET}"
+
+      # musl's C compiler wrapper, for the C and assembly in ring, from the image's own signed
+      # Ubuntu archive.
+      - name: Install musl-gcc
+        if: endsWith(matrix.target, '-musl')
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends musl-tools
+
+      # The project's own build for the runner, refused unless it matches the digest written here,
+      # in seconds where building it from source took up to half a minute on each system.
+      - name: Install cargo-auditable
+        env:
+          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          LINUX_X64_TAG: v0.7.7
+          LINUX_X64_SHA256: 7676443367c5e33d9fb22acef63cccb5e9202de12dae1b0579995eb3e2bc7a18
+          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          WINDOWS_X64_TAG: v0.7.7
+          WINDOWS_X64_SHA256: 717ba2d3ed7997c501e9987ee7c94bebf9d7219b18b185a03009420ec7029c7d
+          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          WINDOWS_ARM64_TAG: v0.7.7
+          WINDOWS_ARM64_SHA256: ad827b9c8e94de85930ba32a52d5ab5873e7b54148b4e415279b8d5f3f9eb917
+          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          MACOS_ARM64_TAG: v0.7.7
+          MACOS_ARM64_SHA256: a66ad6392861ca1abfe0b02b522622d91edf63e5d7b60f4d3088b5c23d240c72
+        run: |
+          set -euo pipefail
+          case "${RUNNER_OS}-${RUNNER_ARCH}" in
+            Linux-X64) host=x86_64-unknown-linux-musl tag="${LINUX_X64_TAG}" digest="${LINUX_X64_SHA256}" ;;
+            Windows-X64) host=x86_64-pc-windows-msvc tag="${WINDOWS_X64_TAG}" digest="${WINDOWS_X64_SHA256}" ;;
+            Windows-ARM64) host=aarch64-pc-windows-msvc tag="${WINDOWS_ARM64_TAG}" digest="${WINDOWS_ARM64_SHA256}" ;;
+            macOS-ARM64) host=aarch64-apple-darwin tag="${MACOS_ARM64_TAG}" digest="${MACOS_ARM64_SHA256}" ;;
+            *)
+              echo "No cargo-auditable build is pinned for ${RUNNER_OS} on ${RUNNER_ARCH}." >&2
+              exit 1
+              ;;
+          esac
+          archive="cargo-auditable-${host}.tar.xz"
+          if [[ "${RUNNER_OS}" == Windows ]]; then
+            archive="cargo-auditable-${host}.zip"
+          fi
+          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/rust-secure-code/cargo-auditable/releases/download/${tag}/${archive}"
+          # macOS has a sha256sum of BSD's, which knows no --strict.
+          if [[ "${RUNNER_OS}" == macOS ]]; then
+            echo "${digest}  ${RUNNER_TEMP}/${archive}" | shasum -a 256 --check
+          else
+            echo "${digest}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
+          fi
+          tool="${RUNNER_TEMP}/cargo-auditable"
+          mkdir -p "${tool}"
+          # The Windows archives hold the program at their top; the others in a folder of the
+          # target's name.
+          if [[ "${RUNNER_OS}" == Windows ]]; then
+            unzip -q "${RUNNER_TEMP}/${archive}" -d "${tool}"
+          else
+            tar -xJf "${RUNNER_TEMP}/${archive}" -C "${tool}" --strip-components 1
+          fi
+          echo "${tool}" >> "${GITHUB_PATH}"
+
+      # No tests here: main takes a pull request only once it is up to date and every check has
+      # passed, so the tagged tree is the one CI tested on each of these systems.
+      # The dist profile, optimised as a whole program, where `cargo install` keeps to the
+      # quicker release profile. Windows' flags come from .cargo/config.toml, which CI's tests
+      # are built with too. The docs generator, which writes the archive's man pages and
+      # completions, is built beside it in a target folder of its own, on the cores the
+      # whole-program optimisation leaves idle; the pack step then only runs it.
+      - name: Build
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          cargo build --locked -p steamship-docs-site --target-dir target/docs \
+            > "${RUNNER_TEMP}/docs-build.txt" 2>&1 &
+          docs=$!
+          cargo auditable build --locked --profile dist --target "${TARGET}"
+          if ! wait "${docs}"; then
+            cat "${RUNNER_TEMP}/docs-build.txt"
+            echo "The docs generator, which packing needs, did not build." >&2
+            exit 1
+          fi
+
+      - name: Verify the build left the source as it was
+        run: |
+          set -euo pipefail
+          if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
+            echo "The build changed the checked-out release source." >&2
+            git status --short >&2
+            exit 1
+          fi
+
+      - name: Pack the binary with its licences, README, man pages and completions
+        id: pack
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.verify.outputs.version }}
+          # Where the build step built the docs generator; the binary is read from target/ by
+          # its path, whatever this says.
+          CARGO_TARGET_DIR: target/docs
+        run: |
+          set -euo pipefail
+          archive="$(.github/pack.sh "${VERSION}" "${TARGET}" dist)"
+          echo "archive=${archive}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload the archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/${{ steps.pack.outputs.archive }}
+            dist/${{ steps.pack.outputs.archive }}.sha256
+          if-no-files-found: error
+          retention-days: 1
