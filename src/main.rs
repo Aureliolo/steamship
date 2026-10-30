@@ -41,6 +41,15 @@ fn main() -> ExitCode {
     if io::stdout().is_terminal() {
         cli = cli.before_help(show::banner());
     }
+    // Asking for nothing is no mistake: steamship says what it does and exits 0, as with --help.
+    // winget's install check starts a package's program so, and fails one that exits otherwise.
+    if env::args_os().len() == 1 {
+        return if cli.print_help().is_ok() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(FAILED)
+        };
+    }
     let parsed = cli
         .try_get_matches()
         .and_then(|matches| Cli::from_arg_matches(&matches));
