@@ -81,6 +81,14 @@ jobs:
 
   homebrew:
     name: packages (homebrew ${{ matrix.platform }})
+    # The release's own pull request, opened by the packaging app, carries the very files the
+    # release installed through this workflow a minute before opening it; signed above still
+    # checks they are those files. The same holds for scoop and winget.
+    if: >-
+      ${{ !(github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -153,6 +161,12 @@ jobs:
 
   scoop:
     name: packages (scoop ${{ matrix.architecture }})
+    # As homebrew: not again on the release's own pull request.
+    if: >-
+      ${{ !(github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     strategy:
       fail-fast: false
       matrix:
@@ -249,6 +263,12 @@ jobs:
   # manifests reach winget-pkgs.
   winget:
     name: packages (winget ${{ matrix.architecture }})
+    # As homebrew: not again on the release's own pull request.
+    if: >-
+      ${{ !(github.event_name == 'pull_request'
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && startsWith(github.head_ref, 'packages/v')
+      && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     strategy:
       fail-fast: false
       matrix:
