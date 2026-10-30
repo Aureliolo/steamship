@@ -265,6 +265,24 @@ fn logout_forgets_steamcmds_saved_login_on_every_system_and_the_account() {
 }
 
 #[test]
+fn steamship_run_with_nothing_says_what_it_does_and_exits_0_but_a_command_missing_its_own_exits_2()
+{
+    let (code, stdout, stderr) = steamship(&[], Some(Path::new(".")), &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("Usage: steamship <COMMAND>\n")
+            && stdout
+                .contains("  upload         Check, build and upload, then print the build ID\n"),
+        "{stdout}"
+    );
+    assert!(stderr.is_empty(), "{stderr}");
+
+    let (unfinished, said, why) = steamship(&["self"], Some(Path::new(".")), &[]);
+    assert_eq!(unfinished, Some(2_i32), "{said}{why}");
+    assert!(why.contains("Usage: steamship self <COMMAND>"), "{why}");
+}
+
+#[test]
 fn help_lists_every_command_with_one_short_line() {
     let (code, stdout, _) = steamship(&["--help"], Some(Path::new(".")), &[]);
     assert_eq!(code, Some(0_i32));
