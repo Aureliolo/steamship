@@ -17,8 +17,8 @@ and then publishes and packages:
 1. **verify** refuses to go on unless the release commit is on `main`, carries a valid
    signature, and the tag names the version in `Cargo.toml`.
 2. **build** makes the five binaries, each on the system it is for: x86-64 Linux, x86-64 and
-   arm64 Windows, and arm64 and x86-64 macOS. The tests run again where the system can run them.
-   Each binary records every crate it was built from, at its exact version (`cargo auditable`).
+   arm64 Windows, and arm64 and x86-64 macOS. The tests are not run again: `main` takes a pull
+   request only once it is up to date and CI has passed on each of these systems. Each binary records every crate it was built from, at its exact version (`cargo auditable`).
    There is no Arm Linux build: Valve's steamcmd for Linux is x86 only.
 3. **linux packages** builds the `.deb` and the `.rpm` from the Linux archive with nFPM, then
    lints each with its own system's linter and installs it on a bare Debian and Fedora, where it
