@@ -352,4 +352,4 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "steamship with no arguments exited $LASTEXITCODE on attempt $attempt." }
           }
           $PSNativeCommandUseErrorActionPreference = $true
-          winget uninstall --manifest winget --disable-interactivity
+          winget uninstall --manifest winget --disable-interactivity --accept-source-agreements
