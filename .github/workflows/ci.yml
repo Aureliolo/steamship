@@ -300,6 +300,9 @@ jobs:
       # anonymous account may not build. Had steamcmd updated itself, the check after the run
       # would exit 4 rather than 1.
       - name: Upload a preview anonymously, which Steam refuses
+        # Refused within a minute; a steamcmd that hangs instead is stopped here, before the job's
+        # own limit, so that the step below still runs and shows where it stopped.
+        timeout-minutes: 8
         run: |
           set -euo pipefail
           export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
@@ -309,6 +312,19 @@ jobs:
           cat "${RUNNER_TEMP}/upload.txt"
           test "${status}" -eq 1
           grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/upload.txt"
+
+      # steamship shows steamcmd's logs itself when steamcmd fails, but not when steamcmd hangs and
+      # is stopped from outside. The account is anonymous, so the logs hold no login.
+      - name: Show steamcmd's logs when the upload did not end as it should
+        if: failure()
+        run: |
+          set -euo pipefail
+          home="${RUNNER_TEMP}/steamship home"
+          find "${home}" -path '*/logs/*' -type f | while IFS= read -r log; do
+            echo "::group::${log#"${home}"/}"
+            tail -n 100 "${log}"
+            echo "::endgroup::"
+          done
 
       # steamcmd keeps its login in a config.vdf whose place differs by system. This is where each
       # system shows the one it uses, which must be the one steamship reads to redact and to pack
