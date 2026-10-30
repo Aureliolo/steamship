@@ -49,7 +49,8 @@ footer = "The game's own example mod, dedicated to the public domain under CC0 1
 ```
 
 - `steamship`: the version the game ships with. Any other steamship run in the game refuses
-  every command, so that a game is never shipped by one it was not checked against.
+  every command that takes the game from its folder, so that a game is never shipped by one it
+  was not checked against. A command given its app or files works as anywhere else.
 - `build`: the program and its arguments that build the game into the folders its depots ship,
   run in the game's folder. Without it, the content goes up as it is.
 - `branch`: the one branch the app build script may set live, if not `testing`. The default
