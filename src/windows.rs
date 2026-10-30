@@ -75,6 +75,7 @@ use windows_sys::Win32::System::Threading::{
 use zeroize::{Zeroize as _, Zeroizing};
 
 use crate::keychain;
+use crate::parallel;
 use crate::run::{self, Finished};
 use windows_sys::Win32::Security::Cryptography::{
     CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
@@ -1327,7 +1328,7 @@ pub fn unsigned<'file, Files>(root: &Path, files: Files, signer: &str) -> Vec<St
 where
     Files: IntoIterator<Item = &'file String>,
 {
-    files
+    let programs: Vec<_> = files
         .into_iter()
         .filter(|relative| !relative.starts_with(NOT_VALVES))
         .filter(|relative| {
@@ -1337,7 +1338,9 @@ where
                     extension.eq_ignore_ascii_case("exe") || extension.eq_ignore_ascii_case("dll")
                 })
         })
-        .filter_map(|relative| match signature(&root.join(relative)) {
+        .collect();
+    parallel::map(&programs, |relative| {
+        match signature(&root.join(relative)) {
             Signature::Signed(name) if name == signer => None,
             Signature::Signed(name) => {
                 Some(format!("{relative} is signed by {name}, not {signer}"))
@@ -1345,8 +1348,11 @@ where
             Signature::Refused(status) => Some(format!(
                 "{relative} has no valid signature (Windows says {status:#010x})"
             )),
-        })
-        .collect()
+        }
+    })
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
