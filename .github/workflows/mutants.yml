@@ -48,54 +48,53 @@ jobs:
     permissions:
       pull-requests: read # Lists the files the pull request changes.
     outputs:
-      exclude: ${{ steps.plan.outputs.exclude }}
+      systems: ${{ steps.plan.outputs.systems }}
     steps:
-      - name: Leave out each system whose own module is unchanged
+      # The systems are listed here rather than in the matrix: a matrix's include entries are
+      # added after its exclusions, so one cannot leave out a system that an include describes.
+      - name: List the systems with something to mutate
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
           PULL_REQUEST: ${{ github.event.pull_request.number }}
+          # renovate: datasource=github-runners depName=ubuntu
+          LINUX_RUNNER: ubuntu-26.04
+          # renovate: datasource=github-runners depName=windows
+          WINDOWS_RUNNER: windows-2025
+          # renovate: datasource=github-runners depName=macos
+          MACOS_RUNNER: macos-26
         run: |
           set -euo pipefail
-          exclude='[]'
+          changed=''
           if [[ -n "${PULL_REQUEST}" ]]; then
             changed="$(gh api --paginate "repos/${REPOSITORY}/pulls/${PULL_REQUEST}/files" \
               --jq '.[].filename')"
-            exclude="$(jq -cn --arg changed "${changed}" \
-              '($changed | split("\n")) as $changed
-               | [{platform: "windows", module: "src/windows.rs"},
-                  {platform: "macos", module: "src/macos.rs"}]
-               | map(select(.module as $module | $changed | index($module) | not)
-                     | {platform})')"
           fi
-          echo "Left out: ${exclude}"
-          echo "exclude=${exclude}" >> "${GITHUB_OUTPUT}"
+          systems="$(jq -cn --arg changed "${changed}" --arg pull "${PULL_REQUEST}" \
+            '($changed | split("\n")) as $changed
+             | [{platform: "linux", runner: env.LINUX_RUNNER,
+                 mutate: "--exclude src/windows.rs --exclude src/macos.rs"},
+                {platform: "windows", runner: env.WINDOWS_RUNNER,
+                 mutate: "--file src/windows.rs", module: "src/windows.rs"},
+                {platform: "macos", runner: env.MACOS_RUNNER,
+                 mutate: "--file src/macos.rs", module: "src/macos.rs"}]
+             | map(select($pull == "" or .module == null
+                          or (.module as $module | $changed | index($module)))
+                   | del(.module))')"
+          echo "Mutating on: $(jq -r 'map(.platform) | join(", ")' <<< "${systems}")"
+          echo "systems=${systems}" >> "${GITHUB_OUTPUT}"
 
   mutants:
     # A pull request's one job for each system is named by the system alone.
-    name: mutants (${{ matrix.platform }}${{ github.event_name != 'pull_request' && format(' {0}/8', matrix.shard) || '' }})
+    name: mutants (${{ matrix.system.platform }}${{ github.event_name != 'pull_request' && format(' {0}/8', matrix.shard) || '' }})
     needs: [plan]
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux, windows, macos]
+        system: ${{ fromJSON(needs.plan.outputs.systems) }}
         shard: ${{ fromJSON(github.event_name == 'pull_request' && '[0]' || '[0, 1, 2, 3, 4, 5, 6, 7]') }}
-        exclude: ${{ fromJSON(needs.plan.outputs.exclude) }}
-        include:
-          - platform: linux
-            # renovate: datasource=github-runners depName=ubuntu
-            runner: ubuntu-26.04
-            mutate: --exclude src/windows.rs --exclude src/macos.rs
-          - platform: windows
-            # renovate: datasource=github-runners depName=windows
-            runner: windows-2025
-            mutate: --file src/windows.rs
-          - platform: macos
-            # renovate: datasource=github-runners depName=macos
-            runner: macos-26
-            mutate: --file src/macos.rs
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.system.runner }}
     timeout-minutes: 60
     permissions:
       contents: read # Reads the source it mutates, and the base branch to diff against.
@@ -161,7 +160,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          MUTATE: ${{ matrix.mutate }}
+          MUTATE: ${{ matrix.system.mutate }}
         run: |
           set -euo pipefail
           read -ra mutate <<< "${MUTATE}"
@@ -172,7 +171,7 @@ jobs:
       - name: Mutate everything, one shard
         if: github.event_name != 'pull_request'
         env:
-          MUTATE: ${{ matrix.mutate }}
+          MUTATE: ${{ matrix.system.mutate }}
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
@@ -185,7 +184,7 @@ jobs:
         if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: mutants-${{ matrix.platform }}-${{ matrix.shard }}
+          name: mutants-${{ matrix.system.platform }}-${{ matrix.shard }}
           path: mutants.out/
           if-no-files-found: ignore
 
