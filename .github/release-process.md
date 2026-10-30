@@ -2,11 +2,12 @@
 
 ## What a person does
 
-Run **Prepare release** from the Actions tab and pick the bump. It raises the version in
-`Cargo.toml` and `Cargo.lock` on a `release/vX.Y.Z` branch, in a commit GitHub signs, and opens
-the pull request as the packaging app with auto-merge on: it merges itself once every required
-check has passed. Nobody types a version twice, nobody makes a tag by hand, and nothing waits on
-a click once the run starts.
+Run **Prepare release** from the Actions tab and pick the bump. It waits for CI, CodeQL and
+BinSkim to pass on `main`, raises the version in `Cargo.toml` and `Cargo.lock` on a
+`release/vX.Y.Z` branch, in a commit GitHub signs, and opens the pull request as the packaging app
+with auto-merge on: it merges itself once every required check has passed. Those checks do not
+test, analyse or build the code again, which changes in nothing but the version. Nobody types a
+version twice, nobody makes a tag by hand, and nothing waits on a click once the run starts.
 
 ## What happens on the merge
 

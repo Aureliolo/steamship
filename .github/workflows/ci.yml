@@ -20,13 +20,15 @@ jobs:
   # Named by platform rather than by runner image, so an image raise leaves the name as it was.
   rust:
     name: rust (${{ matrix.platform }})
-    # A release's Homebrew and Scoop pull request, opened by the packaging app on a branch of this
-    # repository, changes those two files alone, and packages.yml checks them against the release's
-    # signed checksums; the code it leaves as it was is not tested again. The passed job at the
-    # end counts a skipped job as passed.
+    # A release's own pull requests, opened by the packaging app on a branch of this repository,
+    # are not tested again. The release pull request raises the version alone, on a main that took
+    # each change only once it was up to date and had passed here, and Prepare release refuses a
+    # main whose checks have not passed. The Homebrew and Scoop pull request changes those two
+    # files alone, and packages.yml checks them against the release's signed checksums. The passed
+    # job at the end counts a skipped job as passed.
     if: >-
       ${{ !(github.event.pull_request.head.repo.full_name == github.repository
-      && startsWith(github.head_ref, 'packages/v')
+      && (startsWith(github.head_ref, 'packages/v') || startsWith(github.head_ref, 'release/v'))
       && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     strategy:
       fail-fast: false
@@ -265,10 +267,10 @@ jobs:
   # change that adds code without tests for it fails here.
   coverage:
     name: coverage
-    # As rust: not for a release's Homebrew and Scoop pull request.
+    # As rust: not for a release's own pull requests.
     if: >-
       ${{ !(github.event.pull_request.head.repo.full_name == github.repository
-      && startsWith(github.head_ref, 'packages/v')
+      && (startsWith(github.head_ref, 'packages/v') || startsWith(github.head_ref, 'release/v'))
       && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 20
@@ -445,10 +447,10 @@ jobs:
   # than at a release.
   linux-packages:
     name: linux packages
-    # As rust: not for a release's Homebrew and Scoop pull request.
+    # As rust: not for a release's own pull requests.
     if: >-
       ${{ !(github.event.pull_request.head.repo.full_name == github.repository
-      && startsWith(github.head_ref, 'packages/v')
+      && (startsWith(github.head_ref, 'packages/v') || startsWith(github.head_ref, 'release/v'))
       && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 30
@@ -502,10 +504,10 @@ jobs:
   # runtime, and a sanitiser adds nothing here, where no fuzzed code is unsafe.
   fuzz:
     name: fuzz
-    # As rust: not for a release's Homebrew and Scoop pull request.
+    # As rust: not for a release's own pull requests.
     if: >-
       ${{ !(github.event.pull_request.head.repo.full_name == github.repository
-      && startsWith(github.head_ref, 'packages/v')
+      && (startsWith(github.head_ref, 'packages/v') || startsWith(github.head_ref, 'release/v'))
       && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     runs-on: ubuntu-26.04
     timeout-minutes: 20
