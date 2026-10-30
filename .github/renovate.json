@@ -111,11 +111,11 @@
       ]
     },
     {
-      "description": "The runner images inside a job matrix, which the github-actions manager does not read.",
+      "description": "The runner images inside a job matrix, or handed to one through a variable, which the github-actions manager does not read.",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>github-runners) depName=(?<depName>ubuntu|windows|macos)\\n\\s*runner: (?:ubuntu|windows|macos)-(?<currentValue>[0-9.]+(?:-[a-z0-9]+)?)"
+        "# renovate: datasource=(?<datasource>github-runners) depName=(?<depName>ubuntu|windows|macos)\\n\\s*(?:runner|[A-Z]+_RUNNER): (?:ubuntu|windows|macos)-(?<currentValue>[0-9.]+(?:-[a-z0-9]+)?)"
       ]
     }
   ]
