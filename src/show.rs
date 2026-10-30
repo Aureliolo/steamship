@@ -511,6 +511,7 @@ mod tests {
             ("shown", 230, true, "shown (0.2 s)"),
             ("built in 21 s", 21_480, true, "built in 21 s (21.5 s)"),
             ("", 119_940, true, "(119.9 s)"),
+            ("checked", 120_000, true, "checked (2 min)"),
             ("uploaded", 271 * 60_000, true, "uploaded (271 min)"),
             ("shown", 230, false, "shown"),
         ];
