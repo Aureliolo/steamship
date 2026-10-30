@@ -266,7 +266,8 @@ jobs:
       run:
         shell: pwsh
     env:
-      # winget itself, used only where the runner image lacks it. Raised by Renovate from the tag.
+      # winget itself, installed over the older one the runner image carries so that the test
+      # runs the client winget-pkgs validates with. Raised by Renovate from the tag.
       # renovate: datasource=github-releases depName=microsoft/winget-cli
       WINGET_TAG: v1.29.380
       WINGET_BUNDLE_SHA256: 65dea9c01ce08ee7b763366b27c0e651f97db857c11ca9b9c301826c10092f2e
@@ -308,10 +309,9 @@ jobs:
           bash .github/packages.sh "${version}" release written
           mv written/winget winget
 
-      - name: Install winget where the runner lacks it
+      - name: Install winget at its pinned release
         run: |
           $ErrorActionPreference = 'Stop'
-          if (Get-Command winget -ErrorAction SilentlyContinue) { winget --version; exit 0 }
           $base = "https://github.com/microsoft/winget-cli/releases/download/$env:WINGET_TAG"
           $files = @{
             'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' = $env:WINGET_BUNDLE_SHA256
@@ -331,6 +331,8 @@ jobs:
             -DependencyPackagePath $dependencies -LicensePath "$env:RUNNER_TEMP\$env:WINGET_LICENSE" | Out-Null
           Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
           "$env:LOCALAPPDATA\Microsoft\WindowsApps" >> $env:GITHUB_PATH
+          $running = & "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe" --version
+          if ($running -ne $env:WINGET_TAG) { throw "winget is $running after installing the pinned $env:WINGET_TAG." }
 
       - name: Install with winget, then start steamship as winget's validation does
         env:
