@@ -79,7 +79,7 @@ jobs:
       - name: Restore the compiled dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'cache-compiled-dependencies' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install the test prerequisites
         uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
@@ -284,7 +284,7 @@ jobs:
       - name: Restore the compiled dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'cache-compiled-dependencies' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install cargo-llvm-cov
         env:
@@ -470,7 +470,7 @@ jobs:
       - name: Restore the compiled dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'cache-compiled-dependencies' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # The release profile rather than the release's dist one, which only adds whole-program
       # optimisation and would triple the build.
@@ -521,7 +521,7 @@ jobs:
       - name: Restore the compiled dependencies
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' || github.head_ref == 'cache-compiled-dependencies' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # From source at an exact version, every dependency held to the hashes in its lock file.
       - name: Install cargo-fuzz
