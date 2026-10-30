@@ -541,6 +541,7 @@ jobs:
               echo "::error::The fuzz target ${target} failed; its input is in this run's failing-fuzz-inputs."
               return 1
             fi
+            echo "${target}: $(tail -n 1 "${FUZZ_LOGS}/${target}.log")"
           }
           export -f fuzz
           cargo fuzz list | xargs -P "$(nproc)" -n 1 bash -c "fuzz \"\$1\"" fuzz
