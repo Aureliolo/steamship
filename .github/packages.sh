@@ -146,7 +146,9 @@ winget_installer() {
 INSTALLER
 }
 
-manifest_version=1.12.0
+# winget-pkgs refuses a submission whose manifest version it has deprecated, so this stays at the
+# newest folder in microsoft/winget-cli's schemas/JSON/manifests.
+manifest_version=1.28.0
 schema="https://aka.ms/winget-manifest"
 x64_installer="$(winget_installer x64 "${windows_archive}" "${windows}")"
 arm64_installer="$(winget_installer arm64 "${windows_arm_archive}" "${windows_arm}")"
