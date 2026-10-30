@@ -61,6 +61,10 @@ jobs:
       # The release's C runtime, with Spectre mitigations, so that a runner without it fails
       # here rather than at a release; see .cargo/config.toml.
       VSCMD_ARG_VCVARS_SPECTRE: ${{ matrix.spectre }}
+      # Twice the runner's four cores: the integration tests mostly wait on the programs they
+      # start, and on Windows on Arm, where Git Bash runs emulated, 8 threads take them from
+      # 103 s to 64 s. Linux and macOS take as long either way.
+      RUST_TEST_THREADS: 8
 
     steps:
       - name: Checkout
