@@ -20,6 +20,7 @@ use crate::digest;
 use crate::download;
 use crate::magic;
 use crate::manifest::{Manifest, Package};
+use crate::parallel;
 // What each system does differently lives in a module of its own, which is how every line of it
 // is compiled, tested and mutation-tested on the system it is for.
 #[cfg(unix)]
@@ -449,10 +450,15 @@ impl Inventory {
             files: BTreeMap::new(),
             links: BTreeMap::new(),
         };
-        for (relative, kind) in walk(root)? {
+        let found = walk(root)?;
+        let hashed = parallel::map(&found, |(relative, kind)| match kind {
+            Kind::File => sha256(&root.join(relative)).map(Some),
+            Kind::Link => Ok(None),
+        });
+        for ((relative, kind), sha) in found.into_iter().zip(hashed) {
             let path = root.join(&relative);
             match kind {
-                Kind::File => inventory.files.extend([(relative, sha256(&path)?)]),
+                Kind::File => inventory.files.extend(sha?.map(|sha| (relative, sha))),
                 Kind::Link => {
                     let target = fs::read_link(&path).map_err(at(&path))?;
                     inventory
@@ -520,14 +526,17 @@ impl Inventory {
     /// looks like.
     fn check(&self, root: &Path) -> Result<(), Error> {
         let mut changes = Vec::new();
-        for (relative, pinned) in &self.files {
+        let pinned_files: Vec<_> = self.files.iter().collect();
+        let hashed = parallel::map(&pinned_files, |(relative, _)| {
             let path = root.join(relative);
-            let now = if path.is_file() {
-                Some(sha256(&path)?)
+            if path.is_file() {
+                sha256(&path).map(Some)
             } else {
-                None
-            };
-            match now {
+                Ok(None)
+            }
+        });
+        for ((relative, pinned), now) in pinned_files.into_iter().zip(hashed) {
+            match now? {
                 None => changes.push(format!("{relative} is missing")),
                 Some(found) if found != *pinned => changes.push(format!("{relative} has changed")),
                 Some(_) => {}
