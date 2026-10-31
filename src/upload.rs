@@ -69,19 +69,44 @@ fn at(path: &Path) -> impl FnOnce(io::Error) -> Error {
 /// When the version is empty, too long, or holds a quote or a control character, none of which
 /// a script value can carry.
 pub fn description(version: &str, commit: &str) -> Result<String, Error> {
+    shippable(version)?;
+    Ok(format!("{version} {commit}"))
+}
+
+/// Refuses a `version` a build cannot go up as.
+///
+/// # Errors
+///
+/// When it is not 1 to 64 characters without quotes or control characters, or is noughts alone.
+pub fn shippable(version: &str) -> Result<(), Error> {
     let usable = !version.is_empty()
         && version.len() <= 64
         && !version
             .chars()
             .any(|character| character == '"' || character.is_control());
-    if usable {
-        Ok(format!("{version} {commit}"))
-    } else {
-        Err(Error::Description(format!(
+    if !usable {
+        return Err(Error::Description(format!(
             "the version \"{}\" is not 1 to 64 characters without quotes or control characters",
             version.escape_debug()
-        )))
+        )));
     }
+    if unreleased(version) {
+        return Err(Error::Description(format!(
+            "the version {version} is noughts alone, which names no release: give the release \
+             going up with --version"
+        )));
+    }
+    Ok(())
+}
+
+/// Whether `version` is noughts alone, such as the 0.0.0 a project states between releases.
+#[must_use]
+pub fn unreleased(version: &str) -> bool {
+    version
+        .strip_prefix('v')
+        .unwrap_or(version)
+        .split('.')
+        .all(|part| !part.is_empty() && part.bytes().all(|byte| byte == b'0'))
 }
 
 /// The commit the file or folder at `path` is in, abbreviated as Git does for display.
@@ -720,7 +745,7 @@ mod tests {
 
     #[test]
     fn refuses_a_version_a_script_value_cannot_carry() {
-        for version in ["", "1.0\"", "1.0\n", &"9".repeat(65)] {
+        for version in ["", "1.0\"", "1.0\n", &"9".repeat(65), "0.0.0", "v0.0", "0"] {
             assert!(
                 matches!(description(version, "abc"), Err(Error::Description(_))),
                 "{version:?}"
@@ -729,6 +754,13 @@ mod tests {
         assert_eq!(
             description(&"9".repeat(64), "abc").unwrap(),
             format!("{} abc", "9".repeat(64))
+        );
+        assert_eq!(description("0.0.1", "abc").unwrap(), "0.0.1 abc");
+        assert_eq!(description("0.10", "abc").unwrap(), "0.10 abc");
+        assert_eq!(
+            description("0.0.0", "abc").unwrap_err().to_string(),
+            "the version 0.0.0 is noughts alone, which names no release: give the release going \
+             up with --version"
         );
     }
 

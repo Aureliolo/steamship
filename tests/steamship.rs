@@ -9201,6 +9201,44 @@ fn an_upload_in_a_game_ships_only_its_pushed_commit_against_its_settings_snapsho
 }
 
 #[test]
+fn an_upload_in_a_game_goes_up_as_the_newest_release_changes_md_heads_and_never_as_noughts() {
+    let failing = "build = [\"git\", \"rev-parse\", \"--verify\", \"--quiet\", \"none\"]\n";
+    let (_temp, root) = pushed_game(Some(failing));
+    fs::write(
+        root.join("project.godot"),
+        "[application]\nconfig/name=\"Inn\"\nconfig/version=\"0.0.0\"\n",
+    )
+    .unwrap();
+    pushed(&root, "Keep the release in the changelog");
+    let stated = in_game(&root, &["upload"]);
+    assert_eq!(stated.0, Some(2_i32), "{}{}", stated.1, stated.2);
+    assert!(
+        failure(&stated.2).ends_with(
+            "project.godot's config/version is 0.0.0, which names no release: head the newest \
+             release in CHANGES.md as `## <version>`, or give it with --version"
+        ),
+        "{}",
+        stated.2
+    );
+    let given = in_game(&root, &["upload", "--version", "0.0.0"]);
+    assert_eq!(given.0, Some(2_i32), "{}{}", given.1, given.2);
+    assert_eq!(
+        failure(&given.2),
+        "the version 0.0.0 is noughts alone, which names no release: give the release going up \
+         with --version"
+    );
+    fs::write(
+        root.join("CHANGES.md"),
+        "# Changes\n\n## 0.4.0, 2026-10-31\n",
+    )
+    .unwrap();
+    pushed(&root, "Release 0.4.0");
+    let headed = in_game(&root, &["upload"]);
+    assert_eq!(headed.0, Some(1_i32), "{}{}", headed.1, headed.2);
+    assert!(headed.1.contains("  version   0.4.0\n"), "{}", headed.1);
+}
+
+#[test]
 fn an_upload_in_a_game_refuses_a_build_that_fails() {
     let failing = "build = [\"git\", \"rev-parse\", \"--verify\", \"--quiet\", \"none\"]\n";
     let (_temp, root) = pushed_game(Some(failing));
@@ -9355,7 +9393,8 @@ fn an_upload_naming_its_script_needs_the_version_it_goes_up_as() {
     assert_eq!(
         failure(&stderr),
         "give the version steam/app_build.vdf goes up as with --version, or run steamship upload \
-         with no script in the game's folder, which takes project.godot's"
+         with no script in the game's folder, which takes the newest release CHANGES.md heads \
+         or project.godot's version"
     );
 }
 
