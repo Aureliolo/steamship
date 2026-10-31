@@ -902,7 +902,7 @@ fn an_upload_asked_for_default_too_once_steam_shows_the_app_released_goes_to_its
         stderr.contains("released, as Steam shows it (released)")
             && stderr.contains(
                 "app 1000 is released, so its default branch is set live in Steamworks, where \
-                 Valve asks for a Steam Mobile confirmation; the build goes up without it"
+                 Valve asks for a Steam Mobile confirmation. The build goes up without it"
             )
             && stderr.contains("app 1000: BuildID 4242, set live on testing")
             && !stderr.contains("and default"),
@@ -2194,7 +2194,7 @@ fn a_login_handed_over_that_steam_refuses_says_when_it_was_packed_and_how_to_pac
     assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
     assert_eq!(
         failure(&stderr),
-        "not logged in: Expired Login Auth Code; the login in STEAMSHIP_LOGIN was packed on \
+        "not logged in: Expired Login Auth Code. The login in STEAMSHIP_LOGIN was packed on \
          2026-09-28"
     );
     assert!(
@@ -3519,7 +3519,7 @@ fn an_item_made_whose_id_cannot_be_kept_says_what_to_keep_by_hand_and_exits_1() 
             "\u{2717} app 480: Workshop item 777 was made: {}: ",
             items.display()
         )) && stderr
-            .contains("; add \"example\": 777 to its \"items\", or the next upload makes another"),
+            .contains(". Add \"example\": 777 to its \"items\", or the next upload makes another"),
         "{stderr}"
     );
     assert_eq!(
@@ -7587,7 +7587,10 @@ fn settings_are_shown_saved_and_checked_leaving_steams_bookkeeping_out() {
         ),
         "{why}"
     );
-    assert!(shown.contains("settings --save` the file again"), "{shown}");
+    assert!(
+        shown.contains("or run steamship settings --save again if the change was meant"),
+        "{shown}"
+    );
 }
 
 #[cfg(unix)]
@@ -8029,7 +8032,7 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
         (
             vec!["1000", "--into", on_testing.to_str().unwrap()],
             format!(
-                "{}: holds app 1000's testing branch; fetch default into a folder of its own",
+                "{}: holds app 1000's testing branch. Fetch default into a folder of its own",
                 on_testing.display()
             ),
         ),
