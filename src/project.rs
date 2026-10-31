@@ -1,9 +1,10 @@
 //! A game's folder as steamship finds it, so that a command run in the game needs nothing named.
 //!
 //! Its build scripts, records, catalogues and example mods are where steamship expects them, or
-//! where its `steamship.toml` says they are. The layout steamship expects is games-kit's: the build scripts in `steam/`, the base mod's
-//! records in `mods/base/data`, every language's catalogue in `game/locale`, the example mods in
-//! `modding/`, and the version in `project.godot`. `steamship.toml` names whatever a game keeps
+//! where its `steamship.toml` says they are. The layout steamship expects is games-kit's: the
+//! build scripts in `steam/`, the base mod's records in `mods/base/data`, every language's
+//! catalogue in `game/locale`, the example mods in `modding/`, and the version as `CHANGES.md`'s
+//! newest release heading or `project.godot`'s. `steamship.toml` names whatever a game keeps
 //! elsewhere, the command that builds it, and the one steamship it ships with.
 
 use std::collections::BTreeSet;
@@ -20,7 +21,7 @@ use toml::de::Error as TomlError;
 use crate::unix as native;
 #[cfg(windows)]
 use crate::windows as native;
-use crate::{check, run, settings, show, webapi, workshop};
+use crate::{check, run, settings, show, upload, webapi, workshop};
 
 /// The file a game names its own layout in, at its root.
 pub const FILE: &str = "steamship.toml";
@@ -31,6 +32,9 @@ const SCRIPT: &str = "steam/app_build.vdf";
 /// Where a game keeps its demo's app build script when its `steamship.toml` names none: a folder
 /// of its own, since the demo's settings snapshot and depot scripts go beside it.
 const DEMO_SCRIPT: &str = "steam/demo/app_build.vdf";
+
+/// The changelog whose newest release heading is the version a game ships as.
+const CHANGES: &str = "CHANGES.md";
 
 /// The branch a game's build goes live on when its `steamship.toml` names none: the default branch
 /// is the publisher's to set, once the game is released.
@@ -407,30 +411,46 @@ impl Project {
         self.scripts().join(settings::SNAPSHOT)
     }
 
-    /// The version the game ships as, from `project.godot`'s `config/version`.
+    /// The version the game ships as: the newest release `CHANGES.md` heads, or else
+    /// `project.godot`'s `config/version`. A project whose changelog holds its releases may keep
+    /// 0.0.0 in `project.godot` and write the release into the export, so noughts alone are
+    /// refused rather than uploaded.
     ///
     /// # Errors
     ///
-    /// When there is no `project.godot`, or it names no version.
+    /// When neither file names a version, either cannot be read, or the version is noughts alone.
     pub fn version(&self) -> Result<String, String> {
+        let changes = self.root.join(CHANGES);
+        match fs::read_to_string(&changes) {
+            Ok(text) => {
+                if let Some(version) = newest_release(&text) {
+                    return released(version, &changes, "newest release heading");
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("{}: {error}", changes.display())),
+        }
         let path = self.root.join("project.godot");
         let text = fs::read_to_string(&path).map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
                 format!(
-                    "{} has no project.godot to take the version from: give it with --version",
+                    "{} has no release heading in {CHANGES} nor a project.godot to take the \
+                     version from: head the newest release in {CHANGES} as `## <version>`, or \
+                     give it with --version",
                     self.root.display()
                 )
             } else {
                 format!("{}: {error}", path.display())
             }
         })?;
-        godot_version(&text).ok_or_else(|| {
+        let version = godot_version(&text).ok_or_else(|| {
             format!(
-                "{} names no config/version under [application]: set the game's version there, or \
-                 give it with --version",
+                "{} names no config/version under [application]: set the game's version there, \
+                 head the newest release in {CHANGES} as `## <version>`, or give it with --version",
                 path.display()
             )
-        })
+        })?;
+        released(version, &path, "config/version")
     }
 
     /// The record files holding what `kind` reads: each JSON file in a records folder, and each
@@ -767,6 +787,40 @@ fn holds(path: &Path, kind: Records) -> bool {
         Ok(_) => false,
         Err(_) => true,
     }
+}
+
+/// `version`, read from `path`'s `what`, unless it is noughts alone.
+fn released(version: String, path: &Path, what: &str) -> Result<String, String> {
+    if upload::unreleased(&version) {
+        return Err(format!(
+            "{}'s {what} is {version}, which names no release: head the newest release in \
+             {CHANGES} as `## <version>`, or give it with --version",
+            path.display()
+        ));
+    }
+    Ok(version)
+}
+
+/// The newest release a changelog's `text` heads: the first `## ` heading whose first word is a
+/// version, `1.2.0`, `v1.2.0` or Keep a Changelog's `[1.2.0]`, so `## Unreleased` is passed over.
+#[must_use]
+pub fn newest_release(text: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let heading = line.strip_prefix("## ")?.trim_start();
+        let heading = heading.strip_prefix('[').unwrap_or(heading);
+        let heading = heading.strip_prefix('v').unwrap_or(heading);
+        let version = heading
+            .split(|character: char| character.is_whitespace() || character == ']')
+            .next()?;
+        let mut numbers = version.splitn(3, '.');
+        let numeric =
+            |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+        let major = numbers.next()?;
+        let minor = numbers.next()?;
+        let patch = numbers.next()?;
+        let patch_number = patch.split(['-', '+']).next()?;
+        (numeric(major) && numeric(minor) && numeric(patch_number)).then(|| version.to_owned())
+    })
 }
 
 /// The `config/version` a `project.godot`'s `text` gives under `[application]`.
@@ -1621,7 +1675,7 @@ mod tests {
             project
                 .version()
                 .unwrap_err()
-                .ends_with("names no config/version under [application]: set the game's version there, or give it with --version")
+                .ends_with("names no config/version under [application]: set the game's version there, head the newest release in CHANGES.md as `## <version>`, or give it with --version")
         );
         fs::remove_file(folder.path().join("project.godot")).unwrap();
         fs::create_dir_all(folder.path().join("project.godot")).unwrap();
@@ -1633,10 +1687,74 @@ mod tests {
         assert_eq!(
             project.version(),
             Err(format!(
-                "{} has no project.godot to take the version from: give it with --version",
+                "{} has no release heading in CHANGES.md nor a project.godot to take the version \
+                 from: head the newest release in CHANGES.md as `## <version>`, or give it with \
+                 --version",
                 folder.path().display()
             ))
         );
+    }
+
+    #[test]
+    fn the_newest_release_changes_md_heads_comes_before_project_godots_version() {
+        let (folder, project) = game(
+            &[
+                ("project.godot", "[application]\nconfig/version=\"0.0.0\"\n"),
+                (
+                    "CHANGES.md",
+                    "# Changes\n\n## Unreleased\n\n- More.\n\n## v0.4.2 - 2026-10-30\n\n## 0.4.1\n",
+                ),
+            ],
+            None,
+        );
+        assert_eq!(project.version(), Ok("0.4.2".to_owned()));
+        fs::write(
+            folder.path().join("CHANGES.md"),
+            "# Changes\n\n## Unreleased\n",
+        )
+        .unwrap();
+        assert_eq!(
+            project.version(),
+            Err(format!(
+                "{}'s config/version is 0.0.0, which names no release: head the newest release \
+                 in CHANGES.md as `## <version>`, or give it with --version",
+                folder.path().join("project.godot").display()
+            ))
+        );
+        fs::write(folder.path().join("CHANGES.md"), "## 0.0.0\n").unwrap();
+        assert_eq!(
+            project.version(),
+            Err(format!(
+                "{}'s newest release heading is 0.0.0, which names no release: head the newest \
+                 release in CHANGES.md as `## <version>`, or give it with --version",
+                folder.path().join("CHANGES.md").display()
+            ))
+        );
+        fs::remove_file(folder.path().join("CHANGES.md")).unwrap();
+        fs::create_dir_all(folder.path().join("CHANGES.md")).unwrap();
+        assert!(
+            project
+                .version()
+                .unwrap_err()
+                .starts_with(&format!("{}: ", folder.path().join("CHANGES.md").display()))
+        );
+    }
+
+    #[test]
+    fn a_changelogs_newest_release_is_its_first_heading_naming_a_version() {
+        for (text, newest) in [
+            ("## 1.2.3\n## 1.2.2\n", Some("1.2.3")),
+            ("## [Unreleased]\n## [1.0.0] - 2026-01-01\n", Some("1.0.0")),
+            ("## v2.0.0-rc.1\n", Some("2.0.0-rc.1")),
+            (
+                "### 9.9.9\n# 8.8.8\n## Next\n## 1.2\n## 1.2.3.4\n## 1.x.3\n",
+                None,
+            ),
+            ("  ## 1.2.3\n", None),
+            ("", None),
+        ] {
+            assert_eq!(newest_release(text).as_deref(), newest, "{text:?}");
+        }
     }
 
     #[test]

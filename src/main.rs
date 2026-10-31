@@ -229,7 +229,8 @@ fn upload_in(request: &cli::Upload) -> ExitCode {
         (Some(script), None) => fail(
             &format!(
                 "give the version {} goes up as with --version, or run steamship upload with no \
-                 script in the game's folder, which takes project.godot's",
+                 script in the game's folder, which takes the newest release CHANGES.md heads or \
+                 project.godot's version",
                 script.display()
             ),
             REFUSED,
@@ -658,6 +659,7 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
         Some(version) => version.to_owned(),
         None => game.version().map_err(|why| fail(&why, REFUSED))?,
     };
+    upload::shippable(&version).map_err(|error| fail(&error, REFUSED))?;
     show::field("version", &version);
     let script = game_script(&game)?;
     apart(&game)?;

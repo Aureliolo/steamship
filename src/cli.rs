@@ -150,9 +150,10 @@ pub enum Command {
     /// game's branch live, `testing` unless `steamship.toml` names another; then built with its
     /// `build` command, steamcmd and the build held to 4 processors or the file's `cores`, and
     /// refused if a file its depots map was not written by the build; then checked against the
-    /// settings snapshot `steam/settings.vdf`, its achievements, leaderboards
-    /// and rich presence, and uploaded as the version `project.godot` gives, live on the default
-    /// branch too while the app is unreleased. Once it is live, the branch's description becomes
+    /// settings snapshot `steam/settings.vdf`, its achievements, leaderboards and rich presence,
+    /// and uploaded as the newest release `CHANGES.md` heads, or else the version `project.godot`
+    /// gives, live on the default branch too while the app is unreleased. Once it is live, the
+    /// branch's description becomes
     /// the version, or the file's `description`. An app with no branch but default has the build
     /// live on default alone, and steamship names the commands that set it live on the game's
     /// branch and describe it once that branch is made.
@@ -593,7 +594,8 @@ pub struct Upload {
     /// The app build script, such as `steam/app_build.vdf`; in a game's folder, its own.
     pub script: Option<PathBuf>,
     /// The version being shipped, which with the commit becomes the build's description; in a
-    /// game's folder, `project.godot`'s.
+    /// game's folder, the newest release `CHANGES.md` heads, or else `project.godot`'s. Noughts
+    /// alone, such as 0.0.0, are refused.
     #[arg(long)]
     pub version: Option<String>,
     /// Valve's dry run: the whole build is computed and logged, and nothing is uploaded.
