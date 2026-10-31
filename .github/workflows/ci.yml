@@ -173,7 +173,7 @@ jobs:
             cargo run --locked -- builds 480 2> "${RUNNER_TEMP}/builds.txt" || status=$?
           cat "${RUNNER_TEMP}/builds.txt"
           test "${status}" -eq 1
-          grep -q '^  ✗ Steam refused the Web API key; ' "${RUNNER_TEMP}/builds.txt"
+          grep -q '^  ✗ Steam refused the Web API key\. ' "${RUNNER_TEMP}/builds.txt"
 
       # A key kept as a Linux desktop keeps one: libsecret's own secret-tool stores it in GNOME
       # Keyring, steamship finds it for its home and has Steam refuse it as above, then `logout`
@@ -194,7 +194,7 @@ jobs:
           cat "${RUNNER_TEMP}/kept.txt"
           test "${status}" -eq 1
           grep -q '^  api key   kept in the Secret Service$' "${RUNNER_TEMP}/kept.txt"
-          grep -q '^  ✗ Steam refused the Web API key; ' "${RUNNER_TEMP}/kept.txt"
+          grep -q '^  ✗ Steam refused the Web API key\. ' "${RUNNER_TEMP}/kept.txt"
           cargo run --locked -- logout | tee "${RUNNER_TEMP}/logout.txt"
           grep -q '^  api key   ✓ forgotten$' "${RUNNER_TEMP}/logout.txt"
           if secret-tool lookup application steamship kind web-api-key home "${STEAMSHIP_HOME}"; then
