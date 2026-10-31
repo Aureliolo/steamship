@@ -83,7 +83,7 @@ that fails:
 1. The tree is refused while it holds anything its commit does not, untracked files among it, or
    while origin's default branch is at another commit: what goes up is a pushed commit.
 2. The version is the newest release `CHANGES.md` heads: its first second-level heading that
-   starts with a version, such as `## 1.2.0`, `## v1.2.0` or `## [1.2.0] - 2026-10-30`. With none,
+   starts with a version, such as `## 1.2.0, 2026-10-30`, `## v1.2.0` or `## [1.2.0]`. With none,
    it is `project.godot`'s. `--version` gives another. Noughts alone, such as the 0.0.0 a project
    keeps in `project.godot` between releases, are refused.
 3. The app build script has to set the game's branch live, and no other. The settings snapshot

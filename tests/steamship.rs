@@ -9229,7 +9229,7 @@ fn an_upload_in_a_game_goes_up_as_the_newest_release_changes_md_heads_and_never_
     );
     fs::write(
         root.join("CHANGES.md"),
-        "# Changes\n\n## v0.4.0 - 2026-10-31\n",
+        "# Changes\n\n## 0.4.0, 2026-10-31\n",
     )
     .unwrap();
     pushed(&root, "Release 0.4.0");

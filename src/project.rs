@@ -801,8 +801,10 @@ fn released(version: String, path: &Path, what: &str) -> Result<String, String> 
     Ok(version)
 }
 
-/// The newest release a changelog's `text` heads: the first `## ` heading whose first word is a
-/// version, `1.2.0`, `v1.2.0` or Keep a Changelog's `[1.2.0]`, so `## Unreleased` is passed over.
+/// The newest release a changelog's `text` heads.
+///
+/// That is the first `## ` heading that starts with a version, `1.2.0`, `v1.2.0`, Keep a
+/// Changelog's `[1.2.0]` or changie's `1.2.0, 2026-10-30`, so `## Unreleased` is passed over.
 #[must_use]
 pub fn newest_release(text: &str) -> Option<String> {
     text.lines().find_map(|line| {
@@ -810,7 +812,9 @@ pub fn newest_release(text: &str) -> Option<String> {
         let heading = heading.strip_prefix('[').unwrap_or(heading);
         let heading = heading.strip_prefix('v').unwrap_or(heading);
         let version = heading
-            .split(|character: char| character.is_whitespace() || character == ']')
+            .split(|character: char| {
+                !(character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '+'))
+            })
             .next()?;
         let mut numbers = version.splitn(3, '.');
         let numeric =
@@ -1746,6 +1750,7 @@ mod tests {
             ("## 1.2.3\n## 1.2.2\n", Some("1.2.3")),
             ("## [Unreleased]\n## [1.0.0] - 2026-01-01\n", Some("1.0.0")),
             ("## v2.0.0-rc.1\n", Some("2.0.0-rc.1")),
+            ("## 0.4.2, 2026-10-30\n", Some("0.4.2")),
             (
                 "### 9.9.9\n# 8.8.8\n## Next\n## 1.2\n## 1.2.3.4\n## 1.x.3\n",
                 None,
