@@ -1,6 +1,6 @@
 //! Just enough of the ELF header to tell a Linux program from a Linux library.
 //!
-//! A program needs its executable bit to start; a shared library does not. Both can be `ET_DYN`
+//! A program needs its executable bit to start. A shared library does not. Both can be `ET_DYN`
 //! (a position-independent program is), so the question is whether the file names an
 //! interpreter, which only programs do, or is marked `DF_1_PIE`, which a static-pie program is
 //! in place of naming one.
@@ -20,7 +20,7 @@ const DYNAMIC_LIMIT: u64 = 64 * 1024;
 ///
 /// # Errors
 ///
-/// Only when reading fails; a file that is not ELF, or is cut short, is simply not a program.
+/// Only when reading fails. A file that is not ELF, or is cut short, is simply not a program.
 pub fn is_program<File>(file: &mut File) -> io::Result<bool>
 where
     File: Read + Seek,
@@ -95,7 +95,7 @@ where
             };
         }
     }
-    // A program linked static-pie names no interpreter, as a library does not; it is told from
+    // A program linked static-pie names no interpreter, as a library does not. It is told from
     // one by the flag the linker sets on programs alone.
     match dynamic {
         Some((offset, size)) => says_pie(file, order, wide, offset, size),
@@ -193,7 +193,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    /// Writes `value` at `at`, zero-filling up to it; fields are written in ascending order.
+    /// Writes `value` at `at`, zero-filling up to it. Fields are written in ascending order.
     fn put(bytes: &mut Vec<u8>, at: usize, value: &[u8]) {
         bytes.resize(at, 0);
         bytes.extend_from_slice(value);
@@ -233,7 +233,7 @@ mod tests {
     }
 
     /// A 64-bit little-endian `ET_DYN` file whose one segment is a dynamic section `size` bytes
-    /// long at 120, holding `entries` from its start and `DT_FLAGS_1` of `flags` at `flags_at`.
+    /// long at 120. The section holds `DT_FLAGS_1` of `flags` at `flags_at`.
     fn with_dynamic(flags: u64, flags_at: usize, size: u64) -> Vec<u8> {
         let mut bytes = elf64(ET_DYN, PT_DYNAMIC);
         let mut header = bytes.split_off(64);

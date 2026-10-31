@@ -232,6 +232,8 @@ fn git(folder: &Path, args: &[&str]) {
                 "user.email=steamship@example.invalid",
             ])
             .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
+            // A hooks folder set in the machine's own git config would otherwise run here.
+            .args(["-c", "core.hooksPath=.git/hooks"])
             .args(args)
             .current_dir(folder),
     )

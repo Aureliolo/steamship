@@ -14,7 +14,7 @@ use windows_sys::Win32::System::Diagnostics::Debug::{
 
 #[test]
 fn crashes_and_missing_files_put_up_no_dialogue() {
-    // SAFETY: changes one process-wide flag; nothing else runs in this process.
+    // SAFETY: changes one process-wide flag. Nothing else runs in this process.
     let _: u32 = unsafe { SetErrorMode(0) };
     silence_error_dialogues();
     // SAFETY: reads one process-wide flag.

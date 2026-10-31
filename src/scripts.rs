@@ -279,7 +279,7 @@ fn number(block: &Block, key: &str, path: &Path, problems: &mut Vec<Problem>) ->
         )),
         Some(0) => problems.push(Problem::new(
             path,
-            format!("\"{key}\" is 0, which Steamworks never gives: put in the ID it shows for it"),
+            format!("\"{key}\" is 0, which Steamworks never gives. Put in the ID it shows for it"),
         )),
         Some(_) => return parsed,
     }
@@ -295,7 +295,7 @@ fn parent(path: &Path) -> PathBuf {
 ///
 /// Scripts are usually written on Windows, so elsewhere a backslash is read as the separator it
 /// was meant as. The result is rebuilt from its parts, so it is shown with the system's own
-/// separator throughout, however `base` and the script were written; a trailing separator, which
+/// separator throughout, however `base` and the script were written. A trailing separator, which
 /// marks a folder in `ContentRoot`, is kept.
 ///
 /// A `..` goes with the folder before it wherever the system would take both out anyway, so a

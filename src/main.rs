@@ -193,7 +193,7 @@ fn check_in(script: Option<&Path>, scripts_only: bool, demo: bool) -> ExitCode {
         Some(folder) if folder.is_dir() => run_check_folder(folder, scripts_only, demo),
         Some(script) if demo => fail(
             &format!(
-                "{} is an app build script, which names its own app; give --demo a build's \
+                "{} is an app build script, which names its own app. Give --demo a build's \
                  folder, or nothing in the game's folder",
                 script.display()
             ),
@@ -228,8 +228,8 @@ fn upload_in(request: &cli::Upload) -> ExitCode {
         }
         (Some(script), None) => fail(
             &format!(
-                "give the version {} goes up as with --version, or run steamship upload with no \
-                 script in the game's folder, which takes the newest release CHANGES.md heads or \
+                "{} needs a version. Give it with --version, or run steamship upload with no \
+                 script in the game's folder. That takes the newest release CHANGES.md heads, or \
                  project.godot's version",
                 script.display()
             ),
@@ -251,7 +251,7 @@ fn game() -> Result<Project, ExitCode> {
                 &format!(
                     "there is no game in {}: no {} or steam/app_build.vdf in it or a folder \
                      above. Run steamship in the game's folder, start one here with \
-                     `steamship init <app ID>`, or name the app and its files",
+                     steamship init <app ID>, or name the app and its files",
                     here.display(),
                     project::FILE
                 ),
@@ -374,8 +374,8 @@ fn snapshot_sound(
         if needed {
             return Err(fail(
                 &format!(
-                    "{} is missing: run steamship settings --save in the game and commit it, so a \
-                     build goes up only against the settings it was made for",
+                    "{} is missing. Run steamship settings --save in the game, and commit the \
+                     file",
                     path.display()
                 ),
                 REFUSED,
@@ -388,16 +388,16 @@ fn snapshot_sound(
     let depots: Vec<u32> = script.depots.iter().map(|depot| depot.depot_id).collect();
     wrong.extend(settings::foreign(&snapshot, &depots).into_iter().map(|depot| {
         format!(
-            "{} uploads depot {depot}, which is not among app {app}'s own depots: a depot goes up \
-             in the app it was made under; if it is new, publish it in Steamworks and save the \
+            "{} uploads depot {depot}, which is not among app {app}'s own depots. A depot goes up \
+             in the app it was made under. If it is new, publish it in Steamworks and save the \
              settings again",
             game.script.display()
         )
     }));
     wrong.extend(settings::unlaunched(&snapshot).into_iter().map(|system| {
         format!(
-            "app {app} has a depot for {system}, and no launch option runs on {system}: \
-                     add one under Installation, General Installation in Steamworks, then save \
+            "app {app} has a depot for {system}, and no launch option runs on {system}. \
+                     Add one under Installation, General Installation in Steamworks, then save \
                      the settings again"
         )
     }));
@@ -432,7 +432,7 @@ fn snapshot_sound(
 }
 
 /// Refuses a game and its demo that share an app or a depot, so that neither's build can go up
-/// into the other's; nothing when the game has no demo.
+/// into the other's. Does nothing when the game has no demo.
 ///
 /// The full game is shipped whatever is wrong with the demo's script, such as an app ID of 0
 /// held in place until the demo's app exists: steamship cannot upload that script, so it cannot
@@ -461,7 +461,7 @@ fn apart(game: &Project) -> Result<(), ExitCode> {
     let mut wrong = Vec::new();
     if full.app_id == demo.app_id {
         wrong.push(format!(
-            "{} names app {}, the full game's own in {}: a demo is its own app, so put the \
+            "{} names app {}, the full game's own in {}. A demo is its own app, so put the \
              demo's ID in it",
             demo_path.display(),
             demo.app_id,
@@ -512,7 +512,7 @@ fn exports_apart(game: &Project, script: &scripts::AppScript) -> Result<(), Exit
             };
             wrong.push(format!(
                 "{} ships {} into depot {}, {whose}, and the export preset \"{}\" in {} makes it \
-                 {made} the `{}` feature: map only the folders {whose} presets export to",
+                 {made} the \"{}\" feature. Map only the folders {whose} presets export to",
                 depot.path.display(),
                 preset.export.display(),
                 depot.depot_id,
@@ -560,7 +560,8 @@ fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> {
         unchecked(
             "achievements",
             &format!(
-                "no achievement, stat or set records in {}: name the game's in {}'s records",
+                "no achievement, stat or set records in {}. List the game's under `records` in \
+                 {}",
                 records(),
                 project::FILE
             ),
@@ -866,7 +867,7 @@ fn achievements_in(
     try_achievements(&app_given_or(app, game.as_ref()), &files, &writing, json)
 }
 
-/// The app as `app` names it, or else as the game's build script does; `game` is there whenever
+/// The app as `app` names it, or else as the game's build script does. `game` is there whenever
 /// `app` is not.
 fn app_given_or(app: Option<String>, game: Option<&Project>) -> String {
     app.or_else(|| game.map(script_named)).unwrap_or_default()
@@ -971,7 +972,7 @@ fn rich_presence_in(
             show::title("rich-presence");
             return Err(fail(
                 &format!(
-                    "the game holds no rich_presence_<language>.vdf beside {}: write \
+                    "the game holds no rich_presence_<language>.vdf beside {}. Write \
                      rich_presence_english.vdf there, or name the files to send",
                     game.script.display()
                 ),
@@ -1012,7 +1013,7 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     }
     shipped_from(&game)?;
     let app = script_named(&game);
-    // A file that cannot be read is named by the upload itself; until then no item counts as made.
+    // A file that cannot be read is named by the upload itself. Until then no item counts as made.
     let made = fs::read_to_string(&game.items)
         .ok()
         .and_then(|text| workshop::Record::read(&text).ok())
@@ -1088,7 +1089,7 @@ fn home() -> Result<PathBuf, ExitCode> {
         .map_err(|error| fail(&error, FAILED))
 }
 
-/// The home, held, waiting for any other steamship using it to finish first.
+/// The home, held once any other steamship using it has finished.
 fn hold(home: &Path) -> Result<install::Held, ExitCode> {
     let mut waiting = None;
     let held = install::hold(home, || {
@@ -1278,7 +1279,7 @@ fn account(named: Option<&str>, ask: bool) -> Result<(Account, Source), ExitCode
             .and_then(|name| Account::parse(&name).map_err(|error| fail(&error, REFUSED)))
             .map(|account| (account, Source::Typed)),
         Ok(None) => Err(fail(
-            &"name the build account with --account or STEAMSHIP_ACCOUNT",
+            &"no build account is named. Name it with --account or STEAMSHIP_ACCOUNT",
             REFUSED,
         )),
         Err(error) => Err(fail(
@@ -1291,7 +1292,7 @@ fn account(named: Option<&str>, ask: bool) -> Result<(Account, Source), ExitCode
 /// What steamship shows while it waits for the login to be approved.
 const APPROVING: &str = "waiting for you in the Steam Mobile app";
 
-/// The person at the terminal, answering steamcmd through steamship's own prompts.
+/// The person at the terminal, who answers steamcmd through steamship's own prompts.
 #[derive(Debug, Default)]
 struct Typist {
     approving: Option<Spinner>,
@@ -1399,10 +1400,7 @@ fn run_logout() -> ExitCode {
         Ok(false) => show::field("api key", "none kept"),
         Err(code) => return code,
     }
-    show::success(
-        "logged out",
-        "the next upload needs `steamship login` first",
-    );
+    show::success("logged out", "the next upload needs steamship login first");
     ExitCode::SUCCESS
 }
 
@@ -1418,10 +1416,10 @@ fn steamcmd_state(home: &Path, manifest: &Manifest) -> Result<(), ExitCode> {
         ),
         Ok(State::Earlier) => show::field(
             "steamcmd",
-            "an earlier pin; the next login or upload replaces it",
+            "an earlier pin, which the next login or upload replaces",
         ),
         Ok(State::Missing) => {
-            show::field("steamcmd", "not installed; `steamship login` installs it");
+            show::field("steamcmd", "not installed (steamship login installs it)");
         }
         Err(error) => {
             show::failed("steamcmd", "not as pinned");
@@ -1617,7 +1615,7 @@ fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCode {
             show::failure(
                 "not logged in",
                 &format!(
-                    "{reason}; the login in {} was packed on {day}",
+                    "{reason}. The login in {} was packed on {day}",
                     ci::VARIABLE
                 ),
                 Some(again),
@@ -1627,8 +1625,8 @@ fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCode {
     ExitCode::from(LOGIN)
 }
 
-/// The exit code for what Steam made of the saved login, or the one handed over in `packed`,
-/// saying why when it did not take it.
+/// The exit code for what Steam made of the saved login, or of the one handed over in `packed`.
+/// It says why when Steam did not take the login.
 fn verdict(judged: upload::Login, packed: Option<&ci::Login>) -> ExitCode {
     match judged {
         upload::Login::Taken => ExitCode::SUCCESS,
@@ -1696,7 +1694,7 @@ fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     if typist.saved {
         show::success(
             "already logged in",
-            "uploads use the saved login until it expires; `steamship logout` forgets it",
+            "uploads use the saved login until it expires. steamship logout forgets it",
         );
     } else {
         show::success("logged in", "uploads use this login until it expires");
@@ -1704,9 +1702,9 @@ fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Refuses, naming every problem, when `check` found any; otherwise shows what was checked, and
+/// Refuses, naming every problem, when `check` found any. Otherwise shows what was checked, and
 /// answers whether the branch the script sets live can be. The content is checked against the
-/// settings snapshot beside the script when there is one; with `scripts_only`, it is left
+/// settings snapshot beside the script when there is one. With `scripts_only`, it is left
 /// unchecked.
 fn checked(script: &Path, scripts_only: bool) -> Result<(check::Report, Branch), ExitCode> {
     let report = if scripts_only {
@@ -1742,7 +1740,7 @@ fn checked(script: &Path, scripts_only: bool) -> Result<(check::Report, Branch),
     Err(ExitCode::from(REFUSED))
 }
 
-/// The settings snapshot beside `script`, for `app`, when there is one; refused when it cannot be
+/// The settings snapshot beside `script`, for `app`, when there is one. Refused when it cannot be
 /// read.
 fn snapshot_beside(script: &Path, app: Option<u32>) -> Result<Option<vdf::Block>, ExitCode> {
     let path = script
@@ -1844,7 +1842,7 @@ const UNKNOWN_TICKS: &str = "upload asks Steam which redistributables the app ti
 
 /// Why an unchecked `SetLive` branch matters, and how to have it checked.
 const UNCHECKED_BRANCH: &str = "a branch the app does not have leaves the build uploaded but not \
-                                live; steamship login --web-api-key keeps a key to check it with";
+                                live. steamship login --web-api-key keeps a key to check it with";
 
 /// Whether the branch an app build script sets live can be set live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1889,9 +1887,8 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<Branch, Ex
                 spinner.skipped(&format!("{branch}, not on Steam yet"));
                 show::aside(&format!(
                     "app {app} has no build live on its default branch, and Steam gives it no \
-                     other branch until it has: an upload with --default sets the build live on \
-                     default alone, and then {branch} can be made in Steamworks under SteamPipe, \
-                     Builds"
+                     other branch until it has. An upload with --default sets the build live on \
+                     default alone. Then make {branch} in Steamworks under SteamPipe, Builds"
                 ));
                 return Ok(Branch::Unbranched);
             }
@@ -1902,8 +1899,8 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<Branch, Ex
     }
 }
 
-/// The partner Web API, when a key is set in `STEAMSHIP_WEB_API_KEY` or kept; none otherwise,
-/// without asking for one.
+/// The partner Web API, when a key is set in `STEAMSHIP_WEB_API_KEY` or kept. None otherwise,
+/// and none is asked for.
 fn key_at_hand() -> Result<Option<webapi::Api>, ExitCode> {
     if let Some(text) = key_variable() {
         let key = webapi::Key::parse(&text).map_err(|_not_a_key| {
@@ -1917,7 +1914,7 @@ fn key_at_hand() -> Result<Option<webapi::Api>, ExitCode> {
         })?;
         return Ok(Some(webapi::Api::new(key)));
     }
-    // Asked first without reading it, which no store prompts for; a store holding none is then
+    // Asked first without reading it, which no store prompts for. A store holding none is then
     // never asked to unlock, so a check stays free of prompts for anyone who kept no key.
     let kept = Platform::THIS
         .home(|name| env::var_os(name))
@@ -2053,8 +2050,8 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
 ///
 /// Asked for on every upload by a game's tools, the default branch is left once the game is
 /// released, and the upload goes on to its own branch as ever. With a key at hand Steam is asked
-/// in the build's run, saving a login; without one it is asked here, so a key that is needed is
-/// asked for before anything goes up.
+/// in the build's run, which saves a login. Without one it is asked here, so a key that is needed
+/// is asked for before anything goes up.
 fn default_key(
     asked: bool,
     (held, home, manifest): (&install::Held, &Path, &Manifest),
@@ -2073,7 +2070,7 @@ fn default_key(
     Ok(match shown? {
         Ok(()) => (Some(web_api(home)?), false),
         Err(why) => {
-            show::note(&format!("{why}; the build goes up without it"));
+            show::note(&format!("{why}. The build goes up without it"));
             (None, false)
         }
     })
@@ -2081,7 +2078,7 @@ fn default_key(
 
 /// The `default` key to set the default branch live with, kept, when the build's own steamcmd run
 /// printed the app's `info`, only while that shows `app` unreleased, said while the build's
-/// `spinner`, `doing` so, waits; nothing is said for a build that never reached Steam.
+/// `spinner`, `doing` so, waits. Nothing is said for a build that never reached Steam.
 fn shown_unreleased<Key>(
     default: Option<Key>,
     outcome: &upload::Outcome,
@@ -2111,7 +2108,7 @@ fn shown_unreleased<Key>(
             Ok(()) => show::done("steam", &said),
             Err(why) => {
                 show::failed("steam", &said);
-                show::note(&format!("{why}; the build goes up without it"));
+                show::note(&format!("{why}. The build goes up without it"));
             }
         },
         doing,
@@ -2195,7 +2192,9 @@ fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, Ex
                     // The CDN answers 401 for a request code it does not take, as one that has
                     // expired, and steamcmd's next run is given a new one.
                     download::Served::Otherwise(status) => {
-                        waiting.done(&format!("answered {status} after {waited}; asking again"));
+                        waiting.done(&format!(
+                            "answered {status} after {waited} and is asked again"
+                        ));
                     }
                     download::Served::No => {
                         ran.spinner = waiting;
@@ -2293,9 +2292,9 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
     })
 }
 
-/// Asks Steam, when a key is at hand, whether `build_id` is what is live on `branch` now; false
+/// Asks Steam, when a key is at hand, whether `build_id` is what is live on `branch` now. False
 /// only when Steam shows another build there, or no such branch. Asked a few times, since a
-/// build just set live may not show at once; a Steam that cannot be asked holds nothing up.
+/// build just set live may not show at once. A Steam that cannot be asked holds nothing up.
 fn confirmed_live(app: u32, branch: &str, build_id: u64) -> bool {
     const ASKS: u32 = 4;
     const APART: Duration = Duration::from_secs(2);
@@ -2475,7 +2474,7 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
 
 /// Says where `build_id`, just uploaded for `app`, is live: on `branch`, which the script set it
 /// live on, once Steam shows it there, and then on default, set through `default` when given.
-/// Answers the upload's exit code and where the build is live; `logs` says where to look.
+/// Answers the upload's exit code and where the build is live. `logs` says where to look.
 fn set_live(
     app: u32,
     build_id: u64,
@@ -2573,7 +2572,7 @@ fn first_on_default(
 }
 
 /// Sets `build_id` of `app` live on the default branch through `api`, and says whether Steam
-/// did; the build is already live on `branch`, if the script sets one live.
+/// did. The build is already live on `branch`, if the script sets one live.
 fn live_on_default(api: &webapi::Api, app: u32, build_id: u64, branch: Option<&str>) -> bool {
     let spinner = Spinner::start("default", "setting it live", false);
     let Err(error) = api.set_live(app, build_id, webapi::DEFAULT_KEY) else {
@@ -2707,7 +2706,7 @@ fn run_check(script: &Path, scripts_only: bool, game: Option<&Project>) -> ExitC
                 (true, _) => {}
                 (false, Some(_)) => show::field(
                     "content",
-                    "not checked; upload checks it once the game is built",
+                    "not checked (upload checks it once the game is built)",
                 ),
                 (false, None) => show::field("content", "not checked (--scripts-only)"),
             }
@@ -2741,12 +2740,12 @@ fn run_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> ExitCode {
 /// Checks the build in `folder` on its own, as soon as it is built. In a game's folder its
 /// Windows files are judged against the redistributables its settings snapshot ticks: the demo's
 /// with `demo`, or when only the demo's depots ship the folder, as a demo can tick fewer than the
-/// full game; and its rich presence files are read as `rich-presence` sends them.
+/// full game. Its rich presence files are read as `rich-presence` sends them.
 fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<ExitCode, ExitCode> {
     if scripts_only {
         return Err(fail(
             &format!(
-                "{} is a build's folder, which holds no scripts; give --scripts-only the app \
+                "{} is a build's folder, which holds no scripts. Give --scripts-only the app \
                  build script",
                 folder.display()
             ),
@@ -2789,7 +2788,7 @@ fn try_check_folder(folder: &Path, scripts_only: bool, demo: bool) -> Result<Exi
         None if demo => {
             return Err(fail(
                 &format!(
-                    "{} is in no game's folder, so it has no demo; run the check in the game's \
+                    "{} is in no game's folder, so it has no demo. Run the check in the game's \
                      folder, or leave out --demo",
                     here.display()
                 ),
@@ -2880,7 +2879,7 @@ fn key_variable() -> Option<Zeroizing<String>> {
 
 /// Where Steamworks shows the key, said before it is asked for.
 const WHERE_KEY: &str = "the publisher Web API key is in Steamworks under Users & Permissions, \
-                         Manage Groups: the group that holds the app";
+                         Manage Groups, in the group that holds the app";
 
 /// How the Web API key for a command was found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2932,7 +2931,7 @@ fn web_api(home: &Path) -> Result<(webapi::Api, KeyFrom), ExitCode> {
     Ok((webapi::Api::new(key), KeyFrom::Typed))
 }
 
-/// The key typed at the prompt, shown as dots; none when only Enter was pressed.
+/// The key typed at the prompt, shown as dots. None when only Enter was pressed.
 fn typed_key() -> Result<Option<webapi::Key>, ExitCode> {
     let typed = typing::ask("api key", Echo::Dots)
         .map_err(|error| fail(&format!("the Web API key: {error}"), FAILED))?;
@@ -2968,7 +2967,8 @@ fn check_key(api: &webapi::Api) -> Result<(), ExitCode> {
     }
 }
 
-/// Keeps `key` for `home` in the credential store, and says whether it did; why not is shown.
+/// Keeps `key` for `home` in the credential store, and answers whether it did. A failure is shown
+/// with its reason.
 fn keep_key(home: &Path, key: &webapi::Key) -> bool {
     match keychain::keep(home, key) {
         Ok(()) => {
@@ -3000,13 +3000,13 @@ fn try_key_login() -> Result<ExitCode, ExitCode> {
     }
     show::success(
         "Web API key kept",
-        "`steamship builds` and the other Web API commands use it; `steamship logout` forgets it",
+        "steamship builds and the other Web API commands use it. steamship logout forgets it",
     );
     Ok(ExitCode::SUCCESS)
 }
 
 /// At the end of `login`, at a terminal: offers to keep the Web API key too, when none is set or
-/// kept and there is a store to keep it in. Only Enter skips it; nothing here fails the login.
+/// kept and there is a store to keep it in. Only Enter skips it. Nothing here fails the login.
 fn offer_key(home: &Path) {
     if !io::stdin().is_terminal() || key_variable().is_some() {
         return;
@@ -3019,14 +3019,14 @@ fn offer_key(home: &Path) {
         }
         Err(_) => return,
     }
-    show::aside("`steamship builds` and the other Web API commands need the publisher key;");
+    show::aside("steamship builds and the other Web API commands need the publisher key");
     show::aside(&format!("{WHERE_KEY}. Enter skips it"));
     let key = match typed_key() {
         Ok(Some(key)) => key,
         Ok(None) => {
             show::field(
                 "api key",
-                "skipped; `steamship login --web-api-key` keeps one",
+                "skipped (steamship login --web-api-key keeps one)",
             );
             return;
         }
@@ -3044,7 +3044,7 @@ fn offer_to_keep(home: &Path, api: &webapi::Api, from: KeyFrom) {
         return;
     }
     show::aside(&format!(
-        "Enter keeps the key in {} for next time; n does not",
+        "Enter keeps the key in {} for next time, and n does not",
         keychain::STORE
     ));
     let Ok(answer) = typing::ask("keep it", Echo::Typed) else {
@@ -3180,7 +3180,7 @@ fn try_fetch(request: &cli::Fetch) -> Result<ExitCode, ExitCode> {
         return Err(fail(
             &format!(
                 "steamcmd put build {} of the {} branch in {}, where Steam's Web API showed build \
-                 {} live on {shown}; if a build was set live meanwhile, fetch again",
+                 {} live on {shown}. If a build was set live meanwhile, fetch again",
                 held.build_id,
                 held.branch,
                 given.display(),
@@ -3247,7 +3247,7 @@ fn fetch_folder(folder: &Path, app: u32, branch: &str) -> Result<PathBuf, ExitCo
                 && held.branch != branch
             {
                 return Err(refused(&format!(
-                    "holds app {app}'s {} branch; fetch {branch} into a folder of its own",
+                    "holds app {app}'s {} branch. Fetch {branch} into a folder of its own",
                     held.branch
                 )));
             }
@@ -3255,7 +3255,7 @@ fn fetch_folder(folder: &Path, app: u32, branch: &str) -> Result<PathBuf, ExitCo
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             if fs::read_dir(folder).is_ok_and(|mut entries| entries.next().is_some()) {
                 return Err(refused(&format!(
-                    "holds files and no build of app {app}; fetch into an empty folder, or one a \
+                    "holds files and no build of app {app}. Fetch into an empty folder, or one a \
                      fetch of {branch} made"
                 )));
             }
@@ -3309,8 +3309,8 @@ fn branch_password(
         let needed = || {
             fail(
                 &format!(
-                    "app {app}'s {shown} branch takes a password: set {} to it, or type it when \
-                     fetch asks, which it does without --json",
+                    "app {app}'s {shown} branch takes a password. Set {} to it, or run fetch \
+                     without --json and type it when asked",
                     fetch::PASSWORD
                 ),
                 REFUSED,
@@ -3349,7 +3349,7 @@ fn branch_password(
     Ok(given)
 }
 
-/// The password kept for `app`'s `branch`, if one is and the store can be read; a store that
+/// The password kept for `app`'s `branch`, if one is and the store can be read. A store that
 /// fails is named, and the password asked for instead.
 fn kept_branch_password(home: &Path, app: u32, branch: &str) -> Option<Zeroizing<String>> {
     match keychain::branch_password(home, app, branch) {
@@ -3391,7 +3391,7 @@ fn keep_branch_password(
 /// Offers to keep a typed password, and answers whether Enter, or a yes, took the offer.
 fn keeping_offered() -> bool {
     show::aside(&format!(
-        "Enter keeps the password in {} for next time; n does not",
+        "Enter keeps the password in {} for next time, and n does not",
         keychain::STORE
     ));
     let keep = typing::ask("keep it", Echo::Typed).is_ok_and(|answer| {
@@ -3542,7 +3542,7 @@ fn forget_refused_password(home: &Path, fetching: &Fetching<'_>) {
     }
     match keychain::forget_branch_password(home, fetching.app, &fetching.branch.name) {
         Ok(_) => show::note(&format!(
-            "the password kept in {} is forgotten; fetch again to give the one the branch takes \
+            "the password kept in {} is forgotten. Fetch again to give the one the branch takes \
              now",
             keychain::STORE
         )),
@@ -3621,7 +3621,7 @@ fn achievements_file(path: &Path, app: u32) -> Result<achievements::Listed, Exit
     }
     let own = path.parent().unwrap_or_else(|| Path::new(""));
     // games-kit gives a record's icons inside the mod that sets it, wherever under the mod its
-    // records are kept; a mod's folder is the one holding its manifest.
+    // records are kept. A mod's folder is the one holding its manifest.
     let folder = if text.trim_start().starts_with('[') {
         own.ancestors()
             .find(|folder| folder.join("manifest.json").is_file())
@@ -3685,7 +3685,7 @@ fn catalogue_file(
 }
 
 /// The achievements files at `paths`, each read as `achievements_file` reads one or as a
-/// catalogue, as one; or none when there are none to check against. When `checking` them
+/// catalogue, as one. None when there are none to check against. When `checking` them
 /// against Steam, it says what in them goes unchecked.
 fn achievements_files(
     paths: &[PathBuf],
@@ -3865,11 +3865,11 @@ fn try_achievements(
 /// Why Steam can differ from an import saved in Steamworks: its Web API and image host give the
 /// achievements, stats and icons as last published, where a saved import changes only the editor
 /// until then.
-const PUBLISHED: &str = "Steam answers with what is published: an import saved in Steamworks \
+const PUBLISHED: &str = "Steam answers with what is published. An import saved in Steamworks \
                          counts here once it is published";
 
 /// What Steam says of whether it adds up over all players each stat it `held` that the `listed`
-/// files say it does or does not; nothing is asked when no file says of any.
+/// files say it does or does not. Nothing is asked when no file says of any.
 fn aggregation(
     api: &webapi::Api,
     app: u32,
@@ -3994,7 +3994,7 @@ fn list_achievements(
 }
 
 /// Each icon the `listed` achievements give, read and named as the achievement editor puts it on
-/// its achievement; refused unless it is a square PNG of 64 pixels or more.
+/// its achievement. Refused unless it is a square PNG of 64 pixels or more.
 fn achievement_icons(listed: &achievements::Listed) -> Result<Vec<editor::Icon>, ExitCode> {
     let mut icons = Vec::new();
     for wanted in &listed.achievements {
@@ -4039,7 +4039,7 @@ fn receipt_in(out: &Path, app: u32) -> Result<editor::Receipt, ExitCode> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             return Err(fail(
                 &format!(
-                    "{}: has no {}: import and publish the files --write wrote there, then run \
+                    "{}: has no {}. Import and publish the files --write wrote there, then run \
                      --imported",
                     out.display(),
                     editor::RECEIPT
@@ -4064,7 +4064,7 @@ fn receipt_in(out: &Path, app: u32) -> Result<editor::Receipt, ExitCode> {
     Ok(receipt)
 }
 
-/// The names of the files in `out` of the kinds written for `app`, in order; none when there is
+/// The names of the files in `out` of the kinds written for `app`, in order. None when there is
 /// no such folder yet.
 fn written_before(out: &Path, app: u32) -> Result<Vec<String>, ExitCode> {
     // A folder that cannot be looked at is taken as none yet: making it says why it cannot be.
@@ -4179,9 +4179,9 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
         "next",
         &format!(
             "in Steamworks, under app {app_id}'s Stats & Achievements, Bulk Import/Export: drop \
-             every CSV and PNG file in {folder} and {SAVED}; then drop \
+             every CSV and PNG file in {folder} and {SAVED}. Then drop \
              {app_id}-achievements-localization.csv again on its own the same way, since the \
-             first import applies it only in part; publish, and run this again with --imported"
+             first import applies it only in part. Publish, and run this again with --imported"
         ),
     );
     import_notes(&listed);
@@ -4210,7 +4210,7 @@ fn changed_notes(
     for (api_name, was, is) in editor::rebarred(defined_before, &defined) {
         show::note(&format!(
             "{api_name}'s progress bar goes from {was} to {is}, which Steam's Web API cannot \
-             show: look at it in the editor once imported, and set it there by hand if it has \
+             show. Look at it in the editor once imported, and set it there by hand if it has \
              not moved, before publishing"
         ));
     }
@@ -4228,7 +4228,7 @@ fn changed_notes(
             [] => continue,
         };
         show::note(&format!(
-            "{api_name}'s {changed} changed and its icons did not: look at them, so that they \
+            "{api_name}'s {changed} changed and its icons did not. Look at them, so that they \
              still show what it asks for"
         ));
     }
@@ -4236,10 +4236,10 @@ fn changed_notes(
 
 /// How an import is saved so that all of it is applied: a page left before Pending Changes
 /// cleared had applied only some of its icons.
-const SAVED: &str = "Save imported data, staying on the page until Pending Changes is gone";
+const SAVED: &str = "Save imported data, then stay on the page until Pending Changes is gone";
 
 /// Records in `out` the image Steam made of each of `app`'s `icons`, once they are imported and
-/// published; refused when Steam lacks one or plainly has not taken the import yet.
+/// published. Refused when Steam lacks one or plainly has not taken the import yet.
 fn try_achievements_imported(
     app: u32,
     wanted: &[achievements::Wanted],
@@ -4247,7 +4247,7 @@ fn try_achievements_imported(
     out: &Path,
 ) -> Result<ExitCode, ExitCode> {
     let path = out.join(editor::RECEIPT);
-    // Only a readable receipt of this app tells an import Steam has not taken; any other is
+    // Only a readable receipt of this app tells an import Steam has not taken. Any other is
     // replaced.
     let last = fs::read_to_string(&path)
         .ok()
@@ -4284,9 +4284,9 @@ fn try_achievements_imported(
                 )
             } else {
                 format!(
-                    "give each of those achievements its `icon` in the files, run it without \
-                     --imported to write {folder}, import and publish what it writes, then run \
-                     --imported again"
+                    "give each of those achievements its \"icon\" in the files, and run it without \
+                     --imported to write {folder}. Then import and publish what it writes, and \
+                     run --imported again"
                 )
             },
         );
@@ -4302,7 +4302,7 @@ fn try_achievements_imported(
             "next",
             &format!(
                 "in Steamworks, under app {app}'s Stats & Achievements, Bulk Import/Export: drop \
-                 the PNG files in {} again, {SAVED}, and publish, then run --imported again",
+                 the PNG files in {} again and {SAVED}. Then publish, and run --imported again",
                 out.display()
             ),
         );
@@ -4324,7 +4324,7 @@ fn try_achievements_imported(
     show::field(
         "next",
         &format!(
-            "keep {} with the files; --check with --out names each icon that changes after",
+            "keep {} with the files. --check with --out then names each icon that changes",
             editor::RECEIPT
         ),
     );
@@ -4395,8 +4395,8 @@ fn unnamed_icons(
         .collect()
 }
 
-/// Each of `app`'s `icons` whose image on Steam, among its achievements `held`, is not its file,
-/// pixel by pixel, or could not be compared, saying how.
+/// Each of `app`'s `icons` whose image on Steam, among its achievements `held`, is not its file
+/// pixel by pixel, or could not be compared. Each says how.
 fn unlike_icons(
     api: &webapi::Api,
     app: u32,
@@ -4606,9 +4606,9 @@ fn try_self_check() -> Result<ExitCode, ExitCode> {
         show::field("release's", &digest::hex(&listed));
         return Err(fail(
             &format!(
-                "{} is not the {target} binary of steamship {version}'s release: it was built \
-                 from source, as `cargo install` builds it, or elsewhere, or altered since. \
-                 Install the release's own binary, from {} or with `cargo binstall steamship`",
+                "{} is not the {target} binary of steamship {version}'s release. It was built \
+                 from source (as by cargo install), built elsewhere, or altered since. Install \
+                 the release's own binary from {}, or with cargo binstall steamship",
                 path.display(),
                 update::LATEST
             ),
@@ -4700,7 +4700,7 @@ fn try_text_on_steam() -> Result<ExitCode, ExitCode> {
         show::field(
             "next",
             &format!(
-                "type the recommended ones from {} on the store page's Basic Info form, upload the \
+                "type the recommended ones from {} on the store page's Basic Info form. Upload the \
                  files in {}/ on its Localization tab for the minimum ones, and run it again",
                 text::BASIC_INFO,
                 text::STORE_FOLDER
@@ -4729,7 +4729,7 @@ fn try_text_on_steam() -> Result<ExitCode, ExitCode> {
 }
 
 /// How many of the requirements `wanted` in `language` were compared with what the store page
-/// `shown` holds, and how many it lacks, each named; those Steam rewords are added to `reworded`.
+/// `shown` holds, and how many it lacks, each named. Those Steam rewords are added to `reworded`.
 fn requirements_shown(
     wanted: &[text::Requirement],
     language: &str,
@@ -4918,8 +4918,8 @@ fn text_next(files: &[(String, String)]) {
             "next",
             &format!(
                 "type each language's recommended system requirements in {} on the store page's \
-                 Basic Info form, as the upload leaves them out; once the page is public, \
-                 `steamship text --steam` finds any missed",
+                 Basic Info form, as the upload leaves them out. Once the page is public, \
+                 steamship text --steam finds any missed",
                 text::BASIC_INFO
             ),
         );
@@ -4929,7 +4929,7 @@ fn text_next(files: &[(String, String)]) {
             "next",
             &format!(
                 "type each language's screenshot alt text in {} into the screenshots' Edit \
-                 Accessibility Text panel on the Store Page tab, one language at a time, as the \
+                 Accessibility Text panel on the Store Page tab, one language at a time. The \
                  upload carries none",
                 text::SCREENSHOTS
             ),
@@ -4963,7 +4963,7 @@ fn text_next(files: &[(String, String)]) {
 }
 
 /// Says whether the `count` files `--write` makes are in `out` as it would write them, naming each
-/// of them `stale` and each of those it `left` there from `before`; and the exit code for it.
+/// of them `stale` and each of those it `left` there from `before`. Answers the exit code for it.
 fn unchanged_or_not(
     out: &Path,
     count: usize,
@@ -5033,7 +5033,7 @@ fn import_notes(listed: &achievements::Listed) {
         .count();
     if unlocked_only > 0 {
         show::note(&format!(
-            "no locked icon for {}: tick Automatically generate unachieved icons, and Steam \
+            "no locked icon for {}. Tick Automatically generate unachieved icons, and Steam \
              greys the icon",
             show::counted(unlocked_only, "achievement")
         ));
@@ -5087,7 +5087,7 @@ fn try_rich_presence(app: &str, files: &[PathBuf], preview: bool) -> Result<Exit
     let app_id = app_named(app)?;
     let languages = presence_files(files)?;
     if preview {
-        show::success("the files are sound; nothing was sent, as asked", "");
+        show::success("the files are sound, and nothing was sent, as asked", "");
         return Ok(ExitCode::SUCCESS);
     }
     let home = home()?;
@@ -5276,7 +5276,7 @@ fn settings_file(path: &Path, app: u32) -> Result<vdf::Block, ExitCode> {
 }
 
 /// What steamcmd, run from `home` and logged in as `account`, printed of `app`'s info, redacted,
-/// with the spinner that said it was `doing` so still turning; refused when Steam did not take
+/// with the spinner that said it was `doing` so still turning. Refused when Steam did not take
 /// the login.
 fn app_info(
     home: &Path,
@@ -5382,7 +5382,7 @@ fn launched(
 ) -> Result<Result<(), String>, ExitCode> {
     let (state, spinner) = release_shown(home, account, app, packed)?;
     let held = format!(
-        "{} holds the game's Workshop items until launch: give --for-launch to the run that \
+        "{} holds the game's Workshop items until launch. Give --for-launch to the run that \
          readies the launch",
         file.display()
     );
@@ -5542,7 +5542,7 @@ fn try_settings(
             .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
         show::success(
             &format!("app {app_id}: settings saved to {}", path.display()),
-            "`steamship settings --check` compares Steam's with them",
+            "steamship settings --check compares Steam's with them",
         );
         return Ok(ExitCode::SUCCESS);
     }
@@ -5565,8 +5565,8 @@ fn try_settings(
         show::failure(why, "", None);
     }
     show::aside(
-        "change the app in Steamworks, or `steamship settings --save` the file again if the \
-         change was meant",
+        "change the app in Steamworks, or run steamship settings --save again if the change \
+         was meant",
     );
     Ok(ExitCode::from(REFUSED))
 }
@@ -5637,7 +5637,7 @@ fn try_leaderboards(
             .collect();
         if !gone.is_empty() {
             let released = format!(
-                "deleting {} would take its players' scores with it: delete it in Steamworks, \
+                "deleting {} would take its players' scores with it. Delete it in Steamworks, \
                  under Stats & Achievements, Leaderboards, or put it back in the file",
                 gone.join(", ")
             );
@@ -5689,7 +5689,7 @@ fn try_leaderboards(
         .any(|difference| matches!(difference, leaderboards::Drift::Differs { .. }))
     {
         show::aside(
-            "Steam keeps a leaderboard's settings: change them in Steamworks, under Stats & \
+            "Steam keeps a leaderboard's settings. Change them in Steamworks, under Stats & \
              Achievements, Leaderboards",
         );
     }
@@ -5724,7 +5724,7 @@ fn try_branch(app: &str, branch: &str, description: &str) -> Result<ExitCode, Ex
         asking.failed("not on Steam");
         return Err(fail(
             &format!(
-                "app {app_id} has no branch \"{branch}\"; {}",
+                "app {app_id} has no branch \"{branch}\". {}",
                 upload::create_first(&branches)
             ),
             REFUSED,
@@ -5943,7 +5943,7 @@ fn item_published(given: &Given<'_>, item: &workshop::Item, published: u64, log:
         (Given::Script(script), None) => show::success(
             &said,
             &format!(
-                "a new item: add \"publishedfileid\" \"{published}\" to {} so that later uploads \
+                "a new item. Add \"publishedfileid\" \"{published}\" to {} so that later uploads \
                  update it",
                 script.display()
             ),
@@ -6000,7 +6000,7 @@ fn given_fields(item: &cli::WorkshopItem) -> Result<Given<'_>, ExitCode> {
 }
 
 /// Writes `published`, the item just made for `app_id`, into the `--items` file under its name,
-/// and says so; or, when the file cannot be written, what to add to it by hand.
+/// and says so. When the file cannot be written, it says what to add to it by hand.
 fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
     let mut record = kept.record.clone();
     let _: Option<u64> = record.items.insert(kept.name.to_owned(), published);
@@ -6014,7 +6014,7 @@ fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
             show::success(
                 &format!("app {app_id}: Workshop item {published}"),
                 &format!(
-                    "a new item, kept in {} as {}: commit it so that later uploads update it",
+                    "a new item, kept in {} as {}. Commit it so that later uploads update it",
                     kept.path.display(),
                     kept.name
                 ),
@@ -6025,7 +6025,7 @@ fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
             show::failure(
                 &format!("app {app_id}: Workshop item {published} was made"),
                 &format!(
-                    "{}: {error}; add \"{}\": {published} to its \"items\", or the next upload \
+                    "{}: {error}. Add \"{}\": {published} to its \"items\", or the next upload \
                      makes another",
                     kept.path.display(),
                     kept.name
@@ -6058,11 +6058,11 @@ fn checked_item(given: &Given<'_>, new: bool) -> Result<workshop::Item, ExitCode
         let why = match given {
             Given::Script(script) => format!(
                 "{}: there is no \"publishedfileid\", so every CI run would make a new Workshop \
-                 item; add the ID of the item to update, or pass --new to make one",
+                 item. Add the ID of the item to update, or pass --new to make one",
                 script.display()
             ),
             Given::Fields(_, kept) => format!(
-                "{} has no item {}, so every CI run would make a new Workshop item; make it \
+                "{} has no item {}, so every CI run would make a new Workshop item. Make it \
                  outside CI and commit the file, or pass --new to make one",
                 kept.path.display(),
                 kept.name
@@ -6137,7 +6137,7 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
     // CI is set up before it has built anything, and a checkout seldom holds the build, so the
     // content is left to the check each upload makes.
     drop(checked(&script, true)?);
-    show::field("content", "not checked; each upload checks it");
+    show::field("content", "not checked (each upload checks it)");
     let repository = match setup.output {
         Some(_) => None,
         None => Some(ci_repository(setup.repo, &script)?),
@@ -6170,7 +6170,7 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
         .duration_since(SystemTime::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
     let packed = packed.packed(&ci::day(today));
-    let again = "when the login expires, run `steamship login` and `steamship ci` again";
+    let again = "When the login expires, run steamship login and steamship ci again";
     match (setup.output, repository) {
         (Some(output), _) => {
             ci::write_private(output, packed.as_bytes())
@@ -6179,7 +6179,7 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
             show::success(
                 "ready for CI",
                 &format!(
-                    "give your CI the file's contents as {}, then delete the file; {again}",
+                    "give your CI the file's contents as {}, then delete the file. {again}",
                     ci::VARIABLE
                 ),
             );
@@ -6200,7 +6200,7 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
             let (pinned, release) = pinned_action();
             show::success(
                 "ready for CI",
-                &format!("add this step after the one that builds the content; {again}"),
+                &format!("add this step after the one that builds the content. {again}"),
             );
             show::verbatim(&ci::step(
                 &relative.to_string_lossy().replace('\\', "/"),
@@ -6236,7 +6236,8 @@ fn ci_script(named: Option<&Path>, root: Option<&Path>) -> Result<PathBuf, ExitC
     }
     let root = root.ok_or_else(|| {
         fail(
-            &"this is not a Git repository; run it in the game's, or name the script with --script",
+            &"this folder is in no Git repository. Run steamship ci in the game's, or name the \
+              script with --script",
             REFUSED,
         )
     })?;
@@ -6251,7 +6252,7 @@ fn ci_script(named: Option<&Path>, root: Option<&Path>) -> Result<PathBuf, ExitC
     match found.as_slice() {
         [] => Err(fail(
             &format!(
-                "no app build script in {}; name one with --script",
+                "no app build script in {}. Name one with --script",
                 root.display()
             ),
             REFUSED,
@@ -6278,7 +6279,7 @@ fn ci_script(named: Option<&Path>, root: Option<&Path>) -> Result<PathBuf, ExitC
             let listed: Vec<String> = several.iter().map(|script| shown(script)).collect();
             Err(fail(
                 &format!(
-                    "several app build scripts, {}; name one with --script",
+                    "several app build scripts, {}. Name one with --script",
                     listed.join(", ")
                 ),
                 REFUSED,
@@ -6317,7 +6318,7 @@ fn ci_repository(named: Option<&str>, script: &Path) -> Result<String, ExitCode>
         .and_then(ci::github_repository)
         .ok_or_else(|| {
             fail(
-                &"the script's repository has no GitHub origin; name one with --repo owner/name, \
+                &"the script's repository has no GitHub origin. Name one with --repo owner/name, \
                   or write the login to a file with --output",
                 REFUSED,
             )
@@ -6407,7 +6408,7 @@ fn set_secret(repository: &str, secret: &str, packed: &str) -> Result<(), ExitCo
 }
 
 /// The commit this release of steamship's action is at, and the release, for a step pinned by
-/// commit; the release's tag alone when GitHub cannot be asked.
+/// commit. The release's tag alone when GitHub cannot be asked.
 fn pinned_action() -> (String, String) {
     let release = format!("v{}", env!("CARGO_PKG_VERSION"));
     let commit = run::output(run::command("gh").args([

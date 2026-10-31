@@ -12,22 +12,19 @@
 [![Rust 1.99.1](https://img.shields.io/badge/rust-1.99.1-b7410e?style=flat&logo=rust)](rust-toolchain.toml)
 [![Licence: MIT OR Apache-2.0](https://img.shields.io/badge/licence-MIT%20OR%20Apache--2.0-blue)](#licence)
 
-**steamcmd uploads your build. Everything around the upload is left to you:** where steamcmd
-comes from, whether it updated itself since yesterday, whether the upload really worked, and
-whether your login token ends up in a log.
+steamship is a command-line tool that uploads your game's builds to Steam through Valve's own
+steamcmd. It runs steamcmd with your own `app_build` and `depot_build` scripts. It adds what
+steamcmd leaves out:
 
-steamship runs Valve's own steamcmd with your own `app_build` and `depot_build` scripts, and adds
-what steamcmd leaves out:
-
-- **steamcmd set up for you, pinned and verified**, and checked again after every run.
-- **A clear result:** the BuildID, or the reason it failed, read from Valve's build log rather
-  than from console output.
-- **No passwords kept:** you log in once, and nothing steamship prints or writes contains your
-  login token.
-- **Checked before it uploads:** scripts that would upload the wrong thing are refused before
+- It sets steamcmd up for you, pinned and verified. It checks steamcmd again after every run.
+- Each upload ends in its BuildID, or the reason it failed, read from Valve's build log rather than
+  from console output.
+- You log in once and no password is kept. Nothing steamship prints or writes contains your login
+  token.
+- A script that would upload the wrong content, such as a depot of another app, is refused before
   anything is sent.
 
-It works with any engine: anything that ends in a folder of files per platform can be shipped.
+It works with any engine that exports a folder of files per platform.
 
 ## Install
 
@@ -53,27 +50,32 @@ steamship upload steam/app_build.vdf --version 1.4.0 --preview
 steamship upload steam/app_build.vdf --version 1.4.0
 ```
 
-`steam/app_build.vdf` and its depot scripts are Valve's own format; if you already upload with
-steamcmd, you already have them, and `steamship init <app id>` writes a starting set if not.
-`--preview` is Valve's dry run: the whole build is computed and nothing is uploaded.
-`steamship ci` sets up the same upload from GitHub Actions. In a game's folder every command
-finds the game's files itself, and `steamship upload` alone builds, checks and ships its pushed
-commit.
+`steam/app_build.vdf` and its depot scripts are Valve's own format. If you already upload with
+steamcmd, you already have them. If not, `steamship init <app id>` writes a starting set.
+`--preview` is Valve's dry run. It computes the whole build and uploads nothing.
+
+`steamship ci` sets up the same upload from GitHub Actions.
+
+In a game's folder, every command finds the game's files itself. There `steamship upload` alone
+builds, checks and ships the pushed commit, as
+[Shipping a game](https://aureliolo.github.io/steamship/games.html) describes.
 
 ## Documentation
 
-**<https://aureliolo.github.io/steamship>**:
-[uploading](https://aureliolo.github.io/steamship/uploading.html),
-[shipping a game](https://aureliolo.github.io/steamship/games.html),
-[uploading from CI](https://aureliolo.github.io/steamship/ci.html) and every
-[command](https://aureliolo.github.io/steamship/commands.html). Security issues go through
-[SECURITY.md](.github/SECURITY.md).
+The site is <https://aureliolo.github.io/steamship>:
+
+- [Uploading](https://aureliolo.github.io/steamship/uploading.html)
+- [Shipping a game](https://aureliolo.github.io/steamship/games.html)
+- [Uploading from CI](https://aureliolo.github.io/steamship/ci.html)
+- [Commands](https://aureliolo.github.io/steamship/commands.html)
+
+Security issues go through [SECURITY.md](.github/SECURITY.md).
 
 ## Licence
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT licence](LICENSE-MIT),
-at your option. Unless you say otherwise, any contribution you submit for inclusion is licensed
-the same way, without any additional terms.
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT licence](LICENSE-MIT), at your option. Unless you say otherwise, any contribution you submit
+for inclusion is licensed the same way, without any additional terms.
 
 steamship is not affiliated with or endorsed by Valve. Steam and Steamworks are trademarks of Valve
 Corporation.

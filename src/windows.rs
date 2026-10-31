@@ -97,7 +97,7 @@ static DESKTOPS: AtomicU64 = AtomicU64::new(0);
 ///
 /// The standard library hands a program every handle the process has marked so at that moment.
 /// steamship marks the output of a run for as long as it takes to start the program, and making a
-/// pseudo console marks its pipes for as long as it takes to start the console; a program the
+/// pseudo console marks its pipes for as long as it takes to start the console. A program the
 /// standard library started then would hold that output open for as long as it ran.
 static HANDING_DOWN: Mutex<()> = Mutex::new(());
 
@@ -162,7 +162,7 @@ pub const fn told() -> Option<&'static str> {
     None
 }
 
-/// Nothing tells steamship to stop on Windows; see [`told`].
+/// Nothing tells steamship to stop on Windows (see [`told`]).
 pub const fn end_as_told() {}
 
 /// Keeps Windows from showing a dialogue when a program crashes or cannot find a disk or file.
@@ -170,12 +170,12 @@ pub const fn end_as_told() {}
 /// The setting is per process and inherited, so set here it reaches steamcmd and everything
 /// steamcmd starts: those failures are then only returned as errors.
 pub fn silence_error_dialogues() {
-    // SAFETY: changes one process-wide flag and returns the previous one; no memory is involved.
+    // SAFETY: changes one process-wide flag and returns the previous one. No memory is involved.
     let _: u32 = unsafe { SetErrorMode(NO_DIALOGUES) };
 }
 
 /// Holds steamship, and every program it starts from here on, which inherit it, to the first
-/// `cores` of the processors it may run on; gives how many it is held to, of how many.
+/// `cores` of the processors it may run on. Gives how many it is held to, of how many.
 ///
 /// # Errors
 ///
@@ -263,9 +263,9 @@ const NO_DIALOGUES: THREAD_ERROR_MODE =
 const JOB_LIMITS: JOB_OBJECT_LIMIT =
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION;
 
-/// How a program is started: suspended until it is in the job, so that nothing it does happens
-/// outside it; with an environment block of UTF-16; and with the attribute list that limits what
-/// it inherits.
+/// How a program is started. It is suspended until it is in the job, so that nothing it does
+/// happens outside it. Its environment block is UTF-16, and the attribute list limits what it
+/// inherits.
 const CREATION: PROCESS_CREATION_FLAGS =
     CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
 
@@ -286,8 +286,8 @@ impl Desktop {
     fn create() -> io::Result<Self> {
         let number = DESKTOPS.fetch_add(1, Ordering::Relaxed);
         let name = wide(OsStr::new(&format!("steamship-{}-{number}", process::id())));
-        // SAFETY: `name` is NUL-terminated and outlives the call; the other arguments are null,
-        // meaning the default display settings and security.
+        // SAFETY: `name` is NUL-terminated and outlives the call. Null for the other arguments
+        // means the default display settings and security.
         let handle = unsafe {
             CreateDesktopW(
                 name.as_ptr(),
@@ -344,7 +344,7 @@ impl Job {
     }
 
     fn stop_all(&self) {
-        // SAFETY: the job handle is open; ending its processes is what it is for.
+        // SAFETY: the job handle is open. Ending its processes is what it is for.
         let _: i32 = unsafe { TerminateJobObject(self.0.as_raw_handle(), 1) };
     }
 
@@ -363,7 +363,7 @@ impl Process {
         let _: u32 = unsafe { WaitForSingleObject(self.0.as_raw_handle(), INFINITE) };
     }
 
-    /// The process's exit code once it ends; none when `limit` passes or `hopeless` is set first,
+    /// The process's exit code once it ends. None when `limit` passes or `hopeless` is set first,
     /// and the job is stopped.
     fn wait(&self, limit: Duration, job: &Job, hopeless: &AtomicBool) -> io::Result<Option<i32>> {
         let handle = self.0.as_raw_handle();
@@ -384,7 +384,7 @@ impl Process {
                 || deadline.is_some_and(|deadline| Instant::now() >= deadline)
             {
                 job.stop_all();
-                // SAFETY: as above; the job has ended the process, so this returns at once.
+                // SAFETY: as above. The job has ended the process, so this returns at once.
                 let _: u32 = unsafe { WaitForSingleObject(handle, INFINITE) };
                 return Ok(None);
             }
@@ -435,7 +435,7 @@ impl Terminal {
         let (output, written) = io::pipe()?;
         // Wide enough that steamcmd's longest line is never broken across two.
         let console = PseudoConsole::create(&typed, &written, COORD { X: 240, Y: 50 })?;
-        // The console holds its own copies now; ours would keep the output open after it closes.
+        // The console holds its own copies now. Ours would keep the output open after it closes.
         drop(typed);
         drop(written);
         let process = spawn(
@@ -451,7 +451,7 @@ impl Terminal {
         let leftovers = job.try_clone()?;
         // Whatever the program left running is still attached to the console, and closing the
         // console only asks it to go, which a busy machine can leave unanswered for as long as
-        // it likes; so it is ended first, and the output ends with the program.
+        // it likes. So it is ended first, and the output ends with the program.
         let closing = thread::spawn(move || {
             watched.ended();
             leftovers.stop_all();
@@ -542,10 +542,10 @@ impl Keys {
     ///
     /// When the console will not change modes.
     pub fn open() -> io::Result<Option<Self>> {
-        // SAFETY: asks for this process's own standard input; nothing is freed.
+        // SAFETY: asks for this process's own standard input. Nothing is freed.
         let input = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
         let mut mode = 0;
-        // SAFETY: `mode` is a valid place for the answer; a handle that is no console fails.
+        // SAFETY: `mode` is a valid place for the answer. A handle that is no console fails.
         if unsafe { GetConsoleMode(input, &raw mut mode) } == 0_i32 {
             return Ok(None);
         }
@@ -584,7 +584,7 @@ impl Keys {
                 return Ok(None);
             }
             units.push(unit);
-            // A high surrogate is half a character; the other half is the next unit.
+            // A high surrogate is half a character. The other half is the next unit.
             if !(0xd800..=0xdbff).contains(&unit) {
                 let decoded = char::decode_utf16(units.iter().copied()).next();
                 units.fill(0);
@@ -674,7 +674,7 @@ fn spawn(
     // SAFETY: every buffer is NUL-terminated and outlives the call, the environment block ends
     // in the two NULs Windows looks for, `line` is writable as the call requires, `info`
     // describes a live attribute list, and `started` receives the handles. Handed-down handles
-    // are limited by the attribute list to exactly those; with a console none are inherited.
+    // are limited by the attribute list to exactly those. With a console none are inherited.
     let created = unsafe {
         CreateProcessW(
             application.as_ptr(),
@@ -708,18 +708,18 @@ fn spawn(
         == 0_i32
     {
         let error = io::Error::last_os_error();
-        // SAFETY: the process is suspended and was never let run; ending it is all that is left.
+        // SAFETY: the process is suspended and was never let run. Ending it is all that is left.
         let _: i32 = unsafe { TerminateProcess(process.0.as_raw_handle(), 1) };
         return Err(error);
     }
-    // SAFETY: the thread handle is open; it was created suspended once, so one resume starts it.
+    // SAFETY: the thread handle is open. It was created suspended once, so one resume starts it.
     match unsafe { ResumeThread(thread.as_raw_handle()) } {
         // The count it was suspended by before this resume: once, since it was made that way.
         1 => Ok(process),
         u32::MAX => Err(io::Error::last_os_error()),
         // It was running already, so it may have done something before it was in the job.
         count => {
-            // SAFETY: as above; the program is ended rather than left running outside the rules.
+            // SAFETY: as above. The program is ended rather than left running outside the rules.
             let _: i32 = unsafe { TerminateProcess(process.0.as_raw_handle(), 1) };
             Err(io::Error::other(format!(
                 "the program was not held suspended until it was in its job (count {count})"
@@ -767,7 +767,7 @@ impl AttributeList {
         handles: Option<Box<[RawHandle; 2]>>,
     ) -> io::Result<Self> {
         let mut size = 0_usize;
-        // SAFETY: a null list with a size to fill is how the needed size is asked for; the call
+        // SAFETY: a null list with a size to fill is how the needed size is asked for. The call
         // then fails with ERROR_INSUFFICIENT_BUFFER, which is expected.
         let _: i32 =
             unsafe { InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &raw mut size) };
@@ -782,7 +782,7 @@ impl AttributeList {
             return Err(io::Error::last_os_error());
         }
         let attribute = usize::try_from(attribute).map_err(io::Error::other)?;
-        // SAFETY: the list was initialised for one attribute; a value that points anywhere
+        // SAFETY: the list was initialised for one attribute. A value that points anywhere
         // points into `list.handles`, which lives as long as the list does.
         let updated = unsafe {
             UpdateProcThreadAttribute(
@@ -931,7 +931,7 @@ pub fn has_secret(item: &keychain::Item) -> Result<bool, keychain::Error> {
 pub fn kept_secret(item: &keychain::Item) -> Result<Option<Zeroizing<Vec<u8>>>, keychain::Error> {
     let target = target(item);
     let mut found: *mut CREDENTIALW = ptr::null_mut();
-    // SAFETY: `target` is NUL-terminated and outlives the call; on success Windows points `found`
+    // SAFETY: `target` is NUL-terminated and outlives the call. On success Windows points `found`
     // at a credential it allocated.
     if unsafe { CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &raw mut found) } == 0_i32 {
         let error = io::Error::last_os_error();
@@ -1058,7 +1058,7 @@ pub fn create_private(path: &Path) -> io::Result<File> {
         .open(path)?;
     let user = User::current()?;
     let list = list_allowing(&[user.sid()], 0)?;
-    // SAFETY: the handle is open with WRITE_DAC, and `list` is a complete list; the owner, the
+    // SAFETY: the handle is open with WRITE_DAC, and `list` is a complete list. The owner, the
     // group and the audit list are left as they are.
     let status = unsafe {
         SetSecurityInfo(
@@ -1076,10 +1076,10 @@ pub fn create_private(path: &Path) -> io::Result<File> {
 }
 
 /// Gives the file or folder `name` permissions of its own, not inherited from above: one entry
-/// for each of `sids`, allowing everything and passed down to all a folder holds.
+/// for each of `sids`, which allows everything and is passed down to all a folder holds.
 fn allow_alone(name: &[u16], sids: &[PSID]) -> io::Result<()> {
     let list = list_allowing(sids, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)?;
-    // SAFETY: `name` is NUL-terminated and `list` is a complete list; the owner, the group and
+    // SAFETY: `name` is NUL-terminated and `list` is a complete list. The owner, the group and
     // the audit list are left as they are.
     let status = unsafe {
         SetNamedSecurityInfoW(
@@ -1095,7 +1095,7 @@ fn allow_alone(name: &[u16], sids: &[PSID]) -> io::Result<()> {
     win32(status)
 }
 
-/// An access list with one entry for each of `sids`, allowing everything, with `flags`; held in
+/// An access list with one entry for each of `sids`, allowing everything, with `flags`. It is held in
 /// words so that it is aligned as an ACL must be.
 fn list_allowing(sids: &[PSID], flags: u32) -> io::Result<Vec<u32>> {
     // An entry's size counts its SID in place of the SidStart field that marks where it begins.
@@ -1147,7 +1147,7 @@ impl User {
         // SAFETY: the handle is new and owned by nobody else.
         let token = unsafe { OwnedHandle::from_raw_handle(token) };
         let mut size = 0_u32;
-        // SAFETY: no buffer with a size of 0 is how the needed size is asked for; the call then
+        // SAFETY: no buffer with a size of 0 is how the needed size is asked for. The call then
         // fails with ERROR_INSUFFICIENT_BUFFER, which is expected.
         let _: BOOL = unsafe {
             GetTokenInformation(
@@ -1295,7 +1295,7 @@ impl Drop for Security {
 ///
 /// # Errors
 ///
-/// Never; the signature is the one every system shares.
+/// Never. The signature is the one every system shares.
 pub const fn mark_if_program(_: &Path) -> io::Result<()> {
     Ok(())
 }
@@ -1318,7 +1318,7 @@ pub const VALVE: &str = "Valve Corp.";
 
 /// Valve ships a web UI for its content server alongside steamcmd, bundling Microsoft's runtime
 /// (signed by Microsoft) and a few third-party libraries (not signed at all). steamship never
-/// runs it; its files are held to their pinned SHA-256 like every other, but not to Valve's
+/// runs it. Its files are held to their pinned SHA-256 like every other, but not to Valve's
 /// signature, which they do not carry.
 const NOT_VALVES: &str = "siteserverui/";
 
@@ -1359,7 +1359,7 @@ where
 pub enum Signature {
     /// Windows verified the signature, and this is the signer's name.
     Signed(String),
-    /// Windows did not accept the file's signature, or found none; this is its answer.
+    /// Windows did not accept the file's signature, or found none. This is its answer.
     Refused(u32),
 }
 
@@ -1424,7 +1424,7 @@ pub fn signature(path: &Path) -> Signature {
 
 /// The simple display name, in practice the common name, of the certificate that signed.
 fn signer_name(state: HANDLE) -> Option<String> {
-    // SAFETY: `state` is the state a successful verification left open; it stays valid until
+    // SAFETY: `state` is the state a successful verification left open. It stays valid until
     // the closing call, which comes after this function returns.
     let provider = unsafe { WTHelperProvDataFromStateData(state) };
     if provider.is_null() {
@@ -1621,9 +1621,9 @@ mod tests {
         // and is reached through nothing else meanwhile.
         let search = unsafe { &mut *place };
         let mut owner = 0_u32;
-        // SAFETY: `owner` is a valid place for the id; a window that has gone just leaves it 0.
+        // SAFETY: `owner` is a valid place for the id. A window that has gone just leaves it 0.
         let _: u32 = unsafe { GetWindowThreadProcessId(window, &raw mut owner) };
-        // SAFETY: any handle may be asked about; one that has gone is not visible.
+        // SAFETY: any handle may be asked about. One that has gone is not visible.
         if owner == search.process && unsafe { IsWindowVisible(window) } != 0_i32 {
             search.found = search.found.saturating_add(1);
         }

@@ -205,7 +205,7 @@ mod tests {
     use super::*;
 
     /// Steam's app details in German, cut to the requirements, each list copied from the store's
-    /// answer for a public game; Linux's as a Coming Soon page with none typed shows it.
+    /// answer for a public game. Linux's is the one a Coming Soon page with none typed shows.
     const DETAILS: &str = r#"{"1000010":{"success":true,"data":{"type":"game","name":"Sample",
         "pc_requirements":{"minimum":"<strong>Mindestanforderungen:</strong><br><ul class=\"bb_ul\"><li>Setzt 64-Bit-Prozessor und -Betriebssystem voraus<br></li><li><strong>Betriebssystem:</strong> Windows 10<br></li><li><strong>Prozessor:</strong> 2 GHz Intel Dual Core 64-bit Processor<br></li><li><strong>Arbeitsspeicher:</strong> 4 GB RAM<br></li><li><strong>Grafik:</strong> NVIDIA &amp; AMD (1GB VRAM)<br></li><li><strong>DirectX:</strong> Version 11<br></li></ul>",
         "recommended":"<strong>Empfohlen:</strong><br><ul class=\"bb_ul\"><li>Setzt 64-Bit-Prozessor und -Betriebssystem voraus<br></li><li><strong>Betriebssystem:</strong> Windows 10 64-bit<br></li><li><strong>Prozessor:</strong> Intel i7 8700K / AMD r5 3600<br></li></ul>"},

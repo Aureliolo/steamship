@@ -256,7 +256,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
-    /// Writes `value` at `at`, zero-filling up to it; fields are written in ascending order.
+    /// Writes `value` at `at`, zero-filling up to it. Fields are written in ascending order.
     fn put(bytes: &mut Vec<u8>, at: usize, value: &[u8]) {
         bytes.resize(at, 0);
         bytes.extend_from_slice(value);

@@ -1,8 +1,8 @@
 //! Just enough of the Mach-O header to tell a macOS program from a macOS library.
 //!
-//! A program needs its executable bit to start; a library or bundle does not. The header says
+//! A program needs its executable bit to start. A library or bundle does not. The header says
 //! which it is. A universal file holds one slice per architecture, and its first slice speaks for
-//! the rest; it shares its opening bytes with a Java class file, whose version stands where the
+//! the rest. It shares its opening bytes with a Java class file, whose version stands where the
 //! number of slices would, and is far larger than any universal file's.
 
 use std::io::{self, Read, Seek, SeekFrom};
@@ -17,7 +17,7 @@ const MOST_SLICES: u32 = 20;
 ///
 /// # Errors
 ///
-/// Only when reading fails; a file that is not Mach-O, or is cut short, is simply not a program.
+/// Only when reading fails. A file that is not Mach-O, or is cut short, is simply not a program.
 pub fn is_program<File>(file: &mut File) -> io::Result<bool>
 where
     File: Read + Seek,

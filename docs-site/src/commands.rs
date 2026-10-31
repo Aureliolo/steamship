@@ -334,7 +334,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("| 3 | Not logged in, or the token expired; run `steamship login` |"),
+            text.contains("| 3 | Not logged in, or the token expired. Run `steamship login` |"),
             "{text}"
         );
         assert!(text.contains("| `STEAMSHIP_HOME` |"), "{text}");

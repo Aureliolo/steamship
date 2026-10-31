@@ -46,7 +46,7 @@ impl Key {
     ///
     /// # Errors
     ///
-    /// When `text` is not one; nothing of it is repeated.
+    /// When `text` is not one. Nothing of it is repeated.
     pub fn parse(text: &str) -> Result<Self, Error> {
         let text = text.trim();
         if text.len() == 32 && text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -65,7 +65,7 @@ impl Key {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Error {
-    /// The key is not one; nothing of it is repeated.
+    /// The key is not one. Nothing of it is repeated.
     NotAKey,
     /// Steam refused the key for this app.
     Refused,
@@ -75,7 +75,7 @@ pub enum Error {
     Unreachable(Unreached),
     /// Steam answered with something that is not what the method answers.
     Unreadable(&'static str),
-    /// Steam answered that the call failed, saying this.
+    /// Steam answered that the call failed, with this message.
     Failed(String),
 }
 
@@ -86,7 +86,7 @@ impl fmt::Display for Error {
                 formatter.write_str("not a publisher Web API key, which is 32 hexadecimal digits")
             }
             Self::Refused => formatter.write_str(
-                "Steam refused the Web API key; it must be the publisher key of a group that \
+                "Steam refused the Web API key. It must be the publisher key of a group that \
                  holds the app",
             ),
             Self::Status(status, said) if said.is_empty() => {
@@ -190,7 +190,7 @@ fn failed(error: &io::Error) -> String {
 pub fn error_json(app: u32, error: &Error, why: Option<&str>) -> Value {
     let (code, message) = why.map_or_else(
         || (error.code(), error.to_string()),
-        |why| ("no-build-live", format!("{error}; {why}")),
+        |why| ("no-build-live", format!("{error}: {why}")),
     );
     json!({ "app": app, "error": { "code": code, "message": message } })
 }
@@ -224,7 +224,7 @@ pub struct Achievement {
     pub description: String,
     /// Whether players see it only once unlocked.
     pub hidden: bool,
-    /// The address of its icon, and of the one shown while it is locked; empty when none.
+    /// The address of its icon, and of the one shown while it is locked. Empty when none.
     pub icon: String,
     pub icon_locked: String,
 }
@@ -234,7 +234,7 @@ pub struct Achievement {
 pub struct Stat {
     /// The name the game sets it by.
     pub api_name: String,
-    /// The name players see; empty when none was given.
+    /// The name players see. Empty when none was given.
     pub name: String,
     /// The value it starts at.
     pub default: f64,
@@ -309,15 +309,15 @@ pub fn schema_from(answer: &Value) -> Result<Schema, Error> {
 pub struct Global {
     /// The share of players who have each achievement, in percent, by API name.
     pub shares: BTreeMap<String, f64>,
-    /// Each stat Steam adds up over all players, by API name, with the total as Steam writes it;
-    /// none for one no player has set.
+    /// Each stat Steam adds up over all players, by API name, with the total as Steam writes it.
+    /// None for one no player has set.
     pub totals: BTreeMap<String, Option<String>>,
 }
 
 /// What `GetGlobalStatsForGame` says of the stats it was asked to add up over all players.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Totalled {
-    /// Each it adds up, by API name, with the total as Steam writes it; none for one no player
+    /// Each it adds up, by API name, with the total as Steam writes it. None for one no player
     /// has set.
     pub totals: BTreeMap<String, Option<String>>,
     /// Each it named as one it does not add up.
@@ -370,11 +370,11 @@ pub fn shares_from(answer: &Value) -> Result<BTreeMap<String, f64>, Error> {
 /// What `GetGlobalStatsForGame` answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Totals {
-    /// Each stat asked for, with its total over all players; none for one no player has set.
+    /// Each stat asked for, with its total over all players. None for one no player has set.
     Given(BTreeMap<String, Option<String>>),
     /// A stat asked for that Steam does not add up over all players, which it names.
     NotAggregated(String),
-    /// Steam answered that it gives none, saying this.
+    /// Steam answered that it gives none, with this message.
     Withheld(String),
 }
 
@@ -422,7 +422,7 @@ pub struct Leaderboard {
     /// `Ascending` or `Descending`, Steam's words for whether the lowest score is first or the
     /// highest.
     pub sort: String,
-    /// `Numeric`, `Seconds` or `MilliSeconds`, how a score is shown; empty when none was set.
+    /// `Numeric`, `Seconds` or `MilliSeconds`, how a score is shown. Empty when none was set.
     pub display: String,
     /// Whether only the Web API, and never the game, may set scores.
     pub trusted_writes: bool,
@@ -530,7 +530,7 @@ fn entries<'answer>(
     }
 }
 
-/// Refuses a response whose `result` says the call failed; Steam's 1 is success.
+/// Refuses a response whose `result` says the call failed. Steam's 1 is success.
 fn succeeded(response: &Value) -> Result<(), Error> {
     match number(field(response, &["result"])) {
         None | Some(1) => Ok(()),
@@ -656,8 +656,8 @@ pub fn no_build_yet(error: &Error, app: u32, apps: &[App]) -> Option<String> {
     .then(|| {
         format!(
             "this key holds app {app}, and Steam answers so while no build is live on its \
-                 default branch: set one live there in Steamworks under SteamPipe, Builds, and \
-                 its branches and builds can be asked for"
+                 default branch. Set one live there in Steamworks under SteamPipe, Builds, then \
+                 ask again"
         )
     })
 }
@@ -758,7 +758,7 @@ impl Overview {
 
     /// The branches and builds of `app` as `builds --json` prints them. A build's `version` and
     /// `commit` are read back from the description `upload` wrote, and are null for a build
-    /// described otherwise; `created` is null when Steam gave no time.
+    /// described otherwise. `created` is null when Steam gave no time.
     #[must_use]
     pub fn json(&self, app: u32) -> Value {
         let branches: Vec<Value> = self
@@ -800,7 +800,7 @@ impl Overview {
 
 impl Schema {
     /// The achievements and stats of `app` as `achievements --json` prints them, each with how
-    /// far players have got with it from `global`; an icon Steam gave none of, and a share or
+    /// far players have got with it from `global`. An icon Steam gave none of, and a share or
     /// total it gave none of, is null.
     #[must_use]
     pub fn json(&self, app: u32, global: &Global) -> Value {
@@ -954,7 +954,8 @@ impl Api {
     ///
     /// # Errors
     ///
-    /// When `name` is not one Steam gives an image, or the image cannot be fetched, saying why.
+    /// When `name` is not one Steam gives an image, or the image cannot be fetched. The error says
+    /// why.
     pub fn icon_image(&self, app: u32, name: &str) -> Result<Vec<u8>, String> {
         let named = name.strip_suffix(".jpg").is_some_and(|hash| {
             !hash.is_empty() && hash.bytes().all(|byte| byte.is_ascii_hexdigit())
@@ -1024,7 +1025,7 @@ impl Api {
     }
 
     /// How far players have got with `app`'s achievements and with those of its `stats` Steam
-    /// adds up over all players; nothing of either where Steam gives none, as for an app no
+    /// adds up over all players. Nothing of either where Steam gives none, as for an app no
     /// player has yet.
     ///
     /// # Errors
@@ -1305,8 +1306,8 @@ fn read(response: Result<Response<Body>, Error>) -> Result<Value, Error> {
     answer.ok_or(Error::Unreadable("JSON"))
 }
 
-/// The reason Steam gave in an answer, such as "Unable to find specificed betakey x" with a 404;
-/// empty when it gave none.
+/// The reason Steam gave in an answer, such as "Unable to find specificed betakey x" with a 404.
+/// Empty when it gave none.
 fn said(answer: &Value) -> String {
     field(answer, &["response", "result"])
         .map(|inner| text(inner, &["message"]))
@@ -1491,7 +1492,7 @@ mod tests {
         for (error, said) in [
             (
                 Error::Refused,
-                "Steam refused the Web API key; it must be the publisher key of a group that \
+                "Steam refused the Web API key. It must be the publisher key of a group that \
                  holds the app",
             ),
             (Error::Status(500, String::new()), "Steam answered HTTP 500"),
@@ -1563,7 +1564,8 @@ mod tests {
 
     #[test]
     fn a_schema_is_read_as_steam_answers_it_and_none_is_none() {
-        // As Steam answered for Spacewar, trimmed to two achievements; its stats shaped as they.
+        // As Steam answered for Spacewar, trimmed to two achievements. Its stats are as Steam
+        // shaped them.
         let schema = schema_from(&answer(
             r#"{"game": {"gameName": "Spacewar", "availableGameStats": {"achievements": [
                 {"name": "ACH_WIN_ONE_GAME", "defaultvalue": 0, "displayName": "Winner",
@@ -2099,7 +2101,7 @@ mod tests {
     fn a_refused_key_a_failed_status_and_an_answer_that_is_not_json_are_errors() {
         for (status, body, expected) in [
             ("403 Forbidden", "", Error::Refused),
-            // Only the code is read; the phrase after it is the server's to choose.
+            // Only the code is read. The phrase after it is the server's to choose.
             ("401 Refused", "", Error::Refused),
             (
                 "500 Internal Server Error",
@@ -2434,7 +2436,7 @@ mod tests {
             held,
             json!({"app": 1_000_030_u32, "error": {
                 "code": "no-build-live",
-                "message": "Steam answered HTTP 500; none live",
+                "message": "Steam answered HTTP 500: none live",
             }})
         );
     }

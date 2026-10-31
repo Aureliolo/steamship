@@ -41,7 +41,7 @@ enum Source {
 #[derive(Debug, Clone, Copy)]
 struct Page {
     source: Source,
-    /// Where the page lands, which is also its link; its markdown copy has the same name.
+    /// Where the page lands, which is also its link. Its markdown copy has the same name.
     name: &'static str,
     /// In the browser's tab, and in the navigation unless `nav` says otherwise.
     title: &'static str,
@@ -234,7 +234,7 @@ fn refuse_orphans(docs: &Path) -> Result<(), String> {
             .any(|page| matches!(page.source, Source::File(file) if file == name));
         if name.ends_with(".md") && name != "README.md" && !published {
             return Err(format!(
-                "docs/{name} is published by no page; add it to PAGES in docs-site/src/main.rs"
+                "docs/{name} is published by no page. Add it to PAGES in docs-site/src/main.rs"
             ));
         }
     }

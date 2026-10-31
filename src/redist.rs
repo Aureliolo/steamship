@@ -306,8 +306,8 @@ fn judge(
             judged.unchecked.push(Problem::new(
                 file,
                 format!(
-                    "{missing}; the file starts without it, and works only where it finds it or \
-                     does without it"
+                    "{missing}. The file starts without it, and works only where it finds the \
+                     DLL or does not need it"
                 ),
             ));
         } else if scripted {
@@ -318,7 +318,7 @@ fn judge(
         } else {
             judged.refused.push(Problem::new(
                 file,
-                format!("{missing}; ship it in a depot, or link its library in statically"),
+                format!("{missing}. Ship it in a depot, or link its library in statically"),
             ));
         }
         return;
@@ -336,7 +336,7 @@ fn judge(
                     file,
                     format!(
                         "{verb} {dll}, which {names} installs, and app {app} ticks none in \
-                         Steamworks; tick one under Installation, Redistributables, ship the DLL \
+                         Steamworks. Tick one under Installation, Redistributables, ship the DLL \
                          in a depot, or link its library in statically"
                     ),
                 ));

@@ -1,4 +1,4 @@
-//! Any bytes are either a program or not; reading them never panics or runs away, and reading
+//! Any bytes are either a program or not. Reading them never panics or runs away, and reading
 //! from memory never fails.
 #![no_main]
 #![expect(

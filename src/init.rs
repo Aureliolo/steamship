@@ -35,7 +35,7 @@ pub fn depot(text: &str) -> Result<Depot, String> {
 /// The scripts for `app` and its `depots`, by file name, to be written into `folder`.
 ///
 /// `folder` is relative to where the depots' folders are. The app's script sets `set_live` live,
-/// the branch of the game it is the script of; with none, it leaves the branch to its author.
+/// the branch of the game it is the script of. With none, it leaves the branch to its author.
 ///
 /// # Errors
 ///
@@ -54,8 +54,8 @@ pub fn scripts(
             Component::CurDir => {}
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                 return Err(format!(
-                    "{} is not a folder inside this one, which the scripts could find their way \
-                     back from",
+                    "{} is not a folder inside this one. Name a relative path inside it, \
+                     without ..",
                     folder.display()
                 ));
             }
@@ -226,8 +226,7 @@ mod tests {
         assert_eq!(content("."), "./");
         assert_eq!(
             scripts(480, &one, Path::new("../steam"), None).unwrap_err(),
-            "../steam is not a folder inside this one, which the scripts could find their way \
-             back from"
+            "../steam is not a folder inside this one. Name a relative path inside it, without .."
         );
     }
 }

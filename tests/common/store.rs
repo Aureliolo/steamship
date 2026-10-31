@@ -88,7 +88,7 @@ pub fn lock() -> File {
     file
 }
 
-/// A home of its own for a test that keeps a key in the system's store, holding [`lock`].
+/// A home of its own for a test that keeps a key in the system's store. It holds [`lock`].
 ///
 /// Its key is forgotten as it is dropped, by `forget`, whether the test passed or failed: the
 /// folder goes either way, and a key kept for a folder no longer there would stay in the
@@ -152,7 +152,7 @@ pub const fn environment() -> [(&'static str, &'static str); 0] {
 #[cfg(target_os = "linux")]
 struct Held {
     address: String,
-    /// Open for as long as the process runs; its end is the script's cue to stop.
+    /// Open for as long as the process runs. Its end is the script's cue to stop.
     _running: ChildStdin,
 }
 
@@ -198,7 +198,7 @@ pub fn secret_service() -> &'static str {
 }
 
 /// Waits until gnome-keyring owns the Secret Service's name, so that nothing asks for it first
-/// and has the bus start another; and then until its default keyring is there and unlocked.
+/// and has the bus start another. Then it waits until its default keyring is there and unlocked.
 /// gnome-keyring takes the name before it has made and unlocked that keyring, and a key kept in
 /// the moments between would ask for a prompt, which has no display to open on.
 #[cfg(target_os = "linux")]

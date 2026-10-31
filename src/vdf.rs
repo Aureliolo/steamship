@@ -262,7 +262,7 @@ impl<'text> Reader<'text> {
             },
             Some(first) => {
                 // The first character belongs to the token whatever it is, so every read takes
-                // at least one character and the reader cannot stop advancing.
+                // at least one character and the reader always moves on.
                 let tail = chars.as_str();
                 let end = tail
                     .find([' ', '\t', '\r', '\n', '{', '}', '"', '['])

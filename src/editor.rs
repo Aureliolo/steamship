@@ -47,7 +47,7 @@ pub struct Table {
 /// The editor's three tables for `app`, from `listed`: the definitions, the achievements' names
 /// and descriptions in each language, and the sets' names when there are sets.
 ///
-/// Without translations the texts are the English ones alone; a set's name is English alone
+/// Without translations the texts are the English ones alone. A set's name is English alone
 /// unless its translations were read.
 #[must_use]
 pub fn tables(app: u32, listed: &Listed) -> Vec<Table> {
@@ -193,7 +193,7 @@ pub fn reworded(
 }
 
 /// Each achievement in `definitions` with its English name, its English description and the stat
-/// its progress bar counts, from `localisation`; an achievement the definitions do not name is
+/// its progress bar counts, from `localisation`. An achievement the definitions do not name is
 /// left out.
 fn meanings(definitions: &str, localisation: &str) -> Vec<(String, [String; 3])> {
     let records = records(localisation);
@@ -324,7 +324,7 @@ impl Icon {
         digest::sha256(&mut bytes).map_or_else(|_| String::new(), |sum| digest::hex(&sum))
     }
 
-    /// The address Steam gives this icon in `held`, its achievements; empty when it has none.
+    /// The address Steam gives this icon in `held`, its achievements. Empty when it has none.
     #[must_use]
     pub fn on_steam<'held>(&self, held: &'held [Achievement]) -> &'held str {
         held.iter()
@@ -632,11 +632,11 @@ mod tests {
         assert_eq!(
             named,
             [
-                "FILE: the icon changed in the files since the import steam-icons.json records: \
-                 import it, publish, then run --imported",
+                "FILE: the icon changed in the files since the import steam-icons.json records. \
+                 Import it, publish, then run --imported",
                 "STEAM: the locked icon on Steam changed since the import steam-icons.json \
-                 records, and not from the files: import it again, publish, then run --imported",
-                "NEW: the icon has no import in steam-icons.json: import it, publish, then run \
+                 records, and not from the files. Import it again, publish, then run --imported",
+                "NEW: the icon has no import in steam-icons.json. Import it, publish, then run \
                  --imported",
             ]
         );

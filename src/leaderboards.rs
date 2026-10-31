@@ -1,7 +1,7 @@
 //! An app's leaderboards as a file in its repository says they should be, against Steam's.
 //!
 //! Steam makes a leaderboard it lacks as the file has it, but keeps an existing one's settings,
-//! and its scores with them; so one that differs is reported, never changed or made again.
+//! and its scores with them. So one that differs is reported, never changed or made again.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -157,7 +157,7 @@ pub fn read(text: &str) -> Result<Listed, String> {
 }
 
 /// The leaderboard `entry`, its name under `named_by`, called `label` in what is wrong with it
-/// until that name is known; and its period when it is a template.
+/// until that name is known, with its period when it is a template.
 fn leaderboard(
     entry: &Value,
     label: &str,
@@ -214,8 +214,8 @@ fn leaderboard(
         }
         if board.trusted_writes || board.friends_only {
             return Err(format!(
-                "{}: the game makes a board each period, which cannot have trusted writes or \
-                 friends only, as Steamworks sets them board by board",
+                "{}: a board the game makes each period cannot have trusted writes or \
+                 friends only, which Steamworks sets board by board. Leave both out",
                 board.name
             ));
         }
@@ -291,12 +291,12 @@ impl fmt::Display for Drift {
             Self::NotOnSteam(name) => {
                 write!(
                     formatter,
-                    "{name}: in the file, not on Steam; --create makes it"
+                    "{name}: in the file, not on Steam. --create makes it"
                 )
             }
             Self::NotInFile(name) => write!(
                 formatter,
-                "{name}: on Steam, not in the file; --delete-missing deletes it while the app is \
+                "{name}: on Steam, not in the file. --delete-missing deletes it while the app is \
                  unreleased"
             ),
             Self::Differs {
@@ -658,13 +658,13 @@ mod tests {
             ),
             (
                 record("A", r#", "period": "day", "trusted_writes": true"#),
-                "A: the game makes a board each period, which cannot have trusted writes or \
-                 friends only, as Steamworks sets them board by board",
+                "A: a board the game makes each period cannot have trusted writes or \
+                 friends only, which Steamworks sets board by board. Leave both out",
             ),
             (
                 record("A", r#", "period": "week", "friends_only": true"#),
-                "A: the game makes a board each period, which cannot have trusted writes or \
-                 friends only, as Steamworks sets them board by board",
+                "A: a board the game makes each period cannot have trusted writes or \
+                 friends only, which Steamworks sets board by board. Leave both out",
             ),
             (
                 record(&"x".repeat(120), r#", "period": "day""#),
@@ -745,7 +745,7 @@ mod tests {
             said,
             [
                 "DAILY_20261025: the sort is \"ascending\" on Steam and \"descending\" in the file",
-                "DAILY: on Steam, not in the file; --delete-missing deletes it while the app is \
+                "DAILY: on Steam, not in the file. --delete-missing deletes it while the app is \
                  unreleased",
             ]
         );
@@ -816,8 +816,8 @@ mod tests {
                  the file",
                 "fastest_season: trusted writes only is \"yes\" on Steam and \"no\" in the file",
                 "fastest_season: friends only is \"yes\" on Steam and \"no\" in the file",
-                "gold: in the file, not on Steam; --create makes it",
-                "old: on Steam, not in the file; --delete-missing deletes it while the app is \
+                "gold: in the file, not on Steam. --create makes it",
+                "old: on Steam, not in the file. --delete-missing deletes it while the app is \
                  unreleased",
             ]
         );

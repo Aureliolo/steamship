@@ -4,7 +4,7 @@
 //! That is the Credential Manager on Windows, the Keychain on macOS, and on Linux the Secret
 //! Service that GNOME Keyring and `KWallet` provide. One key is kept for each steamship home, as
 //! the Steam login is, so that `logout` forgets both and a test with a home of its own never meets
-//! a person's real key; a branch's password is kept for the home, the app and the branch.
+//! a person's real key. A branch's password is kept for the home, the app and the branch.
 
 use std::error;
 use std::fmt;
@@ -35,9 +35,8 @@ pub const STORE: &str = "the Secret Service";
 /// upgrade.
 #[cfg(target_os = "macos")]
 pub const KEPT_NOTE: &[&str] = &[
-    "after each steamship upgrade, macOS asks once whether it may use the key; Always Allow",
+    "after each steamship upgrade, macOS asks once whether it may use the key, and Always Allow",
     "holds until the next upgrade",
-    "a way around that question is welcome as a pull request: github.com/Aureliolo/steamship",
 ];
 #[cfg(not(target_os = "macos"))]
 pub const KEPT_NOTE: &[&str] = &[];

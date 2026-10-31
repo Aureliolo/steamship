@@ -8,7 +8,7 @@ use std::mem;
 pub struct Entry {
     pub context: Option<String>,
     pub id: String,
-    /// The translation, or the first of its plural forms; empty while it is untranslated.
+    /// The translation, or the first of its plural forms. Empty while it is untranslated.
     pub text: String,
     /// Marked fuzzy: a guess left for a translator to confirm, which gettext does not use either.
     pub fuzzy: bool,
@@ -39,7 +39,7 @@ impl Catalogue {
 }
 
 /// Each locale gettext names a language by, with Steam's name for it, from Valve's table of the
-/// languages Steam supports; the last three are the other names locales go by.
+/// languages Steam supports. The last three are the other names locales go by.
 const LANGUAGES: [(&str, &str); 34] = [
     ("ar", "arabic"),
     ("bg", "bulgarian"),
@@ -125,14 +125,14 @@ struct Pending {
 
 /// Reads the catalogue `text`.
 ///
-/// Comments are left alone but for the fuzzy flag, and so are obsolete entries; of a plural
+/// Comments are left alone but for the fuzzy flag, and so are obsolete entries. Of a plural
 /// entry, the first form is kept.
 ///
 /// # Errors
 ///
 /// When a line is not gettext's, a string is not quoted or escaped as gettext's are, an entry
-/// lacks its `msgid` or its `msgstr`, or two entries have the same context and `msgid`; each
-/// named by its line.
+/// lacks its `msgid` or its `msgstr`, or two entries have the same context and `msgid`. Each fault
+/// is named by its line.
 pub fn read(text: &str) -> Result<Catalogue, String> {
     let mut catalogue = Catalogue::default();
     let mut pending = Pending::default();

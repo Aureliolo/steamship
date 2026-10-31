@@ -73,7 +73,8 @@ impl fmt::Display for HomeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             formatter,
-            "neither STEAMSHIP_HOME nor {} is set, so there is nowhere to keep steamcmd",
+            "neither STEAMSHIP_HOME nor {} is set, so there is nowhere to keep steamcmd. Set \
+             STEAMSHIP_HOME to a folder for it",
             self.variable
         )
     }
@@ -151,7 +152,7 @@ mod tests {
             missing,
             Err(
                 "neither STEAMSHIP_HOME nor LOCALAPPDATA is set, so there is nowhere to keep \
-                 steamcmd"
+                 steamcmd. Set STEAMSHIP_HOME to a folder for it"
                     .to_owned()
             )
         );

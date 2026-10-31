@@ -33,7 +33,7 @@ const PREVIEW: u64 = 1024 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Item {
     pub app_id: u32,
-    /// The item it updates; none when it makes a new one.
+    /// The item it updates, or none when it makes a new one.
     pub published: Option<u64>,
     /// The folder uploaded as the item's content, if it names one.
     pub content: Option<PathBuf>,
@@ -305,14 +305,14 @@ impl Visibility {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fields {
     pub app_id: u32,
-    /// The item it updates; none when it makes a new one.
+    /// The item it updates, or none when it makes a new one.
     pub published: Option<u64>,
     pub content: PathBuf,
     pub preview: Option<PathBuf>,
     pub title: String,
     pub description: Option<String>,
     pub change_note: Option<String>,
-    /// Who may see it; none leaves an existing item as it is on Steam.
+    /// Who may see it. None leaves an existing item as it is on Steam.
     pub visibility: Option<Visibility>,
 }
 
@@ -369,7 +369,7 @@ pub fn check_fields(fields: &Fields) -> Result<Item, Vec<String>> {
 ///
 /// # Errors
 ///
-/// When it may not, saying why.
+/// When it may not. The error says why.
 pub fn named(name: &str) -> Result<(), String> {
     if name.is_empty() {
         return Err("--name is empty".to_owned());

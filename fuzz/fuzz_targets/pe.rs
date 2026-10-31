@@ -1,5 +1,5 @@
 //! Any bytes are a Windows file's imports, not a Windows file, or a Windows file said to be
-//! unreadable; reading them never panics or runs away, and reading from memory never fails.
+//! unreadable. Reading them never panics or runs away, and reading from memory never fails.
 #![no_main]
 #![expect(
     clippy::panic,
