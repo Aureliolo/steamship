@@ -131,8 +131,8 @@ pub struct Translated {
 ///
 /// That is the app it is for, if it says, the achievements in its order, the stats when it lists
 /// them, which are checked only then, the sets, what it sets that Steam's Web API does not
-/// answer, and the achievements' translations when it is a localisation; and, once
-/// [`translate`] has read them from catalogues, the sets' too.
+/// answer, and the achievements' translations when it is a localisation. Once [`translate`] has
+/// read them from catalogues, it holds the sets' translations too.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Listed {
     pub app: Option<u64>,
@@ -159,15 +159,15 @@ impl Listed {
 }
 
 /// Reads the file's `text`: an object with an `achievements` list, a `stats` list if the app's
-/// stats are to be checked too, and a `sets` list if its achievements are grouped; or a list of
+/// stats are to be checked too, and a `sets` list if its achievements are grouped. Or a list of
 /// games-kit's records.
 ///
 /// In the object, each achievement has its `api_name` and `name`, and its `description` and
-/// `hidden` when they are set; each stat its `api_name`, and its `name` and `default`, none and 0
-/// when left out; each set its `setid` and its `name` in English. An achievement may also give
-/// its `set`, whether it is `archived`, who has `permission` to unlock it, the `stat` its
-/// progress bar counts with the value it unlocks `at`, and its `icon` and `icon_locked`. Other
-/// keys, such as what a game's own tools keep beside them, are left alone.
+/// `hidden` when they are set. Each stat has its `api_name`, and its `name` and `default`, none
+/// and 0 when left out. Each set has its `setid` and its `name` in English. An achievement may
+/// also give its `set`, whether it is `archived`, who has `permission` to unlock it, the `stat`
+/// its progress bar counts with the value it unlocks `at`, and its `icon` and `icon_locked`.
+/// Other keys, such as what a game's own tools keep beside them, are left alone.
 ///
 /// In the list, the records typed `achievement`, `stat` and `achievement_set` are read the same
 /// way with the API name or set ID in `steam`, and those of other types are left alone. The list
@@ -431,7 +431,7 @@ fn achievement(entry: &Value, label: &str, named_by: &str) -> Result<Wanted, Str
         Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
         Some(_) => Err(format!("{api_name}: \"{key}\" is not text")),
     };
-    // A record is games-kit's, which words the permission its own way; a file's matches the CSV.
+    // A record is games-kit's, which words the permission its own way. A file's matches the CSV.
     let worded = |(editor, kit): &(&'static str, &'static str)| {
         if named_by == "steam" { *kit } else { *editor }
     };
@@ -579,7 +579,7 @@ fn stat(entry: &Value, label: &str, named_by: &str) -> Result<WantedStat, String
     })
 }
 
-/// Refuses an achievement and a stat of one API name, in any case, naming the files each is in.
+/// Refuses an achievement and a stat of one API name, in any case, and names the files each is in.
 ///
 /// # Errors
 ///
@@ -610,9 +610,8 @@ fn named_apart(
             format!("stat {stat} in {stat_in} and achievement {achievement} in {achievement_in}")
         };
         return Err(format!(
-            "{where_} differ only in case: Steam finds a stat by its API name in any case, and \
-             answers for {stat} as for the achievement, so whether the stat is aggregated cannot \
-             be read; rename one"
+            "{where_} differ only in case. Steam finds a stat by its API name in any case, so it \
+             answers for {stat} as for the achievement. Rename one"
         ));
     }
     let where_ = if achievement_in == stat_in {
@@ -621,8 +620,8 @@ fn named_apart(
         format!("an achievement in {achievement_in} and a stat in {stat_in}")
     };
     Err(format!(
-        "{stat} is {where_}: Steamworks publishes no achievement and stat of one API name, so \
-         rename one"
+        "{stat} is {where_}. Steamworks cannot publish an achievement and a stat of one API name. \
+         Rename one"
     ))
 }
 
@@ -633,10 +632,12 @@ fn named_apart(
 ///
 /// # Errors
 ///
-/// When an achievement, a stat or a set is in two of the files, or is translated in two, naming
-/// both; when an achievement and a stat share an API name, in any case; when there are
-/// translations, but not of every achievement, or of one no file lists; and when [`resolve`]
-/// refuses them.
+/// When:
+/// - an achievement, a stat or a set is in two of the files, or is translated in two, and the
+///   error names both
+/// - an achievement and a stat share an API name, in any case
+/// - there are translations, but not of every achievement, or of one no file lists
+/// - [`resolve`] refuses them.
 pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
     let mut whole = Listed::default();
     let mut achievements_from: BTreeMap<String, String> = BTreeMap::new();
@@ -703,7 +704,8 @@ pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
             .find(|wanted| !translated_in.contains_key(&wanted.api_name))
     {
         return Err(format!(
-            "{} is in no localisation, which every achievement needs once one is checked",
+            "{} is in no localisation. Once a localisation is given, every achievement needs to \
+             be in one",
             untranslated.api_name
         ));
     }
@@ -733,7 +735,7 @@ fn first_step(default: f64, at: f64) -> bool {
 /// # Errors
 ///
 /// When an achievement is in a set the files do not list, counts a stat they list none of, or
-/// unlocks at a fraction of a stat that counts in whole steps; and when there are more sets or
+/// unlocks at a fraction of a stat that counts in whole steps. Also when there are more sets or
 /// achievements than Steam takes.
 fn resolve(whole: &mut Listed) -> Result<(), String> {
     for wanted in &mut whole.achievements {
@@ -800,7 +802,7 @@ fn resolve(whole: &mut Listed) -> Result<(), String> {
 }
 
 /// Puts each achievement's and set's texts in English, from the files, and in the language of
-/// each of the `catalogues` into `listed`, the languages in alphabetical order; or nothing, with
+/// each of the `catalogues` into `listed`, the languages in alphabetical order. Does nothing with
 /// no catalogues.
 ///
 /// An achievement's translations are kept under the contexts `achievement.name` and
@@ -810,15 +812,15 @@ fn resolve(whole: &mut Listed) -> Result<(), String> {
 /// # Errors
 ///
 /// When the achievements are translated by a localisation as well, or a catalogue lacks a text,
-/// leaves it empty or marks it fuzzy, naming the catalogue and the text.
+/// leaves it empty or marks it fuzzy. The error names the catalogue and the text.
 pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), String> {
     if catalogues.is_empty() {
         return Ok(());
     }
     if !listed.translations.is_empty() {
         return Err(
-            "the achievements are translated both in a localisation and in gettext catalogues: \
-             give one or the other"
+            "the achievements are translated both in a localisation and in gettext catalogues. \
+             Give one or the other"
                 .to_owned(),
         );
     }
@@ -950,7 +952,8 @@ pub enum Drift {
         field: &'static str,
         file: String,
     },
-    /// A language Steam holds no text in at all, answering each of these achievements in English.
+    /// A language Steam holds no text in at all, so it answers each of these achievements in
+    /// English.
     NoLanguage {
         language: String,
         api_names: Vec<String>,
@@ -1019,18 +1022,18 @@ impl fmt::Display for Drift {
                 api_names,
             } => write!(
                 formatter,
-                "Steam holds nothing in {language}, so shows {} in English: import the \
+                "Steam holds nothing in {language}, so shows {} in English. Import the \
                  localisation in Steamworks, under Stats & Achievements, and publish",
                 counted(api_names.len(), "achievement")
             ),
             Self::NoneOnSteam { count, kind } => write!(
                 formatter,
-                "Steam holds none of the file's {}: {} once entered and published in Steamworks",
+                "Steam holds none of the file's {}. {} once entered and published in Steamworks",
                 counted(*count, kind),
                 if *count == 1 {
-                    "it counts"
+                    "It counts"
                 } else {
-                    "they count"
+                    "They count"
                 }
             ),
             Self::IconImport {
@@ -1039,7 +1042,7 @@ impl fmt::Display for Drift {
                 change: IconChange::Unrecorded,
             } => write!(
                 formatter,
-                "{api_name}: the {which} has no import in {RECEIPT}: import it, publish, then run \
+                "{api_name}: the {which} has no import in {RECEIPT}. Import it, publish, then run \
                  --imported"
             ),
             Self::IconImport {
@@ -1048,8 +1051,8 @@ impl fmt::Display for Drift {
                 change: IconChange::ChangedInFiles,
             } => write!(
                 formatter,
-                "{api_name}: the {which} changed in the files since the import {RECEIPT} records: \
-                 import it, publish, then run --imported"
+                "{api_name}: the {which} changed in the files since the import {RECEIPT} records. \
+                 Import it, publish, then run --imported"
             ),
             Self::IconImport {
                 api_name,
@@ -1058,7 +1061,7 @@ impl fmt::Display for Drift {
             } => write!(
                 formatter,
                 "{api_name}: the {which} on Steam changed since the import {RECEIPT} records, and \
-                 not from the files: import it again, publish, then run --imported"
+                 not from the files. Import it again, publish, then run --imported"
             ),
         }
     }
@@ -1168,7 +1171,8 @@ pub fn compare_stats(
 }
 
 /// Every way `held`, Steam's achievements, differ from those the file `wants`: first each of the
-/// file's in its order, then those only Steam has, in Steam's; or, when Steam holds none, that.
+/// file's in its order, then those only Steam has, in Steam's. When Steam holds none, the one
+/// drift that says so.
 #[must_use]
 pub fn compare(wants: &[Wanted], held: &[Achievement]) -> Vec<Drift> {
     if held.is_empty() && !wants.is_empty() {
@@ -1722,8 +1726,8 @@ mod tests {
         .unwrap();
         assert_eq!(
             together(vec![("base.json".to_owned(), records)]).unwrap_err(),
-            "DOOR_OPENED is both an achievement and a stat in base.json: Steamworks publishes \
-             no achievement and stat of one API name, so rename one"
+            "DOOR_OPENED is both an achievement and a stat in base.json. Steamworks cannot \
+             publish an achievement and a stat of one API name. Rename one"
         );
         let feats = read(r#"{"achievements": [{"api_name": "s", "name": "S"}]}"#).unwrap();
         let counters = read(r#"[{"type": "stat", "steam": "s"}]"#).unwrap();
@@ -1733,8 +1737,8 @@ mod tests {
                 ("counters.json".to_owned(), counters),
             ])
             .unwrap_err(),
-            "s is an achievement in feats.json and a stat in counters.json: Steamworks \
-             publishes no achievement and stat of one API name, so rename one"
+            "s is an achievement in feats.json and a stat in counters.json. Steamworks \
+             cannot publish an achievement and a stat of one API name. Rename one"
         );
     }
 
@@ -1751,9 +1755,9 @@ mod tests {
         .unwrap();
         assert_eq!(
             together(vec![("base.json".to_owned(), records)]).unwrap_err(),
-            "stat doors_opened and achievement DOORS_OPENED in base.json differ only in case: \
-             Steam finds a stat by its API name in any case, and answers for doors_opened as for \
-             the achievement, so whether the stat is aggregated cannot be read; rename one"
+            "stat doors_opened and achievement DOORS_OPENED in base.json differ only in case. \
+             Steam finds a stat by its API name in any case, so it answers for doors_opened as \
+             for the achievement. Rename one"
         );
         let feats = read(r#"{"achievements": [{"api_name": "KEYS", "name": "K"}]}"#).unwrap();
         let counters = read(r#"[{"type": "stat", "steam": "keys"}]"#).unwrap();
@@ -1763,9 +1767,9 @@ mod tests {
                 ("counters.json".to_owned(), counters),
             ])
             .unwrap_err(),
-            "stat keys in counters.json and achievement KEYS in feats.json differ only in case: \
-             Steam finds a stat by its API name in any case, and answers for keys as for the \
-             achievement, so whether the stat is aggregated cannot be read; rename one"
+            "stat keys in counters.json and achievement KEYS in feats.json differ only in case. \
+             Steam finds a stat by its API name in any case, so it answers for keys as for the \
+             achievement. Rename one"
         );
     }
 
@@ -2179,8 +2183,8 @@ mod tests {
         });
         assert_eq!(
             translate(&mut both, &[catalogued("de.po", "german", GERMAN)]).unwrap_err(),
-            "the achievements are translated both in a localisation and in gettext catalogues: \
-             give one or the other"
+            "the achievements are translated both in a localisation and in gettext catalogues. \
+             Give one or the other"
         );
     }
 
@@ -2232,12 +2236,12 @@ mod tests {
         );
         assert_eq!(
             drift.first().unwrap().to_string(),
-            "Steam holds none of the file's 2 achievements: they count once entered and \
+            "Steam holds none of the file's 2 achievements. They count once entered and \
              published in Steamworks"
         );
         assert_eq!(
             compare(&wants[..1], &[]).first().unwrap().to_string(),
-            "Steam holds none of the file's 1 achievement: it counts once entered and published \
+            "Steam holds none of the file's 1 achievement. It counts once entered and published \
              in Steamworks"
         );
         assert_eq!(compare(&[], &[]), Vec::<Drift>::new());
@@ -2419,7 +2423,7 @@ mod tests {
         assert_eq!(
             none.iter().map(ToString::to_string).collect::<Vec<_>>(),
             [
-                "Steam holds none of the file's 2 stats: they count once entered and published in \
+                "Steam holds none of the file's 2 stats. They count once entered and published in \
               Steamworks"
             ],
             "said once, not once for each"
@@ -2646,7 +2650,8 @@ mod tests {
                     ("achievements.json", both),
                     ("localisation.csv", of(&["A"])),
                 ],
-                "B is in no localisation, which every achievement needs once one is checked",
+                "B is in no localisation. Once a localisation is given, every achievement needs \
+                 to be in one",
             ),
         ] {
             let files = files
@@ -2721,7 +2726,7 @@ mod tests {
                 &english
             )),
             [
-                "Steam holds nothing in german, so shows 2 achievements in English: import the \
+                "Steam holds nothing in german, so shows 2 achievements in English. Import the \
                  localisation in Steamworks, under Stats & Achievements, and publish"
             ]
         );

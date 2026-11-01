@@ -20,7 +20,7 @@ const CARDS: [Card; 3] = [
         kicker: "steamcmd",
         title: "Pinned and verified",
         body: "Fetched from Valve's signed manifest at a version fixed in each release, every \
-               package checked by SHA-256, kept from updating itself, and checked again after \
+               package checked by SHA-256. Kept from updating itself, and checked again after \
                every run.",
         link: "install.html#steamcmd",
         link_text: "The steamcmd it pins",
@@ -126,7 +126,7 @@ const WAYS: [Way; 8] = [
                   gh release download vVERSION --repo Aureliolo/steamship --pattern '*linux-musl*'",
         note: "Any x86-64 Linux, whatever its glibc: steamship vVERSION, with curl, wget or the \
                GitHub command line. Check it as Install shows, then put `steamship` on your \
-               `PATH`; steamcmd needs the 32-bit C libraries Install names.",
+               `PATH`. steamcmd needs the 32-bit C libraries Install names.",
         link: Some("RELEASE/steamship-VERSION-x86_64-linux-musl.tar.gz"),
     },
     Way {
@@ -134,7 +134,7 @@ const WAYS: [Way; 8] = [
         name: "macOS archive",
         command: "curl -fLO RELEASE/steamship-VERSION-aarch64-apple-darwin.tar.gz\n\
                   gh release download vVERSION --repo Aureliolo/steamship --pattern '*aarch64-apple*'",
-        note: "Apple silicon: steamship vVERSION, with curl or the GitHub command line; on an \
+        note: "Apple silicon: steamship vVERSION, with curl or the GitHub command line. On an \
                Intel Mac, `aarch64` becomes `x86_64`. Check it as Install shows, then put \
                `steamship` on your `PATH`.",
         link: Some("RELEASE/steamship-VERSION-aarch64-apple-darwin.tar.gz"),
@@ -145,7 +145,7 @@ const WAYS: [Way; 8] = [
         command: "curl.exe -fLO RELEASE/steamship-VERSION-x86_64-pc-windows-msvc.zip\n\
                   gh release download vVERSION --repo Aureliolo/steamship --pattern '*x86_64-pc-windows*'",
         note: "Windows x86-64: steamship vVERSION, with the curl Windows ships or the GitHub \
-               command line; on Windows on Arm, `x86_64` becomes `aarch64`. Check it as Install \
+               command line. On Windows on Arm, `x86_64` becomes `aarch64`. Check it as Install \
                shows, then put `steamship.exe` on your `PATH`.",
         link: Some("RELEASE/steamship-VERSION-x86_64-pc-windows-msvc.zip"),
     },
@@ -172,7 +172,7 @@ const SUB: &str = "steamship runs Valve's own steamcmd with your own build scrip
                    of files per platform can be shipped.";
 
 const SMALLPRINT: &str = "MIT or Apache-2.0, at your option. Not affiliated with or endorsed by \
-                          Valve; Steam and Steamworks are trademarks of Valve Corporation.";
+                          Valve. Steam and Steamworks are trademarks of Valve Corporation.";
 
 /// The front page, as the site's HTML.
 #[must_use]

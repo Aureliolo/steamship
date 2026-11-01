@@ -93,7 +93,7 @@ pub fn read(text: &str) -> Result<Language, String> {
 ///
 /// # Errors
 ///
-/// When `value` holds such a slot, quoting it.
+/// When `value` holds such a slot. The error quotes it.
 pub fn fillable(value: &str) -> Result<(), String> {
     let word = |letter: char| letter.is_ascii_alphanumeric() || letter == '_';
     let mut rest = value;
@@ -110,8 +110,8 @@ pub fn fillable(value: &str) -> Result<(), String> {
                 }
                 _ => {
                     return Err(format!(
-                        "{from:?} holds a % that starts no %field%, which Steam reads as one: \
-                         write the word, such as \"per cent\""
+                        "{from:?} holds a % that starts no %field%, which Steam reads as one. \
+                         Write the word, such as \"per cent\""
                     ));
                 }
             }
@@ -132,7 +132,7 @@ pub fn fillable(value: &str) -> Result<(), String> {
                 });
             if !shaped {
                 return Err(format!(
-                    "{from:?} holds a reference Steam cannot fill: write {{#Token}} or \
+                    "{from:?} holds a reference Steam cannot fill. Write {{#Token}} or \
                      {{#Token_%field%}}"
                 ));
             }

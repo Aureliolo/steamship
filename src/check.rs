@@ -80,7 +80,7 @@ pub fn folder(path: &Path, app: Option<u32>) -> Report {
     for folder in not_to_ship(path, &files) {
         problems.push(Problem::new(
             &folder,
-            "is in the build; Unity names this folder as one not to ship",
+            "is in the build. Unity names this folder as one not to ship",
         ));
     }
     let build = DepotFiles {
@@ -122,13 +122,14 @@ fn check_loaded(app: &AppScript, content: bool, settings: Option<&Block>) -> Rep
     {
         Some("default") => problems.push(Problem::new(
             &app.path,
-            "\"SetLive\" names \"default\", which steamcmd never sets live; upload --default sets \
-             it live while the app is unreleased",
+            "\"SetLive\" names \"default\", which steamcmd never sets live. An upload with \
+             --default sets it live while the app is unreleased",
         )),
         Some("public") => problems.push(Problem::new(
             &app.path,
             "\"SetLive\" names \"public\", the Web API's name for the default branch, which \
-             steamcmd never sets live; upload --default sets it live while the app is unreleased",
+             steamcmd never sets live. An upload with --default sets it live while the app is \
+             unreleased",
         )),
         _ => {}
     }
@@ -139,7 +140,7 @@ fn check_loaded(app: &AppScript, content: bool, settings: Option<&Block>) -> Rep
     {
         problems.push(Problem::new(
             &app.path,
-            "\"Preview\" is set in the script; pass --preview",
+            "\"Preview\" is set in the script. Pass --preview",
         ));
     }
     if app
@@ -149,7 +150,8 @@ fn check_loaded(app: &AppScript, content: bool, settings: Option<&Block>) -> Rep
     {
         problems.push(Problem::new(
             &app.path,
-            "\"Local\" is set, which sends the build to a local content server, not to Steam",
+            "\"Local\" is set, which sends the build to a local content server, not to Steam. \
+             Take it out of the script",
         ));
     }
     let depots = app
@@ -219,7 +221,7 @@ fn unshipped_configurations(depots: &[DepotFiles], problems: &mut Vec<Problem>) 
                     file,
                     format!(
                         "is Steam Input's Action Manifest in depot {}, and lists \"{path}\" for \
-                         {controller}, which the build does not ship beside it: put the \
+                         {controller}, which the build does not ship beside it. Put the \
                          configuration there, or take it out of the manifest",
                         depot.depot_id
                     ),
@@ -230,11 +232,11 @@ fn unshipped_configurations(depots: &[DepotFiles], problems: &mut Vec<Problem>) 
 }
 
 /// What to do when a bundled Steam Input configuration has no action manifest named.
-const NAME_THE_MANIFEST: &str = "enter its path from the install folder on the app's Steam Input \
+const NAME_THE_MANIFEST: &str = "Enter its path from the install folder on the app's Steam Input \
                                  page in Steamworks, then save the settings again";
 
 /// A problem for each system the build installs on without the action manifest of the Steam
-/// Input configuration that `settings`, `app`'s, say the game bundles; one for the snapshot when
+/// Input configuration that `settings`, `app`'s, say the game bundles. One for the snapshot when
 /// they name none. Steam reads the manifest from the install folder, where the depots' mappings
 /// put each file, so a depot for one system shipping it leaves the others without.
 fn unshipped_manifest(app: &AppScript, settings: &Block, problems: &mut Vec<Problem>) {
@@ -251,7 +253,7 @@ fn unshipped_manifest(app: &AppScript, settings: &Block, problems: &mut Vec<Prob
             &snapshot,
             format!(
                 "chooses a Custom Configuration as app {}'s Default Controller Configuration and \
-                 names no action manifest: {NAME_THE_MANIFEST}",
+                 names no action manifest. {NAME_THE_MANIFEST}",
                 app.app_id
             ),
         ));
@@ -279,8 +281,8 @@ fn unshipped_manifest(app: &AppScript, settings: &Block, problems: &mut Vec<Prob
             &snapshot,
             format!(
                 "names \"{manifest}\" as app {}'s Steam Input action manifest, and the build \
-                 installs no file there{on}: ship the manifest at that path in the install \
-                 folder, or change the path on the app's Steam Input page in Steamworks and save \
+                 installs no file there{on}. Ship the manifest at that path in the install \
+                 folder. Or change the path on the app's Steam Input page in Steamworks and save \
                  the settings again",
                 app.app_id
             ),
@@ -304,7 +306,7 @@ pub fn folder_manifest(folder: &Path, app: u32, settings: &Block) -> Option<Prob
             folder,
             format!(
                 "is a build of app {app}, whose settings choose a Custom Configuration as its \
-                 Default Controller Configuration and name no action manifest: \
+                 Default Controller Configuration and name no action manifest. \
                  {NAME_THE_MANIFEST}"
             ),
         ));
@@ -314,7 +316,7 @@ pub fn folder_manifest(folder: &Path, app: u32, settings: &Block) -> Option<Prob
             folder,
             format!(
                 "has no \"{manifest}\", which app {app}'s settings name as its Steam Input action \
-                 manifest: put the manifest there, or change the path on the app's Steam Input \
+                 manifest. Put the manifest there, or change the path on the app's Steam Input \
                  page in Steamworks and save the settings again"
             ),
         )
@@ -357,7 +359,7 @@ fn installed(depot: &DepotScript, file: &Path) -> Vec<Vec<String>> {
 }
 
 /// None when `on`, depots with their files, install `wanted`, a path's folders and name from the
-/// install folder, matched by case or, with `any_case`, in any; otherwise the programs and macOS
+/// install folder, matched by case or, with `any_case`, in any. Otherwise the programs and macOS
 /// apps they install in its folder instead.
 fn programs_beside(
     on: &[(&DepotScript, &DepotFiles)],
@@ -484,9 +486,9 @@ fn unlaunchable(
                 &snapshot,
                 format!(
                     "starts \"{}\" in app {}'s launch option {}{on_system}, which the build does not \
-                     install: it installs {instead}. Name the build's program in the launch \
+                     install. It installs {instead}. Name the build's program in the launch \
                      option, under Installation, General Installation in Steamworks, and save \
-                     the settings again, or ship the program under that name",
+                     the settings again. Or ship the program under that name",
                     option.executable, app.app_id, option.key
                 ),
             ));
@@ -565,7 +567,7 @@ fn holds(folder: &Path, wanted: &[String], any_case: bool) -> bool {
 /// `settings` say its launch options start.
 ///
 /// A build's folder is one system's, which the folder does not say, so any option's program will
-/// do; a folder holding no program, such as a depot of data alone, is not judged.
+/// do. A folder holding no program, such as a depot of data alone, is not judged.
 #[must_use]
 pub fn folder_launch(folder: &Path, app: u32, settings: &Block) -> Option<Problem> {
     let options: Vec<settings::Launch> = settings::launch_options(settings)
@@ -615,7 +617,7 @@ pub fn folder_launch(folder: &Path, app: u32, settings: &Block) -> Option<Proble
         format!(
             "is a build of app {app} holding {}, and none of the programs its launch options \
              start: {}. Name the build's program in a launch option, under Installation, General \
-             Installation in Steamworks, and save the settings again, or ship the program under \
+             Installation in Steamworks, and save the settings again. Or ship the program under \
              that name",
             quoted(&programs),
             listed(started)
@@ -648,7 +650,7 @@ fn installs(depot: &DepotScript, path: &str) -> bool {
 }
 
 /// Each controller and the configuration file `file` lists for it, when `file` is Steam Input's
-/// Action Manifest; none when it is any other file.
+/// Action Manifest. None when it is any other file.
 fn configurations(file: &Path) -> Vec<(String, String)> {
     let vdf = file
         .extension()
@@ -712,7 +714,8 @@ fn split(mapping: &FileMapping) -> (String, String) {
 /// Why `mapping` can never be mapped, if it cannot.
 fn unmappable(mapping: &FileMapping) -> Option<&'static str> {
     split(mapping).0.contains(['*', '?']).then_some(
-        "has a wildcard in a folder name, which steamship cannot map the way steamcmd does",
+        "has a wildcard in a folder name, which steamship cannot map as steamcmd does. Name the \
+         folder without one",
     )
 }
 
@@ -721,10 +724,10 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
     let root = &depot.content_root;
     if !root.is_dir() {
         let what = if matches!(root.try_exists(), Ok(false)) {
-            "does not exist; put the depot's files there, or point ContentRoot at the folder they \
+            "does not exist. Put the depot's files there, or point ContentRoot at the folder they \
              are in"
         } else {
-            "is not a folder; point ContentRoot at the folder the depot's files are in"
+            "is not a folder. Point ContentRoot at the folder the depot's files are in"
         };
         problems.push(Problem::new(
             &depot.path,
@@ -766,7 +769,7 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
         problems.push(Problem::new(
             &folder,
             format!(
-                "is in depot {}; Unity names this folder as one not to ship",
+                "is in depot {}. Unity names this folder as one not to ship",
                 depot.depot_id
             ),
         ));
@@ -776,7 +779,7 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
         let message = if !path.is_file() {
             format!("is not a file in {}", root.display())
         } else if !mapped.iter().any(|file| same_file(file, &path)) {
-            "is not in the depot; map it with a FileMapping too".to_owned()
+            "is not in the depot. Map it with a FileMapping too".to_owned()
         } else {
             continue;
         };
@@ -876,7 +879,7 @@ fn walk(folder: &Path, name: &str, recursive: bool, found: &mut Vec<PathBuf>) ->
             continue;
         }
         // The kind above is the entry's own, so a link to a folder is never walked into and a
-        // loop of links cannot make the walk endless; a link to a file counts as that file.
+        // loop of links cannot make the walk endless. A link to a file counts as that file.
         if path.metadata()?.is_file()
             && pattern::matches(name, &entry.file_name().to_string_lossy())
         {
@@ -886,7 +889,7 @@ fn walk(folder: &Path, name: &str, recursive: bool, found: &mut Vec<PathBuf>) ->
     Ok(())
 }
 
-/// A `FileExclusion` with a folder in it is matched against the path from the content root; one
+/// A `FileExclusion` with a folder in it is matched against the path from the content root. One
 /// without is matched against the file name at any depth, as Valve's `"*.pdb"` example is.
 fn excluded(root: &Path, file: &Path, exclusions: &[String]) -> bool {
     let relative = file.strip_prefix(root).unwrap_or(file);
@@ -914,7 +917,7 @@ fn content_problems(place: &str, file: &Path, problems: &mut Vec<Problem>) {
     if name.eq_ignore_ascii_case("steam_appid.txt") {
         problems.push(Problem::new(
             file,
-            format!("is in {place}; it is for development only and must not ship"),
+            format!("is in {place}. It is for development only and must not ship"),
         ));
     }
     // Windows file systems have no executable bit, so there the question cannot be asked.
@@ -962,7 +965,7 @@ fn runtime_installed_apart(file: &Path) -> Option<String> {
             let options = settings.get("runtimeOptions")?;
             (options.get("framework").is_some() || options.get("frameworks").is_some()).then(|| {
                 "runs on a .NET runtime installed apart from it, which neither Windows nor a \
-                 Steamworks Common Redistributable installs; publish the program self-contained"
+                 Steamworks Common Redistributable installs. Publish the program self-contained"
                     .to_owned()
             })
         }

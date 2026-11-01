@@ -2,7 +2,8 @@
 //! nothing behind to look at afterwards.
 //!
 //! Each file is one collapsed group. What it holds is shown with workflow commands stopped, so no
-//! line in a log can act as one; and only its last lines, so a long log does not drown the job's.
+//! line in a log can act as one. Only its last lines are shown, so a long log does not drown the
+//! job's.
 
 use std::collections::BTreeMap;
 use std::collections::hash_map::RandomState;
@@ -40,7 +41,7 @@ where
 pub struct Marks(BTreeMap<PathBuf, u64>);
 
 impl Marks {
-    /// The length of every file in `folder` now; none when the folder is not there yet.
+    /// The length of every file in `folder` now, or none when the folder is not there yet.
     #[must_use]
     pub fn take(folder: &Path) -> Self {
         let lengths = fs::read_dir(folder)

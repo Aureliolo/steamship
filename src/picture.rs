@@ -1,7 +1,7 @@
 //! What a picture file is and how large, from its header alone: PNG, JPEG, and Windows and Apple
 //! icons, the formats Steamworks takes artwork in.
 //!
-//! Nothing is decoded; only the few bytes that say the size are read, so a hostile file can
+//! Nothing is decoded. Only the few bytes that say the size are read, so a hostile file can
 //! cost no more than walking its headers.
 
 use std::fmt;
@@ -14,9 +14,9 @@ pub enum Format {
         transparent: bool,
     },
     Jpeg,
-    /// A Windows icon; its size is its largest image's.
+    /// A Windows icon, whose size is its largest image's.
     Ico,
-    /// An Apple icon, ICNS; its size is its largest image's.
+    /// An Apple icon, ICNS, whose size is its largest image's.
     Icns,
 }
 

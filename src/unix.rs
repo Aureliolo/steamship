@@ -2,7 +2,7 @@
 //! and mutation-tested on the systems where it runs.
 #![expect(
     unsafe_code,
-    reason = "stopping a process group, catching the signals that end steamship, opening a pseudo terminal, changing terminal modes and asking which user steamship runs as are libc calls"
+    reason = "libc calls: stopping a process group, catching the signals that end steamship, opening a pseudo terminal, changing terminal modes and asking which user steamship runs as"
 )]
 
 use std::ffi::OsString;
@@ -90,7 +90,7 @@ extern "C" fn on_ending(signal: libc::c_int) {
     if group != 0_i32 {
         stop_group(group);
         // The first signal stops only the program, so that what it said is shown, as a job
-        // cancelled in CI would otherwise end with nothing to tell why it hung; any later one
+        // cancelled in CI would otherwise end with nothing to tell why it hung. Any later one
         // ends steamship.
         if SHOWN.load(Ordering::SeqCst)
             && TOLD
@@ -181,7 +181,7 @@ pub fn run(
     let output = reading
         .join()
         .unwrap_or_else(|panic| panic::resume_unwind(panic))?;
-    // A program ended by a signal has no exit code; the shell's convention stands in for one.
+    // A program ended by a signal has no exit code. The shell's convention stands in for one.
     let code = status.filter(|_| told().is_none()).and_then(|status| {
         status
             .code()
@@ -237,7 +237,7 @@ impl Terminal {
     ) -> io::Result<(Self, Output, File)> {
         let mut main = 0_i32;
         let mut replica = 0_i32;
-        // SAFETY: both are valid places for a descriptor; the name, the settings and the size
+        // SAFETY: both are valid places for a descriptor. The name, the settings and the size
         // are left to the system.
         let opened = unsafe {
             libc::openpty(
@@ -334,7 +334,7 @@ impl Keys {
     ///
     /// When the terminal will not change modes.
     pub fn open() -> io::Result<Option<Self>> {
-        // SAFETY: asks about a descriptor; nothing is changed.
+        // SAFETY: asks about a descriptor. Nothing is changed.
         if unsafe { libc::isatty(libc::STDIN_FILENO) } == 0_i32 {
             return Ok(None);
         }
@@ -425,7 +425,7 @@ fn quiet(descriptor: RawFd) -> io::Result<()> {
 }
 
 fn stop_group(group: i32) {
-    // SAFETY: `killpg` only sends a signal; a group that has already gone is an error it
+    // SAFETY: `killpg` only sends a signal. A group that has already gone is an error it
     // reports and that nothing here depends on.
     let _: i32 = unsafe { libc::killpg(group, libc::SIGKILL) };
 }
@@ -437,7 +437,7 @@ pub fn missing_executable_bit(file: &Path) -> Option<String> {
     match unstartable(file) {
         Ok(None) => None,
         Ok(Some(kind)) => Some(format!(
-            "is {kind} without its executable bit; run chmod +x on it"
+            "is {kind} without its executable bit. Run chmod +x on it"
         )),
         Err(error) => Some(format!("cannot be read: {error}")),
     }
@@ -521,12 +521,12 @@ pub fn make_link(target: &str, link: &Path) -> io::Result<()> {
 /// The user steamship runs as, by number, which is how the session bus knows its users.
 #[must_use]
 pub fn user_id() -> u32 {
-    // SAFETY: geteuid reads the process's own credentials; it takes nothing and cannot fail.
+    // SAFETY: geteuid reads the process's own credentials. It takes nothing and cannot fail.
     unsafe { libc::geteuid() }
 }
 
 /// Holds steamship's thread, and every program it starts from here on, which inherit it, to the
-/// first `cores` of the processors it may run on; gives how many it is held to, of how many.
+/// first `cores` of the processors it may run on. Gives how many it is held to, of how many.
 ///
 /// # Errors
 ///

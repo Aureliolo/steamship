@@ -1,5 +1,5 @@
 //! What steamcmd says while it logs in, read into what steamship shows or asks. steamcmd's own
-//! wording is kept to the lines matched here; anything else it says is passed on as it is.
+//! wording is kept to the lines matched here. Anything else it says is passed on as it is.
 
 use crate::terminal::Event;
 
@@ -104,15 +104,15 @@ pub fn explain(reason: &str) -> String {
         ("Invalid Login Auth Code", "Steam refused the code"),
         (
             "Account Login Denied Throttle",
-            "Steam is limiting login attempts; wait, then try again",
+            "Steam is limiting login attempts. Wait, then try again",
         ),
         (
             "Rate Limit Exceeded",
-            "Steam is limiting login attempts; wait, then try again",
+            "Steam is limiting login attempts. Wait, then try again",
         ),
         (
             "Expired Login Auth Code",
-            "the code had expired; try again with a new one",
+            "the code had expired. Try again with a new one",
         ),
     ];
     known

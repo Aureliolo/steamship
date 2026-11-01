@@ -82,7 +82,8 @@ impl Service {
     {
         let mut bus = Connection::session(lookup).map_err(|error| failed(&error))?;
         // GNOME Keyring records a caller only after a first message from it, and a session asked
-        // for before then ends the daemon, leaving every keyring locked (GNOME/gnome-keyring#190).
+        // for before then ends the daemon and leaves every keyring locked
+        // (GNOME/gnome-keyring#190).
         // Asking where the default keyring is, which needs no record, and waiting for the answer
         // leaves the record made: in bursts of fresh callers the daemon died in 13 rounds of 100
         // asked for a session first, and in none asked this first.
@@ -145,8 +146,8 @@ impl Service {
         self.prompt(answer.get(1).and_then(Value::path).unwrap_or(NONE))
     }
 
-    /// Has the Secret Service ask its question, as to unlock a keyring, and waits for the answer;
-    /// the question is its own, shown by the desktop.
+    /// Has the Secret Service ask its question, as to unlock a keyring, and waits for the answer.
+    /// The question is its own, shown by the desktop.
     fn prompt(&mut self, prompt: &str) -> Result<(), Error> {
         if prompt == NONE {
             return Ok(());
@@ -259,7 +260,7 @@ pub fn has_secret(item: &Item) -> Result<bool, Error> {
     service()?.has(item)
 }
 
-/// The secret kept as `item`, if there is one, unlocking it first if need be.
+/// The secret kept as `item`, if there is one. It is unlocked first if need be.
 ///
 /// # Errors
 ///
@@ -351,7 +352,7 @@ mod tests {
     }
 
     /// How long the stand-in waits for steamship to say something before hanging up, as a bus
-    /// drops a peer that has stalled; steamship waiting for what never comes then fails at once.
+    /// drops a peer that has stalled. steamship waiting for what never comes then fails at once.
     const STALLED: Duration = Duration::from_secs(10);
 
     fn read_line(stream: &mut UnixStream) -> Vec<u8> {
@@ -401,8 +402,8 @@ mod tests {
         }
     }
 
-    /// A stand-in session bus with a Secret Service on it, on a socket in a folder of its own,
-    /// greeting a login with `greeting` and answering each call through `answer`. Gives back the
+    /// A stand-in session bus with a Secret Service on it, on a socket in a folder of its own. It
+    /// greets a login with `greeting` and answers each call through `answer`. Gives back the
     /// address, and the calls it was sent once the connection has ended.
     fn standing_in<Answering>(
         greeting: &'static [u8],
@@ -458,7 +459,7 @@ mod tests {
         }
     }
 
-    /// The stand-in bus of [`standing_in`], answering on `listener`.
+    /// The stand-in bus of [`standing_in`], which answers on `listener`.
     fn serve<Answering>(
         listener: UnixListener,
         greeting: &'static [u8],

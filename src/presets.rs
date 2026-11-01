@@ -21,7 +21,7 @@ pub struct Preset {
     pub export: PathBuf,
 }
 
-/// Every preset in the project at `root` that exports somewhere; none when it has no presets.
+/// Every preset in the project at `root` that exports somewhere, or none when it has no presets.
 ///
 /// # Errors
 ///

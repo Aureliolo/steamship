@@ -2,7 +2,7 @@
 //!
 //! Renovate raises only the version inside a pin, and `.github/workflows/pins.yml` finishes the
 //! raise on Renovate's branch the same way. This is that step by hand, for a pin raised any other
-//! way; the result is reviewed and committed like any other change.
+//! way. The result is reviewed and committed like any other change.
 #![expect(
     clippy::print_stdout,
     clippy::print_stderr,

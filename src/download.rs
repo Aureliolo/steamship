@@ -44,7 +44,7 @@ impl fmt::Display for Error {
             Self::GaveUp { url, last } => {
                 write!(
                     formatter,
-                    "{url} failed {ATTEMPTS} times; the last time: {last}"
+                    "{url} failed {ATTEMPTS} times (the last time: {last})"
                 )
             }
             Self::Mismatch { url, reason } => write!(formatter, "{url} {reason}"),
@@ -102,7 +102,8 @@ where
     })
 }
 
-/// Downloads `url` to `into`, refusing it unless it is exactly `size` bytes with SHA-256 `sha256`.
+/// Downloads `url` to `into`. A file that is not exactly `size` bytes with SHA-256 `sha256` is
+/// refused.
 /// The bytes go to a neighbouring `.part` file first, so `into` only ever holds a checked file.
 ///
 /// # Errors
@@ -172,7 +173,7 @@ pub enum Served {
     /// The CDN serves it.
     Yes,
     /// The CDN refused in some other way than "not found", as it does once the request code in
-    /// the address has expired; what it answered.
+    /// the address has expired. The number is the status it answered.
     Otherwise(u16),
     /// Still not found when patience ran out.
     No,
@@ -209,7 +210,7 @@ where
     }
 }
 
-/// A 5xx, a 429 or a broken connection may pass next time; any other answer will not.
+/// A 5xx, a 429 or a broken connection may pass next time. Any other answer will not.
 fn classify(url: &str, error: &ureq::Error) -> Failure {
     if let &ureq::Error::StatusCode(status) = error {
         if status >= 500 || status == 429 {
@@ -348,7 +349,7 @@ mod tests {
                     url: "u".into(),
                     last: "503".into(),
                 },
-                "u failed 7 times; the last time: 503",
+                "u failed 7 times (the last time: 503)",
             ),
             (
                 Error::Mismatch {
@@ -372,7 +373,7 @@ mod tests {
         [head.as_bytes(), body].concat()
     }
 
-    /// Serves `responses` in order, one per connection, on a local port; answers the address.
+    /// Serves `responses` in order, one per connection, on a local port, and returns its address.
     /// Any request past the script is answered with a server error, so code that asks more often
     /// than it should fails at once instead of waiting on a server that has nothing to say.
     fn serve(responses: Vec<Vec<u8>>) -> String {

@@ -58,7 +58,7 @@ pub fn chosen<'branches>(
             .find(|found| named(given, &found.name))
             .ok_or_else(|| {
                 format!(
-                    "app {app} has no branch {given}; its branches are {}",
+                    "app {app} has no branch {given}: its branches are {}",
                     listed(branches)
                 )
             })?,
@@ -69,8 +69,8 @@ pub fn chosen<'branches>(
             .ok_or_else(|| {
                 format!(
                     "build {build} is live on no branch of app {app}, and Steam serves only a \
-                     branch's live build: set it live with `steamship promote --build {build} \
-                     --branch <branch>`, then fetch that branch"
+                     branch's live build. Set it live with steamship promote --build {build} \
+                     --branch <branch>, then fetch that branch"
                 )
             })?,
         (None, None) => branches
@@ -138,7 +138,7 @@ pub fn hidden(text: &str, secret: &str) -> String {
 ///
 /// The console is read from `output` to its end, or to a line holding one of `hopeless`, and typed
 /// into through `input`. A prompt is seen again each time more output arrives before the line
-/// ends; it is answered once.
+/// ends. It is answered once.
 ///
 /// # Errors
 ///
@@ -413,7 +413,7 @@ mod tests {
         assert_eq!(
             chosen(&all, 480, Some("nightly"), None),
             Err(
-                "app 480 has no branch nightly; its branches are beta, default, staging, testing"
+                "app 480 has no branch nightly: its branches are beta, default, staging, testing"
                     .to_owned()
             )
         );
@@ -444,7 +444,7 @@ mod tests {
             chosen(&all, 480, None, Some(9)),
             Err(
                 "build 9 is live on no branch of app 480, and Steam serves only a branch's live \
-                 build: set it live with `steamship promote --build 9 --branch <branch>`, then \
+                 build. Set it live with steamship promote --build 9 --branch <branch>, then \
                  fetch that branch"
                     .to_owned()
             )
@@ -697,8 +697,8 @@ mod tests {
     }
 
     /// What steamcmd 1792617903 added to its content log, and nothing to its console, cancelling a
-    /// fetch of the default branch while it remembered a beta branch whose password it lacked;
-    /// another app's lines among them.
+    /// fetch of the default branch while it remembered a beta branch whose password it lacked.
+    /// Another app's lines are among them.
     const CANCELLED: &str = "[2026-10-28 16:33:50] AppID 480 App update changed : Running Update,Reconfiguring,\n\
         [2026-10-28 16:33:50] WARNING! AppID 480 has missing cached password for private beta \
         \"testing\" set, falling back to public\n\

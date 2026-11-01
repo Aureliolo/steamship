@@ -136,7 +136,8 @@ pub struct Check {
 }
 
 impl Check {
-    /// The check for the steamship whose home is `home`, asking GitHub if the kept answer is stale.
+    /// The check for the steamship whose home is `home`. It asks GitHub if the kept answer is
+    /// stale.
     #[must_use]
     pub fn start(home: PathBuf) -> Self {
         Self::asking_with(home, SystemTime::now(), || ask_at(LATEST))
@@ -173,13 +174,13 @@ impl Check {
         }
     }
 
-    /// A version newer than this one, if there is one, waiting at most [`LIMIT`] for GitHub.
+    /// A version newer than this one, if there is one. GitHub gets at most [`LIMIT`] to answer.
     #[must_use]
     pub fn newer(self) -> Option<Version> {
         self.newer_than(Version::this()?, LIMIT)
     }
 
-    /// A version newer than `this`, waiting at most `wait` for GitHub.
+    /// A version newer than `this`. GitHub gets at most `wait` to answer.
     #[must_use]
     pub fn newer_than(self, this: Version, wait: Duration) -> Option<Version> {
         let latest = match self.asking {

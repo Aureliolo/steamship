@@ -39,7 +39,8 @@ pub const SECRET_LIMIT: usize = 48 * 1024;
 pub struct Login {
     account: Account,
     config: Zeroizing<Vec<u8>>,
-    /// The day `steamship ci` packed it, as YYYY-MM-DD in UTC; none for steamcmd's own saved file.
+    /// The day `steamship ci` packed it, as YYYY-MM-DD in UTC, or none for steamcmd's own saved
+    /// file.
     packed_on: Option<String>,
 }
 
@@ -69,7 +70,8 @@ impl fmt::Display for Error {
         match self {
             Self::Unreadable => write!(
                 formatter,
-                "{VARIABLE} does not hold a login packed by `steamship ci`"
+                "{VARIABLE} does not hold a login packed by steamship ci. Pack the login again \
+                 with steamship ci"
             ),
             Self::NotSaved { path } => {
                 write!(formatter, "there is no saved login in {}", path.display())
@@ -167,7 +169,7 @@ impl Login {
 /// steamcmd's `config.vdf` without its `CMWebSocket` block, the servers it last reached.
 ///
 /// steamcmd finds them again for itself, and they are most of the file, more of it the longer
-/// steamcmd runs; the login is a small part. The rest is kept byte for byte and in its order,
+/// steamcmd runs. The login is a small part. The rest is kept byte for byte and in its order,
 /// since steamcmd reads the login only where it wrote it: cut down to the login alone, the file
 /// is refused. A file not laid out as steamcmd lays it out is kept whole.
 #[must_use]
@@ -399,7 +401,8 @@ mod tests {
             assert!(matches!(error, Error::Unreadable), "{wrong}");
             assert_eq!(
                 error.to_string(),
-                "STEAMSHIP_LOGIN does not hold a login packed by `steamship ci`"
+                "STEAMSHIP_LOGIN does not hold a login packed by steamship ci. Pack the login \
+                 again with steamship ci"
             );
         }
     }

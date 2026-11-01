@@ -29,7 +29,7 @@ use crate::windows as native;
 /// `program`, to be started without a console window of its own.
 ///
 /// A console program started by one that has no console, as steamship has when a scheduled task
-/// or a detached script starts it, gets a window on the screen; one started this way never does,
+/// or a detached script starts it, gets a window on the screen. One started this way never does,
 /// and what it writes still reaches steamship through the streams it is given.
 #[must_use]
 pub fn command<Program>(program: Program) -> Command
@@ -116,7 +116,7 @@ pub fn run(
     windows,
     expect(
         clippy::missing_const_for_fn,
-        reason = "const only where nothing tells steamship to stop; on Unix a signal does"
+        reason = "const only where nothing tells steamship to stop, and on Unix a signal does"
     )
 )]
 pub fn told() -> Option<&'static str> {
@@ -155,8 +155,8 @@ pub fn hold_to(cores: usize) -> io::Result<Option<(usize, usize)>> {
     }
 }
 
-/// Ends steamship as what told it to stop would have, once all it has written is out; when
-/// nothing did, returns.
+/// Ends steamship as what told it to stop would have, once all it has written is out. When
+/// nothing did, it returns.
 pub fn end_as_told() {
     if told().is_some() {
         // Nothing more can be said of a stream that will not take the rest.
@@ -507,7 +507,7 @@ mod tests {
 
     /// A line that reads a line typed at its prompt and exits 0 only when that was `hunter2`.
     /// `cmd` expands `%typed%` as it reads its line, before anything has been typed, and leaves it
-    /// as it is while there is no such variable; the `cmd` it starts then expands it as it reads
+    /// as it is while there is no such variable. The `cmd` it starts then expands it as it reads
     /// its own line, after `set /p` has set it.
     #[cfg(windows)]
     const READS_TYPED: &str =
@@ -526,7 +526,7 @@ mod tests {
         assert_eq!(wrong, Some(5_i32));
     }
 
-    /// Windows leaves echo to the program, which sets its own console's modes; steamcmd hides a
+    /// Windows leaves echo to the program, which sets its own console's modes. steamcmd hides a
     /// password as it is typed.
     #[cfg(unix)]
     #[test]

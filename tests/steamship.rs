@@ -124,7 +124,7 @@ fn set_up(
     let mut command = steamship_command();
     let _: &mut Command = command.current_dir(folder);
     // The runner's own CI variables would make every test a CI run, writing to the job's real
-    // outputs; a test that wants them sets its own.
+    // outputs. A test that wants them sets its own.
     let _: &mut Command = command
         .args(args)
         .env_remove("STEAMSHIP_ACCOUNT")
@@ -143,8 +143,8 @@ fn set_up(
     command
 }
 
-/// The first failure steamship reported, without the cross before it; or, when it reported
-/// none, all it wrote, for the assertion to show.
+/// The first failure steamship reported, without the cross before it. When it reported none,
+/// all it wrote, for the assertion to show.
 fn failure(stderr: &str) -> &str {
     stderr
         .lines()
@@ -268,7 +268,7 @@ fn logout_forgets_steamcmds_saved_login_on_every_system_and_the_account() {
          account   \u{2713} forgotten\n  \
          api key   none kept\n  \
          \u{2713} logged out\n    \
-         the next upload needs `steamship login` first\n"
+         the next upload needs steamship login first\n"
     );
     for file in saved {
         assert!(!home.path().join(file).exists(), "{file}");
@@ -322,7 +322,7 @@ fn help_lists_every_command_with_one_short_line() {
     );
     for line in [
         "  login          Log in to Steam, once, for uploads\n",
-        "  status         Show the login and steamcmd, checking the login with Steam\n",
+        "  status         Show the login and steamcmd, and whether Steam takes the login\n",
         "  check          Check the build scripts, without logging in\n",
         "  upload         Check, build and upload, then print the build ID\n",
         "  workshop       Upload a Workshop item, then print its ID\n",
@@ -334,8 +334,8 @@ fn help_lists_every_command_with_one_short_line() {
          uploaded\n",
         "  drm-wrap       Wrap a Windows executable in Steam DRM, before it is uploaded\n",
         "  settings       Show an app's settings in Steamworks, or check them against a snapshot\n",
-        "  leaderboards   Show an app's leaderboards, or check them against a file, making or \
-         deleting the rest\n",
+        "  leaderboards   Show an app's leaderboards, check them against files, or make and \
+         delete them to match\n",
         "  rich-presence  Upload an app's rich presence localisation\n",
         "  text           Write a game's store, Workshop and rich presence text in every language \
          it speaks\n",
@@ -521,7 +521,7 @@ fn status_with_nothing_saved_says_to_log_in_changes_nothing_and_exits_3() {
              home      {}\n  \
              api key   none kept\n  \
              account   none remembered\n  \
-             steamcmd  not installed; `steamship login` installs it\n  \
+             steamcmd  not installed (steamship login installs it)\n  \
              login     none saved\n",
             env!("CARGO_PKG_VERSION"),
             home.path().display()
@@ -805,7 +805,7 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
 
 /// A steamcmd that, asked for app 1000's info, prints it as [`app_info`] does with the
 /// `ReleaseState` `state`, and asked to build, in the same run or alone, has Valve build the upload
-/// as `BuildID` 4242, as [`BUILT`] does, adding a line to `builds` in the home. Each run adds its
+/// as `BuildID` 4242, as [`BUILT`] does, and adds a line to `builds` in the home. Each run adds its
 /// arguments to `runs` there.
 #[cfg(unix)]
 fn released_as(state: &str) -> String {
@@ -902,7 +902,7 @@ fn an_upload_asked_for_default_too_once_steam_shows_the_app_released_goes_to_its
         stderr.contains("released, as Steam shows it (released)")
             && stderr.contains(
                 "app 1000 is released, so its default branch is set live in Steamworks, where \
-                 Valve asks for a Steam Mobile confirmation; the build goes up without it"
+                 Valve asks for a Steam Mobile confirmation. The build goes up without it"
             )
             && stderr.contains("app 1000: BuildID 4242, set live on testing")
             && !stderr.contains("and default"),
@@ -1055,7 +1055,7 @@ fn an_upload_asked_for_default_too_cannot_be_a_preview() {
 }
 
 /// A steamcmd whose first `failing` runs run the shell commands `fail`, which fail the build, and
-/// exit 6; any run after has Valve build the upload as `BuildID` 4242. Each run adds a line to
+/// exit 6. Any run after has Valve build the upload as `BuildID` 4242. Each run adds a line to
 /// `runs` in the home.
 #[cfg(unix)]
 fn failing_then_built(fail: &str, failing: u32) -> String {
@@ -1176,7 +1176,7 @@ fn an_upload_stops_asking_steamcmd_after_four_runs_the_cdn_never_served() {
     for reason in [
         "Build for depot 1001 failed : Failure",
         "Steam's CDN still does not serve depot 1001's last manifest, which steamcmd builds the \
-         upload against; upload again later",
+         upload against. Upload again later",
     ] {
         assert!(stderr.contains(reason), "{reason:?} in {stderr}");
     }
@@ -1355,7 +1355,7 @@ fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_
     for said in [
         "Failed to commit build for AppID 1000 : Failure",
         "the build is on Steam but not live: it is listed in Steamworks under SteamPipe, Builds",
-        "\"SetLive\" names \"testing\": Steam sets no build live on a branch the app does not have",
+        "\"SetLive\" names \"testing\". Steam sets no build live on a branch the app does not have",
         "see the app's branches with steamship builds 1000",
     ] {
         assert!(stderr.contains(said), "{said:?} in {stderr}");
@@ -1383,7 +1383,7 @@ fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_
     assert_eq!(keyed, Some(1_i32), "{keyed_out}{keyed_err}");
     for said in [
         "app 1000: built as BuildID 20000001, then steamcmd failed",
-        "\"SetLive\" names \"testing\": Steam sets no build live on a branch the app does not have",
+        "\"SetLive\" names \"testing\". Steam sets no build live on a branch the app does not have",
         "set it live with steamship promote 1000 --build 20000001 --branch testing",
     ] {
         assert!(keyed_err.contains(said), "{said:?} in {keyed_err}");
@@ -1560,7 +1560,8 @@ fn a_login_handed_over_that_is_not_one_is_refused_without_repeating_it() {
     assert_eq!(code, Some(2_i32), "{stdout}");
     assert_eq!(
         failure(&stderr),
-        "STEAMSHIP_LOGIN does not hold a login packed by `steamship ci`"
+        "STEAMSHIP_LOGIN does not hold a login packed by steamship ci. Pack the login again \
+         with steamship ci"
     );
     assert!(!format!("{stdout}{stderr}").contains("secret_name"));
 }
@@ -1584,7 +1585,8 @@ fn a_login_handed_over_that_is_not_text_is_refused() {
     assert_eq!(output.status.code(), Some(2_i32));
     assert_eq!(
         failure(&String::from_utf8_lossy(&output.stderr)),
-        "STEAMSHIP_LOGIN does not hold a login packed by `steamship ci`"
+        "STEAMSHIP_LOGIN does not hold a login packed by steamship ci. Pack the login again \
+         with steamship ci"
     );
 }
 
@@ -1611,7 +1613,7 @@ fn ci_with_the_script_named_goes_on_to_the_account() {
     );
     assert_eq!(
         failure(&stderr),
-        "name the build account with --account or STEAMSHIP_ACCOUNT"
+        "no build account is named. Name it with --account or STEAMSHIP_ACCOUNT"
     );
 }
 
@@ -1626,7 +1628,7 @@ fn ci_in_a_repository_without_an_app_build_script_says_so_and_exits_2() {
         failure(&stderr).starts_with("no app build script in "),
         "{stderr}"
     );
-    assert!(stderr.contains("; name one with --script"), "{stderr}");
+    assert!(stderr.contains(". Name one with --script"), "{stderr}");
 }
 
 #[test]
@@ -1656,7 +1658,8 @@ fn ci_outside_a_repository_asks_for_the_script_and_exits_2() {
     assert_eq!(code, Some(2_i32), "{stderr}");
     assert_eq!(
         failure(&stderr),
-        "this is not a Git repository; run it in the game's, or name the script with --script"
+        "this folder is in no Git repository. Run steamship ci in the game's, or name the script \
+         with --script"
     );
 }
 
@@ -1678,7 +1681,7 @@ fn ci_checks_the_scripts_alone_before_the_build_exists_but_needs_a_github_origin
         "{stdout}"
     );
     assert!(
-        stdout.contains("  content   not checked; each upload checks it\n"),
+        stdout.contains("  content   not checked (each upload checks it)\n"),
         "{stdout}"
     );
     assert!(
@@ -1703,7 +1706,7 @@ fn ci_with_several_scripts_and_nobody_to_ask_names_them_and_exits_2() {
     assert_eq!(
         failure(&stderr),
         format!(
-            "several app build scripts, {}, {}; name one with --script",
+            "several app build scripts, {}, {}. Name one with --script",
             steam.join("app_build.vdf").display(),
             steam.join("app_build_demo.vdf").display()
         )
@@ -2061,7 +2064,7 @@ fn ci_run_outside_the_repository_reads_origin_where_the_script_is() {
     );
     assert_eq!(
         failure(&stderr),
-        "name the build account with --account or STEAMSHIP_ACCOUNT"
+        "no build account is named. Name it with --account or STEAMSHIP_ACCOUNT"
     );
 }
 
@@ -2191,7 +2194,7 @@ fn a_login_handed_over_that_steam_refuses_says_when_it_was_packed_and_how_to_pac
     assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
     assert_eq!(
         failure(&stderr),
-        "not logged in: Expired Login Auth Code; the login in STEAMSHIP_LOGIN was packed on \
+        "not logged in: Expired Login Auth Code. The login in STEAMSHIP_LOGIN was packed on \
          2026-09-28"
     );
     assert!(
@@ -2251,7 +2254,7 @@ fn status_with_steamcmd_altered_says_so_and_exits_4() {
 
 /// A home whose recorded steamcmd is a script that prints what it was started with and exits
 /// with `STEAMSHIP_FAKE_EXIT`, or 0. With `STEAMSHIP_FAKE_CHANGE` set it first changes itself, as
-/// an update would; with `STEAMSHIP_FAKE_SAVED` set it logs in with the login it saved.
+/// an update would. With `STEAMSHIP_FAKE_SAVED` set it logs in with the login it saved.
 #[cfg(unix)]
 fn faked() -> tempfile::TempDir {
     faked_with(
@@ -2279,7 +2282,7 @@ fn faked_with(script: &str) -> tempfile::TempDir {
 
 /// Writes `program` as an executable from a process of its own. Written here, its handle would
 /// be open in this process while another test's thread started a program, which holds a copy of
-/// every handle until it runs; running `program` in those moments fails with "Text file busy".
+/// every handle until it runs. Running `program` in those moments fails with "Text file busy".
 #[cfg(unix)]
 fn write_program(program: &Path, script: &str) {
     let mut writer = run::spawn(
@@ -2343,8 +2346,8 @@ fn login_with_a_saved_login_says_it_is_already_logged_in() {
     assert!(!stdout.contains("cached credentials"), "{stdout}");
     assert!(
         stdout.ends_with(
-            "\u{2713} already logged in\n    uploads use the saved login until it expires; \
-             `steamship logout` forgets it\n"
+            "\u{2713} already logged in\n    uploads use the saved login until it expires. \
+             steamship logout forgets it\n"
         ),
         "{stdout}"
     );
@@ -2369,11 +2372,11 @@ fn login_that_steamcmd_ends_badly_exits_1_and_remembers_nothing() {
 }
 
 /// A home whose steamcmd asks for a password, keeps what was typed in `typed` in the home, and
-/// logs in only when that was `hunter2`, refusing it as steamcmd does otherwise.
+/// logs in only when that was `hunter2`. Otherwise it refuses it as steamcmd does.
 ///
 /// With `STEAMSHIP_FAKE_GUARD` set to `code` it then asks for a Steam Guard code, kept in `code`
-/// and taken only when it is `AB12C`; set to `app`, it waits for the login to be approved in the
-/// Steam Mobile app, saying something steamship has no meaning for meanwhile, and with
+/// and taken only when it is `AB12C`. Set to `app`, it waits for the login to be approved in the
+/// Steam Mobile app, and says something steamship has no meaning for meanwhile. With
 /// `STEAMSHIP_FAKE_DENY` set the approval never comes.
 #[cfg(unix)]
 fn asking() -> tempfile::TempDir {
@@ -2817,7 +2820,7 @@ fn login_on_a_terminal_hides_the_password_and_waits_for_approval_with_a_spinner(
     session.wait_for("exited 0");
     let seen = session.seen();
     assert!(
-        seen.contains("  api key   skipped; `steamship login --web-api-key` keeps one\n"),
+        seen.contains("  api key   skipped (steamship login --web-api-key keeps one)\n"),
         "{seen}"
     );
     assert!(!seen.contains("Mobile app..."), "{seen}");
@@ -2878,7 +2881,7 @@ fn login_with_no_account_says_how_to_name_one_and_exits_2() {
     assert_eq!(code, Some(2_i32));
     assert_eq!(
         failure(&stderr),
-        "name the build account with --account or STEAMSHIP_ACCOUNT"
+        "no build account is named. Name it with --account or STEAMSHIP_ACCOUNT"
     );
 }
 
@@ -2914,6 +2917,8 @@ fn git(folder: &Path, args: &[&str]) {
                 "user.email=steamship@example.invalid",
             ])
             .args(["-c", "commit.gpgsign=false"])
+            // A hooks folder set in the machine's own git config would otherwise run here.
+            .args(["-c", "core.hooksPath=.git/hooks"])
             .args(args)
             .current_dir(folder),
     )
@@ -3002,7 +3007,7 @@ fn upload_says_git_is_missing_rather_than_blaming_the_folder_and_exits_2() {
     assert_eq!(
         failure(&stderr).trim_end(),
         "Git is not installed, or not on the PATH, and the build description names the commit \
-         the scripts are at"
+         the scripts are at. Install Git, or put it on the PATH"
     );
 }
 
@@ -3032,9 +3037,9 @@ const SECRETS: [&str; 2] = [
 
 /// A home with a saved login holding [`SECRETS`], where steamcmd is a script that does what the
 /// setup-steamcmd action once did (GHSA-mj96-mh85-r574): prints steamcmd's login files, into its
-/// console and its build log. Then it reports the build finished; or, with
-/// `STEAMSHIP_FAKE_LOGGED_OUT` set, that it has no login; or, with `STEAMSHIP_FAKE_FAIL` set,
-/// that the server refused the build.
+/// console and its build log. Then it reports the build finished. With
+/// `STEAMSHIP_FAKE_LOGGED_OUT` set it reports instead that it has no login, and with
+/// `STEAMSHIP_FAKE_FAIL` set that the server refused the build.
 #[cfg(unix)]
 fn leaking() -> tempfile::TempDir {
     let home = faked_with(
@@ -3233,7 +3238,7 @@ fn a_new_workshop_item_is_uploaded_and_its_id_given_to_add_to_the_script() {
     );
     assert!(
         stdout.contains(&format!(
-            "  \u{2713} app 480: Workshop item 777\n    a new item: add \"publishedfileid\" \"777\" \
+            "  \u{2713} app 480: Workshop item 777\n    a new item. Add \"publishedfileid\" \"777\" \
              to {} so that later uploads update it\n",
             script.display()
         )),
@@ -3287,7 +3292,7 @@ fn a_new_workshop_item_in_ci_is_refused_unless_asked_for() {
             failure(&stderr),
             format!(
                 "refused: {}: there is no \"publishedfileid\", so every CI run would make a new \
-                 Workshop item; add the ID of the item to update, or pass --new to make one",
+                 Workshop item. Add the ID of the item to update, or pass --new to make one",
                 script.display()
             )
         );
@@ -3437,8 +3442,8 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci
         stderr.contains(&format!("  items     {}\n", items.display()))
             && stderr.contains("  item      \u{2713} app 480, a new item, 1 file, checked\n")
             && stderr.contains(&format!(
-                "  \u{2713} app 480: Workshop item 777\n    a new item, kept in {} as example: \
-                 commit it so that later uploads update it\n",
+                "  \u{2713} app 480: Workshop item 777\n    a new item, kept in {} as example. \
+                 Commit it so that later uploads update it\n",
                 items.display()
             )),
         "{stderr}"
@@ -3464,7 +3469,7 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci
         "the item made is updated, keeping the visibility it has: {copy}"
     );
 
-    // Another item uploaded after it keeps its console beside its own copy, leaving the first's.
+    // Another item uploaded after it keeps its console beside its own copy, and the first's stays.
     let other: Vec<String> = by_fields(folder, &items, &["--visibility", "private"])
         .into_iter()
         .map(|arg| {
@@ -3514,7 +3519,7 @@ fn an_item_made_whose_id_cannot_be_kept_says_what_to_keep_by_hand_and_exits_1() 
             "\u{2717} app 480: Workshop item 777 was made: {}: ",
             items.display()
         )) && stderr
-            .contains("; add \"example\": 777 to its \"items\", or the next upload makes another"),
+            .contains(". Add \"example\": 777 to its \"items\", or the next upload makes another"),
         "{stderr}"
     );
     assert_eq!(
@@ -3547,8 +3552,8 @@ fn an_item_given_by_its_fields_is_refused_before_steam_when_it_cannot_be_kept_or
             &[("CI", "true")]
         ),
         format!(
-            "refused: {} has no item example, so every CI run would make a new Workshop item; \
-             make it outside CI and commit the file, or pass --new to make one",
+            "refused: {} has no item example, so every CI run would make a new Workshop item. \
+             Make it outside CI and commit the file, or pass --new to make one",
             items.display()
         )
     );
@@ -3888,7 +3893,7 @@ fn login_with_web_api_key_keeps_nothing_steam_refuses() {
     let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY, &[]);
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     assert!(
-        failure(&stderr).starts_with("Steam refused the Web API key; "),
+        failure(&stderr).starts_with("Steam refused the Web API key. "),
         "{stderr}"
     );
     let (_, status, _) = steamship(&["status"], Some(home.path()), &[]);
@@ -4148,8 +4153,8 @@ fn check_asks_steam_whether_the_live_branch_exists_when_a_key_is_at_hand() {
     assert_eq!(refused, Some(2_i32), "{why}");
     assert!(
         why.contains(
-            "app_build.vdf: \"SetLive\" names \"beta2\", but app 480 has no branch by that name; \
-             create it in Steamworks under SteamPipe, Builds first"
+            "app_build.vdf: \"SetLive\" names \"beta2\", but app 480 has no branch by that name. \
+             Create the branch in Steamworks under SteamPipe, Builds first"
         ),
         "{why}"
     );
@@ -4205,7 +4210,7 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
     assert!(
         new.contains(
             "app 480 has no build live on its default branch, and Steam gives it no other branch \
-             until it has: an upload with --default sets the build live on default alone"
+             until it has. An upload with --default sets the build live on default alone"
         ),
         "{new}"
     );
@@ -4225,7 +4230,7 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
     );
     assert!(
         warned.contains(
-            "leaves the build uploaded but not live; steamship login --web-api-key keeps"
+            "leaves the build uploaded but not live. steamship login --web-api-key keeps"
         ),
         "{warned}"
     );
@@ -4294,7 +4299,7 @@ fn check_reads_which_redistributables_the_app_ticks_from_the_snapshot_beside_the
     assert_eq!(refused, Some(2_i32), "{why}");
     assert!(
         why.contains(&format!(
-            "{NEEDS_VC}, and app 1000 ticks none in Steamworks; tick one under Installation, \
+            "{NEEDS_VC}, and app 1000 ticks none in Steamworks. Tick one under Installation, \
              Redistributables, ship the DLL in a depot, or link its library in statically"
         )),
         "{why}"
@@ -4306,7 +4311,8 @@ fn check_reads_which_redistributables_the_app_ticks_from_the_snapshot_beside_the
 }
 
 /// `steamship check` on the build folder of a game whose `game.dll` needs Visual C++ and whose
-/// snapshot is `snapshot`, run in `folder`, or else in the game's own; with the folder's path.
+/// snapshot is `snapshot`, run in `folder`, or else in the game's own. The folder's path comes
+/// with it.
 fn folder_checked(
     snapshot: &str,
     folder: Option<&Path>,
@@ -4357,7 +4363,7 @@ fn check_takes_a_build_s_folder_alone_naming_what_a_redistributable_installs() {
     assert_eq!(scripts, Some(2_i32));
     assert!(
         refusal.contains(&format!(
-            "{} is a build's folder, which holds no scripts; give --scripts-only the app build \
+            "{} is a build's folder, which holds no scripts. Give --scripts-only the app build \
              script",
             folder.display()
         )),
@@ -4371,7 +4377,7 @@ fn check_judges_a_build_s_folder_in_a_game_by_the_redistributables_its_snapshot_
     assert_eq!(refused, Some(2_i32), "{why}");
     assert!(
         why.contains(&format!(
-            "{NEEDS_VC}, and app 1000 ticks none in Steamworks; tick one under Installation, \
+            "{NEEDS_VC}, and app 1000 ticks none in Steamworks. Tick one under Installation, \
              Redistributables, ship the DLL in a depot, or link its library in statically"
         )),
         "{why}"
@@ -4442,7 +4448,7 @@ fn upload_refuses_a_dll_nothing_installs_before_it_logs_in() {
     assert!(
         why.contains(
             "game.dll: imports fmod.dll, which neither Windows, the build's depots nor a \
-             Steamworks Common Redistributable has; ship it in a depot, or link its library in \
+             Steamworks Common Redistributable has. Ship it in a depot, or link its library in \
              statically"
         ),
         "{why}"
@@ -4552,7 +4558,7 @@ fn builds_and_promote_that_steam_answers_with_an_error_say_its_status_and_exit_1
         "{stdout}"
     );
     assert!(
-        failure(&stderr).starts_with("Steam refused the Web API key; "),
+        failure(&stderr).starts_with("Steam refused the Web API key. "),
         "{stderr}"
     );
 }
@@ -4770,7 +4776,7 @@ fn achievements_are_checked_in_each_language_a_localisation_has() {
     assert_eq!(refused, Some(2_i32), "{why}");
     assert!(
         why.contains(
-            "Steam holds nothing in german, so shows 1 achievement in English: import the \
+            "Steam holds nothing in german, so shows 1 achievement in English. Import the \
              localisation in Steamworks, under Stats & Achievements, and publish\n"
         ),
         "{why}"
@@ -4924,10 +4930,10 @@ fn the_achievement_editors_files_are_written_from_records_catalogues_and_icons()
     assert!(
         said.contains("drop every CSV and PNG file in ")
             && said.contains(
-                " and Save imported data, staying on the page until Pending Changes is gone; then \
-                 drop 1000050-achievements-localization.csv again on its own the same way"
+                " and Save imported data, then stay on the page until Pending Changes is gone. \
+                 Then drop 1000050-achievements-localization.csv again on its own the same way"
             )
-            && said.contains("publish, and run this again with --imported\n"),
+            && said.contains("Publish, and run this again with --imported\n"),
         "{said}"
     );
     assert!(
@@ -4935,7 +4941,7 @@ fn the_achievement_editors_files_are_written_from_records_catalogues_and_icons()
         "{noted}"
     );
     assert!(
-        noted.contains("no locked icon for 1 achievement: tick Automatically generate"),
+        noted.contains("no locked icon for 1 achievement. Tick Automatically generate"),
         "{noted}"
     );
     let read = |name: &str| fs::read_to_string(out.join(name)).unwrap();
@@ -4995,7 +5001,7 @@ fn an_achievement_unlocked_by_the_first_floor_built_is_written_without_a_bar_and
     assert!(
         noted.contains(
             "FIVE_LEVELS's progress bar goes from floors 0 - 5 to no progress bar, which Steam's \
-             Web API cannot show: look at it in the editor once imported, and set it there by \
+             Web API cannot show. Look at it in the editor once imported, and set it there by \
              hand if it has not moved, before publishing\n"
         ),
         "{noted}"
@@ -5023,8 +5029,8 @@ fn an_achievement_reworded_without_new_icons_is_named_to_look_at_them() {
     assert_eq!(code, Some(0_i32), "{noted}");
     assert!(
         noted.contains(
-            "FIRST_ANCHOR's English name and English description changed and its icons did not: \
-             look at them, so that they still show what it asks for\n"
+            "FIRST_ANCHOR's English name and English description changed and its icons did not. \
+             Look at them, so that they still show what it asks for\n"
         ),
         "{noted}"
     );
@@ -5096,7 +5102,7 @@ fn a_file_written_otherwise_or_left_over_is_named_and_rewritten_or_removed() {
         noted.contains("no icon for 1 achievement: Steam shows its own\n")
             && noted.contains(
                 "FIVE_LEVELS's progress bar goes from floors 0 - 5 to no progress bar, which \
-                 Steam's Web API cannot show: look at it in the editor once imported, and set it \
+                 Steam's Web API cannot show. Look at it in the editor once imported, and set it \
                  there by hand if it has not moved, before publishing\n"
             ),
         "{noted}"
@@ -5235,7 +5241,7 @@ fn inn_checked(icons: [&'static str; 3]) -> Vec<(&'static str, &'static str)> {
 }
 
 /// An [`inn_mod`] with its files written and `--imported` run once Steam took them in
-/// [`FIRST_IMPORT`]; and what `--imported` printed and noted.
+/// [`FIRST_IMPORT`], with what `--imported` printed and noted.
 fn inn_imported() -> (tempfile::TempDir, String, String) {
     let game = inn_mod();
     let (written, wrote, why) = write_inn(game.path(), false);
@@ -5312,10 +5318,10 @@ fn an_icon_changed_in_the_files_is_named_until_steam_takes_its_import() {
     assert!(
         why_changed.contains(
             "FIVE_LEVELS: the icon changed in the files since the import steam-icons.json \
-             records: import it, publish, then run --imported\n"
+             records. Import it, publish, then run --imported\n"
         ) && why_changed.contains("1 of 2 achievements match: 1 differs\n")
             && why_changed.contains(
-                "Steam answers with what is published: an import saved in Steamworks counts \
+                "Steam answers with what is published. An import saved in Steamworks counts \
                  here once it is published\n"
             ),
         "{why_changed}"
@@ -5401,8 +5407,9 @@ fn imported_refuses_an_icon_steam_has_that_the_files_give_none_of() {
         "Steam makes a locked icon itself when asked to: {why}"
     );
     assert!(
-        told.contains("give each of those achievements its `icon` in the files, run it without ")
-            && !told.contains("icons as the files"),
+        told.contains(
+            "give each of those achievements its \"icon\" in the files, and run it without "
+        ) && !told.contains("icons as the files"),
         "{told}"
     );
     assert!(!inn_receipt(game.path()).exists());
@@ -5428,7 +5435,7 @@ fn imported_refuses_an_icon_steam_serves_otherwise_than_the_file() {
         "FIRST_ANCHOR: Steam's icon could not be compared with the file: Steam's image host \
          answered HTTP 404\n",
         "FIRST_ANCHOR: Steam's locked icon could not be compared with the file: Steam's image: ",
-        "Steam answers with what is published: an import saved in Steamworks counts here once \
+        "Steam answers with what is published. An import saved in Steamworks counts here once \
          it is published\n",
     ] {
         assert!(why.contains(said), "{said} in {why}");
@@ -5437,8 +5444,8 @@ fn imported_refuses_an_icon_steam_serves_otherwise_than_the_file() {
         told.contains("  steam     \u{2717} 0 of 3 icons as the files\n")
             && told.contains("drop the PNG files in ")
             && told.contains(
-                " again, Save imported data, staying on the page until Pending Changes is gone, \
-                 and publish, then run --imported again\n"
+                " again and Save imported data, then stay on the page until Pending Changes is \
+                 gone. Then publish, and run --imported again\n"
             ),
         "{told}"
     );
@@ -5481,7 +5488,7 @@ fn an_icon_steam_made_anew_from_the_file_imported_is_named() {
     assert!(
         why_moved.contains(
             "FIRST_ANCHOR: the locked icon on Steam changed since the import steam-icons.json \
-             records, and not from the files: import it again, publish, then run --imported\n"
+             records, and not from the files. Import it again, publish, then run --imported\n"
         ),
         "{why_moved}"
     );
@@ -5495,7 +5502,7 @@ fn a_check_against_no_receipt_or_another_apps_is_refused_and_imported_replaces_o
     assert_eq!(unrecorded, Some(2_i32), "{why}");
     assert!(
         why.contains(
-            "achievements: has no steam-icons.json: import and publish the files --write wrote \
+            "achievements: has no steam-icons.json. Import and publish the files --write wrote \
              there, then run --imported\n"
         ),
         "{why}"
@@ -5698,8 +5705,8 @@ fn an_achievement_and_a_stat_of_one_api_name_are_refused_before_anything_is_writ
         assert_eq!(code, Some(2_i32), "{args:?}: {why}");
         assert!(
             why.contains(&format!(
-                "FIVE_LEVELS is both an achievement and a stat in {}: Steamworks publishes no \
-                 achievement and stat of one API name, so rename one\n",
+                "FIVE_LEVELS is both an achievement and a stat in {}. Steamworks cannot publish \
+                 an achievement and a stat of one API name. Rename one\n",
                 records.display()
             )),
             "{args:?}: {why}"
@@ -6088,10 +6095,10 @@ fn a_check_against_an_app_with_nothing_on_steam_says_so_once_for_each_kind_in_an
     assert_eq!(refused, Some(2_i32), "{shown}{why}");
     assert!(
         why.contains(
-            "Steam holds none of the file's 2 achievements: they count once entered and \
+            "Steam holds none of the file's 2 achievements. They count once entered and \
              published in Steamworks\n"
         ) && why.contains(
-            "Steam holds none of the file's 1 stat: it counts once entered and published in \
+            "Steam holds none of the file's 1 stat. It counts once entered and published in \
              Steamworks\n"
         ) && !why.contains("stat floors"),
         "{why}"
@@ -6173,7 +6180,7 @@ fn a_check_with_drift_in_its_stats_still_says_its_achievements_match() {
     assert_eq!(refused, Some(2_i32), "{shown}{why}");
     assert!(shown.contains("2 of 2 achievements match\n"), "{shown}");
     assert!(
-        why.contains("Steam holds none of the file's 1 stat: it counts once entered and published")
+        why.contains("Steam holds none of the file's 1 stat. It counts once entered and published")
             && why.ends_with("0 of 1 stats match: 1 not on Steam\n"),
         "{why}"
     );
@@ -6184,7 +6191,7 @@ fn a_check_with_drift_in_its_stats_still_says_its_achievements_match() {
 const INN_SCHEMA: &str = r#"{"game":{"gameName":"Tidal Mill Inn","gameVersion":"2","availableGameStats":{"stats":[{"name":"floors","defaultvalue":0,"displayName":"Floodwater held behind the sluice"},{"name":"staff","defaultvalue":0,"displayName":"Staff working the stones"}],"achievements":[{"name":"LONG_JOURNEY","defaultvalue":0,"displayName":"Rising Water","hidden":0,"description":"Bring the millpond up to its brim.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/f895e737db45e18257a61fac5b6d409aa6872b82.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/a25a9ca72da3dae23b05f2fb6f712527cf3634d9.jpg"},{"name":"CRAFTED_ALONE","defaultvalue":0,"displayName":"Bushel by Bushel","hidden":0,"description":"Bag a sack of flour by hand.","icon":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/41373b0acc59cfbe2c973699975640bc1db1026a.jpg","icongray":"https://steamcdn-a.akamaihd.net/steamcommunity/public/images/apps/1000050/c4d7c246b05fc3bacc39c9106295794b52faee45.jpg"}]}}}"#;
 
 /// What Steam answers for Tidal Mill Inn when asked for the totals of its stats, which it keeps
-/// none of, naming each in turn.
+/// none of. It names each in turn.
 const TTI_UNAGGREGATED: [(&str, &str); 2] = [
     (
         "200 OK",
@@ -6591,10 +6598,10 @@ fn leaderboards_are_listed_and_checked_and_those_missing_are_made_as_the_file_ha
     assert_eq!(refused, Some(2_i32), "{said}{why}");
     assert!(
         why.contains("gold: trusted writes only is \"yes\" on Steam and \"no\" in the file")
-            && why.contains("fastest_season: in the file, not on Steam; --create makes it"),
+            && why.contains("fastest_season: in the file, not on Steam. --create makes it"),
         "{why}"
     );
-    assert!(said.contains("change them in Steamworks"), "{said}");
+    assert!(said.contains("Change them in Steamworks"), "{said}");
     drop(requests.recv_timeout(Duration::from_secs(10)).unwrap());
 
     let matching = leaderboards_file(files.path(), true);
@@ -6701,7 +6708,7 @@ fn a_leaderboard_the_file_no_longer_holds_is_deleted_only_while_the_app_is_unrel
     assert_eq!(refused, Some(2_i32), "{kept}{why}");
     assert_eq!(
         failure(&why),
-        "app 1000 is released, so deleting gold would take its players' scores with it: delete \
+        "app 1000 is released, so deleting gold would take its players' scores with it. Delete \
          it in Steamworks, under Stats & Achievements, Leaderboards, or put it back in the file"
     );
     assert!(!kept.contains("deleted"), "{kept}");
@@ -6985,8 +6992,8 @@ fn a_branch_is_described_only_when_its_description_differs() {
     assert_eq!(missing, Some(2_i32), "{why}");
     assert!(
         why.contains(
-            "app 1000010 has no branch \"beta\"; create it in Steamworks under SteamPipe, Builds \
-             first"
+            "app 1000010 has no branch \"beta\". Create the branch in Steamworks under SteamPipe, \
+             Builds first"
         ),
         "{why}"
     );
@@ -7580,7 +7587,10 @@ fn settings_are_shown_saved_and_checked_leaving_steams_bookkeeping_out() {
         ),
         "{why}"
     );
-    assert!(shown.contains("settings --save` the file again"), "{shown}");
+    assert!(
+        shown.contains("or run steamship settings --save again if the change was meant"),
+        "{shown}"
+    );
 }
 
 #[cfg(unix)]
@@ -7795,7 +7805,7 @@ fn a_refused_wrap_says_why_and_a_file_that_is_no_windows_program_is_refused_firs
     assert!(
         why.contains(
             "Valve's DRM tool refused the executable: PE module implementation does not \
-             currently support adding imports; Unable to add import of \
+             currently support adding imports. Unable to add import of \
              kernel32.dll:GetModuleHandleA"
         ) && why.contains("Godot's and Rust's executables do not"),
         "{why}"
@@ -7818,7 +7828,7 @@ fn a_refused_wrap_says_why_and_a_file_that_is_no_windows_program_is_refused_firs
 
 /// A steamcmd that fetches app 1000 as steamcmd 1792617903 did: it records the build,
 /// `STEAMSHIP_FAKE_BUILD` or 4242, and the branch `-beta` names in the folder it was given, and
-/// says the app is installed, keeping what it was started with in `args`.
+/// says the app is installed. It keeps what it was started with in `args`.
 #[cfg(unix)]
 const FETCHES: &str = "#!/bin/sh\n\
     echo \"$*\" > \"$HOME/args\"\n\
@@ -7999,8 +8009,8 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
         "\"AppState\"\n{\n\"buildid\" \"4242\"\n\"MountedConfig\"\n{\n\"BetaKey\" \"testing\"\n}\n}\n",
     )
     .unwrap();
-    let refusal = "app 1000's friends branch takes a password: set STEAMSHIP_BRANCH_PASSWORD to \
-                   it, or type it when fetch asks, which it does without --json";
+    let refusal = "app 1000's friends branch takes a password. Set STEAMSHIP_BRANCH_PASSWORD to \
+                   it, or run fetch without --json and type it when asked";
     for (args, said) in [
         (vec!["1000", "--branch", "friends"], refusal.to_owned()),
         (
@@ -8013,7 +8023,7 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
         ),
         (
             vec!["1000", "--branch", "nightly"],
-            "app 1000 has no branch nightly; its branches are friends, default, testing".to_owned(),
+            "app 1000 has no branch nightly: its branches are friends, default, testing".to_owned(),
         ),
         (
             vec!["1000", "--into", other.to_str().unwrap()],
@@ -8022,7 +8032,7 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
         (
             vec!["1000", "--into", on_testing.to_str().unwrap()],
             format!(
-                "{}: holds app 1000's testing branch; fetch default into a folder of its own",
+                "{}: holds app 1000's testing branch. Fetch default into a folder of its own",
                 on_testing.display()
             ),
         ),
@@ -8072,7 +8082,7 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
 /// A steamcmd that logs in, waits at its console for a command as steamcmd 1792617903 does, and
 /// echoes it there as that console does. Typed the fetch of app 1000's friends branch with the
 /// password `STEAMSHIP_FAKE_PASSWORD` or `open-sesame`, it records build 4100 of that branch in
-/// its folder and says the app is installed; with any other, it refuses the password in
+/// its folder and says the app is installed. With any other, it refuses the password in
 /// steamcmd's words. It then waits at the
 /// console again, and keeps what it was started with in `args`, what was typed in `typed`, and
 /// what was typed last in `quit`.
@@ -8497,7 +8507,7 @@ fn the_mac_and_linux_icons_are_checked_with_every_wrong_file_in_the_zip_named() 
 }
 
 /// A game laid out as games-kit lays one out, with `toml` as its `steamship.toml` when given,
-/// committed and pushed to an origin of its own beside it; and the game's folder.
+/// committed and pushed to an origin of its own beside it, and the game's folder.
 fn pushed_game(toml: Option<&str>) -> (tempfile::TempDir, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("inn");
@@ -8819,8 +8829,8 @@ fn recommended_requirements_leave_the_upload_for_the_basic_info_sheet() {
     assert!(
         wrote.contains(
             "  next      type each language's recommended system requirements in basic_info.json \
-             on the store page's Basic Info form, as the upload leaves them out; once the page \
-             is public, `steamship text --steam` finds any missed\n"
+             on the store page's Basic Info form, as the upload leaves them out. Once the page \
+             is public, steamship text --steam finds any missed\n"
         ),
         "{wrote}"
     );
@@ -8879,7 +8889,7 @@ fn screenshots_alt_text_goes_to_its_own_sheet_and_an_about_image_s_into_the_uplo
         wrote.contains(
             "  next      type each language's screenshot alt text in screenshots.json into the \
              screenshots' Edit Accessibility Text panel on the Store Page tab, one language at a \
-             time, as the upload carries none\n"
+             time. The upload carries none\n"
         ),
         "{wrote}"
     );
@@ -8938,8 +8948,8 @@ fn the_store_page_is_read_in_every_language_and_each_requirement_it_lacks_named(
         "german: the recommended windows osversion is not on the store page",
         "\"Windows 11, 64 Bit\"",
         "Steam rewords windows memory amount on the store page, so they are not compared",
-        "type the recommended ones from basic_info.json on the store page's Basic Info form, \
-         upload the files in store/ on its Localization tab for the minimum ones, and run it again",
+        "type the recommended ones from basic_info.json on the store page's Basic Info form. \
+         Upload the files in store/ on its Localization tab for the minimum ones, and run it again",
     ] {
         assert!(told.contains(line), "{line:?} in {told}");
     }
@@ -9126,7 +9136,7 @@ fn a_game_pinning_another_steamship_is_refused_by_every_command_run_in_it() {
         assert_eq!(code, Some(2_i32), "{args:?}: {stdout}{stderr}");
         assert!(
             failure(&stderr).ends_with(&format!(
-                "pins steamship 0.0.1, and this is {}: install 0.0.1, or change the pin",
+                "pins steamship 0.0.1, and this is {}. Install 0.0.1, or change the pin",
                 env!("CARGO_PKG_VERSION")
             )),
             "{args:?}: {stderr}"
@@ -9142,7 +9152,7 @@ fn a_steamship_toml_saying_what_steamship_does_not_take_is_refused_naming_the_fi
     // Ends with, as macOS gives the child its temporary folder through /private.
     assert!(
         failure(&stderr).ends_with(&format!(
-            "{}: `workshop.mod` is no setting steamship takes; it takes `workshop.mods`, \
+            "{}: `workshop.mod` is no setting steamship takes. It takes `workshop.mods`, \
              `workshop.items`, `workshop.footer`, `workshop.held_until_launch`",
             Path::new("inn").join("steamship.toml").display()
         )),
@@ -9169,12 +9179,14 @@ fn an_upload_in_a_game_ships_only_its_pushed_commit_against_its_settings_snapsho
         &root,
         &["commit", "--quiet", "--allow-empty", "-m", "Not pushed"],
     );
-    refused(", and origin's main at ");
+    refused(", and origin's main is at ");
     git(&root, &["push", "--quiet", "origin", "main"]);
 
     fs::remove_file(root.join("steam").join("settings.vdf")).unwrap();
     pushed(&root, "No snapshot");
-    refused("settings.vdf is missing: run steamship settings --save in the game and commit it");
+    refused(
+        "settings.vdf is missing. Run steamship settings --save in the game, and commit the file",
+    );
 
     fs::write(
         root.join("steam").join("settings.vdf"),
@@ -9214,7 +9226,7 @@ fn an_upload_in_a_game_goes_up_as_the_newest_release_changes_md_heads_and_never_
     assert_eq!(stated.0, Some(2_i32), "{}{}", stated.1, stated.2);
     assert!(
         failure(&stated.2).ends_with(
-            "project.godot's config/version is 0.0.0, which names no release: head the newest \
+            "project.godot's config/version is 0.0.0, which names no release. Head the newest \
              release in CHANGES.md as `## <version>`, or give it with --version"
         ),
         "{}",
@@ -9224,7 +9236,7 @@ fn an_upload_in_a_game_goes_up_as_the_newest_release_changes_md_heads_and_never_
     assert_eq!(given.0, Some(2_i32), "{}{}", given.1, given.2);
     assert_eq!(
         failure(&given.2),
-        "the version 0.0.0 is noughts alone, which names no release: give the release going up \
+        "the version 0.0.0 is noughts alone, which names no release. Give the release going up \
          with --version"
     );
     fs::write(
@@ -9318,7 +9330,7 @@ fn an_upload_in_a_game_builds_it_then_checks_its_settings_with_steam() {
         "no build account to ask Steam with: {stderr}"
     );
     assert!(
-        stderr.contains("name the build account with --account or STEAMSHIP_ACCOUNT"),
+        stderr.contains("no build account is named. Name it with --account or STEAMSHIP_ACCOUNT"),
         "{stderr}"
     );
 }
@@ -9352,7 +9364,7 @@ fn outside_a_game_a_command_needing_one_says_to_start_one_or_name_the_app() {
     assert!(
         failure(&stderr).ends_with(
             ": no steamship.toml or steam/app_build.vdf in it or a folder above. Run steamship \
-             in the game's folder, start one here with `steamship init <app ID>`, or name the \
+             in the game's folder, start one here with steamship init <app ID>, or name the \
              app and its files"
         ),
         "{stderr}"
@@ -9392,8 +9404,8 @@ fn an_upload_naming_its_script_needs_the_version_it_goes_up_as() {
     assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
     assert_eq!(
         failure(&stderr),
-        "give the version steam/app_build.vdf goes up as with --version, or run steamship upload \
-         with no script in the game's folder, which takes the newest release CHANGES.md heads \
+        "steam/app_build.vdf needs a version. Give it with --version, or run steamship upload \
+         with no script in the game's folder. That takes the newest release CHANGES.md heads, \
          or project.godot's version"
     );
 }
@@ -9490,7 +9502,8 @@ fn an_upload_in_a_game_asks_origin_and_refuses_when_origin_cannot_say_or_git_is_
     assert_eq!(missing, Some(2_i32), "{stdout}{stderr}");
     assert_eq!(
         failure(&stderr),
-        "Git is not installed, or not on the PATH, and steamship ships only a pushed commit"
+        "Git is not installed, or not on the PATH, and steamship ships only a pushed commit. \
+         Install Git, or put it on the PATH"
     );
 
     git(
@@ -9583,7 +9596,7 @@ fn a_game_check_names_each_comparison_the_game_gives_nothing_for() {
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
     assert!(
-        stdout.contains("  content   not checked; upload checks it once the game is built\n"),
+        stdout.contains("  content   not checked (upload checks it once the game is built)\n"),
         "{stdout}"
     );
     // The folder's tail alone, as macOS gives the child its temporary folder through /private.
@@ -9593,7 +9606,7 @@ fn a_game_check_names_each_comparison_the_game_gives_nothing_for() {
         (
             "steamship achievements\n  unchecked no achievement, stat or set records in ",
             format!(
-                "{}: name the game's in steamship.toml's records",
+                "{}. List the game's under `records` in steamship.toml",
                 data.display()
             ),
         ),
@@ -9738,7 +9751,7 @@ fn a_games_rich_presence_is_sent_from_its_pushed_tree_and_one_without_any_is_ref
     assert!(
         refused.starts_with("the game holds no rich_presence_<language>.vdf beside ")
             && refused.ends_with(&format!(
-                "{}: write rich_presence_english.vdf there, or name the files to send",
+                "{}. Write rich_presence_english.vdf there, or name the files to send",
                 Path::new("steam").join("app_build.vdf").display()
             )),
         "{why}"
@@ -9786,7 +9799,7 @@ fn a_demo_goes_up_as_its_own_app_typed_demo_under_the_full_game_and_never_into_i
     assert_eq!(none, Some(2_i32), "{said}{why}");
     assert!(
         failure(&why).starts_with(
-            "the game has no demo: write its app build script to steam/demo/app_build.vdf"
+            "the game has no demo. Write its app build script to steam/demo/app_build.vdf"
         ),
         "{why}"
     );
@@ -9823,7 +9836,7 @@ fn a_demo_goes_up_as_its_own_app_typed_demo_under_the_full_game_and_never_into_i
         assert_eq!(crossed, Some(2_i32), "{args:?}: {shown}{reason}");
         for line in [
             "names app 1000050, the full game's own in ",
-            ": a demo is its own app, so put the demo's ID in it",
+            ". A demo is its own app, so put the demo's ID in it",
             "depot 1000051 is in both ",
             ": a demo ships depots of its own",
         ] {
@@ -9836,9 +9849,9 @@ fn a_demo_goes_up_as_its_own_app_typed_demo_under_the_full_game_and_never_into_i
     let (untyped, shown, reason) = in_game(&root, &["upload", "--demo"]);
     assert_eq!(untyped, Some(2_i32), "{shown}{reason}");
     for line in [
-        "app 1000070 is typed Game, not Demo: set its type to Demo under General Application \
+        "app 1000070 is typed Game, not Demo. Set its type to Demo under General Application \
          Settings in Steamworks",
-        "app 1000070's settings name no base game: enter the full game, app 1000050, under \
+        "app 1000070's settings name no base game. Enter the full game, app 1000050, under \
          General Application Settings in Steamworks",
     ] {
         assert!(reason.contains(line), "{line:?} in {reason}");
@@ -9914,7 +9927,7 @@ fn a_demo_without_the_full_games_steam_input_defaults_is_refused_until_it_has_th
     assert_eq!(refused, Some(2_i32), "{shown}{reason}");
     for line in [
         "app 1000070 has no Default Controller Configuration, and the full game, app 1000050, \
-         has \"Generic Gamepad\": choose the full game's on app 1000070's Steam Input page in \
+         has \"Generic Gamepad\". Choose the full game's on app 1000070's Steam Input page in \
          Steamworks",
         "app 1000070 has no Default Touch Configuration, and the full game, app 1000050, has \
          \"Mouse point and click\"",
@@ -9971,7 +9984,7 @@ fn a_demo_bundling_its_own_steam_input_configuration_goes_up_only_with_its_actio
     let (stopped, shown, reason) = in_game(&root, &["upload", "--demo"]);
     assert_eq!(stopped, Some(2_i32), "{shown}{reason}");
     assert!(
-        reason.contains("name the build account") && !reason.contains("Steam Input"),
+        reason.contains("no build account is named") && !reason.contains("Steam Input"),
         "past the demo's Steam Input defaults: {shown}{reason}"
     );
 
@@ -9982,7 +9995,7 @@ fn a_demo_bundling_its_own_steam_input_configuration_goes_up_only_with_its_actio
     assert!(
         unshipped.contains(
             "names \"steam_input/action_manifest.vdf\" as app 1000070's Steam Input action \
-             manifest, and the build installs no file there: ship the manifest at that path in \
+             manifest, and the build installs no file there. Ship the manifest at that path in \
              the install folder"
         ),
         "{checking}{unshipped}"
@@ -10062,7 +10075,7 @@ fn a_demos_build_folder_is_judged_against_the_demos_own_settings() {
     assert_eq!(scripted, Some(2_i32), "{titled}{named}");
     assert_eq!(
         failure(&named),
-        "steam/demo/app_build.vdf is an app build script, which names its own app; give --demo a \
+        "steam/demo/app_build.vdf is an app build script, which names its own app. Give --demo a \
          build's folder, or nothing in the game's folder"
     );
 
@@ -10072,7 +10085,7 @@ fn a_demos_build_folder_is_judged_against_the_demos_own_settings() {
     assert_eq!(gameless, Some(2_i32), "{headed}{told}");
     assert!(
         failure(&told).ends_with(
-            " is in no game's folder, so it has no demo; run the check in the game's folder, or \
+            " is in no game's folder, so it has no demo. Run the check in the game's folder, or \
              leave out --demo"
         ),
         "{told}"
@@ -10136,9 +10149,9 @@ fn a_build_without_the_program_its_launch_option_starts_is_refused() {
     assert!(
         why.contains(
             "starts \"inn.exe\" in app 1000050's launch option 0 on windows, which the build \
-             does not install: it installs only \"old-inn.exe\" in the install folder. Name the \
+             does not install. It installs only \"old-inn.exe\" in the install folder. Name the \
              build's program in the launch option, under Installation, General Installation in \
-             Steamworks, and save the settings again, or ship the program under that name"
+             Steamworks, and save the settings again. Or ship the program under that name"
         ),
         "{why}"
     );
@@ -10199,7 +10212,7 @@ fn a_launch_option_naming_no_system_needs_its_program_on_each_system_a_depot_ins
     assert!(
         why.contains(
             "starts \"inn.exe\" in app 1000050's launch option 0 on linux, which the build does \
-             not install: it installs only \"inn.x86_64\" in the install folder."
+             not install. It installs only \"inn.x86_64\" in the install folder."
         ),
         "{why}"
     );
@@ -10245,7 +10258,7 @@ fn on_linux_a_launch_options_program_matches_by_case_and_a_macos_app_is_its_fold
     assert!(
         why.contains(
             "starts \"inn.x86_64\" in app 1000050's launch option 0 on linux, which the build \
-             does not install: it installs only \"Inn.app\" and \"Inn.x86_64\" in the install \
+             does not install. It installs only \"Inn.app\" and \"Inn.x86_64\" in the install \
              folder."
         ),
         "{why}"
@@ -10279,13 +10292,13 @@ fn a_godot_export_ships_only_in_the_app_its_demo_feature_says_it_is_for() {
         (
             ["check", "--demo"].as_slice(),
             "into depot 1000071, the demo's, and the export preset \"Windows Desktop\" in \
-             export_presets.cfg makes it without the `demo` feature: map only the folders the \
+             export_presets.cfg makes it without the \"demo\" feature. Map only the folders the \
              demo's presets export to",
         ),
         (
             ["check"].as_slice(),
             "into depot 1000051, the full game's, and the export preset \"Windows Desktop Demo\" \
-             in export_presets.cfg makes it with the `demo` feature: map only the folders the full \
+             in export_presets.cfg makes it with the \"demo\" feature. Map only the folders the full \
              game's presets export to",
         ),
     ] {
@@ -10340,7 +10353,7 @@ fn a_game_in_no_repository_is_refused_saying_how_to_ship_it() {
     assert!(
         refused.ends_with(
             " is in no Git repository, and steamship ships a game only from a commit pushed to \
-             origin: make it a repository and push it, or name the app build script and its \
+             origin. Make it a repository and push it, or name the app build script and its \
              version, as steamship upload <script> --version <version>"
         ),
         "{stderr}"
@@ -10464,7 +10477,8 @@ fn a_games_workshop_run_gives_its_visibility_only_to_the_items_it_makes() {
     )
     .unwrap();
     pushed(&root, "A second example mod");
-    // As `publishing` does, keeping each script as it was sent before giving a new item its ID.
+    // As `publishing` does, but it keeps each script as it was sent before giving a new item its
+    // ID.
     let home = faked_with(
         "#!/bin/sh\n\
          while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
@@ -10555,7 +10569,7 @@ fn a_game_holding_its_workshop_items_until_launch_sends_none_while_steam_shows_i
     assert!(
         refused.starts_with("app 1000050 is unreleased, and ")
             && refused.ends_with(
-                "steamship.toml holds the game's Workshop items until launch: give --for-launch \
+                "steamship.toml holds the game's Workshop items until launch. Give --for-launch \
                  to the run that readies the launch"
             ),
         "{stderr}"
@@ -10804,29 +10818,29 @@ const TEMPLATE: &str = concat!(
     "value, and every {#Token_{field}} whole, which Steam fills with that token's own line.\n",
     "msgctxt \"rich presence\"\nmsgid \"Grinding at {mill}\"\nmsgstr \"\"\n\n",
     "#. On the game's Steam Workshop page, beside its picture: the title a short headline, the ",
-    "description one or two lines; plain prose, no markup.\n",
+    "description one or two lines. Plain prose, no markup.\n",
     "msgctxt \"steam workshop\"\nmsgid \"Harbours\"\nmsgstr \"\"\n\n",
     "#. On the game's Steam Workshop page, beside its picture: the title a short headline, the ",
-    "description one or two lines; plain prose, no markup.\n",
+    "description one or two lines. Plain prose, no markup.\n",
     "#, max-length:200\n",
     "msgctxt \"steam workshop\"\nmsgid \"Made by players.\"\nmsgstr \"\"\n\n",
-    "#. On the game's Steam store page; plain prose, no markup.\n",
+    "#. On the game's Steam store page. Plain prose, no markup.\n",
     "#, max-length:300\n",
     "msgctxt \"store page\"\nmsgid \"A mill on a tidal river.\"\nmsgstr \"\"\n\n",
     "#. A line of the game's Steam store page outside its description, such as a system ",
-    "requirement; plain text, every product and model name kept as written.\n",
+    "requirement. Plain text, every product and model name kept as written.\n",
     "msgctxt \"store page\"\nmsgid \"All rights reserved.\"\nmsgstr \"\"\n\n",
-    "#. On the game's Steam store page; plain prose, no markup.\n",
+    "#. On the game's Steam store page. Plain prose, no markup.\n",
     "msgctxt \"store page\"\nmsgid \"Grind \\\"grain\\\" at high water.\"\nmsgstr \"\"\n\n",
     "#. The game's statement on its Steam store page of how AI was used in making it, shown ",
-    "under About This Game; plain prose, no markup, and the same plain claim in every ",
+    "under About This Game. Plain prose, no markup, and the same plain claim in every ",
     "language.\n",
     "msgctxt \"store page\"\nmsgid \"Made with AI assistance for coding.\"\nmsgstr \"\"\n\n",
-    "#. Alt text for a screenshot on the game's Steam store page, read aloud by screen readers; ",
-    "plain prose.\n",
+    "#. Alt text for a screenshot on the game's Steam store page, read aloud by screen readers. ",
+    "Plain prose.\n",
     "msgctxt \"store page\"\nmsgid \"The harbour at dawn.\"\nmsgstr \"\"\n\n",
     "#. Alt text for a picture in the About This Game of the game's Steam store page, read aloud ",
-    "by screen readers; plain prose.\n",
+    "by screen readers. Plain prose.\n",
     "msgctxt \"store page\"\nmsgid \"The wheel turning.\"\nmsgstr \"\"\n",
 );
 
@@ -10884,8 +10898,8 @@ fn a_short_description_steam_would_cut_is_refused_before_any_template() {
     assert_eq!(template, "");
     assert!(
         told.contains(&format!(
-            "store_english.json: {long:?} is 320 characters in english, past the 300 Steam shows: \
-             shorten it"
+            "store_english.json: {long:?} is 320 characters in english, past the 300 Steam shows. \
+             Shorten it"
         )),
         "{told}"
     );
@@ -10910,7 +10924,7 @@ fn a_translation_past_steams_room_is_refused_and_nothing_is_written() {
     assert_eq!(code, Some(2_i32), "{told}");
     assert!(
         told.contains(&format!(
-            "de.po: {long:?} is 220 characters in german, past the 200 Steam shows: shorten it"
+            "de.po: {long:?} is 220 characters in german, past the 200 Steam shows. Shorten it"
         )),
         "{told}"
     );
@@ -10940,7 +10954,7 @@ fn every_locale_is_listed_with_steams_name_for_its_language() {
     assert!(shown.contains("  pt-BR     brazilian\n"), "{shown}");
 }
 
-/// The SBOM a release of this version would publish, giving this system's binary `sha256`.
+/// The SBOM a release of this version would publish, with `sha256` as this system's binary's.
 fn sbom_listing(sha256: &str) -> String {
     let version = env!("CARGO_PKG_VERSION");
     let target = itself::target().unwrap();
@@ -10950,7 +10964,7 @@ fn sbom_listing(sha256: &str) -> String {
     )
 }
 
-/// `self check`, reading releases from `host`.
+/// `self check`, which reads releases from `host`.
 fn self_check(host: &str) -> (Option<i32>, String, String) {
     let home = tempfile::tempdir().unwrap();
     steamship(
@@ -10993,10 +11007,10 @@ fn a_binary_that_differs_from_its_release_is_refused() {
     assert_eq!(code, Some(2_i32), "{said}{told}");
     assert!(
         told.contains(&format!(
-            "binary of steamship {}'s release: it was built from source, as `cargo install` \
-             builds it, or elsewhere, or altered since. Install the release's own binary, from \
-             https://github.com/Aureliolo/steamship/releases/latest or with \
-             `cargo binstall steamship`",
+            "binary of steamship {}'s release. It was built from source (as by cargo install), \
+             built elsewhere, or altered since. Install the release's own binary from \
+             https://github.com/Aureliolo/steamship/releases/latest, or with cargo binstall \
+             steamship",
             env!("CARGO_PKG_VERSION")
         )),
         "{told}"

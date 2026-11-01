@@ -132,8 +132,8 @@ fn setting_default_live_is_refused() {
     assert_eq!(
         messages(&check(&app)),
         [
-            "\"SetLive\" names \"default\", which steamcmd never sets live; upload --default sets \
-             it live while the app is unreleased"
+            "\"SetLive\" names \"default\", which steamcmd never sets live. An upload with \
+             --default sets it live while the app is unreleased"
         ]
     );
 }
@@ -149,7 +149,8 @@ fn setting_public_live_is_refused_as_the_default_branch() {
         messages(&check(&app)),
         [
             "\"SetLive\" names \"public\", the Web API's name for the default branch, which \
-             steamcmd never sets live; upload --default sets it live while the app is unreleased"
+             steamcmd never sets live. An upload with --default sets it live while the app is \
+             unreleased"
         ]
     );
 }
@@ -179,7 +180,7 @@ fn an_action_manifest_must_ship_each_configuration_it_lists_beside_it() {
         messages(&report),
         [
             "is Steam Input's Action Manifest in depot 1001, and lists \"controller_xboxone.vdf\" \
-             for controller_xboxone, which the build does not ship beside it: put the \
+             for controller_xboxone, which the build does not ship beside it. Put the \
              configuration there, or take it out of the manifest"
         ]
     );
@@ -239,7 +240,7 @@ fn bundling(manifest: &str) -> vdf::Block {
 fn manifest_missing(manifest: &str, on: &str) -> String {
     format!(
         "names \"{manifest}\" as app 1000's Steam Input action manifest, and the build installs \
-         no file there{on}: ship the manifest at that path in the install folder, or change the \
+         no file there{on}. Ship the manifest at that path in the install folder. Or change the \
          path on the app's Steam Input page in Steamworks and save the settings again"
     )
 }
@@ -284,7 +285,7 @@ fn a_build_must_install_the_action_manifest_its_settings_name_on_every_system() 
         messages(&check::against(&app, Some(&bundling("")))),
         [
             "chooses a Custom Configuration as app 1000's Default Controller Configuration and \
-             names no action manifest: enter its path from the install folder on the app's Steam \
+             names no action manifest. Enter its path from the install folder on the app's Steam \
              Input page in Steamworks, then save the settings again"
         ]
     );
@@ -343,7 +344,7 @@ fn a_build_folder_must_hold_the_action_manifest_its_settings_name() {
         check::folder_manifest(&folder, 1000, &bundling(path)).map(|problem| problem.message),
         Some(
             "has no \"steam_input/action_manifest.vdf\", which app 1000's settings name as its \
-             Steam Input action manifest: put the manifest there, or change the path on the \
+             Steam Input action manifest. Put the manifest there, or change the path on the \
              app's Steam Input page in Steamworks and save the settings again"
                 .to_owned()
         )
@@ -354,7 +355,7 @@ fn a_build_folder_must_hold_the_action_manifest_its_settings_name() {
         check::folder_manifest(&folder, 1000, &bundling("")).map(|problem| problem.message),
         Some(
             "is a build of app 1000, whose settings choose a Custom Configuration as its Default \
-             Controller Configuration and name no action manifest: enter its path from the \
+             Controller Configuration and name no action manifest. Enter its path from the \
              install folder on the app's Steam Input page in Steamworks, then save the settings \
              again"
                 .to_owned()
@@ -398,11 +399,11 @@ fn a_folder_unity_says_not_to_ship_is_refused_once() {
         [
             (
                 "Game_BurstDebugInformation_DoNotShip".to_owned(),
-                "is in depot 1002; Unity names this folder as one not to ship".to_owned()
+                "is in depot 1002. Unity names this folder as one not to ship".to_owned()
             ),
             (
                 "Game_BackUpThisFolder_ButDontShipItWithYourGame".to_owned(),
-                "is in depot 1002; Unity names this folder as one not to ship".to_owned()
+                "is in depot 1002. Unity names this folder as one not to ship".to_owned()
             ),
         ]
     );
@@ -476,7 +477,7 @@ fn an_install_script_must_be_a_file_the_depot_maps() {
     assert_eq!(
         messages(&check(&app)),
         [
-            "depot 1002: InstallScript \"elsewhere\\installscript.vdf\" is not in the depot; map \
+            "depot 1002: InstallScript \"elsewhere\\installscript.vdf\" is not in the depot. Map \
              it with a FileMapping too"
         ]
     );
@@ -498,8 +499,9 @@ fn preview_and_local_in_the_script_are_refused() {
     assert_eq!(
         messages(&check(&app)),
         [
-            "\"Preview\" is set in the script; pass --preview",
-            "\"Local\" is set, which sends the build to a local content server, not to Steam",
+            "\"Preview\" is set in the script. Pass --preview",
+            "\"Local\" is set, which sends the build to a local content server, not to Steam. \
+             Take it out of the script",
         ]
     );
 }
@@ -530,8 +532,9 @@ fn the_scripts_alone_still_refuse_preview_and_local() {
     assert_eq!(
         messages(&scripts_only(&app)),
         [
-            "\"Preview\" is set in the script; pass --preview",
-            "\"Local\" is set, which sends the build to a local content server, not to Steam",
+            "\"Preview\" is set in the script. Pass --preview",
+            "\"Local\" is set, which sends the build to a local content server, not to Steam. \
+             Take it out of the script",
         ]
     );
 }
@@ -549,7 +552,7 @@ fn a_shipped_steam_appid_txt_is_refused() {
     assert_eq!(reported, [fs::canonicalize(planted).unwrap()]);
     assert_eq!(
         messages(&report),
-        ["is in depot 1001; it is for development only and must not ship"]
+        ["is in depot 1001. It is for development only and must not ship"]
     );
 }
 
@@ -618,11 +621,11 @@ fn a_dll_a_redistributable_installs_is_refused_when_the_app_ticks_none_that_does
         texts(&judged.refused),
         [
             "imports VCRUNTIME140.dll, which VC 2015 Redist, VC 2017 Redist, VC 2019 Redist or \
-             VC 2022 Redist installs, and app 1000 ticks none in Steamworks; tick one under \
+             VC 2022 Redist installs, and app 1000 ticks none in Steamworks. Tick one under \
              Installation, Redistributables, ship the DLL in a depot, or link its library in \
              statically",
             "imports XINPUT1_3, which DirectX Jun 2010 Redist installs, and app 1000 ticks none \
-             in Steamworks; tick one under Installation, Redistributables, ship the DLL in a \
+             in Steamworks. Tick one under Installation, Redistributables, ship the DLL in a \
              depot, or link its library in statically",
         ]
     );
@@ -649,7 +652,7 @@ fn a_dll_nothing_installs_is_refused_whatever_the_app_ticks() {
         &windows_library(&["kernel32.dll", "fmod.dll"]),
     );
     let refused = "imports fmod.dll, which neither Windows, the build's depots nor a Steamworks \
-                   Common Redistributable has; ship it in a depot, or link its library in \
+                   Common Redistributable has. Ship it in a depot, or link its library in \
                    statically";
     let report = check(&app);
     assert_eq!(texts(&redist::judged(&report, None).refused), [refused]);
@@ -677,7 +680,7 @@ fn a_dll_counts_as_shipped_by_any_depot_that_installs_on_windows() {
         texts(&redist::judged(&report, Some(&ticking(&[]))).refused),
         [
             "imports steam_api64.dll, which neither Windows, the build's depots nor a Steamworks \
-             Common Redistributable has; ship it in a depot, or link its library in statically"
+             Common Redistributable has. Ship it in a depot, or link its library in statically"
         ],
         "depot 1002 is for Linux alone"
     );
@@ -736,8 +739,8 @@ fn a_build_s_folder_is_checked_alone_with_what_its_files_load_when_first_called(
     assert_eq!(
         messages(&report),
         [
-            "is in the build; it is for development only and must not ship",
-            "is in the build; Unity names this folder as one not to ship",
+            "is in the build. It is for development only and must not ship",
+            "is in the build. Unity names this folder as one not to ship",
         ]
     );
     let build = report.depots.first().unwrap();
@@ -747,7 +750,7 @@ fn a_build_s_folder_is_checked_alone_with_what_its_files_load_when_first_called(
         texts(&judged.refused),
         [
             "delay-loads vcruntime140.dll, which VC 2015 Redist, VC 2017 Redist, VC 2019 Redist \
-             or VC 2022 Redist installs, and app 1000 ticks none in Steamworks; tick one under \
+             or VC 2022 Redist installs, and app 1000 ticks none in Steamworks. Tick one under \
              Installation, Redistributables, ship the DLL in a depot, or link its library in \
              statically"
         ]
@@ -756,8 +759,8 @@ fn a_build_s_folder_is_checked_alone_with_what_its_files_load_when_first_called(
         texts(&judged.unchecked),
         [
             "delay-loads nvapi64.dll, which neither Windows, the build's depots nor a Steamworks \
-             Common Redistributable has; the file starts without it, and works only where it \
-             finds it or does without it"
+             Common Redistributable has. The file starts without it, and works only where it finds \
+             the DLL or does not need it"
         ]
     );
     assert_eq!(
@@ -798,7 +801,7 @@ fn a_dotnet_program_on_a_runtime_installed_apart_is_refused() {
     let mut found = messages(&check(&app));
     found.sort();
     let apart = "runs on a .NET runtime installed apart from it, which neither Windows nor a \
-                 Steamworks Common Redistributable installs; publish the program self-contained";
+                 Steamworks Common Redistributable installs. Publish the program self-contained";
     assert_eq!(
         found,
         [
@@ -831,7 +834,7 @@ fn a_missing_content_root_is_refused() {
         assert!(
             message.starts_with(&format!("depot {depot}: ContentRoot "))
                 && message.ends_with(
-                    " does not exist; put the depot's files there, or point ContentRoot at the \
+                    " does not exist. Put the depot's files there, or point ContentRoot at the \
                      folder they are in"
                 ),
             "{message}"
@@ -848,7 +851,7 @@ fn a_content_root_that_is_a_file_is_refused() {
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(
         found.iter().all(|message| message.ends_with(
-            " is not a folder; point ContentRoot at the folder the depot's files are in"
+            " is not a folder. Point ContentRoot at the folder the depot's files are in"
         )),
         "{found:?}"
     );
@@ -909,7 +912,7 @@ fn a_linux_program_needs_its_executable_bit() {
     fs::set_permissions(&program, fs::Permissions::from_mode(0o644)).unwrap();
     assert_eq!(
         messages(&check(&app)),
-        ["is a Linux program without its executable bit; run chmod +x on it"]
+        ["is a Linux program without its executable bit. Run chmod +x on it"]
     );
     fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(check(&app).problems, Vec::<Problem>::new());
@@ -942,8 +945,8 @@ fn a_macos_program_or_a_script_needs_its_executable_bit_and_a_library_does_not()
     assert_eq!(
         messages(&check(&app)),
         [
-            "is a macOS program without its executable bit; run chmod +x on it",
-            "is a script (it starts with #!) without its executable bit; run chmod +x on it",
+            "is a macOS program without its executable bit. Run chmod +x on it",
+            "is a script (it starts with #!) without its executable bit. Run chmod +x on it",
         ]
     );
 }
@@ -1005,7 +1008,7 @@ fn the_command_says_what_it_mapped_and_exits_0() {
              script    {}\n  \
              app       \u{2713} 1000, 2 depots, 4 files, checked\n  \
              branch    testing, not checked: no Web API key at hand\n    \
-             a branch the app does not have leaves the build uploaded but not live; steamship \
+             a branch the app does not have leaves the build uploaded but not live. steamship \
              login --web-api-key keeps a key to check it with\n  \
              depot     1001, 2 files\n  \
              depot     1002, 2 files\n  \
@@ -1028,7 +1031,7 @@ fn the_command_checks_the_scripts_alone_before_the_build_and_says_the_content_wa
              script    {}\n  \
              app       \u{2713} 1000, 2 depots, scripts checked\n  \
              branch    testing, not checked: no Web API key at hand\n    \
-             a branch the app does not have leaves the build uploaded but not live; steamship \
+             a branch the app does not have leaves the build uploaded but not live. steamship \
              login --web-api-key keeps a key to check it with\n  \
              content   not checked (--scripts-only)\n  \
              \u{2713} nothing refused\n",
@@ -1070,7 +1073,7 @@ fn the_command_lists_every_refusal_and_exits_2() {
             .all(|line| line.starts_with("  \u{2717} refused: ")),
         "{stderr}"
     );
-    assert!(stderr.contains("\"Preview\" is set in the script; pass --preview"));
+    assert!(stderr.contains("\"Preview\" is set in the script. Pass --preview"));
 }
 
 /// An app script in `scripts/`, with content beside it, and what `check` says about it.
@@ -1128,7 +1131,7 @@ fn every_malformed_script_is_refused_with_what_is_wrong() {
                 r#""AppBuild" {{ "AppID" "0" "ContentRoot" "../content" "Depots" {{ "1" {{ {MAPPING} }} }} }}"#
             ),
             None,
-            "\"AppID\" is 0, which Steamworks never gives: put in the ID it shows for it",
+            "\"AppID\" is 0, which Steamworks never gives. Put in the ID it shows for it",
         ),
         (
             format!(
@@ -1182,7 +1185,7 @@ fn every_malformed_script_is_refused_with_what_is_wrong() {
             r#""AppBuild" { "AppID" "1" "ContentRoot" "../content" "Depots" { "1" { "FileMapping" { "LocalPath" "b*/tool.exe" "DepotPath" "." } } } }"#
                 .to_owned(),
             None,
-            "depot 1: LocalPath \"b*/tool.exe\" has a wildcard in a folder name, which steamship cannot map the way steamcmd does",
+            "depot 1: LocalPath \"b*/tool.exe\" has a wildcard in a folder name, which steamship cannot map as steamcmd does. Name the folder without one",
         ),
     ];
     for (app, depot, expected) in cases {

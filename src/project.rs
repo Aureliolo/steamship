@@ -115,7 +115,7 @@ pub struct Project {
     pub branch: String,
     /// What an upload describes that branch as, when not the version.
     pub description: Option<String>,
-    /// The program and arguments that build the game into the folders its depots ship; empty
+    /// The program and arguments that build the game into the folders its depots ship. Empty
     /// when the content is built some other way.
     pub build: Vec<String>,
     /// The most processors steamcmd and the build run on.
@@ -242,7 +242,7 @@ impl Project {
     pub fn demo(&self) -> Result<Self, String> {
         let demo = self.demo.clone().ok_or_else(|| {
             format!(
-                "the game has no demo: write its app build script to {DEMO_SCRIPT}, or name it as \
+                "the game has no demo. Write its app build script to {DEMO_SCRIPT}, or name it as \
                  `script` under [demo] in {FILE}"
             )
         })?;
@@ -281,7 +281,7 @@ impl Project {
             project.build = texts(value, "build")?;
             if project.build.is_empty() {
                 return Err(
-                    "`build` is empty: name the program and its arguments, such as \
+                    "`build` is empty. Name the program and its arguments, such as \
                             [\"python\", \"tools/build.py\"], or leave it out"
                         .to_owned(),
                 );
@@ -291,8 +291,8 @@ impl Project {
             let branch = text_of(value, "branch")?;
             if branch.trim().is_empty() || webapi::is_default(branch) {
                 return Err(format!(
-                    "`branch` is \"{branch}\": name the branch the game's build goes live on, \
-                     such as \"{BRANCH}\"; the default branch is the publisher's to set"
+                    "`branch` is \"{branch}\". Name the branch the game's build goes live on, \
+                     such as \"{BRANCH}\". The default branch is the publisher's to set"
                 ));
             }
             branch.clone_into(&mut project.branch);
@@ -307,7 +307,7 @@ impl Project {
                 .filter(|cores| *cores > 0)
                 .ok_or_else(|| {
                     format!(
-                        "`cores` is the most processors steamcmd and the build run on: give a \
+                        "`cores` is the most processors steamcmd and the build run on. Give a \
                          whole number of 1 or more, such as {CORES}"
                     )
                 })?;
@@ -324,7 +324,7 @@ impl Project {
         if let Some(section) = table.get("workshop") {
             let workshop = section
                 .as_table()
-                .ok_or("`workshop` is not a table: write it as a [workshop] section")?;
+                .ok_or("`workshop` is not a table. Write it as a [workshop] section")?;
             known(workshop, &WORKSHOP, "workshop.")?;
             if let Some(mods) = workshop.get("mods") {
                 project.mods = named(inside(root, mods, "workshop.mods")?);
@@ -337,7 +337,7 @@ impl Project {
             }
             if let Some(held) = workshop.get("held_until_launch") {
                 project.held_until_launch = held.as_bool().ok_or(
-                    "`workshop.held_until_launch` is not true or false: write true to hold the \
+                    "`workshop.held_until_launch` is not true or false. Write true to hold the \
                      Workshop items until launch, or leave it out",
                 )?;
             }
@@ -349,7 +349,7 @@ impl Project {
                 // Godot splits a preset's custom features at commas and trims each.
                 if feature.trim().is_empty() || feature.contains(',') || feature.trim() != feature {
                     return Err(format!(
-                        "`demo.feature` is \"{feature}\": name the one custom feature the demo's \
+                        "`demo.feature` is \"{feature}\". Name the one custom feature the demo's \
                          export presets carry, such as \"{FEATURE}\""
                     ));
                 }
@@ -367,7 +367,7 @@ impl Project {
     pub fn pinned(&self, running: &str) -> Result<(), String> {
         match &self.pin {
             Some(pin) if pin != running => Err(format!(
-                "{} pins steamship {pin}, and this is {running}: install {pin}, or change the pin",
+                "{} pins steamship {pin}, and this is {running}. Install {pin}, or change the pin",
                 self.root.join(FILE).display()
             )),
             _ => Ok(()),
@@ -382,7 +382,7 @@ impl Project {
     pub fn live_on(&self, set_live: Option<&str>) -> Result<(), String> {
         let how = format!(
             "a game's build goes live on {} alone, and on the default branch too while Steam shows \
-             the game unreleased: make the script's \"SetLive\" \"{}\", or name another branch as \
+             the game unreleased. Make the script's \"SetLive\" \"{}\", or name another branch as \
              `branch` in {FILE}",
             self.branch, self.branch
         );
@@ -435,7 +435,7 @@ impl Project {
             if error.kind() == io::ErrorKind::NotFound {
                 format!(
                     "{} has no release heading in {CHANGES} nor a project.godot to take the \
-                     version from: head the newest release in {CHANGES} as `## <version>`, or \
+                     version from. Head the newest release in {CHANGES} as `## <version>`, or \
                      give it with --version",
                     self.root.display()
                 )
@@ -445,7 +445,7 @@ impl Project {
         })?;
         let version = godot_version(&text).ok_or_else(|| {
             format!(
-                "{} names no config/version under [application]: set the game's version there, \
+                "{} names no config/version under [application]. Set the game's version there, \
                  head the newest release in {CHANGES} as `## <version>`, or give it with --version",
                 path.display()
             )
@@ -513,7 +513,7 @@ impl Project {
         })
     }
 
-    /// Every language's rich presence file, `rich_presence_<language>.vdf` beside the scripts; a
+    /// Every language's rich presence file, `rich_presence_<language>.vdf` beside the scripts. A
     /// demo shows the full game's, beside the full game's scripts.
     ///
     /// # Errors
@@ -580,8 +580,8 @@ impl Project {
             let preview = folder.join("preview.png");
             if !preview.is_file() {
                 return Err(format!(
-                    "{} is missing: each example mod needs its preview.png, as Steam gives an item \
-                     without one its grey default picture",
+                    "{} is missing. Each example mod needs its preview.png, or Steam gives the \
+                     item its grey default picture",
                     preview.display()
                 ));
             }
@@ -603,7 +603,7 @@ impl Project {
 fn demo_configured(root: &Path, section: &toml::Value, game: &Project) -> Result<Demo, String> {
     let demo = section
         .as_table()
-        .ok_or("`demo` is not a table: write it as a [demo] section")?;
+        .ok_or("`demo` is not a table. Write it as a [demo] section")?;
     known(demo, &DEMO, "demo.")?;
     let script = demo.get("script").map_or_else(
         || Ok(under(root, DEMO_SCRIPT)),
@@ -623,7 +623,7 @@ fn demo_configured(root: &Path, section: &toml::Value, game: &Project) -> Result
         .unwrap_or_default();
     if demo.contains_key("build") && build.is_empty() {
         return Err(
-            "`demo.build` is empty: name the program and its arguments that build the demo, or \
+            "`demo.build` is empty. Name the program and its arguments that build the demo, or \
              leave it out"
                 .to_owned(),
         );
@@ -633,8 +633,8 @@ fn demo_configured(root: &Path, section: &toml::Value, game: &Project) -> Result
             let branch = text_of(value, "demo.branch")?;
             if branch.trim().is_empty() || webapi::is_default(branch) {
                 return Err(format!(
-                    "`demo.branch` is \"{branch}\": name the branch the demo's build goes live on, \
-                     such as \"{BRANCH}\"; the default branch is the publisher's to set"
+                    "`demo.branch` is \"{branch}\". Name the branch the demo's build goes live on, \
+                     such as \"{BRANCH}\". The default branch is the publisher's to set"
                 ));
             }
             branch.to_owned()
@@ -659,7 +659,7 @@ fn description(value: &toml::Value, name: &str) -> Result<String, String> {
     let text = text_of(value, name)?;
     if text.trim().is_empty() {
         return Err(format!(
-            "`{name}` is empty: name what an upload describes the branch as, such as \"testing\", \
+            "`{name}` is empty. Name what an upload describes the branch as, such as \"testing\", \
              or leave it out for the version"
         ));
     }
@@ -673,7 +673,7 @@ fn known(table: &toml::Table, settings: &[&str], prefix: &str) -> Result<(), Str
         .find(|key| !settings.contains(&key.as_str()))
         .map_or(Ok(()), |key| {
             Err(format!(
-                "`{prefix}{key}` is no setting steamship takes; it takes {}",
+                "`{prefix}{key}` is no setting steamship takes. It takes {}",
                 settings
                     .iter()
                     .map(|setting| format!("`{prefix}{setting}`"))
@@ -686,12 +686,12 @@ fn known(table: &toml::Table, settings: &[&str], prefix: &str) -> Result<(), Str
 fn text_of<'value>(value: &'value toml::Value, key: &str) -> Result<&'value str, String> {
     value
         .as_str()
-        .ok_or_else(|| format!("`{key}` is not text: write it in quotes"))
+        .ok_or_else(|| format!("`{key}` is not text. Write it in quotes"))
 }
 
 /// A list of text, as `build` and `records` take it.
 fn texts(value: &toml::Value, key: &str) -> Result<Vec<String>, String> {
-    let wrong = || format!("`{key}` is not a list of text: write it as [\"one\", \"two\"]");
+    let wrong = || format!("`{key}` is not a list of text. Write it as [\"one\", \"two\"]");
     value
         .as_array()
         .ok_or_else(wrong)?
@@ -724,7 +724,7 @@ fn inside(root: &Path, value: &toml::Value, key: &str) -> Result<PathBuf, String
     let path = Path::new(written);
     if written.trim().is_empty() {
         return Err(format!(
-            "`{key}` is empty: name a path inside the game's folder"
+            "`{key}` is empty. Name a path inside the game's folder"
         ));
     }
     if path
@@ -733,7 +733,7 @@ fn inside(root: &Path, value: &toml::Value, key: &str) -> Result<PathBuf, String
         || written.split(['/', '\\']).any(|part| part == "..")
     {
         return Err(format!(
-            "`{key}` is \"{written}\", which is not inside the game's folder: name a path \
+            "`{key}` is \"{written}\", which is not inside the game's folder. Name a path \
              relative to {FILE}, without .."
         ));
     }
@@ -751,7 +751,7 @@ fn under(root: &Path, relative: &str) -> PathBuf {
 
 fn missing(path: &Path, key: &str) -> String {
     format!(
-        "`{key}` names {}, which is not there: make it, or change `{key}` in {FILE}",
+        "`{key}` names {}, which is not there. Make it, or change `{key}` in {FILE}",
         path.display()
     )
 }
@@ -793,7 +793,7 @@ fn holds(path: &Path, kind: Records) -> bool {
 fn released(version: String, path: &Path, what: &str) -> Result<String, String> {
     if upload::unreleased(&version) {
         return Err(format!(
-            "{}'s {what} is {version}, which names no release: head the newest release in \
+            "{}'s {what} is {version}, which names no release. Head the newest release in \
              {CHANGES} as `## <version>`, or give it with --version",
             path.display()
         ));
@@ -863,8 +863,7 @@ pub fn pushed(root: &Path) -> Result<Pushed, String> {
     })?;
     if at != commit {
         return Err(format!(
-            "HEAD is at {}, and origin's {branch} at {}: push or pull until they are one, so what \
-             goes up is the commit origin's {branch} holds",
+            "HEAD is at {}, and origin's {branch} is at {}. Push or pull until they match",
             short(&commit),
             short(&at)
         ));
@@ -941,7 +940,7 @@ pub fn left_over(unwritten: &BTreeSet<PathBuf>, root: &Path, build: &str) -> Str
     )
 }
 
-/// Refuses a tree at `root` holding anything its commit does not, untracked files among it; what
+/// Refuses a tree at `root` holding anything its commit does not, untracked files among it. What
 /// Git ignores, such as the build, is left out.
 ///
 /// # Errors
@@ -957,8 +956,7 @@ pub fn unchanged(root: &Path) -> Result<(), String> {
         .map(|line| line.get(3..).unwrap_or(line))
         .collect();
     Err(format!(
-        "the game's folder holds what its commit does not ({}): commit it or put it away, so \
-         what goes up is a pushed commit and the build it makes",
+        "the game's folder holds what its commit does not ({}). Commit it or put it away",
         files.join(", ")
     ))
 }
@@ -986,7 +984,7 @@ fn remote_head(printed: &str) -> Option<(String, String)> {
     Some((branch?, commit?))
 }
 
-/// What Git printed for `args` in `root`, without the line ending it closed with; the start is
+/// What Git printed for `args` in `root`, without the line ending it closed with. The start is
 /// kept, as `status --porcelain` begins a line with a space for a file changed but not staged.
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_run(root, args)?;
@@ -1014,12 +1012,13 @@ fn git_run(root: &Path, args: &[&str]) -> Result<process::Output, String> {
         run::command("git")
             .args(args)
             .current_dir(root)
-            // A remote asked for a password would wait for one; the credential helper answers.
+            // A remote asked for a password would wait for one. The credential helper answers.
             .env("GIT_TERMINAL_PROMPT", "0"),
     )
     .map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
-            "Git is not installed, or not on the PATH, and steamship ships only a pushed commit"
+            "Git is not installed, or not on the PATH, and steamship ships only a pushed commit. \
+             Install Git, or put it on the PATH"
                 .to_owned()
         } else {
             format!("Git could not be run ({error}), and steamship ships only a pushed commit")
@@ -1037,7 +1036,7 @@ fn in_repository(root: &Path) -> Result<(), String> {
     }
     Err(format!(
         "{} is in no Git repository, and steamship ships a game only from a commit pushed to \
-         origin: make it a repository and push it, or name the app build script and its \
+         origin. Make it a repository and push it, or name the app build script and its \
          version, as steamship upload <script> --version <version>",
         root.display()
     ))
@@ -1078,7 +1077,7 @@ mod tests {
         );
         assert_eq!(laid_out.live_on(Some("testing")), Ok(()));
         let how = "a game's build goes live on testing alone, and on the default branch too while \
-                   Steam shows the game unreleased: make the script's \"SetLive\" \"testing\", or \
+                   Steam shows the game unreleased. Make the script's \"SetLive\" \"testing\", or \
                    name another branch as `branch` in steamship.toml";
         let script = Path::new("game/steam/app_build.vdf").display().to_string();
         assert_eq!(
@@ -1184,7 +1183,7 @@ mod tests {
 
         assert_eq!(
             configured("").unwrap().demo().unwrap_err(),
-            "the game has no demo: write its app build script to steam/demo/app_build.vdf, or \
+            "the game has no demo. Write its app build script to steam/demo/app_build.vdf, or \
              name it as `script` under [demo] in steamship.toml"
         );
         assert_eq!(
@@ -1202,74 +1201,74 @@ mod tests {
         for (text, said) in [
             (
                 "builds = []",
-                "`builds` is no setting steamship takes; it takes `steamship`, `script`, \
+                "`builds` is no setting steamship takes. It takes `steamship`, `script`, \
                  `branch`, `description`, `build`, `cores`, `records`, `locale`, `import`, \
                  `workshop`, `demo`",
             ),
             (
                 "description = \"\"",
-                "`description` is empty: name what an upload describes the branch as, such as \
+                "`description` is empty. Name what an upload describes the branch as, such as \
                  \"testing\", or leave it out for the version",
             ),
             (
                 "description = 1",
-                "`description` is not text: write it in quotes",
+                "`description` is not text. Write it in quotes",
             ),
             (
                 "branch = \"default\"",
-                "`branch` is \"default\": name the branch the game's build goes live on, such as \
-                 \"testing\"; the default branch is the publisher's to set",
+                "`branch` is \"default\". Name the branch the game's build goes live on, such as \
+                 \"testing\". The default branch is the publisher's to set",
             ),
             (
                 "branch = \" \"",
-                "`branch` is \" \": name the branch the game's build goes live on, such as \
-                 \"testing\"; the default branch is the publisher's to set",
+                "`branch` is \" \". Name the branch the game's build goes live on, such as \
+                 \"testing\". The default branch is the publisher's to set",
             ),
             (
                 "cores = 0",
-                "`cores` is the most processors steamcmd and the build run on: give a whole \
+                "`cores` is the most processors steamcmd and the build run on. Give a whole \
                  number of 1 or more, such as 4",
             ),
             (
                 "cores = \"4\"",
-                "`cores` is the most processors steamcmd and the build run on: give a whole \
+                "`cores` is the most processors steamcmd and the build run on. Give a whole \
                  number of 1 or more, such as 4",
             ),
             (
                 "[workshop]\nmod = \"x\"",
-                "`workshop.mod` is no setting steamship takes; it takes `workshop.mods`, \
+                "`workshop.mod` is no setting steamship takes. It takes `workshop.mods`, \
                  `workshop.items`, `workshop.footer`, `workshop.held_until_launch`",
             ),
             (
                 "[workshop]\nheld_until_launch = \"yes\"",
-                "`workshop.held_until_launch` is not true or false: write true to hold the \
+                "`workshop.held_until_launch` is not true or false. Write true to hold the \
                  Workshop items until launch, or leave it out",
             ),
             (
                 "steamship = 1",
-                "`steamship` is not text: write it in quotes",
+                "`steamship` is not text. Write it in quotes",
             ),
             (
                 "build = \"python tools/build.py\"",
-                "`build` is not a list of text: write it as [\"one\", \"two\"]",
+                "`build` is not a list of text. Write it as [\"one\", \"two\"]",
             ),
             (
                 "build = []",
-                "`build` is empty: name the program and its arguments, such as [\"python\", \
+                "`build` is empty. Name the program and its arguments, such as [\"python\", \
                  \"tools/build.py\"], or leave it out",
             ),
             (
                 "records = [\"../other/data\"]",
-                "`records` is \"../other/data\", which is not inside the game's folder: name a \
+                "`records` is \"../other/data\", which is not inside the game's folder. Name a \
                  path relative to steamship.toml, without ..",
             ),
             (
                 "script = \"\"",
-                "`script` is empty: name a path inside the game's folder",
+                "`script` is empty. Name a path inside the game's folder",
             ),
             (
                 "workshop = \"modding\"",
-                "`workshop` is not a table: write it as a [workshop] section",
+                "`workshop` is not a table. Write it as a [workshop] section",
             ),
         ] {
             assert_eq!(configured(text).unwrap_err(), said, "{text}");
@@ -1277,7 +1276,7 @@ mod tests {
         assert_eq!(
             configured("records = [\"/data\"]").map(|_| ()),
             Err(
-                "`records` is \"/data\", which is not inside the game's folder: name a path \
+                "`records` is \"/data\", which is not inside the game's folder. Name a path \
                  relative to steamship.toml, without .."
                     .to_owned()
             )
@@ -1289,24 +1288,24 @@ mod tests {
     fn a_demo_section_saying_what_steamship_does_not_take_is_refused_naming_it() {
         let feature = |given: &str| {
             format!(
-                "`demo.feature` is \"{given}\": name the one custom feature the demo's export \
+                "`demo.feature` is \"{given}\". Name the one custom feature the demo's export \
                  presets carry, such as \"demo\""
             )
         };
         for (text, said) in [
             (
                 "demo = \"steam/demo\"",
-                "`demo` is not a table: write it as a [demo] section".to_owned(),
+                "`demo` is not a table. Write it as a [demo] section".to_owned(),
             ),
             (
                 "[demo]\napp = 1000070",
-                "`demo.app` is no setting steamship takes; it takes `demo.script`, \
+                "`demo.app` is no setting steamship takes. It takes `demo.script`, \
                  `demo.build`, `demo.branch`, `demo.description`, `demo.feature`"
                     .to_owned(),
             ),
             (
                 "[demo]\ndescription = \" \"",
-                "`demo.description` is empty: name what an upload describes the branch as, such \
+                "`demo.description` is empty. Name what an upload describes the branch as, such \
                  as \"testing\", or leave it out for the version"
                     .to_owned(),
             ),
@@ -1315,14 +1314,14 @@ mod tests {
             ("[demo]\nfeature = \"\"", feature("")),
             (
                 "[demo]\nbuild = []",
-                "`demo.build` is empty: name the program and its arguments that build the demo, \
+                "`demo.build` is empty. Name the program and its arguments that build the demo, \
                  or leave it out"
                     .to_owned(),
             ),
             (
                 "[demo]\nbranch = \"public\"",
-                "`demo.branch` is \"public\": name the branch the demo's build goes live on, such \
-                 as \"testing\"; the default branch is the publisher's to set"
+                "`demo.branch` is \"public\". Name the branch the demo's build goes live on, such \
+                 as \"testing\". The default branch is the publisher's to set"
                     .to_owned(),
             ),
         ] {
@@ -1337,7 +1336,7 @@ mod tests {
         assert_eq!(
             project.pinned("1.2.4").unwrap_err(),
             format!(
-                "{} pins steamship 1.2.3, and this is 1.2.4: install 1.2.3, or change the pin",
+                "{} pins steamship 1.2.3, and this is 1.2.4. Install 1.2.3, or change the pin",
                 Path::new("game").join("steamship.toml").display()
             )
         );
@@ -1550,7 +1549,7 @@ mod tests {
             assert_eq!(
                 found,
                 Err(format!(
-                    "`{key}` names {}, which is not there: make it, or change `{key}` in \
+                    "`{key}` names {}, which is not there. Make it, or change `{key}` in \
                      steamship.toml",
                     folder.path().join(path).display()
                 ))
@@ -1624,8 +1623,8 @@ mod tests {
         assert_eq!(
             project.mods(),
             Err(format!(
-                "{} is missing: each example mod needs its preview.png, as Steam gives an item \
-                 without one its grey default picture",
+                "{} is missing. Each example mod needs its preview.png, or Steam gives the item \
+                 its grey default picture",
                 modding.join("plain").join("preview.png").display()
             ))
         );
@@ -1679,7 +1678,7 @@ mod tests {
             project
                 .version()
                 .unwrap_err()
-                .ends_with("names no config/version under [application]: set the game's version there, head the newest release in CHANGES.md as `## <version>`, or give it with --version")
+                .ends_with("names no config/version under [application]. Set the game's version there, head the newest release in CHANGES.md as `## <version>`, or give it with --version")
         );
         fs::remove_file(folder.path().join("project.godot")).unwrap();
         fs::create_dir_all(folder.path().join("project.godot")).unwrap();
@@ -1692,7 +1691,7 @@ mod tests {
             project.version(),
             Err(format!(
                 "{} has no release heading in CHANGES.md nor a project.godot to take the version \
-                 from: head the newest release in CHANGES.md as `## <version>`, or give it with \
+                 from. Head the newest release in CHANGES.md as `## <version>`, or give it with \
                  --version",
                 folder.path().display()
             ))
@@ -1720,7 +1719,7 @@ mod tests {
         assert_eq!(
             project.version(),
             Err(format!(
-                "{}'s config/version is 0.0.0, which names no release: head the newest release \
+                "{}'s config/version is 0.0.0, which names no release. Head the newest release \
                  in CHANGES.md as `## <version>`, or give it with --version",
                 folder.path().join("project.godot").display()
             ))
@@ -1729,7 +1728,7 @@ mod tests {
         assert_eq!(
             project.version(),
             Err(format!(
-                "{}'s newest release heading is 0.0.0, which names no release: head the newest \
+                "{}'s newest release heading is 0.0.0, which names no release. Head the newest \
                  release in CHANGES.md as `## <version>`, or give it with --version",
                 folder.path().join("CHANGES.md").display()
             ))

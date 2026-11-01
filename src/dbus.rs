@@ -795,7 +795,7 @@ pub enum Place {
 }
 
 /// The places a bus address such as `unix:path=/run/user/1000/bus` names, in the order to try
-/// them; those steamship cannot reach, such as TCP, are left out.
+/// them. Those steamship cannot reach, such as TCP, are left out.
 #[must_use]
 pub fn addresses(address: &str) -> Vec<Place> {
     address
@@ -846,13 +846,13 @@ pub mod session {
     use super::{Error, Kind, Message, Place, Value, addresses, call, length, message};
     use crate::{digest, unix};
 
-    /// How long an answer may take; the bus and the Secret Service answer at once.
+    /// How long an answer may take. The bus and the Secret Service answer at once.
     const ANSWER: Duration = Duration::from_secs(30);
 
     /// Signals held while a call is answered, in case one is waited for next.
     const HELD: usize = 64;
 
-    /// The longest answer to the login read, its line end included; a bus's is under 50 bytes.
+    /// The longest answer to the login read, its line end included. A bus's is under 50 bytes.
     pub const LOGIN_LINE: usize = 512;
 
     /// A connection to the session bus.
@@ -868,7 +868,8 @@ pub mod session {
         ///
         /// # Errors
         ///
-        /// [`Error::NoBus`] when there is none to reach; otherwise when it cannot be talked to.
+        /// [`Error::NoBus`] when there is none to reach, and another error when it cannot be
+        /// talked to.
         pub fn session<Lookup>(lookup: Lookup) -> Result<Self, Error>
         where
             Lookup: Fn(&str) -> Option<OsString>,

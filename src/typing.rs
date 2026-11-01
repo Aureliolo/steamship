@@ -11,7 +11,7 @@ use crate::unix as native;
 #[cfg(windows)]
 use crate::windows as native;
 
-/// The most characters taken at a prompt. Steam allows 64 in a password; the room for this many
+/// The most characters taken at a prompt. Steam allows 64 in a password. The room for this many
 /// is set aside at once, so the text is never moved to a larger buffer, which would leave a copy
 /// behind that nothing wipes.
 const LONGEST: usize = 256;

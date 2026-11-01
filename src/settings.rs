@@ -80,7 +80,7 @@ pub fn info_from_console(console: &str, app: u32) -> Result<Block, String> {
 }
 
 /// Where in steamcmd's `console` the info `app_info_print` printed for `app` lies, so what the
-/// other commands of the same run printed is read apart from it; none when steamcmd printed none.
+/// other commands of the same run printed is read apart from it. None when steamcmd printed none.
 #[must_use]
 pub fn info_at(console: &str, app: u32) -> Option<Range<usize>> {
     let named = format!("\"{app}\"");
@@ -168,7 +168,7 @@ fn without_bookkeeping(block: &Block) -> Vec<Pair> {
 pub fn cloud(settings: &Block) -> &'static str {
     match settings.block("ufs") {
         Some(ufs) if ufs.text("hidecloudui") == Some("1") => {
-            "Steam Cloud set up in Steamworks for developers only, so players have none: turn \
+            "Steam Cloud set up in Steamworks for developers only, so players have none. Turn \
              it on for everyone on the app's Steam Cloud page"
         }
         Some(ufs) if !ufs.pairs.is_empty() => "Steam Cloud set up in Steamworks",
@@ -218,7 +218,7 @@ pub fn controls(settings: &Block) -> String {
         || {
             format!(
                 "no Default Controller Configuration in Steamworks, and {rest}, so a Steam Deck \
-                 may give the game no input from its controls: choose one on the app's Steam \
+                 may give the game no input from its controls. Choose one on the app's Steam \
                  Input page"
             )
         },
@@ -234,7 +234,8 @@ pub fn controls(settings: &Block) -> String {
 }
 
 /// The path from the install folder that `settings` give the app's Steam Input action manifest,
-/// when its Default Controller Configuration is one the game bundles; empty when they give none.
+/// when its Default Controller Configuration is one the game bundles. It is empty when they give
+/// none.
 #[must_use]
 pub fn action_manifest(settings: &Block) -> Option<&str> {
     let config = settings.block("config")?;
@@ -242,7 +243,7 @@ pub fn action_manifest(settings: &Block) -> Option<&str> {
     (config.text(controller) == Some(BUNDLED)).then(|| config.text(MANIFEST).map_or("", str::trim))
 }
 
-/// The systems depot `depot` installs on as `settings` show it, by their names in `oslist`; none
+/// The systems depot `depot` installs on as `settings` show it, by their names in `oslist`. None
 /// when it installs on every one, or when the settings do not show it.
 #[must_use]
 pub fn depot_systems(settings: &Block, depot: u32) -> Vec<String> {
@@ -279,8 +280,8 @@ pub fn snapshot(app: u32, settings: &Block) -> Result<String, String> {
     };
     let written = vdf::write(&document).map_err(|error| error.to_string())?;
     Ok(format!(
-        "// App {app}'s settings in Steamworks, kept by `steamship settings --save`;\n\
-         // `steamship settings --check` says where Steam's differ.\n{written}"
+        "// App {app}'s settings in Steamworks, kept by steamship settings --save.\n\
+         // steamship settings --check says where Steam's differ.\n{written}"
     ))
 }
 
@@ -292,8 +293,8 @@ pub fn install_folder(settings: &Block) -> Option<String> {
     let plain = !folder.is_empty() && folder.chars().all(|each| each.is_ascii_alphanumeric());
     (!plain).then(|| {
         format!(
-            "the install folder is \"{folder}\", and steamship takes letters and digits alone: \
-             change it in Steamworks under Installation, General Installation, then save the \
+            "the install folder is \"{folder}\", and steamship takes letters and digits alone. \
+             Change it in Steamworks under Installation, General Installation, then save the \
              settings again"
         )
     })
@@ -309,19 +310,19 @@ pub fn demo_of(settings: &Block, app: u32, full: u32) -> Vec<String> {
     match common.and_then(|common| common.text("type")) {
         Some(kind) if kind.eq_ignore_ascii_case(DEMO) => {}
         Some(kind) => wrong.push(format!(
-            "app {app} is typed {kind}, not {DEMO}: set its type to {DEMO} {then}"
+            "app {app} is typed {kind}, not {DEMO}. Set its type to {DEMO} {then}"
         )),
         None => wrong.push(format!(
-            "app {app}'s settings give it no type: set it to {DEMO} {then}"
+            "app {app}'s settings give it no type. Set it to {DEMO} {then}"
         )),
     }
     match common.and_then(|common| common.text("parent")) {
         Some(parent) if parent == full.to_string() => {}
         Some(parent) => wrong.push(format!(
-            "app {app}'s base game is app {parent}, not the full game, app {full}: change it {then}"
+            "app {app}'s base game is app {parent}, not the full game, app {full}. Change it {then}"
         )),
         None => wrong.push(format!(
-            "app {app}'s settings name no base game: enter the full game, app {full}, {then}"
+            "app {app}'s settings name no base game. Enter the full game, app {full}, {then}"
         )),
     }
     wrong
@@ -400,7 +401,7 @@ pub fn controls_unlike(settings: &Block, app: u32, game: &Block, full: u32) -> V
             .map(ToOwned::to_owned)
     };
     let then = format!(
-        "choose the full game's on app {app}'s Steam Input page in Steamworks, then save the \
+        "Choose the full game's on app {app}'s Steam Input page in Steamworks, then save the \
          settings again"
     );
     CONTROLS
@@ -410,12 +411,12 @@ pub fn controls_unlike(settings: &Block, app: u32, game: &Block, full: u32) -> V
             match config(settings, key) {
                 Some(set) if set == wanted || set == BUNDLED => None,
                 Some(set) => Some(format!(
-                    "app {app}'s {name} is {} and the full game's, app {full}'s, is {}: {then}",
+                    "app {app}'s {name} is {} and the full game's, app {full}'s, is {}. {then}",
                     named(choices, &set),
                     named(choices, &wanted)
                 )),
                 None => Some(format!(
-                    "app {app} has no {name}, and the full game, app {full}, has {}: {then}",
+                    "app {app} has no {name}, and the full game, app {full}, has {}. {then}",
                     named(choices, &wanted)
                 )),
             }
@@ -424,7 +425,7 @@ pub fn controls_unlike(settings: &Block, app: u32, game: &Block, full: u32) -> V
 }
 
 /// Each system an app the player launches has a depot of its own for, and no launch option runs
-/// on, by its name in `oslist`; none for an app of another type, such as a tool.
+/// on, by its name in `oslist`. None for an app of another type, such as a tool.
 #[must_use]
 pub fn unlaunched(settings: &Block) -> Vec<String> {
     let played = settings
@@ -478,7 +479,7 @@ pub struct Launch {
     pub key: String,
     /// The program it starts, by its path from the install folder.
     pub executable: String,
-    /// The systems it runs on, by their names in `oslist`; none when it runs on every one.
+    /// The systems it runs on, by their names in `oslist`. None when it runs on every one.
     pub systems: Vec<String>,
     /// The beta branch it is offered on alone, if any.
     pub branch: Option<String>,
@@ -548,8 +549,8 @@ pub fn installs_beside(settings: &Block, system: Option<&str>, uploaded: &[u32])
     })
 }
 
-/// The depots of `depots`, an app build script's, that `settings` do not show as the app's own;
-/// none when they show no depot of its own at all, as before any is published.
+/// The depots of `depots`, an app build script's, that `settings` do not show as the app's own.
+/// None when they show no depot of its own at all, as before any is published.
 #[must_use]
 pub fn foreign(settings: &Block, depots: &[u32]) -> Vec<u32> {
     let own: Vec<u32> = own_depots(settings).into_iter().map(|(id, _)| id).collect();
@@ -873,8 +874,8 @@ mod tests {
             ])),
             "no Default Controller Configuration in Steamworks, and touch \"Mouse point and \
              click\", Steam Deck touchscreen \"Left Mouse Click Emulation\", no controller opted \
-             into Steam Input, so a Steam Deck may give the game no input from its controls: \
-             choose one on the app's Steam Input page"
+             into Steam Input, so a Steam Deck may give the game no input from its controls. \
+             Choose one on the app's Steam Input page"
         );
     }
 
@@ -943,18 +944,18 @@ mod tests {
             ("steamcontrollertemplateindex", "4"),
         ];
         let game = controlled(&both);
-        let then = "choose the full game's on app 1000070's Steam Input page in Steamworks, then \
+        let then = "Choose the full game's on app 1000070's Steam Input page in Steamworks, then \
                     save the settings again";
         assert_eq!(
             controls_unlike(&demo(DEMO), 1_000_070, &game, 1_000_050),
             [
                 format!(
                     "app 1000070 has no Default Controller Configuration, and the full game, app \
-                     1000050, has \"Generic Gamepad\": {then}"
+                     1000050, has \"Generic Gamepad\". {then}"
                 ),
                 format!(
                     "app 1000070 has no Default Touch Configuration, and the full game, app \
-                     1000050, has \"Mouse point and click\": {then}"
+                     1000050, has \"Mouse point and click\". {then}"
                 ),
             ]
         );
@@ -971,7 +972,7 @@ mod tests {
             [format!(
                 "app 1000070's Default Controller Configuration is \"Custom Configuration, via \
                  Steam Workshop (deprecated)\" and the full game's, app 1000050's, is \"Generic \
-                 Gamepad\": {then}"
+                 Gamepad\". {then}"
             )]
         );
         let bundled = controlled(&[
@@ -989,11 +990,11 @@ mod tests {
             [
                 format!(
                     "app 1000070's Default Controller Configuration is \"Generic Gamepad\" and \
-                     the full game's, app 1000050's, is \"Custom Configuration\": {then}"
+                     the full game's, app 1000050's, is \"Custom Configuration\". {then}"
                 ),
                 format!(
                     "app 1000070's Default Touch Configuration is \"Mouse point and click\" and \
-                     the full game's, app 1000050's, is \"Custom Configuration\": {then}"
+                     the full game's, app 1000050's, is \"Custom Configuration\". {then}"
                 ),
             ]
         );
@@ -1026,7 +1027,7 @@ mod tests {
         assert_eq!(
             demo_of(&settings, 1_000_070, 1_000_030),
             [format!(
-                "app 1000070's base game is app 1000050, not the full game, app 1000030: change \
+                "app 1000070's base game is app 1000050, not the full game, app 1000030. Change \
                  it {then}"
             )]
         );
@@ -1041,9 +1042,9 @@ mod tests {
                 1_000_050
             ),
             [
-                format!("app 1000070 is typed Game, not Demo: set its type to Demo {then}"),
+                format!("app 1000070 is typed Game, not Demo. Set its type to Demo {then}"),
                 format!(
-                    "app 1000070's settings name no base game: enter the full game, app 1000050, \
+                    "app 1000070's settings name no base game. Enter the full game, app 1000050, \
                      {then}"
                 ),
             ]
@@ -1051,7 +1052,7 @@ mod tests {
         assert_eq!(
             demo_of(&Block { pairs: Vec::new() }, 1_000_070, 1_000_050).first(),
             Some(&format!(
-                "app 1000070's settings give it no type: set it to Demo {then}"
+                "app 1000070's settings give it no type. Set it to Demo {then}"
             ))
         );
     }
@@ -1101,8 +1102,8 @@ mod tests {
         let written = snapshot(1_000_010, &settings).unwrap();
         assert_eq!(
             written,
-            "// App 1000010's settings in Steamworks, kept by `steamship settings --save`;\n\
-             // `steamship settings --check` says where Steam's differ.\n\
+            "// App 1000010's settings in Steamworks, kept by steamship settings --save.\n\
+             // steamship settings --check says where Steam's differ.\n\
              \"1000010\"\n{\n\
              \t\"common\"\n\t{\n\
              \t\t\"name\"\t\t\"Falcon Ridge Overseer\"\n\
@@ -1141,8 +1142,8 @@ mod tests {
         for (hidden, said) in [
             (
                 "1",
-                "Steam Cloud set up in Steamworks for developers only, so players have none: \
-                 turn it on for everyone on the app's Steam Cloud page",
+                "Steam Cloud set up in Steamworks for developers only, so players have none. \
+                 Turn it on for everyone on the app's Steam Cloud page",
             ),
             ("0", "Steam Cloud set up in Steamworks"),
         ] {
@@ -1190,7 +1191,7 @@ mod tests {
                 folder(name),
                 Some(format!(
                     "the install folder is \"{name}\", and steamship takes letters and digits \
-                     alone: change it in Steamworks under Installation, General Installation, \
+                     alone. Change it in Steamworks under Installation, General Installation, \
                      then save the settings again"
                 )),
                 "{name}"

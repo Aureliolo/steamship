@@ -64,7 +64,7 @@ impl Reader {
                     at = at.saturating_add(1);
                 }
                 // A carriage return alone moves back over the line: what follows is the line
-                // again, so the part before is dropped; before a line feed it ends nothing. One
+                // again, so the part before is dropped. Before a line feed it ends nothing. One
                 // that ends the chunk waits for the next, which says which it is.
                 b'\r' => match bytes.get(at.saturating_add(1)) {
                     None => {
@@ -148,7 +148,7 @@ impl Reader {
     }
 }
 
-/// How many bytes a character starting with `lead` takes in UTF-8; a byte that starts none is
+/// How many bytes a character starting with `lead` takes in UTF-8. A byte that starts none is
 /// taken alone, and replaced when shown.
 const fn utf8_length(lead: u8) -> usize {
     match lead {
@@ -225,7 +225,7 @@ fn count_of(digits: &[u8]) -> Option<usize> {
     if digits.is_empty() {
         return Some(1);
     }
-    // A console is never larger than this; a larger count is not a screen's worth of anything.
+    // A console is never larger than this. A larger count is not a screen's worth of anything.
     let count = str::from_utf8(digits)
         .ok()
         .and_then(|digits| digits.parse::<usize>().ok())

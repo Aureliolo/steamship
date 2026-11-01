@@ -2,7 +2,7 @@
 //! passed to it.
 //!
 //! A password or code goes from the person straight to steamcmd's input, and is wiped once
-//! written; it is never shown, logged or kept.
+//! written. It is never shown, logged or kept.
 
 use std::io::{self, Read, Write};
 
@@ -33,7 +33,7 @@ pub trait Person {
     /// The login was approved.
     fn approved(&mut self);
 
-    /// steamcmd logged in with the login it saved, asking for nothing.
+    /// steamcmd logged in with the login it saved and asked for nothing.
     fn saved(&mut self);
 
     /// steamcmd said something steamship has no meaning for.
@@ -68,7 +68,7 @@ where
     let mut reader = Reader::default();
     let mut refused = None;
     // A prompt is seen again each time more output arrives before the line ends, as when the
-    // cursor is moved; it is answered once.
+    // cursor is moved. It is answered once.
     let mut answered = false;
     let mut chunk = [0_u8; 4096];
     loop {

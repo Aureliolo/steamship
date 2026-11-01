@@ -46,19 +46,19 @@ const SHORT_MOST: usize = 300;
 const WORKSHOP_DESCRIPTION_MOST: usize = 200;
 
 // What a translator is told of each kind of Steam's text, in the template.
-const STORE_NOTE: &str = "On the game's Steam store page; plain prose, no markup.";
+const STORE_NOTE: &str = "On the game's Steam store page. Plain prose, no markup.";
 const FIELD_NOTE: &str = "A line of the game's Steam store page outside its description, such \
-                          as a system requirement; plain text, every product and model name kept \
+                          as a system requirement. Plain text, every product and model name kept \
                           as written.";
 const DISCLOSURE_NOTE: &str = "The game's statement on its Steam store page of how AI was used \
-                               in making it, shown under About This Game; plain prose, no \
+                               in making it, shown under About This Game. Plain prose, no \
                                markup, and the same plain claim in every language.";
 const SCREENSHOT_NOTE: &str = "Alt text for a screenshot on the game's Steam store page, read \
-                               aloud by screen readers; plain prose.";
+                               aloud by screen readers. Plain prose.";
 const IMAGE_NOTE: &str = "Alt text for a picture in the About This Game of the game's Steam \
-                          store page, read aloud by screen readers; plain prose.";
+                          store page, read aloud by screen readers. Plain prose.";
 const WORKSHOP_NOTE: &str = "On the game's Steam Workshop page, beside its picture: the title a \
-                             short headline, the description one or two lines; plain prose, no \
+                             short headline, the description one or two lines. Plain prose, no \
                              markup.";
 const PRESENCE_NOTE: &str = "What Steam shows the player's friends. Keep every {field}, which \
                              Steam fills with a value, and every {#Token_{field}} whole, which \
@@ -76,7 +76,7 @@ pub struct English {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Store {
     /// The store page's item ID, which its Localization tab's export names and which is not the
-    /// app's; empty until it is known, when nothing is written for the upload.
+    /// app's. It is empty until it is known, when nothing is written for the upload.
     pub item: String,
     /// The statement of how AI was used in making the game, empty for none.
     pub disclosure: String,
@@ -219,7 +219,7 @@ fn block(given: &Json, number: usize) -> Result<Part, String> {
                 None | Some(Json::Null) => None,
                 Some(Json::String(alt)) if alt.is_empty() => {
                     return Err(format!(
-                        "block {number}'s \"alt\" is empty: leave it out of an image with none"
+                        "block {number}'s \"alt\" is empty. Leave it out of an image with none"
                     ));
                 }
                 Some(Json::String(alt)) => Some(alt.clone()),
@@ -262,10 +262,10 @@ fn block(given: &Json, number: usize) -> Result<Part, String> {
     Ok(part)
 }
 
-/// Refuses alt text Steam would not number as meant: the number is the image's place in the
+/// Refuses alt text Steam would not number as meant. The number is the image's place in the
 /// store's own list of its images, which need not follow the About's order and may hold an image
-/// the About does not show, so with any alt text `extras` has to give that list, holding each
-/// image the About shows; and each image's alt text is given once.
+/// the About does not show. So with any alt text, `extras` has to give that list, and the list
+/// has to hold each image the About shows. Each image's alt text has to be given once.
 fn in_steams_order(blocks: &[Part], extras: &[String]) -> Result<(), String> {
     let mut described: Vec<&str> = Vec::new();
     for (index, part) in blocks.iter().enumerate() {
@@ -276,14 +276,13 @@ fn in_steams_order(blocks: &[Part], extras: &[String]) -> Result<(), String> {
         if alt.is_some() {
             if extras.is_empty() {
                 return Err(format!(
-                    "block {number} gives \"alt\", and \"extras\" does not list the About's \
-                     images in the order the store keeps them, by which Steam numbers their alt \
-                     text"
+                    "block {number} gives \"alt\", but \"extras\" does not list the About's \
+                     images in the store's order, by which Steam numbers their alt text"
                 ));
             }
             if described.contains(&name.as_str()) {
                 return Err(format!(
-                    "block {number} gives {name} alt text a second time: give it once"
+                    "block {number} gives {name} alt text a second time. Give it once"
                 ));
             }
             described.push(name);
@@ -461,7 +460,7 @@ fn token_named(name: &str) -> Result<(), String> {
 /// `english`, the line of the token `name`, refused when it is empty.
 fn line_of<'line>(name: &str, english: &'line str) -> Result<&'line str, String> {
     if english.is_empty() {
-        Err(format!("{name} has no English: give it its line"))
+        Err(format!("{name} has no English. Give it its line"))
     } else {
         Ok(english)
     }
@@ -626,7 +625,7 @@ fn quoted(text: &str) -> String {
 }
 
 /// Each short description and Workshop description among `files` past Steam's room for it, which
-/// Steam would cut, naming the catalogue of `translations` it comes from.
+/// Steam would cut. Each names the catalogue of `translations` it comes from.
 fn past_rooms(files: &[(String, String)], translations: &[Catalogued]) -> Vec<String> {
     files
         .iter()
@@ -654,8 +653,8 @@ fn past_room(file: &str, language: &str, text: &str, most: usize) -> Option<Stri
     let count = text.chars().count();
     (count > most).then(|| {
         format!(
-            "{file}: {text:?} is {count} characters in {language}, past the {most} Steam shows: \
-             shorten it"
+            "{file}: {text:?} is {count} characters in {language}, past the {most} Steam shows. \
+             Shorten it"
         )
     })
 }
@@ -670,14 +669,14 @@ fn escaped(file: &str, language: &str, number: usize, alt: &str) -> Vec<String> 
     let said = format!("{file}: screenshot {number}'s alt text in {language}, {alt:?},");
     if alt.contains('&') {
         why.push(format!(
-            "{said} holds \"&\", which Steamworks' Edit Accessibility Text panel keeps as \"&amp;\" \
-             and a screen reader reads out: write the word for \"and\" in {language} instead"
+            "{said} holds \"&\". Steamworks' Edit Accessibility Text panel keeps it as \"&amp;\", \
+             and a screen reader reads that out. Write the word for \"and\" in {language} instead"
         ));
     }
     if alt.contains('"') {
         why.push(format!(
-            "{said} holds a straight double quote, which Steamworks' Edit Accessibility Text panel \
-             keeps as \"&quot;\" and a screen reader reads out: use {language}'s own quotation \
+            "{said} holds a straight double quote. Steamworks' Edit Accessibility Text panel keeps \
+             it as \"&quot;\", and a screen reader reads that out. Use {language}'s own quotation \
              marks instead, such as \u{201c} \u{201d} or \u{ab} \u{bb}"
         ));
     }
@@ -685,7 +684,7 @@ fn escaped(file: &str, language: &str, number: usize, alt: &str) -> Vec<String> 
 }
 
 /// Every file of the text in English and in each language of `translations`, by its path from
-/// the build scripts' folder, with what it holds; or every translation missing from them.
+/// the build scripts' folder, with what it holds, or else every translation missing from them.
 ///
 /// # Errors
 ///
@@ -992,7 +991,7 @@ fn braced(line: &str) -> String {
     rewrapped(line, '%', '%', '{', '}')
 }
 
-/// `line` with each `{field}` a translation carries written back as Steam takes it, `%field%`; a
+/// `line` with each `{field}` a translation carries written back as Steam takes it, `%field%`. A
 /// token's whole reference, `{#Token_{field}}`, keeps its braces.
 fn steam_fields(line: &str) -> String {
     rewrapped(line, '{', '}', '%', '%')
@@ -1333,13 +1332,13 @@ msgstr "Die Erlenhexe"
             written(&english, &[german(&translated)]),
             Err(vec![
                 format!(
-                    "{said} holds \"&\", which Steamworks' Edit Accessibility Text panel keeps as \
-                     \"&amp;\" and a screen reader reads out: write the word for \"and\" in \
+                    "{said} holds \"&\". Steamworks' Edit Accessibility Text panel keeps it as \
+                     \"&amp;\", and a screen reader reads that out. Write the word for \"and\" in \
                      german instead"
                 ),
                 format!(
-                    "{said} holds a straight double quote, which Steamworks' Edit Accessibility \
-                     Text panel keeps as \"&quot;\" and a screen reader reads out: use german's \
+                    "{said} holds a straight double quote. Steamworks' Edit Accessibility Text \
+                     panel keeps it as \"&quot;\", and a screen reader reads that out. Use german's \
                      own quotation marks instead, such as \u{201c} \u{201d} or \u{ab} \u{bb}"
                 ),
             ])
@@ -1351,9 +1350,9 @@ msgstr "Die Erlenhexe"
             ..English::default()
         };
         let refused = format!(
-            "{STORE}: screenshot 1's alt text in english, \"Duel & dusk.\", holds \"&\", which \
-             Steamworks' Edit Accessibility Text panel keeps as \"&amp;\" and a screen reader \
-             reads out: write the word for \"and\" in english instead"
+            "{STORE}: screenshot 1's alt text in english, \"Duel & dusk.\", holds \"&\". \
+             Steamworks' Edit Accessibility Text panel keeps it as \"&amp;\", and a screen reader \
+             reads that out. Write the word for \"and\" in english instead"
         );
         assert_eq!(
             written(&written_in_english, &[]),
@@ -1427,7 +1426,7 @@ msgstr "Die Erlenhexe"
             ),
             (
                 "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\", \"alt\": \"\"}]}",
-                "block 1's \"alt\" is empty: leave it out of an image with none",
+                "block 1's \"alt\" is empty. Leave it out of an image with none",
             ),
             (
                 "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\", \"alt\": 1}]}",
@@ -1436,8 +1435,8 @@ msgstr "Die Erlenhexe"
             (
                 "{\"blocks\": [{\"kind\": \"short\", \"text\": \"S.\"}, \
                  {\"kind\": \"image\", \"image\": \"a\", \"alt\": \"A.\"}]}",
-                "block 2 gives \"alt\", and \"extras\" does not list the About's images in the \
-                 order the store keeps them, by which Steam numbers their alt text",
+                "block 2 gives \"alt\", but \"extras\" does not list the About's images in the \
+                 store's order, by which Steam numbers their alt text",
             ),
             (
                 "{\"extras\": [\"a\"], \"blocks\": [\
@@ -1450,7 +1449,7 @@ msgstr "Die Erlenhexe"
                 "{\"extras\": [\"a\"], \"blocks\": [\
                  {\"kind\": \"image\", \"image\": \"a\", \"alt\": \"A.\"}, \
                  {\"kind\": \"image\", \"image\": \"a\", \"alt\": \"B.\"}]}",
-                "block 2 gives a alt text a second time: give it once",
+                "block 2 gives a alt text a second time. Give it once",
             ),
             (
                 "{\"itemid\": 1, \"title\": \"A\"}",
@@ -1559,7 +1558,7 @@ msgstr "Die Erlenhexe"
             written(&english, &[german(&broken)]),
             Err(vec![
                 "rich_presence_german.vdf would not be read back: #Status_Race: \
-                 \"{#Bishop_%bishop%, im Duell\" holds a reference Steam cannot fill: write \
+                 \"{#Bishop_%bishop%, im Duell\" holds a reference Steam cannot fill. Write \
                  {#Token} or {#Token_%field%}"
                     .to_owned()
             ])
@@ -1623,7 +1622,7 @@ msgstr "Die Erlenhexe"
             ),
             (
                 r##"{"#Status_Day": ""}"##,
-                "#Status_Day has no English: give it its line",
+                "#Status_Day has no English. Give it its line",
             ),
             (
                 r##"{"#Bishop_": {"records": ""}}"##,
@@ -1672,7 +1671,7 @@ msgstr "Die Erlenhexe"
         );
         assert_eq!(
             presence_english(&file("#Status_Day", "")).map(|_| ()),
-            Err("#Status_Day has no English: give it its line".to_owned())
+            Err("#Status_Day has no English. Give it its line".to_owned())
         );
         assert_eq!(
             presence_english(&file("#Status_Day", "Day")).map(|told| told.tokens.len()),
@@ -1752,7 +1751,7 @@ msgstr "Die Erlenhexe"
         assert_eq!(
             past_room(STORE, "english", &"\u{e4}".repeat(301), 300),
             Some(format!(
-                "{STORE}: \"{}\" is 301 characters in english, past the 300 Steam shows: shorten it",
+                "{STORE}: \"{}\" is 301 characters in english, past the 300 Steam shows. Shorten it",
                 "\u{e4}".repeat(301)
             ))
         );
@@ -1804,7 +1803,7 @@ msgstr "Die Erlenhexe"
         assert_eq!(
             written(&english, &[german]),
             Err(vec![format!(
-                "de.po: \"{}\" is 301 characters in german, past the 300 Steam shows: shorten it",
+                "de.po: \"{}\" is 301 characters in german, past the 300 Steam shows. Shorten it",
                 "m".repeat(301)
             )])
         );
@@ -1834,7 +1833,7 @@ msgstr "Die Erlenhexe"
         assert_eq!(
             written(&english, &[german]),
             Err(vec![format!(
-                "de.po: \"{}\" is 201 characters in german, past the 200 Steam shows: shorten it",
+                "de.po: \"{}\" is 201 characters in german, past the 200 Steam shows. Shorten it",
                 "b".repeat(201)
             )])
         );

@@ -10,11 +10,12 @@ use clap::{Args, Parser, Subcommand};
 use crate::platform::Platform;
 use crate::{ci, fetch, init, platform, show, update, webapi, workshop};
 
-/// Something failed; what, and why, is printed.
+/// Something failed. What failed, and why, is printed.
 pub const FAILED: u8 = 1;
-/// `check` refused the scripts, or the command line was wrong (clap uses 2 for the latter too).
+/// A check refused the input or found a difference, or the command line was wrong (clap uses 2
+/// for the latter too).
 pub const REFUSED: u8 = 2;
-/// steamcmd has no login it can use; `login` again.
+/// steamcmd has no login it can use. Run `login` again.
 pub const LOGIN: u8 = 3;
 /// steamcmd is missing or has been altered.
 pub const STEAMCMD: u8 = 4;
@@ -24,15 +25,15 @@ pub const EXIT_CODES: [(u8, &str); 5] = [
     (0, "Done"),
     (
         FAILED,
-        "The upload or login failed; the reason is printed, and for an upload the logs' paths",
+        "The command failed and printed why. An upload also prints its logs' paths",
     ),
     (
         REFUSED,
-        "`check` refused the scripts, or the command line was wrong",
+        "A check refused the input or found a difference, and named each. Or the command line was wrong",
     ),
     (
         LOGIN,
-        "Not logged in, or the token expired; run `steamship login`",
+        "Not logged in, or the token expired. Run `steamship login`",
     ),
     (STEAMCMD, "steamcmd is missing or has been altered"),
 ];
@@ -41,11 +42,12 @@ pub const EXIT_CODES: [(u8, &str); 5] = [
 pub const ACCOUNT: &str = "STEAMSHIP_ACCOUNT";
 
 /// Every environment variable steamship reads, and what it is for. The Steam account's password
-/// is never among them, nor anywhere else; a beta branch's, which every player let in shares, is.
+/// is never among them, nor anywhere else. A beta branch's password is, since every player let in
+/// shares it.
 pub const VARIABLES: [(&str, &str); 6] = [
     (
         platform::HOME,
-        "Where steamcmd, its token and build output live; a per-user folder by default",
+        "Where steamcmd, its token and build output live, by default a per-user folder",
     ),
     (
         ACCOUNT,
@@ -53,7 +55,7 @@ pub const VARIABLES: [(&str, &str); 6] = [
     ),
     (
         ci::VARIABLE,
-        "In CI, the login `steamship ci` set as a secret; `upload` and `status` use it",
+        "In CI, the login `steamship ci` set as a secret, for `upload` and `status`",
     ),
     (
         webapi::KEY,
@@ -89,11 +91,10 @@ pub struct Cli {
 pub enum Command {
     /// Log in to Steam, once, for uploads.
     ///
-    /// Asks for the account's name when none is given or remembered, then the password, and a
-    /// Steam Guard code or approval in the Steam Mobile app. What you type is passed directly to
-    /// steamcmd, never logged or saved. At a terminal it then offers to keep the publisher Web
-    /// API key, which `builds` and the other commands that ask Steam's Web API use, in the
-    /// system's credential store.
+    /// Asks for the account's name when none is given or remembered. Then it asks for the
+    /// password, and a Steam Guard code or approval in the Steam Mobile app. What you type is passed directly to
+    /// steamcmd, never logged or saved. At a terminal, it then offers to keep the publisher Web
+    /// API key in the system's credential store. `builds` and the other Web API commands use it.
     Login {
         /// The build account, if not the one the last login remembered.
         #[arg(long, env = ACCOUNT)]
@@ -102,10 +103,10 @@ pub enum Command {
         #[arg(long)]
         web_api_key: bool,
     },
-    /// Show the login and steamcmd, checking the login with Steam.
+    /// Show the login and steamcmd, and whether Steam takes the login.
     ///
-    /// Shows the home, the build account and steamcmd, then logs in with the login steamcmd
-    /// saved, as an upload does, and says whether Steam takes it. Nothing is asked for.
+    /// Shows the steamship home, the build account and steamcmd. Then it logs in with the login
+    /// steamcmd saved, as an upload does. Nothing is asked for.
     Status {
         /// The build account, if not the one the last login remembered.
         #[arg(long, env = ACCOUNT)]
@@ -114,76 +115,79 @@ pub enum Command {
     /// Check the build scripts, without logging in.
     ///
     /// Reads an app build script and every depot script it names, and refuses anything that
-    /// would upload the wrong thing. Without a script, in a game's folder, checks its scripts and
-    /// then, as Steam shows them, its achievements, leaderboards, rich presence and branches,
-    /// naming every difference from the game's files; the content is checked by `upload`, once
-    /// it is built.
+    /// would upload the wrong thing. Without a script, in a game's folder, it checks the game's
+    /// scripts. It then compares the game's achievements, leaderboards, rich presence and
+    /// branches on Steam with the game's files, and names every difference. `upload` checks the
+    /// content once it is built.
     ///
-    /// Given a build's folder, checks the files in it alone, as soon as it is built and before
-    /// any script maps it: among them every DLL its Windows programs and libraries load, at the
-    /// start or when first called, that neither Windows nor the folder has. In a game's folder,
-    /// one a Common Redistributable installs is refused unless the settings snapshot ticks it, and
-    /// so is a build without the Steam Input action manifest the snapshot names. The snapshot is
-    /// the demo's with `--demo`, or for a folder that only the demo's depots ship. The game's
-    /// rich presence files are read too, as `rich-presence --preview` reads them, all offline.
+    /// Given a build's folder, it checks the files alone, as soon as they are built and before
+    /// any script maps them. It names every DLL the folder's Windows programs and libraries load,
+    /// at start or on first call, that neither Windows nor the folder has. In a game's folder, a
+    /// DLL a Common Redistributable installs is refused unless the settings snapshot ticks that
+    /// redistributable. So is a build without the Steam Input action manifest the snapshot names.
+    /// The snapshot is the demo's with `--demo`, or for a folder only the demo's depots ship. The
+    /// game's rich presence files are read too, as `rich-presence --preview` reads them. All of
+    /// this is offline.
     Check {
         /// The app build script, such as `steam/app_build.vdf`, or a build's folder, such as
-        /// `export/windows`; in a game's folder, its own script.
+        /// `export/windows`. In a game's folder, the game's own script.
         script: Option<PathBuf>,
-        /// Check the scripts alone, not the content they map, as before the build exists;
+        /// Check the scripts alone, not the content they map, as before the build exists.
         /// `upload` still checks both.
         #[arg(long)]
         scripts_only: bool,
-        /// In a game's folder, check its demo, its own app, in place of the full game; with a
-        /// build's folder, judge it against the demo's settings snapshot, as is done without it
-        /// for a folder only the demo's depots ship.
+        /// In a game's folder, check its demo, a separate app, in place of the full game. With a
+        /// build's folder, judge it against the demo's settings snapshot. A folder only the
+        /// demo's depots ship is judged that way without the flag.
         #[arg(long)]
         demo: bool,
     },
     /// Check, build and upload, then print the build ID.
     ///
-    /// Runs `check`, then the build, with steamcmd out of sight, and says the build's ID and
-    /// the branch it was set live on.
+    /// Runs `check`, then the build, with steamcmd hidden. It prints the build's ID and the branch
+    /// it was set live on.
     ///
-    /// Without a script, in a game's folder, ships the game: refused unless its tree holds
-    /// nothing uncommitted, origin's default branch is at the same commit, and its script sets the
-    /// game's branch live, `testing` unless `steamship.toml` names another; then built with its
-    /// `build` command, steamcmd and the build held to 4 processors or the file's `cores`, and
-    /// refused if a file its depots map was not written by the build; then checked against the
-    /// settings snapshot `steam/settings.vdf`, its achievements, leaderboards and rich presence,
-    /// and uploaded as the newest release `CHANGES.md` heads, or else the version `project.godot`
-    /// gives, live on the default branch too while the app is unreleased. Once it is live, the
-    /// branch's description becomes
-    /// the version, or the file's `description`. An app with no branch but default has the build
-    /// live on default alone, and steamship names the commands that set it live on the game's
-    /// branch and describe it once that branch is made.
+    /// Without a script, in a game's folder, ships the game. This is refused while the game's tree
+    /// holds anything uncommitted or origin's default branch is at another commit. Its script must
+    /// set the game's branch live: `testing`, or the branch `steamship.toml` names. The game is
+    /// built with its `build` command, steamcmd and the build held to 4 processors or the file's
+    /// `cores`. A file its depots map that the build did not write is refused. The build is checked
+    /// against the settings snapshot `steam/settings.vdf`, its achievements, leaderboards and rich
+    /// presence. Its version is the newest release `CHANGES.md` heads, or else the one
+    /// `project.godot` gives.
+    ///
+    /// While the app is unreleased, the build goes live on the default branch too. Once it is
+    /// live, the branch's description becomes the version, or the file's `description`. An app
+    /// with no branch but default gets the build on default alone. steamship then prints the
+    /// commands that set it live on the game's branch and describe that branch, once it is made.
     Upload(Upload),
     /// Upload a Workshop item, then print its ID.
     ///
-    /// Takes the item as Valve's `workshopitem` script, or by its fields with `--app` and the
-    /// rest, from which steamship writes the script itself. Checks the item and what it names,
-    /// then has steamcmd upload it with the saved login. A script with no `publishedfileid`
-    /// makes a new item, whose ID is printed to add to the script; an item by its fields makes a
-    /// new one when the `--items` file has none of its name, and writes the new ID into it. Either
-    /// way later uploads update the same item. In CI a new item is refused without `--new`, since
-    /// every run would make another.
+    /// Takes the item as Valve's `workshopitem` script, or as fields given with `--app` and the
+    /// options that go with it. From the fields, steamship writes the script itself. It checks the item
+    /// and what it names, then has steamcmd upload it with the saved login.
     ///
-    /// With neither, in a game's folder, uploads each of its example mods, a folder in
-    /// `modding/` holding a games-kit `manifest.json`, or the one `--name` names: refused unless
-    /// the tree is pushed, as for `upload`. Its title, description and version come from the
-    /// manifest, its preview is the `preview.png` each mod needs beside it, and each item's ID is
-    /// kept in `steam/workshop_items.json`.
+    /// A script with no `publishedfileid` makes a new item. Its ID is printed for you to add to
+    /// the script. Given by fields, an item whose name the `--items` file lacks is made new, and
+    /// its ID is written into that file. Either way, later uploads update the same item. In CI, a
+    /// new item needs `--new`, since every run would make another.
     ///
-    /// In a game whose `steamship.toml` sets `held_until_launch` under `[workshop]`, an item for
-    /// the game's app goes up only once Steam shows the game released, or with `--for-launch`.
+    /// With neither, in a game's folder, uploads each of the game's example mods, or only the one
+    /// `--name` names. An example mod is a folder in `modding/` holding a games-kit
+    /// `manifest.json`. This is refused unless the tree is pushed, as for `upload`. Each mod's
+    /// title, description and version come from its manifest. Its preview is the `preview.png`
+    /// each mod needs in its folder. Each item's ID is kept in `steam/workshop_items.json`.
+    ///
+    /// A game's `steamship.toml` can set `held_until_launch` under `[workshop]`. An item for that
+    /// game's app then goes up only once Steam shows the game released, or with `--for-launch`.
     Workshop(Workshop),
     /// Show an app's branches and last builds.
     ///
-    /// Lists each branch with the build live on it, then the last builds uploaded, through
-    /// Steam's partner Web API, with the publisher key from `STEAMSHIP_WEB_API_KEY`, or else the
-    /// one `login` kept; at a terminal, one is asked for when there is neither.
+    /// Lists each branch with the build live on it, then the last builds uploaded. It asks Steam's
+    /// partner Web API, with the publisher key from `STEAMSHIP_WEB_API_KEY`, or else the one
+    /// `login` kept. At a terminal, it asks for a key when there is neither.
     Builds {
-        /// The app, by its ID or its app build script; in a game's folder, its own.
+        /// The app, by its ID or its app build script. In a game's folder, the game's own.
         app: Option<String>,
         /// In a game's folder, its demo's.
         #[arg(long, conflicts_with = "app")]
@@ -198,65 +202,70 @@ pub enum Command {
     },
     /// Download a branch's build as Steam serves it, into a folder of its own.
     ///
-    /// Asks Steam's partner Web API, with the publisher key as `builds` finds it, which build is
-    /// live on the branch, then has steamcmd download it with the saved login, as the build
-    /// account, for one system: this one unless `--system` names another. Each app, branch and
-    /// system has its own folder under the steamship home, or the one `--into` names, and Steam
-    /// installs nothing in a Steam library. A fetch into a folder that already holds a build of
-    /// the branch checks each of the build's files there and downloads only those that differ;
-    /// files the build does not have are left. The folder and the build it holds are printed once
-    /// steamcmd's record of it shows the build asked for. A folder holding another branch is
-    /// refused.
+    /// Asks Steam's partner Web API which build is live on the branch, with the publisher key as
+    /// `builds` finds it. steamcmd then downloads that build as the build account, with the saved
+    /// login. It downloads for this system, or the one `--system` names.
     ///
-    /// A branch that takes a password is opened with the one in `STEAMSHIP_BRANCH_PASSWORD`, or
-    /// else the one kept for it in the system's credential store, or else one typed at the
-    /// prompt, which can then be kept. steamship types it into steamcmd's console, where no other
-    /// program sees it, unless `--password-on-command-line` asks for steamcmd's own way. A
-    /// password Steam refuses is forgotten if it was kept.
+    /// Each app, branch and system has its own folder under the steamship home, or the one
+    /// `--into` names. Nothing is installed in a Steam library. A fetch into a folder already
+    /// holding a build of the branch checks each of the build's files there. It downloads only
+    /// those that differ, and leaves files the build does not have in place. A folder holding
+    /// another branch is refused. The folder and its build are printed once steamcmd's record of
+    /// it shows the build asked for.
+    ///
+    /// A branch's password comes from `STEAMSHIP_BRANCH_PASSWORD`, or else the system's
+    /// credential store, or else the prompt, which can then keep it. steamship types it into
+    /// steamcmd's console, where no other program sees it. `--password-on-command-line` gives it
+    /// on steamcmd's command line instead. A kept password that Steam refuses is forgotten.
     Fetch(Fetch),
     /// Show an app's achievements and stats, check them against files, or write their import.
     ///
-    /// Lists the achievements and stats Steam holds for the app, in English, through Steam's
-    /// partner Web API with the publisher key as `builds` finds it, with the share of players who
-    /// have each achievement and each aggregated stat's total over all players. With `--check`,
-    /// compares them with the files, read together, by API name, and exits 2 naming every
-    /// achievement missing on either side, every display name, description or hidden flag that
-    /// differs, and every icon Steam has none of; and the same of the stats, their display
-    /// names, defaults and whether Steam adds them up over all players, when a file lists them.
-    /// With a localisation or gettext catalogues among the files, it asks Steam for the
-    /// achievements in each of their languages as well, and names every name or description that
-    /// differs or that Steam lacks in one. Nothing on Steam is changed.
+    /// Lists the achievements and stats Steam holds for the app, in English. Each achievement
+    /// shows the share of players who have it, and each aggregated stat its total over all
+    /// players. This goes through Steam's partner Web API, with the publisher key as `builds`
+    /// finds it.
     ///
-    /// With `--write`, writes the files the achievement editor takes under Bulk Import/Export into
-    /// the `--out` folder instead, from the same kind of files, with nothing asked of Steam: the
-    /// definitions, every name and description in each language, the sets' names, and each icon
-    /// named for its achievement. Either way, the files are refused first, exiting 2, when an
-    /// achievement counts a stat it unlocks at no value of, is in a set no file lists, or there
-    /// are more sets or achievements than Steam takes.
+    /// With `--check`, it compares them by API name with the files, read together. It exits 2
+    /// and names every achievement missing on either side, and every display name, description
+    /// or hidden flag that differs. It also names every icon or locked icon Steam lacks. When a
+    /// file lists stats, it compares their display names and defaults too, and whether Steam
+    /// totals them over all players. With a localisation or gettext catalogues among the files,
+    /// it also asks Steam for the achievements in each of their languages. It names every name
+    /// or description that differs, or that Steam lacks in a language. Nothing on Steam is
+    /// changed.
+    ///
+    /// With `--write`, it writes the files for the achievement editor's Bulk Import/Export into
+    /// the `--out` folder instead, from the same kind of files. Nothing is asked of Steam. The
+    /// files hold the definitions, every name and description in each language, the sets' names,
+    /// and each icon named for its achievement.
+    ///
+    /// Either way, the files are refused first, exiting 2, when an achievement unlocks at a value
+    /// its stat never takes. They are refused too for an achievement in a set no file lists, or
+    /// for more sets or achievements than Steam takes.
     ///
     /// Once the files are imported and published, `--imported` compares each icon Steam serves
-    /// with its file, pixel by pixel, and when all are alike writes `steam-icons.json` into the
-    /// `--out` folder, recording each icon's SHA-256 and the image Steam made of it. `--check`
-    /// with that `--out` then also names every icon changed in the files since, every icon Steam
-    /// made anew though its file is the one imported, and every icon the receipt has no import
-    /// of, without fetching the images. Steam answers with what is published, so an import saved
-    /// but not published counts once it is.
+    /// with its file, pixel by pixel. When all match, it writes the receipt `steam-icons.json`
+    /// into the `--out` folder. The receipt records each icon's SHA-256 and the image Steam made
+    /// of it. `--check` with that `--out` then also names icons changed in the files since, and
+    /// icons Steam made anew from an unchanged file. It names icons the receipt has no import of
+    /// too. It fetches no images for this. Steam serves only what is published, so a saved import counts
+    /// once it is published.
     ///
-    /// In a game's folder, `--check` and `--write` with no files read the game's own: the
-    /// games-kit records in `mods/base/data` holding achievements, stats or sets, and every
-    /// catalogue in `game/locale`; the folder is `steam/achievements`, and `--check` compares the
-    /// icons with its receipt once there is one. `--imported` alone writes that receipt.
+    /// In a game's folder, `--check` and `--write` with no files read the game's own. These are
+    /// the games-kit records in `mods/base/data` holding achievements, stats or sets, and every
+    /// catalogue in `game/locale`. The `--out` folder is `steam/achievements`. `--check` compares
+    /// the icons with its receipt once there is one. `--imported` alone writes that receipt.
     #[command(group(clap::ArgGroup::new("files").args(["check", "write"]).multiple(true)))]
     Achievements {
-        /// The app, by its ID or its app build script; in a game's folder, its own.
+        /// The app, by its ID or its app build script. In a game's folder, the game's own.
         app: Option<String>,
         /// JSON files of the achievements the app should have, each with its `api_name`, `name`,
-        /// `description` and `hidden`, and of its stats if they are to be checked, each with its
-        /// `api_name`, `name` and `default`; or lists of games-kit's records, those typed
-        /// `achievement` and `stat` read the same way by the API name in `steam`. Each
+        /// `description` and `hidden`. Stats to be checked go in them too, each with its
+        /// `api_name`, `name` and `default`. A file may instead be a list of games-kit records:
+        /// those typed `achievement` and `stat` are read by the API name in `steam`. Each
         /// achievement and stat is in one file only. A `.csv` file is a localisation in the
-        /// columns Steamworks' achievement editor exports, which then has to translate every
-        /// achievement; `.po` files are gettext catalogues, which have to.
+        /// columns Steamworks' achievement editor exports. A `.po` file is a gettext catalogue.
+        /// Either must translate every achievement.
         #[arg(long, value_name = "FILE", num_args = 0..)]
         check: Option<Vec<PathBuf>>,
         #[command(flatten)]
@@ -269,24 +278,25 @@ pub enum Command {
     },
     /// Check artwork and icons against Valve's sizes, before they are uploaded.
     ///
-    /// Reads every PNG, JPEG, icon and zip in the folder, each named for the asset it is
-    /// (`header_capsule.png`, `library_logo.png`, `screenshot_01.jpg`, `linux_icons.zip`), or
-    /// with Steam's name for a language after it as Steamworks reads one
-    /// (`header_capsule_koreana.png`), and in each folder inside it named for a language (`de`,
-    /// `koreana`) as that language's. Exits 2 naming every one that is not the size or format
-    /// Steamworks takes, is named for no asset, or cannot be read, every file in the Linux icons
-    /// that is not a square PNG, and too few screenshots. Nothing is sent anywhere.
+    /// Reads every PNG, JPEG, icon and zip in the folder. Each is named for its asset, such as
+    /// `header_capsule.png`, `library_logo.png`, `screenshot_01.jpg` or `linux_icons.zip`. A
+    /// language's file adds Steam's name for the language, as in `header_capsule_koreana.png`.
+    /// A folder inside named for a language, such as `de` or `koreana`, holds that language's
+    /// files.
+    ///
+    /// It exits 2 and names every file that is not a size or format Steamworks takes, is named
+    /// for no asset, or cannot be read. It also names every file in the Linux icons that is not a
+    /// square PNG, and says when there are too few screenshots. Nothing is sent anywhere.
     Assets {
         /// The folder the artwork is kept in, such as `steam/store`.
         folder: PathBuf,
     },
     /// Wrap a Windows executable in Steam DRM, before it is uploaded.
     ///
-    /// Has Valve's servers add the app's Steam DRM to the executable, through steamcmd with the
-    /// saved login, and replaces the executable with the wrapped one, or writes that to
-    /// `--output`. Nothing is replaced unless the wrap succeeded. Valve's tool adds DRM only to an
-    /// executable that already imports `GetModuleHandleA`, which Godot's do not, and says so when
-    /// it refuses one.
+    /// Valve's servers add the app's Steam DRM to the executable, through steamcmd with the saved
+    /// login. The wrapped executable replaces the one given, or goes to `--output`. Nothing is
+    /// replaced unless the wrap succeeded. Valve's tool wraps only an executable that already
+    /// imports `GetModuleHandleA`, and Godot's do not. The tool says so when it refuses one.
     #[command(name = "drm-wrap")]
     DrmWrap {
         /// The app, by its ID or its app build script.
@@ -296,7 +306,7 @@ pub enum Command {
         /// Write the wrapped executable here instead of replacing the one given.
         #[arg(long, value_name = "FILE")]
         output: Option<PathBuf>,
-        /// Valve's compatibility mode, for an executable the default wrap breaks.
+        /// Wrap in Valve's compatibility mode, for an executable the default wrap breaks.
         #[arg(long)]
         compatibility: bool,
         /// The build account, if not the one the last login remembered.
@@ -305,23 +315,23 @@ pub enum Command {
     },
     /// Show an app's settings in Steamworks, or check them against a snapshot.
     ///
-    /// Asks Steam, through steamcmd with the saved login, for the settings made in Steamworks
-    /// that a build depends on: the app's name, type and systems, its install folder, launch
-    /// options and runtime, its depots' systems, and Steam Cloud. `--save` keeps them in a file
-    /// beside the build scripts, in Valve's own format; `--check` exits 2 naming every setting
+    /// Asks Steam, through steamcmd with the saved login, for the Steamworks settings a build
+    /// depends on. These are the app's name, type and systems, its install folder, launch options
+    /// and runtime, its depots' systems, and Steam Cloud. `--save` keeps them in a file
+    /// beside the build scripts, in Valve's own format. `--check` exits 2 naming every setting
     /// that differs from that file. Nothing on Steam is changed.
     Settings {
-        /// The app, by its ID or its app build script; in a game's folder, its own.
+        /// The app, by its ID or its app build script. In a game's folder, the game's own.
         app: Option<String>,
         /// In a game's folder, its demo's, with the demo's own snapshot beside its build scripts.
         #[arg(long, conflicts_with = "app")]
         demo: bool,
-        /// Write the settings to this file, replacing it, to check against later; in a game's
+        /// Write the settings to this file, replacing it, to check against later. In a game's
         /// folder, `settings.vdf` beside its build scripts. Refused, exiting 2, for an install
         /// folder of anything but letters and digits.
         #[arg(long, value_name = "FILE", num_args = 0..=1, conflicts_with = "check")]
         save: Option<Option<PathBuf>>,
-        /// Compare the settings with this file, as `--save` wrote it; in a game's folder, its
+        /// Compare the settings with this file, as `--save` wrote it. In a game's folder, its
         /// `settings.vdf`. An install folder of anything but letters and digits is a difference.
         #[arg(long, value_name = "FILE", num_args = 0..=1)]
         check: Option<Option<PathBuf>>,
@@ -329,36 +339,44 @@ pub enum Command {
         #[arg(long, env = ACCOUNT)]
         account: Option<String>,
     },
-    /// Show an app's leaderboards, or check them against a file, making or deleting the rest.
+    /// Show an app's leaderboards, check them against files, or make and delete them to match.
     ///
     /// Lists the leaderboards Steam holds for the app, through Steam's partner Web API with the
-    /// publisher key as `builds` finds it. With `--check`, compares them with a file by name, and
-    /// exits 2 naming every leaderboard missing on either side and every setting that differs.
-    /// With `--create` too, those in the files that Steam lacks are made first, as the files have
-    /// them. With `--delete-missing`, those on Steam that the files no longer hold are deleted
-    /// first, with their scores, but only while steamcmd's app info shows the build account the
-    /// app unreleased. Steam keeps an existing leaderboard's settings, so none is ever changed or
-    /// made again. In a game's folder, `--check` with no files, `--create` or `--delete-missing`
-    /// alone reads the games-kit records in `mods/base/data` holding leaderboards.
+    /// publisher key as `builds` finds it. With `--check`, it compares them by name with the
+    /// files. It exits 2 and names every leaderboard missing on either side and every setting
+    /// that differs.
+    ///
+    /// With `--create` too, leaderboards in the files that Steam lacks are made first, as the
+    /// files have them. With `--delete-missing`, leaderboards on Steam that the files no longer
+    /// hold are deleted first, with their scores. That happens only while steamcmd's app info
+    /// shows the build account the app unreleased. An existing leaderboard is never changed or
+    /// made again, as Steam keeps its settings.
+    ///
+    /// In a game's folder, `--check` with no files, `--create` or `--delete-missing` alone reads
+    /// the games-kit records in `mods/base/data` holding leaderboards.
     Leaderboards(Leaderboards),
     /// Upload an app's rich presence localisation.
     ///
     /// Sends Valve's rich presence files, one per language, through Steam's partner Web API with
     /// the publisher key as `builds` finds it. Each language's tokens on Steam are replaced by the
-    /// file's, so a token taken out of the file is gone from Steam after the upload. Files are
-    /// checked first: a token that does not start with `#`, a token twice, a text referring to
-    /// tokens that none starts as, or a text holding a slot Steam cannot fill, anything but
-    /// `%field%` and `{#Token_%field%}`, and nothing is sent while one is wrong. With neither the app
-    /// nor files, in a game's folder, sends every `rich_presence_<language>.vdf` beside its build
-    /// scripts, refused unless the tree is pushed, as for `upload`.
+    /// file's. A token taken out of the file is gone from Steam after the upload.
+    ///
+    /// Files are checked first, and nothing is sent while one is wrong. A file is wrong with a
+    /// token that does not start with `#`, or with a token twice. It is wrong with a text that
+    /// refers to `{#Prefix_%field%}` when no token starts with that prefix. It is wrong with a
+    /// text holding a slot Steam cannot fill: anything but `%field%` and `{#Token_%field%}`.
+    ///
+    /// With neither the app nor files, in a game's folder, it sends every
+    /// `rich_presence_<language>.vdf` beside the game's build scripts. That is refused unless the
+    /// tree is pushed, as for `upload`.
     #[command(name = "rich-presence")]
     RichPresence {
-        /// The app, by its ID or its app build script; in a game's folder, its own.
+        /// The app, by its ID or its app build script. In a game's folder, the game's own.
         app: Option<String>,
         /// In a game's folder, send the full game's files to its demo.
         #[arg(long, conflicts_with = "app")]
         demo: bool,
-        /// The rich presence files, such as `steam/rich_presence_english.vdf`; in a game's folder,
+        /// The rich presence files, such as `steam/rich_presence_english.vdf`. In a game's folder,
         /// every one beside its build scripts.
         files: Vec<PathBuf>,
         /// Check the files and show what would be sent, without sending anything.
@@ -368,34 +386,35 @@ pub enum Command {
     /// Write a game's store, Workshop and rich presence text in every language it speaks.
     ///
     /// In a game's folder, translates the English kept beside its build scripts with every
-    /// gettext catalogue in its locale folder, and writes beside the scripts:
-    /// `store/<language>.json`, which the store page's Localization tab uploads, every language at
-    /// once, from `store_english.json` once it names the page's `itemid`; `basic_info.json`, each
-    /// language's recommended system requirements by their names on the Basic Info form, which
-    /// that upload drops; `ai_disclosure.json`, the statement of how AI was used by language, from
-    /// its `disclosure`, for the content survey; `workshop/<language>.json`, the Workshop page's
-    /// title and description, from `workshop_english.json`; and `rich_presence_<language>.vdf`,
-    /// which `rich-presence` sends, from `presence_english.json` or else a
-    /// `rich_presence_english.vdf` kept by hand.
+    /// gettext catalogue in its locale folder. It writes five kinds of file beside the scripts.
+    ///
+    /// `store/<language>.json` comes from `store_english.json` once that names the page's
+    /// `itemid`. The store page's Localization tab uploads these, every language at once.
+    /// `basic_info.json` holds each language's recommended system requirements, by their names on
+    /// the Basic Info form. That upload drops them. `ai_disclosure.json` is the content survey's
+    /// statement of how AI was used, by language, from the `disclosure` in `store_english.json`.
+    /// `workshop/<language>.json` is the Workshop page's title and description, from
+    /// `workshop_english.json`. `rich_presence_<language>.vdf` comes from `presence_english.json`,
+    /// or else from a `rich_presence_english.vdf` kept by hand. `rich-presence` sends it.
     ///
     /// A catalogue translates the English under the context `store page`, `steam workshop` or
-    /// `rich presence`; anything it does not translate, or marks fuzzy, is refused and nothing is
-    /// written, and so is a short description past the 300 characters the store page shows or a
-    /// Workshop description past the 200 it takes. A file of these kinds that would no longer be
-    /// written is removed.
+    /// `rich presence`. Anything it leaves untranslated or marks fuzzy is refused, and then nothing
+    /// is written. The same goes for a short description past the 300 characters the store page
+    /// shows, or a Workshop description past the 200 it takes. A file of these kinds that would no
+    /// longer be written is removed.
     Text(Text),
     /// Set an uploaded build live on a branch.
     ///
-    /// Sets a build live on a branch without uploading it again, through Steam's partner Web
-    /// API, with the publisher key as `builds` finds it. The default branch is set live only
-    /// while Steam shows the build account the app unreleased; once it is released, in
-    /// Steamworks.
+    /// Nothing is uploaded again. It goes through Steam's partner Web API, with the publisher key
+    /// as `builds` finds it. The default branch is set live only while Steam shows the build
+    /// account the app unreleased. Once the app is released, set its default branch live in
+    /// Steamworks instead.
     Promote(Promote),
     /// Set the description players see for a beta branch.
     ///
-    /// Sets the text Steam shows for a beta branch where players choose one, in the game's
-    /// Betas properties, through Steam's partner Web API with the publisher key as `builds`
-    /// finds it. The default branch's is set in Steamworks only.
+    /// Steam shows this text where players choose a beta branch, in the game's Betas properties.
+    /// It is set through Steam's partner Web API, with the publisher key as `builds` finds it.
+    /// The default branch's description is set in Steamworks only.
     Branch {
         /// The app, by its ID or its app build script.
         app: String,
@@ -407,10 +426,11 @@ pub enum Command {
     },
     /// Set up uploads from CI, the login kept as a secret.
     ///
-    /// Finds the GitHub repository, its app build script and the saved login, checks the script,
-    /// and the login with Steam, then sets the login as a secret with the GitHub command line,
-    /// `gh`, and shows the workflow step that uploads. What it cannot find it asks for, and each
-    /// option answers ahead. The secret holds the token steamcmd saved, never a password.
+    /// Finds the GitHub repository, its app build script and the saved login. It checks the
+    /// script, and checks the login with Steam. It then sets the login as a secret with the GitHub
+    /// command line, `gh`, and shows the workflow step that uploads. It asks for anything it
+    /// cannot find, unless an option gives it. The secret holds the token steamcmd saved, never a
+    /// password.
     Ci {
         /// The app build script, if not the one found in the repository.
         #[arg(long)]
@@ -430,20 +450,20 @@ pub enum Command {
     },
     /// Forget the saved login.
     ///
-    /// Removes the login steamcmd saved, the account steamship remembered and the Web API key
-    /// kept for the Web API; the next upload needs `steamship login` first.
+    /// Removes the login steamcmd saved, the account steamship remembered and the kept Web API
+    /// key. The next upload needs `steamship login` first.
     Logout,
     /// Write starter build scripts for an app.
     ///
-    /// Writes an app build script, and a depot build script for each depot, into `steam/`,
-    /// commented, in Valve's own format, for `check` and `upload` to read. Without `--depot`,
-    /// the one depot is the app's ID plus one, shipping `build/`. Nothing already there is
-    /// overwritten.
+    /// Writes a commented app build script, and a depot build script for each depot, into
+    /// `--folder`. They are in Valve's own format, for `check` and `upload` to read. Without
+    /// `--depot`, there is one depot, the app's ID plus one. It ships `build/`. Nothing already
+    /// there is overwritten.
     Init {
         /// The app's ID, from Steamworks.
         app: u32,
-        /// A depot and the folder its files ship from, such as 1001=build/windows, from the folder
-        /// init runs in, not from `--folder`; once for each depot.
+        /// A depot and the folder its files ship from, such as 1001=build/windows. The folder is
+        /// relative to where `init` runs, not to `--folder`. Give it once for each depot.
         #[arg(long = "depot", value_name = "ID=FOLDER", value_parser = init::depot)]
         depots: Vec<init::Depot>,
         /// The folder the scripts are written into.
@@ -452,15 +472,15 @@ pub enum Command {
     },
     /// Install or verify the pinned steamcmd.
     ///
-    /// `login` and `upload` do this themselves; this does it ahead of time, as in CI.
+    /// `login` and `upload` do this themselves. This command does it ahead of time, as in CI.
     Install,
     /// List the languages Steam supports, by the locales gettext names them.
     ///
-    /// Each locale steamship reads a catalogue of, with Steam's name for its language, the API
-    /// language code its files are named by, such as `pt-BR` and `brazilian`. A locale is matched
-    /// regardless of case, with `_` read as `-`.
+    /// Lists each locale steamship reads a catalogue for, beside Steam's name for its language,
+    /// such as `pt-BR` and `brazilian`. Steam's name is the API language code its files are named
+    /// by. A locale is matched regardless of case, with `_` read as `-`.
     Languages {
-        /// Print the list as one JSON object of each locale and Steam's name for its language.
+        /// Print the list as one JSON object, from each locale to Steam's name for its language.
         #[arg(long)]
         json: bool,
     },
@@ -488,18 +508,18 @@ pub enum Command {
 /// The leaderboards `leaderboards` lists, checks, makes or deletes.
 #[derive(Debug, Clone, Args)]
 pub struct Leaderboards {
-    /// The app, by its ID or its app build script; in a game's folder, its own.
+    /// The app, by its ID or its app build script. In a game's folder, the game's own.
     pub app: Option<String>,
     /// JSON files of the leaderboards the app should have, each with its `name`, `sort`,
-    /// `display`, `trusted_writes`, `friends_only` and `period`; or lists of games-kit's records, those
-    /// typed `leaderboard` read the same way by the name in `steam`. Each leaderboard is in one
-    /// file only.
+    /// `display`, `trusted_writes`, `friends_only` and `period`. A file may instead be a list of
+    /// games-kit records: those typed `leaderboard` are read by the name in `steam`. Each
+    /// leaderboard is in one file only.
     #[arg(long, value_name = "FILE", num_args = 0..)]
     pub check: Option<Vec<PathBuf>>,
-    /// Make the file's leaderboards that Steam lacks, before checking.
+    /// Make the leaderboards in the files that Steam lacks, before checking.
     #[arg(long)]
     pub create: bool,
-    /// Delete the leaderboards on Steam that the files do not hold, before checking; refused
+    /// Delete the leaderboards on Steam that the files do not hold, before checking. Refused
     /// once the app is released, as their players' scores would go with them.
     #[arg(long)]
     pub delete_missing: bool,
@@ -516,17 +536,17 @@ pub struct Text {
     /// missing, or is left over.
     #[arg(long, conflicts_with = "steam")]
     pub unchanged: bool,
-    /// Write nothing beside the scripts, and print every English text Steam shows as a gettext
-    /// template under the contexts the catalogues translate it by, each with a note for its
-    /// translator, and `max-length:N` where Steam's room for it is short, for a game's own
-    /// template to take in. A record's name rich presence shows is left to the records.
+    /// Write nothing beside the scripts. Print every English text Steam shows as a gettext
+    /// template, for a game's own template to take in. Each text is under the context the
+    /// catalogues translate it by. Each has a note for its translator, and `max-length:N` where Steam's room
+    /// for it is short. A record's name that rich presence shows is left to the records.
     #[arg(long, conflicts_with_all = ["unchanged", "steam"])]
     pub template: bool,
-    /// Write nothing, and exit 2 naming each system requirement, minimum or recommended, that
-    /// the game's public store page does not show in a language as `store_english.json` and
-    /// its translations give it. Steam shows them only once the page is public, Coming Soon
-    /// included; memory, storage, the DirectX version and VR support it rewords, so they are
-    /// not compared.
+    /// Write nothing. Exit 2 and name each minimum or recommended system requirement that the
+    /// game's public store page does not show as given. The page is compared in each language
+    /// with `store_english.json` and its translations. Steam shows requirements only once the page is public, Coming
+    /// Soon included. Memory, storage, the DirectX version and VR support are not compared, since
+    /// Steam rewords them.
     #[arg(long)]
     pub steam: bool,
 }
@@ -536,10 +556,10 @@ pub struct Text {
 pub enum Itself {
     /// Check that this steamship is its release's own binary, byte for byte.
     ///
-    /// Reads the SPDX SBOM published with this version's GitHub release, which lists the SHA-256
-    /// of each system's binary, and compares this binary's with the one built for this system. A
-    /// release cannot be changed once published, so a binary that differs was built elsewhere or
-    /// altered since: install the release's own binary, from its archive or with
+    /// Reads the SPDX SBOM published with this version's GitHub release. It lists the SHA-256 of
+    /// each system's binary, and this binary's is compared with the one built for this system. A
+    /// release cannot be changed once published. A binary that differs was built elsewhere or
+    /// altered since. Install the release's own binary, from its archive or with
     /// `cargo binstall`. A build from source, such as `cargo install`, differs from every
     /// release's.
     Check,
@@ -548,16 +568,19 @@ pub enum Itself {
 /// What `achievements` writes for Steamworks' achievement editor, from what, and where.
 #[derive(Debug, Args)]
 pub struct Writing {
-    /// Write the achievement editor's files from these, as `--check` reads them; in a game's
-    /// folder, with none, from its own, into `steam/achievements`. An achievement
-    /// may also give its `set`, whether it is `archived`, its `permission`, the `stat` its
-    /// progress bar counts and the value it unlocks `at` (no bar when that is the first whole step
-    /// above the stat's default), and its `icon` and `icon_locked`, PNG
-    /// files in the games-kit mod the records are in or beside the file; a set gives its `setid` and
-    /// English `name`, or as a games-kit record typed `achievement_set`, its set ID in `steam`.
-    /// Each catalogue's language is its header's `Language`, or else its name, such as `de.po`;
-    /// its texts are under the contexts `achievement.name`, `achievement.description` and
-    /// `achievement_set.name`, by the record's `id`, or else the API name or set ID.
+    /// Write the achievement editor's files from these, read as `--check` reads them. In a
+    /// game's folder, with no files, write from the game's own into `steam/achievements`.
+    ///
+    /// An achievement may also give its `set`, whether it is `archived`, and its `permission`. It
+    /// may give the `stat` its progress bar counts and the value it unlocks `at`. There is no bar
+    /// when that value is the first whole step above the stat's default. Its `icon` and
+    /// `icon_locked` are PNG files in the games-kit mod the records are in, or beside the file.
+    ///
+    /// A set gives its `setid` and English `name`. As a games-kit record typed `achievement_set`,
+    /// it gives its set ID in `steam`. A catalogue's language is its header's `Language`, or else
+    /// its file name, such as `de.po`. Its texts are under the contexts `achievement.name`,
+    /// `achievement.description` and `achievement_set.name`, by the record's `id`, or else the
+    /// API name or set ID.
     #[arg(
         long,
         value_name = "FILE",
@@ -566,20 +589,23 @@ pub struct Writing {
     )]
     pub write: Option<Vec<PathBuf>>,
     /// The folder `--write` writes into, made if missing. Files of the kinds it writes for the app
-    /// that it no longer would are removed; others, `steam-icons.json` among them, are left
-    /// alone. With `--check`, the folder whose `steam-icons.json` the icons are checked against.
+    /// that it would no longer write are removed. Other files, `steam-icons.json` among them, are
+    /// left alone. With `--check`, the folder whose `steam-icons.json` the icons are checked
+    /// against.
     #[arg(long, value_name = "FOLDER", requires = "files")]
     pub out: Option<PathBuf>,
     /// Write nothing, and exit 2 naming each file in the folder that differs from what `--write`
     /// would write there, is missing, or is left over. `steam-icons.json` is none of these.
     #[arg(long, requires = "write")]
     pub unchanged: bool,
-    /// Write only `steam-icons.json` in the folder, from the icons Steam holds once the folder's
-    /// files are imported and published; refused, exiting 2, when the folder is not as `--write`
-    /// would write it, Steam lacks an achievement or icon of the files, Steam has an icon for an
-    /// achievement the files give none, or an icon Steam serves is not its file: more than one
-    /// pixel in a thousand more than 64 off in a channel, out of 255, where its JPEG leaves each
-    /// pixel well within that. In a game's folder it needs no `--write`.
+    /// Write only `steam-icons.json` into the folder, from the icons Steam holds once the
+    /// folder's files are imported and published. In a game's folder it needs no `--write`.
+    ///
+    /// It is refused, exiting 2, when the folder is not as `--write` would write it. It is
+    /// refused when Steam lacks an achievement or icon the files have, or has an icon for an
+    /// achievement the files give none. It is refused when an icon Steam serves is not its file.
+    /// That is when more than one pixel in a thousand is more than 64 of 255 off in a channel.
+    /// Steam's JPEG of a matching file keeps each pixel well within that.
     #[arg(long, conflicts_with_all = ["unchanged", "check", "json"])]
     pub imported: bool,
 }
@@ -591,26 +617,26 @@ pub struct Writing {
     reason = "each is a switch of its own on the command line, which clap reads into a field"
 )]
 pub struct Upload {
-    /// The app build script, such as `steam/app_build.vdf`; in a game's folder, its own.
+    /// The app build script, such as `steam/app_build.vdf`. In a game's folder, the game's own.
     pub script: Option<PathBuf>,
-    /// The version being shipped, which with the commit becomes the build's description; in a
-    /// game's folder, the newest release `CHANGES.md` heads, or else `project.godot`'s. Noughts
-    /// alone, such as 0.0.0, are refused.
+    /// The version being shipped. With the commit, it becomes the build's description. In a
+    /// game's folder, the newest release `CHANGES.md` heads, or else `project.godot`'s version. A
+    /// version of noughts alone, such as 0.0.0, is refused.
     #[arg(long)]
     pub version: Option<String>,
-    /// Valve's dry run: the whole build is computed and logged, and nothing is uploaded.
+    /// Compute and log the whole build without uploading anything, as Valve's dry run.
     #[arg(long)]
     pub preview: bool,
-    /// While Steam shows the app unreleased, also set the build live on the default branch,
-    /// through Steam's partner Web API with the publisher key as `builds` finds it. Once it is
-    /// released, its default branch is set live in Steamworks, and the build goes up without it.
-    /// In a game's folder an upload always does.
+    /// Also set the build live on the default branch, while Steam shows the app unreleased. This
+    /// goes through Steam's partner Web API, with the publisher key as `builds` finds it. Once
+    /// the app is released, the build goes up without this. Its default branch is then set live
+    /// in Steamworks. In a game's folder, an upload does this without the flag.
     #[arg(long, conflicts_with = "preview")]
     pub default: bool,
-    /// In a game's folder, ship its demo, its own app, in place of the full game: built with the
-    /// demo's `build`, its depots kept apart from the full game's and shipping only the Godot
-    /// exports made with the demo's feature, and checked against the demo's own settings
-    /// snapshot, which must show it typed Demo with the full game as its base game.
+    /// In a game's folder, ship its demo, a separate app, in place of the full game. The demo is
+    /// built with the demo's `build` command. Its depots are kept apart from the full game's, and ship
+    /// only the Godot exports made with the demo's feature. It is checked against the demo's own
+    /// settings snapshot, which must show it typed Demo with the full game as its base game.
     #[arg(long, conflicts_with = "script")]
     pub demo: bool,
     /// The build account, if not the one the last login remembered.
@@ -626,22 +652,23 @@ pub struct Upload {
 /// The build `fetch` downloads, and where to.
 #[derive(Debug, Args)]
 pub struct Fetch {
-    /// The app, by its ID or its app build script; in a game's folder, its own.
+    /// The app, by its ID or its app build script. In a game's folder, the game's own.
     pub app: Option<String>,
     /// In a game's folder, its demo.
     #[arg(long, conflicts_with = "app")]
     pub demo: bool,
-    /// The branch whose live build is fetched; the default branch unless `--build` names a build
+    /// The branch whose live build is fetched. The default branch, unless `--build` names a build
     /// live on another.
     #[arg(long)]
     pub branch: Option<String>,
-    /// The build, by its build ID, refused unless it is live on the branch, or on some branch.
+    /// The build, by its build ID. Refused unless it is live on `--branch`, or without
+    /// `--branch`, on some branch.
     #[arg(long)]
     pub build: Option<u64>,
-    /// The system whose depots are fetched: windows, linux or macos; this one's by default.
+    /// The system whose depots are fetched: windows, linux or macos. This system's by default.
     #[arg(long, value_parser = fetch::system)]
     pub system: Option<Platform>,
-    /// The folder the build is fetched into, which holds that one branch and system.
+    /// The folder to fetch the build into. It holds this one branch and system alone.
     #[arg(long, value_name = "FOLDER")]
     pub into: Option<PathBuf>,
     /// The build account, if not the one the last login remembered.
@@ -658,8 +685,8 @@ pub struct Fetch {
 /// How `fetch` handles the password of a branch that takes one.
 #[derive(Debug, Clone, Copy, Args)]
 pub struct BranchPassword {
-    /// Give steamcmd the branch's password on its command line, where any program on this
-    /// machine can read it while the fetch runs, rather than typing it into steamcmd's console.
+    /// Give steamcmd the branch's password on its command line, not typed into its console. Any
+    /// program on this machine can read it there while the fetch runs.
     #[arg(long = "password-on-command-line")]
     pub on_command_line: bool,
     /// Keep the branch's password, given in `STEAMSHIP_BRANCH_PASSWORD` or typed, in the
@@ -671,7 +698,7 @@ pub struct BranchPassword {
 /// The build `promote` sets live, and where.
 #[derive(Debug, Args)]
 pub struct Promote {
-    /// The app, by its ID or its app build script; in a game's folder, its own.
+    /// The app, by its ID or its app build script. In a game's folder, the game's own.
     pub app: Option<String>,
     /// In a game's folder, its demo.
     #[arg(long, conflicts_with = "app")]
@@ -682,8 +709,8 @@ pub struct Promote {
     /// The branch to set it live on.
     #[arg(long)]
     pub branch: String,
-    /// The build account Steam is asked as whether the app is released, for the default branch,
-    /// if not the one the last login remembered.
+    /// The build account that asks Steam whether the app is released, for the default branch, if
+    /// not the one the last login remembered.
     #[arg(long, env = ACCOUNT)]
     pub account: Option<String>,
 }
@@ -702,8 +729,8 @@ pub struct Workshop {
     /// Make a new item from CI, which is otherwise refused there.
     #[arg(long)]
     pub new: bool,
-    /// Upload an item for a game whose `steamship.toml` holds its Workshop items until launch,
-    /// while Steam still shows the game unreleased: for the run that readies the launch.
+    /// Upload an item while Steam still shows the game unreleased, though `steamship.toml` holds
+    /// its Workshop items until launch. This is for the run that readies the launch.
     #[arg(long)]
     pub for_launch: bool,
     /// Once steamcmd has run, print what came of it on standard output as one line of JSON:
@@ -718,12 +745,12 @@ pub struct WorkshopItem {
     /// The app the item is for, by its ID or its app build script.
     #[arg(long, requires_all = ["items", "name", "content", "title"])]
     pub app: Option<String>,
-    /// The file that keeps the ID of each item made, by its name, such as
-    /// `steam/workshop_items.json`: kept with the game, so that a run from any machine updates
-    /// the item an earlier one made. steamship writes it, and makes it if missing.
+    /// The file that keeps the ID of each item made, by the item's name, such as
+    /// `steam/workshop_items.json`. Kept with the game, it lets a run on any machine update the
+    /// item an earlier run made. steamship writes it, and makes it if missing.
     #[arg(long, value_name = "FILE", requires = "app")]
     pub items: Option<PathBuf>,
-    /// The item's name in the `--items` file, such as `example`; in a game's folder, the one
+    /// The item's name in the `--items` file, such as `example`. In a game's folder, the one
     /// example mod to upload.
     #[arg(long)]
     pub name: Option<String>,
@@ -742,9 +769,9 @@ pub struct WorkshopItem {
     /// What changed in this upload, 8000 bytes at most, shown in the item's change notes.
     #[arg(long, value_name = "TEXT", requires = "app")]
     pub change_note: Option<String>,
-    /// Who may see the item: `public`, `friends-only`, `private` or `unlisted`. Needed to make
-    /// one, since steamship never chooses; left out, an item already made keeps what it has. In
-    /// a game's folder it is given to the items being made alone.
+    /// Who may see the item: `public`, `friends-only`, `private` or `unlisted`. Needed to make a
+    /// new item, since steamship never chooses. Left out, an existing item keeps its visibility.
+    /// In a game's folder, it applies only to the items being made.
     #[arg(long, value_parser = workshop::visibility)]
     pub visibility: Option<workshop::Visibility>,
 }

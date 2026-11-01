@@ -50,7 +50,7 @@ enum Formats {
 pub struct Asset {
     /// What Steamworks calls it.
     name: &'static str,
-    /// The file's name without its extension; screenshots start with it and may go on.
+    /// The file's name without its extension. Screenshots start with it and may go on.
     stem: &'static str,
     size: Size,
     formats: Formats,
@@ -191,7 +191,7 @@ const ASSETS: [Asset; 18] = [
 /// Steamworks' least number of screenshots for a store page.
 pub const SCREENSHOTS: usize = 5;
 
-/// The extensions of the files looked at; anything else in the folder is left alone.
+/// The extensions of the files looked at. Anything else in the folder is left alone.
 const LOOKED_AT: [&str; 6] = ["png", "jpg", "jpeg", "ico", "icns", "zip"];
 
 /// The most of each file in the Linux icons' zip that is read. A PNG says its size in its first
@@ -287,7 +287,7 @@ pub struct Checked {
     /// The asset it is kept as and the language it is for, when its name says.
     pub kept_as: Option<(&'static Asset, Option<&'static str>)>,
     /// The asset it is and what it holds, as `assets` lists it, such as "header capsule, 920x430
-    /// PNG"; or every way it is not what Steamworks takes.
+    /// PNG". Otherwise every way it is not what Steamworks takes.
     pub found: Result<String, Vec<String>>,
 }
 
@@ -374,7 +374,7 @@ fn checked(name: String, path: &Path, folder: Option<(&str, &'static str)>) -> C
     let found = kept_as
         .ok_or_else(|| {
             vec![
-                "is named for no asset: name it header_capsule, screenshot_01, library_logo and \
+                "is named for no asset. Name it header_capsule, screenshot_01, library_logo and \
                  so on"
                     .to_owned(),
             ]
@@ -384,8 +384,8 @@ fn checked(name: String, path: &Path, folder: Option<(&str, &'static str)>) -> C
                 && !asset.per_language
             {
                 return Err(vec![format!(
-                    "Steamworks reads a language from the name only of the store page's and the \
-                     library's artwork, not the {}'s: name it {}, without _{language}",
+                    "Steamworks reads a language from the file name only for the store page's \
+                     and the library's artwork, not for the {}. Name it {}, without _{language}",
                     asset.name, asset.stem
                 )]);
             }
@@ -393,7 +393,7 @@ fn checked(name: String, path: &Path, folder: Option<(&str, &'static str)>) -> C
                 && !asset.per_language
             {
                 return Err(vec![format!(
-                    "Steamworks takes one {} for every language: keep it beside the folders for \
+                    "Steamworks takes one {} for every language. Keep it beside the folders for \
                      a language, not in {folder}",
                     asset.name
                 )]);
@@ -735,7 +735,8 @@ mod tests {
         file
     }
 
-    /// A zip of `entries`, deflated as macOS and Windows zip them; a name ending in `/` is a folder.
+    /// A zip of `entries`, deflated as macOS and Windows zip them. A name ending in `/` is a
+    /// folder.
     fn zip_of(entries: &[(&str, &[u8])]) -> Vec<u8> {
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
         let options = SimpleFileOptions::default();
@@ -882,16 +883,16 @@ mod tests {
                 (
                     "app_icon_french.jpg".to_owned(),
                     Err(vec![
-                        "Steamworks reads a language from the name only of the store page's and \
-                         the library's artwork, not the app icon's: name it app_icon, without \
-                         _french"
+                        "Steamworks reads a language from the file name only for the store \
+                         page's and the library's artwork, not for the app icon. Name it \
+                         app_icon, without _french"
                             .to_owned()
                     ])
                 ),
                 (
                     "capsule.png".to_owned(),
                     Err(vec![
-                        "is named for no asset: name it header_capsule, screenshot_01, \
+                        "is named for no asset. Name it header_capsule, screenshot_01, \
                          library_logo and so on"
                             .to_owned()
                     ])
@@ -976,7 +977,7 @@ mod tests {
                 (
                     "de/app_icon.jpg",
                     Err(vec![
-                        "Steamworks takes one app icon for every language: keep it beside the \
+                        "Steamworks takes one app icon for every language. Keep it beside the \
                          folders for a language, not in de"
                     ])
                 ),

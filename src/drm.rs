@@ -76,15 +76,15 @@ fn refusal(console: &str) -> Option<Vec<String>> {
     }
     let mut reasons = vec![format!(
         "Valve's DRM tool refused the executable: {}",
-        said.join("; ")
+        said.join(". ")
     )];
     if said
         .iter()
         .any(|line| line.starts_with("Unable to add import"))
     {
         reasons.push(
-            "the tool adds Steam DRM only to an executable that already imports that function; \
-             Godot's and Rust's executables do not"
+            "the tool adds Steam DRM only to an executable that already imports that function, \
+             which Godot's and Rust's executables do not"
                 .to_owned(),
         );
     }
@@ -141,11 +141,11 @@ mod tests {
             judge(Some(11_i32), REFUSED, false),
             Outcome::Failed(vec![
                 "Valve's DRM tool refused the executable: PE module implementation does not \
-                 currently support adding imports; Unable to add import of \
+                 currently support adding imports. Unable to add import of \
                  kernel32.dll:GetModuleHandleA"
                     .to_owned(),
                 "the tool adds Steam DRM only to an executable that already imports that \
-                 function; Godot's and Rust's executables do not"
+                 function, which Godot's and Rust's executables do not"
                     .to_owned(),
             ])
         );

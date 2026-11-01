@@ -21,7 +21,7 @@ On Windows, straight from the latest release:
 scoop install https://github.com/Aureliolo/steamship/releases/latest/download/steamship.json
 ```
 
-or with this repository as a bucket, which `scoop update` then follows:
+To have `scoop update` follow new releases, add this repository as a bucket:
 
 ```powershell
 scoop bucket add aureliolo https://github.com/Aureliolo/steamship
@@ -51,15 +51,18 @@ sudo apt install ./steamship_{{version}}-1_amd64.deb
 sudo dnf install https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-1.x86_64.rpm
 ```
 
-Each brings the 32-bit C libraries Valve's steamcmd for Linux loads and the certificates it checks
-Steam against, and carries a man page per command and tab completion for bash, zsh and fish.
-Check one as [Verifying a download](#verifying-a-download) shows, with the package's name in place
-of the archive's.
+Each package also installs the 32-bit C libraries Valve's steamcmd for Linux loads, and the
+certificates steamcmd checks Steam against. Each carries a man page per command and tab completion
+for bash, zsh and fish. Check one as [Verifying a download](#verifying-a-download) shows, with the
+package's name in place of the archive's.
 
-Installed any other way on Linux, steamship needs those too: `lib32gcc-s1` and `ca-certificates`
-on Debian and Ubuntu, `glibc.i686`, `libgcc.i686` and `ca-certificates` on Fedora,
-`lib32-gcc-libs` and `ca-certificates` on Arch. Most systems have the certificates already; a
-minimal container may not.
+Any other install on Linux needs these packages:
+
+- Debian and Ubuntu: `lib32gcc-s1` and `ca-certificates`
+- Fedora: `glibc.i686`, `libgcc.i686` and `ca-certificates`
+- Arch: `lib32-gcc-libs` and `ca-certificates`
+
+Most systems have the certificates already. A minimal container may not.
 
 ## Cargo
 
@@ -69,8 +72,8 @@ Anywhere Rust runs, built from source in a few minutes:
 cargo install --locked steamship
 ```
 
-With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall), a Cargo add-on installed
-separately, the release's own archive instead, in seconds:
+[cargo-binstall](https://github.com/cargo-bins/cargo-binstall), a Cargo add-on installed
+separately, fetches the release's own archive instead, in seconds:
 
 ```sh
 cargo binstall steamship
@@ -79,8 +82,8 @@ cargo binstall steamship
 ## A release archive
 
 Each [release](https://github.com/Aureliolo/steamship/releases/latest) carries an archive for
-each system, with its checksum and signature. The Linux binary is linked statically, so it runs
-on any x86-64 Linux, whatever its glibc. These are steamship {{version}}'s:
+each system, with its checksum and signature. The Linux binary is linked statically and runs on
+any x86-64 Linux, whatever its glibc. These are steamship {{version}}'s:
 
 | System              | Archive                                                          |
 | ------------------- | ---------------------------------------------------------------- |
@@ -96,7 +99,9 @@ on any x86-64 Linux, whatever its glibc. These are steamship {{version}}'s:
 [windows]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-pc-windows-msvc.zip
 [windows-arm]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-aarch64-pc-windows-msvc.zip
 
-From a terminal, the Linux one with curl, wget or the GitHub command line:
+### From a terminal
+
+The Linux archive with curl, wget or the GitHub command line:
 
 ```sh
 curl -fLO https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-linux-musl.tar.gz
@@ -122,19 +127,21 @@ gh attestation verify "${ARCHIVE}" --repo Aureliolo/steamship \
 
 The checksum proves the bytes are the ones the release lists. The attestation proves GitHub
 Actions built them from this repository, by the steps in `release-build.yml` at that tag, on a
-GitHub-hosted runner, which a checksum cannot: a checksum made beside a tampered archive agrees
-with it perfectly. Every release also carries an SPDX SBOM of its five binaries, attested against
-each archive in the same file.
+GitHub-hosted runner. A checksum cannot prove that. One made beside a tampered archive agrees with
+it. Every release also carries an SPDX SBOM of its five binaries, attested against each archive
+in the same file.
 
 Once installed, `steamship self check` compares its own binary with the SHA-256 that SBOM lists
-for your system, fetched from the release, and exits 2 if they differ, as a check before an
-upload can. A release cannot be changed once published, so a binary that differs was built
-elsewhere or altered since. A build from source differs from every release's.
+for your system, fetched from the release. It exits 2 if they differ. A job can run it as a check
+before an upload.
+
+A release cannot be changed once published. A binary that differs was built elsewhere or altered
+since. A build from source differs from every release's.
 
 ## Tab completion
 
-Homebrew installs tab completion for bash, zsh and fish, and `man steamship`. Anywhere else,
-steamship prints it for your shell to load:
+Homebrew and the Linux packages install a man page per command and tab completion for bash, zsh
+and fish. Anywhere else, steamship prints the completion for your shell to load:
 
 ```sh
 steamship completions bash > ~/.local/share/bash-completion/completions/steamship
@@ -143,8 +150,8 @@ steamship completions fish > ~/.config/fish/completions/steamship.fish
 steamship completions powershell >> $PROFILE
 ```
 
-Each release archive also carries them in `completions/`, and a man page for every command in
-`man/`.
+Each release archive also carries the completions in `completions/` and a man page for every
+command in `man/`.
 
 ## Upgrading
 
@@ -158,31 +165,35 @@ cargo install --locked steamship
 cargo binstall steamship
 ```
 
-or download the archive from the latest release again. Once a day, at a terminal, steamship asks
-GitHub whether a newer release is out; when one is, it says so after the command, with the
-command that upgrades the way you installed. It never asks in CI, or with
-`STEAMSHIP_NO_UPDATE_CHECK` set.
+Or download the archive from the latest release again.
+
+Once a day, at a terminal, steamship asks GitHub whether a newer release is out. If one is, it
+says so after the command, with the command that upgrades the way you installed. It never asks in
+CI, or with `STEAMSHIP_NO_UPDATE_CHECK` set.
 
 ## steamcmd
 
-steamship runs Valve's own steamcmd, and installs it itself. The first `login` or `upload` fetches
-it from Valve's signed package manifest at the version this steamship release pins, checks every
-package's SHA-256, and on Windows Valve's code signature too. steamcmd is kept from updating
-itself, and its files are checked again after every run: one that changed stops steamship with
-exit code 4.
+steamship runs Valve's own steamcmd and installs it itself. The first `login` or `upload` fetches
+it from Valve's signed package manifest, at the version this steamship release pins. It checks
+every package's SHA-256. On Windows it checks Valve's code signature too.
 
-`steamship install` does it ahead of time, as in CI, and verifies an install that is already
-there.
+steamcmd is kept from updating itself. Its files are checked again after every run. A file that
+changed stops steamship with exit code 4.
+
+`steamship install` installs it ahead of time, as a CI job would. It also verifies an install
+that is already there.
 
 Valve keeps old steamcmd builds on its CDN for years, then deletes them. An install already made
-keeps working after that; a new one fails, saying that Valve no longer serves the pinned steamcmd
+keeps working after that. A new one fails. It says that Valve no longer serves the pinned steamcmd
 and how to upgrade to a steamship that pins one it does.
 
-steamcmd, its login token and the build output live in steamship's home, a per-user folder
-unless `STEAMSHIP_HOME` names another. The token can do everything the build account may, so
-treat that folder like a password.
+### The home folder
 
-Every steamship on the machine shares that home, whichever release each repository pins. One
-using steamcmd holds the home from its check of the install to the check after steamcmd's run,
-and another started meanwhile waits for it, saying so, then goes on. A release that pins another
-steamcmd installs its own over the one there, keeping the login.
+steamcmd, its login token and the build output live in steamship's home. That is a per-user
+folder unless `STEAMSHIP_HOME` names another. The token can do everything the build account may,
+so treat that folder like a password.
+
+Every steamship on the machine shares that home, whichever release each repository pins. Two runs
+that use steamcmd take turns. The second waits, and says so, until the first has checked steamcmd
+again after its run. A release that pins another steamcmd installs its own over the one there and
+keeps the login.

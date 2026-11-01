@@ -1,4 +1,4 @@
-//! Any bytes are a picture of some size or are refused with a reason; reading them never panics
+//! Any bytes are a picture of some size or are refused with a reason. Reading them never panics
 //! or runs away, and a picture that is read has a size.
 #![no_main]
 #![expect(

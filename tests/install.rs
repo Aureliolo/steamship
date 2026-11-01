@@ -80,7 +80,7 @@ impl Setup {
         }
     }
 
-    /// Installs, counting the packages fetched.
+    /// Installs, and counts the packages fetched.
     fn install(&self, manifest: &Manifest, fetched: &Cell<usize>) -> Result<Outcome, Error> {
         install::using(&self.held(), manifest, |package, into| {
             fetched.set(fetched.get().saturating_add(1));

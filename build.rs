@@ -37,7 +37,7 @@ fn main() -> Result<(), String> {
         .join("steamship.res");
     fs::write(&out, res).map_err(|error| format!("{}: {error}", out.display()))?;
     tell(&format!("cargo::rustc-link-arg-bins={}", out.display()));
-    // Compatible with the hardware shadow stack, which then guards every return address; x86-64
+    // Compatible with the hardware shadow stack, which then guards every return address. x86-64
     // has one, Arm does not. And the DLLs steamship imports are looked up in System32 alone:
     // wintrust.dll and the crypto libraries are not among Windows' known DLLs, so without this a
     // copy planted beside the program, in a Downloads folder say, would be loaded in their
@@ -248,7 +248,7 @@ fn block(key: &str, value: Value<'_>, children: &[Vec<u8>]) -> Result<Vec<u8>, S
     Ok(node)
 }
 
-/// `text` as Windows keeps it: UTF-16, little-endian, ending in a zero.
+/// `text` as Windows keeps it: UTF-16, little-endian, with a zero at the end.
 fn utf16(text: &str) -> Vec<u8> {
     text.encode_utf16()
         .chain([0])

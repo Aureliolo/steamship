@@ -1,9 +1,13 @@
 //! An upload: the app script rewritten with what steamship decides, and the result read back.
 //!
 //! steamcmd is given a copy of the app script in the home, never the original, with every path
-//! in it absolute and three keys set by steamship: `BuildOutput` in the home, so that logs and
-//! the chunk cache never land in the content; `Desc`, the version and commit; and `Preview` for
-//! a preview. steamcmd reads `Preview` from its command line only when another option follows
+//! in it absolute. steamship sets three keys in it:
+//!
+//! - `BuildOutput`, in the home, so that logs and the chunk cache never land in the content
+//! - `Desc`, the version and commit
+//! - `Preview`, for a preview.
+//!
+//! steamcmd reads `Preview` from its command line only when another option follows
 //! it, as tried, so the file is the one place it is reliably set.
 
 use std::error;
@@ -92,7 +96,7 @@ pub fn shippable(version: &str) -> Result<(), Error> {
     }
     if unreleased(version) {
         return Err(Error::Description(format!(
-            "the version {version} is noughts alone, which names no release: give the release \
+            "the version {version} is noughts alone, which names no release. Give the release \
              going up with --version"
         )));
     }
@@ -133,7 +137,7 @@ pub fn commit(path: &Path) -> Result<String, Error> {
     .map_err(|error| {
             Error::Description(if error.kind() == io::ErrorKind::NotFound {
                 "Git is not installed, or not on the PATH, and the build description names the \
-                 commit the scripts are at"
+                 commit the scripts are at. Install Git, or put it on the PATH"
                     .to_owned()
             } else {
                 format!("Git could not be run ({error}), and the build description names the commit the scripts are at")
@@ -203,7 +207,7 @@ impl Prepared {
 ///
 /// # Errors
 ///
-/// When the script cannot be read, has no app ID, or cannot be written back; or the folders in
+/// When the script cannot be read, has no app ID, or cannot be written back, or the folders in
 /// the home cannot be made.
 pub fn prepare(
     home: &Path,
@@ -342,12 +346,12 @@ pub fn written(path: &Path) -> Result<String, String> {
 pub enum Outcome {
     /// Uploaded, as the build with this ID.
     Built { build_id: u64 },
-    /// A preview that finished; nothing was uploaded.
+    /// A preview that finished. Nothing was uploaded.
     Previewed,
-    /// steamcmd could not log in with what it has saved; the line it said so on.
+    /// steamcmd could not log in with what it has saved. Holds the line it said so on.
     NotLoggedIn(String),
-    /// Valve built the upload as this build, and steamcmd failed after, as when setting it live;
-    /// with every reason it gave. The build is there to be set live by hand.
+    /// Valve built the upload as this build, and steamcmd failed after, as when setting it live.
+    /// Holds every reason it gave. The build is there to be set live by hand.
     BuiltThenFailed { build_id: u64, reasons: Vec<String> },
     /// Anything else, with every reason steamcmd gave.
     Failed(Vec<String>),
@@ -420,8 +424,8 @@ pub fn commit_refused(reasons: &[String], set_live: Option<&str>) -> Option<Stri
         .any(|reason| reason.starts_with("Failed to commit build"))
         .then(|| {
             format!(
-                "\"SetLive\" names \"{branch}\": Steam sets no build live on a branch the app \
-                 does not have, or for an account that may not set builds live; a new app gets \
+                "\"SetLive\" names \"{branch}\". Steam sets no build live on a branch the app \
+                 does not have, or for an account that may not set builds live. A new app gets \
                  other branches only once its default branch has a build live"
             )
         })
@@ -432,7 +436,7 @@ pub fn commit_refused(reasons: &[String], set_live: Option<&str>) -> Option<Stri
 #[must_use]
 pub fn no_branch(app: u32, branch: &str, branches: &[webapi::Branch]) -> String {
     format!(
-        "\"SetLive\" names \"{branch}\", but app {app} has no branch by that name; {}",
+        "\"SetLive\" names \"{branch}\", but app {app} has no branch by that name. {}",
         create_first(branches)
     )
 }
@@ -444,10 +448,10 @@ pub fn create_first(branches: &[webapi::Branch]) -> &'static str {
         .iter()
         .any(|found| webapi::is_default(&found.name) && found.build_id == 0);
     if fresh {
-        "set a build live on its default branch, as steamship promote --branch default does while \
-         the app is unreleased, then create it in Steamworks under SteamPipe, Builds"
+        "Set a build live on its default branch, as steamship promote --branch default does while \
+         the app is unreleased. Then create the branch in Steamworks under SteamPipe, Builds"
     } else {
-        "create it in Steamworks under SteamPipe, Builds first"
+        "Create the branch in Steamworks under SteamPipe, Builds first"
     }
 }
 
@@ -516,13 +520,13 @@ const NO_CLIENT_CONFIG: &str = "ERROR! Failed to load platform info";
 /// Why a build failed that may pass when steamcmd runs again.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Retry {
-    /// For a manifest the CDN does not serve yet; it passes once the CDN does.
+    /// For a manifest the CDN does not serve yet. It passes once the CDN does.
     Unserved(Unserved),
-    /// For no connection to Steam's build server; it is tried once more.
+    /// For no connection to Steam's build server. It is tried once more.
     NoConnection,
-    /// For Steam dropping steamcmd's connection; it is tried once more, as for no connection.
+    /// For Steam dropping steamcmd's connection. It is tried once more, as for no connection.
     Disconnected,
-    /// For Steam not sending steamcmd its client config; it is tried once more, as for no
+    /// For Steam not sending steamcmd its client config. It is tried once more, as for no
     /// connection.
     NoClientConfig,
 }
@@ -576,7 +580,7 @@ fn unserved(console: &str, log: Option<&str>) -> Option<Unserved> {
 }
 
 /// The manifest at `printed`, which steamcmd gives as a host and a path with no scheme. Asked
-/// over HTTPS; a debug build, as the tests run, asks a stand-in on this machine over HTTP.
+/// over HTTPS. A debug build, as the tests run, asks a stand-in on this machine over HTTP.
 fn manifest_at(printed: &str) -> Option<Unserved> {
     let mut parts = printed.split('/');
     let host = parts.next()?;
@@ -613,7 +617,7 @@ pub fn still_unserved(outcome: &mut Outcome, depot: u32) {
     if let Outcome::Failed(reasons) = outcome {
         reasons.push(format!(
             "Steam's CDN still does not serve depot {depot}'s last manifest, which steamcmd \
-             builds the upload against; upload again later"
+             builds the upload against. Upload again later"
         ));
     }
 }
@@ -670,7 +674,7 @@ pub fn judge_login(code: Option<i32>, console: &str) -> Login {
 }
 
 /// Every error steamcmd reported, from the log and the console, once each, and what its exit
-/// said when nothing else did; first of all, what told steamship to stop it, if anything did.
+/// said when nothing else did. First of all comes what told steamship to stop it, if anything did.
 #[must_use]
 pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<String> {
     let mut found: Vec<String> = run::told()
@@ -682,7 +686,7 @@ pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<Strin
             error.trim().to_owned()
         } else if line.contains(steamcmd::NO_CERTIFICATES) {
             "steamcmd found no certificates to check Steam's servers against, and would have \
-             waited for good; install the system's certificate store (ca-certificates)"
+             waited forever. Install the system's certificate store (ca-certificates)"
                 .to_owned()
         } else if let Some((_, socket)) = line.split_once("CreateBoundSocket: ") {
             no_socket(socket.trim())
@@ -712,8 +716,8 @@ pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<Strin
 /// container, and gone when the same container runs without the filter.
 fn no_socket(said: &str) -> String {
     if said.ends_with("(38)") {
-        "steamcmd could not open a network socket: in a Docker container, the default seccomp \
-         filter refuses the socket call 32-bit steamcmd makes; run the container with \
+        "steamcmd could not open a network socket. In a Docker container, the default seccomp \
+         filter refuses the socket call 32-bit steamcmd makes. Run the container with \
          --security-opt seccomp=unconfined"
             .to_owned()
     } else {
@@ -759,7 +763,7 @@ mod tests {
         assert_eq!(description("0.10", "abc").unwrap(), "0.10 abc");
         assert_eq!(
             description("0.0.0", "abc").unwrap_err().to_string(),
-            "the version 0.0.0 is noughts alone, which names no release: give the release going \
+            "the version 0.0.0 is noughts alone, which names no release. Give the release going \
              up with --version"
         );
     }
@@ -957,7 +961,7 @@ mod tests {
             Outcome::Failed(vec![
                 "Build for depot 5 failed : Failure".to_owned(),
                 "Steam's CDN still does not serve depot 5's last manifest, which steamcmd builds \
-                 the upload against; upload again later"
+                 the upload against. Upload again later"
                     .to_owned()
             ])
         );
@@ -968,7 +972,7 @@ mod tests {
         // As steamcmd 1788292693 reported an upload whose SetLive branch did not exist yet.
         let refused = vec!["Failed to commit build for AppID 1000010 : Failure".to_owned()];
         let why = commit_refused(&refused, Some("testing")).unwrap();
-        assert!(why.starts_with("\"SetLive\" names \"testing\": "), "{why}");
+        assert!(why.starts_with("\"SetLive\" names \"testing\". "), "{why}");
         assert!(
             why.ends_with("once its default branch has a build live"),
             "{why}"
@@ -988,9 +992,9 @@ mod tests {
         };
         assert_eq!(
             no_branch(5, "testing", &[branch("public", 0)]),
-            "\"SetLive\" names \"testing\", but app 5 has no branch by that name; set a build \
+            "\"SetLive\" names \"testing\", but app 5 has no branch by that name. Set a build \
              live on its default branch, as steamship promote --branch default does while the \
-             app is unreleased, then create it in Steamworks under SteamPipe, Builds"
+             app is unreleased. Then create the branch in Steamworks under SteamPipe, Builds"
         );
         for live in [
             vec![branch("public", 9)],
@@ -998,8 +1002,8 @@ mod tests {
         ] {
             assert_eq!(
                 no_branch(5, "testing", &live),
-                "\"SetLive\" names \"testing\", but app 5 has no branch by that name; create it \
-                 in Steamworks under SteamPipe, Builds first",
+                "\"SetLive\" names \"testing\", but app 5 has no branch by that name. Create the \
+                 branch in Steamworks under SteamPipe, Builds first",
                 "{live:?}"
             );
         }
@@ -1204,8 +1208,8 @@ mod tests {
         assert_eq!(
             judge(480, Some(5_i32), NO_SOCKET, None, true),
             Outcome::Failed(vec![
-                "steamcmd could not open a network socket: in a Docker container, the default \
-                 seccomp filter refuses the socket call 32-bit steamcmd makes; run the container \
+                "steamcmd could not open a network socket. In a Docker container, the default \
+                 seccomp filter refuses the socket call 32-bit steamcmd makes. Run the container \
                  with --security-opt seccomp=unconfined"
                     .to_owned(),
                 "steamcmd could not connect to Steam (No Connection)".to_owned(),
@@ -1273,7 +1277,7 @@ mod tests {
             judge(480, None, console, None, true),
             Outcome::Failed(vec![
                 "steamcmd found no certificates to check Steam's servers against, and would have \
-                 waited for good; install the system's certificate store (ca-certificates)"
+                 waited forever. Install the system's certificate store (ca-certificates)"
                     .to_owned()
             ])
         );

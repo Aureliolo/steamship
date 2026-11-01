@@ -1,5 +1,5 @@
 //! Any two lots of bytes, taken as an icon's file and the image Steam serves of it, are compared
-//! or refused with a reason; comparing never panics or runs away, and no more pixels differ than
+//! or refused with a reason. Comparing never panics or runs away, and no more pixels differ than
 //! were compared.
 #![no_main]
 #![expect(

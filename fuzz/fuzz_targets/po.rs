@@ -1,4 +1,4 @@
-//! Any text is a gettext catalogue or is refused with the line it went wrong on; reading it never
+//! Any text is a gettext catalogue or is refused with the line it went wrong on. Reading it never
 //! panics or runs away, and a catalogue read holds each context and msgid once.
 #![no_main]
 #![expect(

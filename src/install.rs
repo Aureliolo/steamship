@@ -93,7 +93,7 @@ impl fmt::Display for Error {
                 formatter,
                 "steamcmd in {} is no longer the pinned one: {}",
                 root.display(),
-                changes.join("; ")
+                changes.join(", ")
             ),
         }
     }
@@ -145,7 +145,7 @@ impl Held {
     }
 }
 
-/// Holds `home`, made if it is not there yet; when another steamship holds it, `waiting` is told
+/// Holds `home`, made if it is not there yet. When another steamship holds it, `waiting` is told
 /// before this waits for that one to let go.
 ///
 /// # Errors
@@ -235,15 +235,15 @@ pub fn verify(held: &Held, manifest: &Manifest) -> Result<(), Error> {
 /// What the steamcmd in a home is, against the one a manifest pins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
-    /// Nothing installed yet; the first login or upload installs it.
+    /// Nothing installed yet. The first login or upload installs it.
     Missing,
-    /// Another version, installed under an earlier pin; the next login or upload replaces it.
+    /// Another version, installed under an earlier pin. The next login or upload replaces it.
     Earlier,
     /// Exactly the pinned one.
     Pinned,
 }
 
-/// What the steamcmd in `home` is against the one `manifest` pins, changing nothing.
+/// What the steamcmd in `home` is against the one `manifest` pins. Nothing is changed.
 ///
 /// # Errors
 ///
@@ -258,7 +258,7 @@ pub fn state(home: &Path, manifest: &Manifest) -> Result<State, Error> {
     }
 }
 
-/// A pinned package the CDN says it does not have, as [`Error::Withdrawn`]; anything else as it is.
+/// A pinned package the CDN says it does not have, as [`Error::Withdrawn`]. Anything else stays as it is.
 fn withdrawn(error: Error, manifest: &Manifest, package: &Package) -> Error {
     if matches!(
         error,
@@ -522,7 +522,7 @@ impl Inventory {
     }
 
     /// Every way the install at `root` differs from this record. A file steamcmd writes as it
-    /// runs (a log, a cache) is its business; a new program is not, since that is what an update
+    /// runs (a log, a cache) is its business. A new program is not, since that is what an update
     /// looks like.
     fn check(&self, root: &Path) -> Result<(), Error> {
         let mut changes = Vec::new();
@@ -706,7 +706,7 @@ mod tests {
                     changes: vec!["a".into(), "b".into()],
                 },
                 format!(
-                    "steamcmd in {} is no longer the pinned one: a; b",
+                    "steamcmd in {} is no longer the pinned one: a, b",
                     home.join("steamcmd").display()
                 ),
             ),

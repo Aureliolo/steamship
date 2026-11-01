@@ -79,7 +79,7 @@ fn decode(bytes: &[u8], format: ImageFormat) -> Result<DynamicImage, String> {
 ///
 /// # Errors
 ///
-/// When either cannot be decoded, saying which.
+/// When either cannot be decoded. The error says which.
 pub fn compare(file: &[u8], served: &[u8]) -> Result<Likeness, String> {
     let file = decode(file, ImageFormat::Png)
         .map_err(|why| format!("the file: {why}"))?

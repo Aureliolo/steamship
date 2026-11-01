@@ -2,7 +2,7 @@
 //!
 //! A title, then one aligned line per step, a tick or a cross at the end, and a spinner while
 //! steamcmd is silent. Colour and the spinner appear only on a terminal, and colour not with
-//! `NO_COLOR` set; written anywhere else, the same lines are plain.
+//! `NO_COLOR` set. Written anywhere else, the same lines are plain.
 
 use std::io::{self, IsTerminal as _, Write};
 use std::mem;
@@ -409,7 +409,7 @@ impl Spinner {
         }
     }
 
-    /// Stops the spinner, leaving the step's label for what came of it.
+    /// Stops the spinner and returns the step's label, for what came of it.
     fn stop(mut self) -> String {
         self.halt();
         mem::take(&mut self.label)

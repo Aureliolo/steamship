@@ -267,7 +267,7 @@ pub const CHECK_LIMIT: Duration = Duration::from_mins(2);
 pub const WRAP_LIMIT: Duration = Duration::from_hours(1);
 
 /// The longest an upload may run before it is taken to have hung and is stopped. A large first
-/// upload over a slow line takes hours; steamcmd waiting at a prompt would wait forever.
+/// upload over a slow line takes hours. steamcmd waiting at a prompt would wait forever.
 pub const UPLOAD_LIMIT: Duration = Duration::from_hours(6);
 
 /// What steamcmd says when it will never reach Steam, only wait.
