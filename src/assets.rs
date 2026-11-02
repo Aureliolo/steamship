@@ -809,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn a_damaged_file_in_the_linux_icons_is_named_with_the_rest() {
+    fn damaged_files_in_the_linux_icons_are_each_named() {
         let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
         let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
         for name in ["16.png", "32.png", "48.png"] {
@@ -839,7 +839,7 @@ mod tests {
                 said.as_slice(),
                 [checksum, unsupported]
                     if checksum.starts_with("32.png cannot be read from the zip: ")
-                        && unsupported.starts_with("cannot be read as a zip: ")
+                        && unsupported.starts_with("48.png cannot be read from the zip: ")
             ),
             "{said:?}"
         );
