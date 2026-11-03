@@ -4,11 +4,12 @@
 //! how AI was used, the Workshop page's title and description, and rich presence. The English is
 //! written by hand beside the build scripts, and each catalogue translates it under a context of
 //! Steam's text: `store page`, `steam workshop` or `rich presence`, with the English as the
-//! `msgid`.
+//! `msgid`. The template gives the achievements too, under `steam achievements`, for
+//! `achievements` to read.
 
 use serde_json::{Map, Value as Json};
 
-use crate::achievements::Catalogued;
+use crate::achievements::{self, Catalogued, Listed};
 use crate::presence;
 use crate::vdf::{self, Block, Pair, Value};
 
@@ -70,6 +71,8 @@ pub struct English {
     pub store: Option<Store>,
     pub workshop: Option<Workshop>,
     pub presence: Option<Presence>,
+    /// The template's entries for the achievements and sets that no record `id` keys.
+    pub achievements: Vec<Entry>,
 }
 
 /// The store page, as [`STORE`] gives it.
@@ -518,6 +521,10 @@ pub fn entries(english: &English) -> Result<Vec<Entry>, Vec<String>> {
             .find(|entry| entry.context == context && entry.english == id)
         {
             given.most = given.most.into_iter().chain(most).min();
+            if !given.note.lines().any(|line| line == note) {
+                given.note.push('\n');
+                given.note.push_str(note);
+            }
         } else {
             said.push(Entry {
                 context: context.to_owned(),
@@ -564,6 +571,9 @@ pub fn entries(english: &English) -> Result<Vec<Entry>, Vec<String>> {
             add(PRESENCE_CONTEXT, &token.id, PRESENCE_NOTE, None);
         }
     }
+    for entry in &english.achievements {
+        add(&entry.context, &entry.english, &entry.note, entry.most);
+    }
     let mut past: Vec<String> = english
         .store
         .iter()
@@ -586,6 +596,51 @@ pub fn entries(english: &English) -> Result<Vec<Entry>, Vec<String>> {
     Ok(said)
 }
 
+/// The template's entries for each achievement and set of `listed` that no record `id` keys.
+///
+/// Each is its English under [`achievements::CONTEXT`], with a note naming it. games-kit's own
+/// template gives those a record keys.
+#[must_use]
+pub fn achievement_entries(listed: &Listed) -> Vec<Entry> {
+    let entry = |english: &str, note: String| Entry {
+        context: achievements::CONTEXT.to_owned(),
+        english: english.to_owned(),
+        note,
+        most: None,
+    };
+    let mut entries = Vec::new();
+    for wanted in listed
+        .achievements
+        .iter()
+        .filter(|wanted| wanted.id.is_none())
+    {
+        let api_name = &wanted.api_name;
+        entries.push(entry(
+            &wanted.name,
+            format!("The name of the game's Steam achievement {api_name}. Plain text."),
+        ));
+        if !wanted.description.is_empty() {
+            entries.push(entry(
+                &wanted.description,
+                format!(
+                    "What the player does to earn the game's Steam achievement {api_name}, shown \
+                     under its name. Plain text."
+                ),
+            ));
+        }
+    }
+    for set in listed.sets.iter().filter(|set| set.id.is_none()) {
+        entries.push(entry(
+            &set.name,
+            format!(
+                "The name of set {} of the game's Steam achievements. Plain text.",
+                set.setid
+            ),
+        ));
+    }
+    entries
+}
+
 /// `entries` as a gettext template, each with its note and, where its room is short, the flag
 /// `max-length:N` that translation tools show and hold a translation to.
 #[must_use]
@@ -594,8 +649,9 @@ pub fn template(entries: &[Entry]) -> String {
         "# The Steam text of a game, for its translation template, by steamship: the store page \
          under \"store page\","
             .to_owned(),
-        "# the Workshop page under \"steam workshop\" and rich presence under \"rich presence\"."
+        "# the Workshop page under \"steam workshop\", rich presence under \"rich presence\" and"
             .to_owned(),
+        "# the achievements under \"steam achievements\".".to_owned(),
         "msgid \"\"".to_owned(),
         "msgstr \"\"".to_owned(),
         "\"Content-Type: text/plain; charset=UTF-8\\n\"".to_owned(),
@@ -1716,6 +1772,7 @@ msgstr "Die Erlenhexe"
                     .unwrap(),
             ),
             presence: Some(presence(PRESENCE_SOURCE, &records()).unwrap()),
+            achievements: Vec::new(),
         };
         let unsure = GERMAN.replace("msgstr \"Saiten\"", "msgstr \"\"").replace(
             "msgctxt \"bishop.name\"",
@@ -1769,6 +1826,7 @@ msgstr "Die Erlenhexe"
             ),
             workshop: None,
             presence: None,
+            achievements: Vec::new(),
         };
         assert_eq!(
             entries(&english),
@@ -1782,6 +1840,72 @@ msgstr "Die Erlenhexe"
     }
 
     #[test]
+    fn the_template_gives_each_achievement_no_record_keys_by_its_english_with_a_note() {
+        let listed = achievements::together(vec![(
+            "a.json".to_owned(),
+            achievements::read(
+                r#"{"sets": [{"setid": "1", "name": "Firsts"}],
+                "achievements": [
+                    {"api_name": "FIRST_GRIST", "set": "1", "name": "First grist",
+                     "description": "Grind your first sack of grain."},
+                    {"api_name": "HUSH", "name": "Hush"},
+                    {"api_name": "QUIET", "name": "Hush", "description": "Say nothing."},
+                    {"api_name": "KEPT", "id": "base:kept", "name": "Kept"}]}"#,
+            )
+            .unwrap(),
+        )])
+        .unwrap();
+        let english = English {
+            achievements: achievement_entries(&listed),
+            ..English::default()
+        };
+        let given = entries(&english).unwrap();
+        let entry = |text: &str, note: &str| Entry {
+            context: achievements::CONTEXT.to_owned(),
+            english: text.to_owned(),
+            note: note.to_owned(),
+            most: None,
+        };
+        assert_eq!(
+            given,
+            [
+                entry(
+                    "First grist",
+                    "The name of the game's Steam achievement FIRST_GRIST. Plain text."
+                ),
+                entry(
+                    "Firsts",
+                    "The name of set 1 of the game's Steam achievements. Plain text."
+                ),
+                entry(
+                    "Grind your first sack of grain.",
+                    "What the player does to earn the game's Steam achievement FIRST_GRIST, \
+                     shown under its name. Plain text."
+                ),
+                entry(
+                    "Hush",
+                    "The name of the game's Steam achievement HUSH. Plain text.\n\
+                     The name of the game's Steam achievement QUIET. Plain text."
+                ),
+                entry(
+                    "Say nothing.",
+                    "What the player does to earn the game's Steam achievement QUIET, shown \
+                     under its name. Plain text."
+                ),
+            ]
+        );
+        let template = template(&given);
+        assert!(
+            template.contains(
+                "#. The name of the game's Steam achievement HUSH. Plain text.\n\
+                 #. The name of the game's Steam achievement QUIET. Plain text.\n\
+                 msgctxt \"steam achievements\"\nmsgid \"Hush\"\nmsgstr \"\"\n"
+            ),
+            "{template}"
+        );
+    }
+
+    #[test]
     fn a_translated_short_description_past_steams_room_names_its_catalogue() {
         let english = English {
             store: Some(
@@ -1790,6 +1914,7 @@ msgstr "Die Erlenhexe"
             ),
             workshop: None,
             presence: None,
+            achievements: Vec::new(),
         };
         let german = Catalogued {
             file: "de.po".to_owned(),
@@ -1829,6 +1954,7 @@ msgstr "Die Erlenhexe"
             store: None,
             workshop: Some(page),
             presence: None,
+            achievements: Vec::new(),
         };
         assert_eq!(
             written(&english, &[german]),
