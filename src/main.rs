@@ -3709,7 +3709,7 @@ fn achievements_files(
         }
     }
     let mut listed = achievements::together(files).map_err(|why| fail(&why, REFUSED))?;
-    achievements::translate(&mut listed, &catalogues).map_err(|why| fail(&why, REFUSED))?;
+    achievements::translate(&mut listed, &catalogues).map_err(|wrong| refusals(&wrong))?;
     if listed.achievements.len() > achievements::MOST_UNVETTED {
         show::note(&format!(
             "Steam takes more than {} achievements only once Valve has vetted the app",
@@ -4531,7 +4531,8 @@ fn try_text_template() -> Result<ExitCode, ExitCode> {
     show::title("text, template");
     let game = game()?;
     let folder = game.scripts().to_path_buf();
-    let english = text_english(&game, &folder)?;
+    let mut english = text_english(&game, &folder)?;
+    english.achievements = text_achievements(&game)?;
     let entries = text::entries(&english).map_err(|wrong| refusals(&wrong))?;
     show::plain(&text::template(&entries));
     show::success(
@@ -4823,6 +4824,24 @@ fn text_english(game: &Project, folder: &Path) -> Result<text::English, ExitCode
         ));
     }
     Ok(english)
+}
+
+/// The template's entries for the game's achievements and sets that no record `id` keys, which
+/// the game's own template does not give. None when it keeps no achievements.
+fn text_achievements(game: &Project) -> Result<Vec<text::Entry>, ExitCode> {
+    let paths = game
+        .records(project::ACHIEVEMENTS)
+        .map_err(|why| fail(&why, REFUSED))?;
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let app = game_script(game)?.app_id;
+    let mut files = Vec::with_capacity(paths.len());
+    for path in &paths {
+        files.push((path.display().to_string(), achievements_file(path, app)?));
+    }
+    let listed = achievements::together(files).map_err(|why| fail(&why, REFUSED))?;
+    Ok(text::achievement_entries(&listed))
 }
 
 /// Every record of the game, from each of its record files that holds a list of them.

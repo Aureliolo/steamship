@@ -10809,7 +10809,8 @@ fn a_games_first_upload_to_an_app_with_no_branch_yet_succeeds_and_says_how_to_de
 const TEMPLATE: &str = concat!(
     "# The Steam text of a game, for its translation template, by steamship: the store page ",
     "under \"store page\",\n",
-    "# the Workshop page under \"steam workshop\" and rich presence under \"rich presence\".\n",
+    "# the Workshop page under \"steam workshop\", rich presence under \"rich presence\" and\n",
+    "# the achievements under \"steam achievements\".\n",
     "msgid \"\"\nmsgstr \"\"\n\"Content-Type: text/plain; charset=UTF-8\\n\"\n\n",
     "#. What Steam shows the player's friends. Keep every {field}, which Steam fills with a ",
     "value, and every {#Token_{field}} whole, which Steam fills with that token's own line.\n",
@@ -10880,6 +10881,34 @@ fn a_games_steam_text_is_printed_as_a_template_its_own_takes_in() {
     assert!(
         !steam.join("workshop").exists(),
         "nothing is written beside the scripts"
+    );
+}
+
+#[test]
+fn achievements_kept_in_steamships_own_file_are_in_the_template_by_their_english() {
+    let (_temp, root) = pushed_game(Some("records = [\"steam/achievements.json\"]\n"));
+    fs::write(
+        root.join("steam/achievements.json"),
+        r#"{"app": 1000050, "achievements": [
+            {"api_name": "FIRST_GRIST", "name": "First grist",
+             "description": "Grind your first sack of grain."}]}"#,
+    )
+    .unwrap();
+
+    let (code, template, told) = in_game(&root, &["text", "--template"]);
+    assert_eq!(code, Some(0_i32), "{told}");
+    assert!(
+        template.contains(
+            "#. The name of the game's Steam achievement FIRST_GRIST. Plain text.\n\
+             msgctxt \"steam achievements\"\nmsgid \"First grist\"\nmsgstr \"\"\n"
+        ),
+        "{template}"
+    );
+    assert!(
+        template.contains(
+            "msgctxt \"steam achievements\"\nmsgid \"Grind your first sack of grain.\"\n"
+        ),
+        "{template}"
     );
 }
 

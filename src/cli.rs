@@ -539,7 +539,8 @@ pub struct Text {
     /// Write nothing beside the scripts. Print every English text Steam shows as a gettext
     /// template, for a game's own template to take in. Each text is under the context the
     /// catalogues translate it by. Each has a note for its translator, and `max-length:N` where Steam's room
-    /// for it is short. A record's name that rich presence shows is left to the records.
+    /// for it is short. A record's name that rich presence shows is left to the records. So are
+    /// achievements a record `id` keys, and the rest are given under `steam achievements`.
     #[arg(long, conflicts_with_all = ["unchanged", "steam"])]
     pub template: bool,
     /// Write nothing. Exit 2 and name each minimum or recommended system requirement that the
@@ -579,8 +580,8 @@ pub struct Writing {
     /// A set gives its `setid` and English `name`. As a games-kit record typed `achievement_set`,
     /// it gives its set ID in `steam`. A catalogue's language is its header's `Language`, or else
     /// its file name, such as `de.po`. Its texts are under the contexts `achievement.name`,
-    /// `achievement.description` and `achievement_set.name`, by the record's `id`, or else the
-    /// API name or set ID.
+    /// `achievement.description` and `achievement_set.name`, by the record's `id`. Without an
+    /// `id`, they are under `steam achievements` by their English, as `text --template` gives them.
     #[arg(
         long,
         value_name = "FILE",

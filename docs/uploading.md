@@ -851,13 +851,15 @@ A game that keeps its translations in gettext catalogues gives those instead. Ea
 the language its header's `Language` names, or else its file name, such as `de.po` or `pt_BR.po`.
 steamship turns that into Steam's name for the language with Valve's table.
 
-An achievement's name and description are under the contexts `achievement.name` and
+A games-kit record's name and description are under the contexts `achievement.name` and
 `achievement.description`. A set's name is under `achievement_set.name`. Each is found by the
-record's `id`, as games-kit keeps a record's translations. A file of the kind above, with no `id`,
-uses the API name or set ID.
+record's `id`, as games-kit keeps a record's translations.
 
-A text a catalogue lacks, leaves empty or marks fuzzy is refused. The message names the catalogue,
-the context and the id.
+In a file of the kind above, with no `id`, each text is under the context `steam achievements`, with
+its English as the msgid. `steamship text --template` gives these entries for the game's template.
+
+Every text a catalogue lacks, leaves empty or marks fuzzy is refused. Each message names the
+catalogue, the context and the msgid.
 
 ```sh
 steamship achievements 480 --check mods/base/data/achievements.json game/locale/*.po

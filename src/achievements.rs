@@ -38,8 +38,9 @@ pub struct Wanted {
     pub name: String,
     pub description: String,
     pub hidden: bool,
-    /// What its translations are kept under: the record's `id`, or else its API name.
-    pub id: String,
+    /// The record's `id`, which its translations are kept under. Without one they are kept under
+    /// its English, in [`CONTEXT`].
+    pub id: Option<String>,
     pub defined: Definition,
 }
 
@@ -89,9 +90,9 @@ pub struct WantedSet {
     pub setid: String,
     /// Its name in English.
     pub name: String,
-    /// What achievements name it by and its translations are kept under: the record's `id`, or
-    /// else its set ID.
-    pub id: String,
+    /// The record's `id`, which achievements may name it by and its translations are kept under.
+    /// Without one its name is kept under its English, in [`CONTEXT`].
+    pub id: Option<String>,
 }
 
 /// A set's name in each language, in the order of its localisation's columns.
@@ -494,7 +495,7 @@ fn achievement(entry: &Value, label: &str, named_by: &str) -> Result<Wanted, Str
         name: words("name", true)?,
         description: words("description", false)?,
         hidden: flag("hidden")?,
-        id: text("id")?.unwrap_or_else(|| api_name.clone()),
+        id: text("id")?,
         defined,
         api_name,
     })
@@ -524,8 +525,8 @@ fn set(entry: &Value, label: &str, named_by: &str) -> Result<WantedSet, String> 
     };
     Ok(WantedSet {
         id: match entry.get("id") {
-            Some(Value::String(id)) if !id.is_empty() => id.clone(),
-            _ => setid.clone(),
+            Some(Value::String(id)) if !id.is_empty() => Some(id.clone()),
+            _ => None,
         },
         setid,
         name,
@@ -773,11 +774,9 @@ fn resolve(whole: &mut Listed) -> Result<(), String> {
             }
         }
         if let Some(set) = &mut wanted.defined.set {
-            let Some(found) = whole
-                .sets
-                .iter()
-                .find(|each| each.setid == *set || names(&each.id, set))
-            else {
+            let Some(found) = whole.sets.iter().find(|each| {
+                each.setid == *set || each.id.as_deref().is_some_and(|id| names(id, set))
+            }) else {
                 return Err(format!(
                     "{} is in the set {set}, which no file lists",
                     wanted.api_name
@@ -807,54 +806,54 @@ fn resolve(whole: &mut Listed) -> Result<(), String> {
 ///
 /// An achievement's translations are kept under the contexts `achievement.name` and
 /// `achievement.description`, and a set's under `achievement_set.name`, each by its `id`, as
-/// games-kit reads a record's.
+/// games-kit reads a record's. Without an `id`, each text is kept under its English in
+/// [`CONTEXT`], as `text --template` gives it.
 ///
 /// # Errors
 ///
-/// When the achievements are translated by a localisation as well, or a catalogue lacks a text,
-/// leaves it empty or marks it fuzzy. The error names the catalogue and the text.
-pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), String> {
+/// When the achievements are translated by a localisation as well. Otherwise each text a
+/// catalogue lacks, leaves empty or marks fuzzy, each naming the catalogue and the text.
+pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), Vec<String>> {
     if catalogues.is_empty() {
         return Ok(());
     }
     if !listed.translations.is_empty() {
-        return Err(
+        return Err(vec![
             "the achievements are translated both in a localisation and in gettext catalogues. \
              Give one or the other"
                 .to_owned(),
-        );
+        ]);
     }
     // None stands for English, which the files themselves give.
     let mut columns: Vec<Option<&Catalogued>> = catalogues.iter().map(Some).collect();
     columns.push(None);
     columns.sort_by_key(|column| column.map_or("english", |from| from.language));
-    let text = |from: &Catalogued, field: &str, kind: &str, id: &str, of: &str| {
-        let context = format!("{kind}.{field}");
-        match from.catalogue.find(&context, id) {
-            Some(entry) if entry.fuzzy => Err(format!(
-                "{}: the {field} of {of} is marked fuzzy, under msgctxt \"{context}\" and msgid \
-                 \"{id}\"",
-                from.file
-            )),
-            Some(entry) if !entry.text.is_empty() => Ok(entry.text.clone()),
-            _ => Err(format!(
-                "{} has no {field} of {of}, under msgctxt \"{context}\" and msgid \"{id}\"",
-                from.file
-            )),
-        }
+    let mut wrong = Vec::new();
+    let mut text = |from: &Catalogued, field: &str, kind: &str, key: Key<'_>, of: &str| {
+        found(from, field, kind, key, of).unwrap_or_else(|why| {
+            wrong.push(why);
+            String::new()
+        })
     };
+    let mut translations = Vec::with_capacity(listed.achievements.len());
     for wanted in &listed.achievements {
         let mut texts = Vec::with_capacity(columns.len());
         for column in &columns {
-            texts.push(match column {
-                None => Translation {
+            texts.push(column.map_or_else(
+                || Translation {
                     language: "english".to_owned(),
                     name: wanted.name.clone(),
                     description: wanted.description.clone(),
                 },
-                Some(from) => Translation {
+                |from| Translation {
                     language: from.language.to_owned(),
-                    name: text(from, "name", "achievement", &wanted.id, &wanted.api_name)?,
+                    name: text(
+                        from,
+                        "name",
+                        "achievement",
+                        key(wanted.id.as_ref(), &wanted.name),
+                        &wanted.api_name,
+                    ),
                     description: if wanted.description.is_empty() {
                         String::new()
                     } else {
@@ -862,41 +861,96 @@ pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), S
                             from,
                             "description",
                             "achievement",
-                            &wanted.id,
+                            key(wanted.id.as_ref(), &wanted.description),
                             &wanted.api_name,
-                        )?
+                        )
                     },
                 },
-            });
+            ));
         }
-        listed.translations.push(Translated {
+        translations.push(Translated {
             api_name: wanted.api_name.clone(),
             texts,
         });
     }
+    let mut set_names = Vec::with_capacity(listed.sets.len());
     for wanted in &listed.sets {
         let mut names = Vec::with_capacity(columns.len());
         for column in &columns {
-            names.push(match column {
-                None => ("english".to_owned(), wanted.name.clone()),
-                Some(from) => (
-                    from.language.to_owned(),
-                    text(
-                        from,
-                        "name",
-                        "achievement_set",
-                        &wanted.id,
-                        &format!("set {}", wanted.setid),
-                    )?,
-                ),
-            });
+            names.push(column.map_or_else(
+                || ("english".to_owned(), wanted.name.clone()),
+                |from| {
+                    (
+                        from.language.to_owned(),
+                        text(
+                            from,
+                            "name",
+                            "achievement_set",
+                            key(wanted.id.as_ref(), &wanted.name),
+                            &format!("set {}", wanted.setid),
+                        ),
+                    )
+                },
+            ));
         }
-        listed.set_names.push(SetTranslated {
+        set_names.push(SetTranslated {
             setid: wanted.setid.clone(),
             names,
         });
     }
+    if !wrong.is_empty() {
+        return Err(wrong);
+    }
+    listed.translations = translations;
+    listed.set_names = set_names;
     Ok(())
+}
+
+/// The context a catalogue translates an achievement's or a set's text under, by its English,
+/// when its file gives it no record `id`.
+pub const CONTEXT: &str = "steam achievements";
+
+/// What a catalogue finds a text by: the record's `id` or its English.
+#[derive(Clone, Copy)]
+enum Key<'text> {
+    Id(&'text str),
+    English(&'text str),
+}
+
+/// The `field` of a `kind` of record, called `of`, as the catalogue `from` translates it by `key`.
+///
+/// # Errors
+///
+/// When the catalogue lacks it, leaves it empty or marks it fuzzy. The error says where it was
+/// looked for.
+fn found(
+    from: &Catalogued,
+    field: &str,
+    kind: &str,
+    key: Key<'_>,
+    of: &str,
+) -> Result<String, String> {
+    let (context, id) = match key {
+        Key::Id(id) => (format!("{kind}.{field}"), id),
+        Key::English(english) => (CONTEXT.to_owned(), english),
+    };
+    match from.catalogue.find(&context, id) {
+        Some(entry) if entry.fuzzy => Err(format!(
+            "{}: the {field} of {of} is marked fuzzy, under msgctxt \"{context}\" and msgid \
+             \"{id}\"",
+            from.file
+        )),
+        Some(entry) if !entry.text.is_empty() => Ok(entry.text.clone()),
+        _ => Err(format!(
+            "{} has no {field} of {of}, under msgctxt \"{context}\" and msgid \"{id}\"",
+            from.file
+        )),
+    }
+}
+
+/// The record's `id` when there is one, or else the `english`.
+fn key<'text>(id: Option<&'text String>, english: &'text str) -> Key<'text> {
+    id.map_or(Key::English(english), |id| Key::Id(id))
 }
 
 /// Refuses the first of `api_names` that is there twice, said with `kind` before it.
@@ -1392,7 +1446,7 @@ mod tests {
             name: name.to_owned(),
             description: format!("{name}, described"),
             hidden: false,
-            id: api_name.to_owned(),
+            id: None,
             defined: Definition::default(),
         }
     }
@@ -1556,7 +1610,7 @@ mod tests {
             [
                 Wanted {
                     description: "Bring the millpond up to its brim.".to_owned(),
-                    id: "base:long_journey".to_owned(),
+                    id: Some("base:long_journey".to_owned()),
                     defined: Definition {
                         progress: Some(Progress {
                             stat: "base:floors".to_owned(),
@@ -1569,7 +1623,7 @@ mod tests {
                 Wanted {
                     description: String::new(),
                     hidden: true,
-                    id: "base:secret".to_owned(),
+                    id: Some("base:secret".to_owned()),
                     defined: Definition {
                         icon: Some(PathBuf::from("res://icons/secret.png")),
                         ..Definition::default()
@@ -1793,7 +1847,7 @@ mod tests {
             [WantedSet {
                 setid: "1".to_owned(),
                 name: "The Cellar".to_owned(),
-                id: "base:cellar".to_owned(),
+                id: Some("base:cellar".to_owned()),
             }]
         );
         let cellar = whole.achievements.last().unwrap();
@@ -1842,8 +1896,8 @@ mod tests {
             defined,
             [(Some("7"), Some("OfficialGameServer")), (Some("8"), None)]
         );
-        let ids: Vec<&str> = grouped.sets.iter().map(|set| set.id.as_str()).collect();
-        assert_eq!(ids, ["7", "8"]);
+        let ids: Vec<Option<&str>> = grouped.sets.iter().map(|set| set.id.as_deref()).collect();
+        assert_eq!(ids, [None, None]);
     }
 
     #[test]
@@ -1944,9 +1998,9 @@ mod tests {
             records
                 .sets
                 .iter()
-                .map(|set| set.id.as_str())
+                .map(|set| set.id.as_deref())
                 .collect::<Vec<_>>(),
-            ["1"]
+            [None]
         );
         let whole = together(vec![("a.json".to_owned(), records)]).unwrap();
         let counted = whole
@@ -2052,7 +2106,7 @@ mod tests {
                     .map(|each| WantedSet {
                         setid: each.to_string(),
                         name: each.to_string(),
-                        id: each.to_string(),
+                        id: None,
                     })
                     .collect(),
                 ..Listed::default()
@@ -2173,7 +2227,11 @@ mod tests {
             let mut listed = whole.clone();
             assert_eq!(
                 translate(&mut listed, &[catalogued("de.po", "german", &text)]).unwrap_err(),
-                why
+                [why]
+            );
+            assert_eq!(
+                listed, whole,
+                "nothing is translated while a text is missing"
             );
         }
         let mut both = whole;
@@ -2183,9 +2241,79 @@ mod tests {
         });
         assert_eq!(
             translate(&mut both, &[catalogued("de.po", "german", GERMAN)]).unwrap_err(),
-            "the achievements are translated both in a localisation and in gettext catalogues. \
-             Give one or the other"
+            [
+                "the achievements are translated both in a localisation and in gettext catalogues. \
+              Give one or the other"
+            ]
         );
+    }
+
+    const OWN_KIND: &str = r#"{"sets": [{"setid": "1", "name": "Firsts"}],
+        "achievements": [
+            {"api_name": "FIRST_GRIST", "set": "1", "name": "First grist",
+             "description": "Grind your first sack of grain."},
+            {"api_name": "HUSH", "name": "Hush"}]}"#;
+
+    #[test]
+    fn a_file_of_steamships_kind_is_translated_by_its_english() {
+        let mut whole = together(vec![("a.json".to_owned(), read(OWN_KIND).unwrap())]).unwrap();
+        let german = "msgctxt \"steam achievements\"\nmsgid \"First grist\"\n\
+            msgstr \"Erstes Mahlgut\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"Grind your first sack of grain.\"\n\
+            msgstr \"Mahle deinen ersten Sack Korn.\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"Hush\"\nmsgstr \"Pst\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"Firsts\"\nmsgstr \"Erste Male\"\n";
+        translate(&mut whole, &[catalogued("de.po", "german", german)]).unwrap();
+        let german_texts: Vec<(&str, &str)> = whole
+            .translations
+            .iter()
+            .filter_map(|translated| translated.texts.last())
+            .map(|text| (text.name.as_str(), text.description.as_str()))
+            .collect();
+        assert_eq!(
+            german_texts,
+            [
+                ("Erstes Mahlgut", "Mahle deinen ersten Sack Korn."),
+                ("Pst", "")
+            ]
+        );
+        assert_eq!(
+            whole.set_names.first().unwrap().names.last().unwrap(),
+            &("german".to_owned(), "Erste Male".to_owned())
+        );
+    }
+
+    #[test]
+    fn every_text_a_catalogue_lacks_is_named_at_once() {
+        let whole = together(vec![("a.json".to_owned(), read(OWN_KIND).unwrap())]).unwrap();
+        let mut listed = whole.clone();
+        let french = "msgctxt \"steam achievements\"\nmsgid \"Hush\"\nmsgstr \"Chut\"\n";
+        assert_eq!(
+            translate(
+                &mut listed,
+                &[
+                    catalogued("de.po", "german", ""),
+                    catalogued("fr.po", "french", french)
+                ]
+            )
+            .unwrap_err(),
+            [
+                "fr.po has no name of FIRST_GRIST, under msgctxt \"steam achievements\" and msgid \
+                 \"First grist\"",
+                "fr.po has no description of FIRST_GRIST, under msgctxt \"steam achievements\" and \
+                 msgid \"Grind your first sack of grain.\"",
+                "de.po has no name of FIRST_GRIST, under msgctxt \"steam achievements\" and msgid \
+                 \"First grist\"",
+                "de.po has no description of FIRST_GRIST, under msgctxt \"steam achievements\" and \
+                 msgid \"Grind your first sack of grain.\"",
+                "de.po has no name of HUSH, under msgctxt \"steam achievements\" and msgid \"Hush\"",
+                "fr.po has no name of set 1, under msgctxt \"steam achievements\" and msgid \
+                 \"Firsts\"",
+                "de.po has no name of set 1, under msgctxt \"steam achievements\" and msgid \
+                 \"Firsts\"",
+            ]
+        );
+        assert_eq!(listed, whole);
     }
 
     #[test]
