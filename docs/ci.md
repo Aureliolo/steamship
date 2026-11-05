@@ -25,7 +25,9 @@ the step to add to your workflow, after the step that builds your content:
     login: ${{ secrets.STEAMSHIP_LOGIN }}
 ```
 
-The action installs the steamship release it is pinned to. It refuses that release unless its
+The action is listed on the GitHub Marketplace as
+[Upload to Steam with steamship](https://github.com/marketplace/actions/upload-to-steam-with-steamship).
+It installs the steamship release it is pinned to. It refuses that release unless its
 SHA-256 and its attestation check out. Then it uploads, and gives the BuildID as its `build-id`
 output. `preview: true` makes it Valve's dry run.
 
