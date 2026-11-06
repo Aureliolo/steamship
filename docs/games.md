@@ -355,6 +355,12 @@ list is in the About's order instead, so it is no guide.
 Every image the About shows has to be in `extras`. Each image `extras` lists gets its `alt`, or an
 empty one. An empty one clears what the store held, such as for a decorative image.
 
+### Quotes in image alt text
+
+Steam stores a straight double quote in an image's alt text as `&quot;`. The store page then serves
+it escaped a second time, which screen readers read out. So an image's alt text holding one, in
+any language, is refused. Use the language's own quotation marks or single quotes.
+
 ### Screenshot alt text
 
 The upload carries no screenshot's alt text. So the screenshots' alt text goes into
