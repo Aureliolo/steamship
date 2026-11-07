@@ -128,9 +128,10 @@ fn run(command: Command) -> ExitCode {
         Command::Achievements {
             app,
             check,
+            save,
             writing,
             json,
-        } => either(achievements_in(app, check, writing, json)),
+        } => either(achievements_in(app, check, save.as_deref(), writing, json)),
         Command::DrmWrap {
             app,
             executable,
@@ -584,6 +585,7 @@ fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> {
         codes.push(either(try_achievements(
             app,
             &achievements,
+            None,
             &writing,
             false,
         )));
@@ -843,6 +845,7 @@ fn no_import_due(game: &Project) -> Result<ExitCode, ExitCode> {
 fn achievements_in(
     app: Option<String>,
     check: Option<Vec<PathBuf>>,
+    save: Option<&Path>,
     mut writing: Writing,
     json: bool,
 ) -> Result<ExitCode, ExitCode> {
@@ -891,7 +894,13 @@ fn achievements_in(
             REFUSED,
         ));
     }
-    try_achievements(&app_given_or(app, game.as_ref()), &files, &writing, json)
+    try_achievements(
+        &app_given_or(app, game.as_ref()),
+        &files,
+        save,
+        &writing,
+        json,
+    )
 }
 
 /// The app as `app` names it, or else as the game's build script does. `game` is there whenever
@@ -3898,6 +3907,7 @@ fn translation_drift(
 fn try_achievements(
     app: &str,
     check: &[PathBuf],
+    save: Option<&Path>,
     writing: &Writing,
     json: bool,
 ) -> Result<ExitCode, ExitCode> {
@@ -3909,6 +3919,9 @@ fn try_achievements(
     }
     show::title("achievements");
     let app_id = app_named(app)?;
+    if let Some(path) = save {
+        written_over(path, &achievements::SAVED)?;
+    }
     let listed = achievements_files(check, app_id, true)?;
     let receipt = match (&listed, &writing.out) {
         (Some(listed), Some(out)) => Some((receipt_in(out, app_id)?, achievement_icons(listed)?)),
@@ -3933,6 +3946,9 @@ fn try_achievements(
     }
     spinner.done(&format!("{holds} on Steam"));
     offer_to_keep(&home, &api, from);
+    if let Some(path) = save {
+        return save_achievements(app_id, &held, path);
+    }
     let Some(listed) = listed else {
         return list_achievements(&api, app_id, &held, json);
     };
@@ -3977,6 +3993,28 @@ fn try_achievements(
         }
     }
     Ok(ExitCode::from(REFUSED))
+}
+
+/// Writes `held`, app `app_id`'s achievements and stats on Steam, to `path` as `--check` reads
+/// them.
+fn save_achievements(
+    app_id: u32,
+    held: &webapi::Schema,
+    path: &Path,
+) -> Result<ExitCode, ExitCode> {
+    let text = achievements::saved(app_id, &held.achievements, &held.stats)
+        .map_err(|why| fail(&format!("app {app_id}: {why}"), REFUSED))?;
+    fs::write(path, text).map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
+    show::success(
+        &format!(
+            "app {app_id}: {} and {} saved to {}",
+            show::counted(held.achievements.len(), "achievement"),
+            show::counted(held.stats.len(), "stat"),
+            path.display()
+        ),
+        "steamship achievements --check compares Steam's with them",
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Why Steam can differ from an import saved in Steamworks: its Web API and image host give the

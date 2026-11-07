@@ -761,6 +761,12 @@ the game sets it by:
 `description` and `hidden` may be left out, for none and `false`. `app`, when there, must be the
 app checked. Other keys, such as your own tools', are left alone.
 
+`achievements 480 --save steam/achievements.json` writes what Steam holds to that file, its stats
+included. Achievements made by hand in Steamworks can then be checked. An achievement with no name
+in English exits 2, as the file must give one. As with leaderboards, `--save` writes over only a
+file holding nothing more than it writes, so an `icon`, a `sets` list or games-kit records are
+never lost.
+
 Achievements and stats count on Steam only once published in Steamworks. One entered or imported
 but not yet published is missing from Steam's, or shows as it was before. A check that fails says
 so.

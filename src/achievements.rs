@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::editor::RECEIPT;
 use crate::po::Catalogue;
 use crate::presence;
+use crate::saved::List;
 use crate::show::counted;
 use crate::webapi::{Achievement, Stat, Totalled};
 
@@ -245,6 +246,86 @@ pub fn read(text: &str) -> Result<Listed, String> {
         unchecked,
         ..Listed::default()
     })
+}
+
+/// What [`saved`] writes, which is all a file it writes over may hold.
+pub const SAVED: [List; 2] = [
+    List {
+        key: "achievements",
+        entry: "achievement",
+        fields: &["api_name", "name", "description", "hidden"],
+    },
+    List {
+        key: "stats",
+        entry: "stat",
+        fields: &["api_name", "name", "default"],
+    },
+];
+
+/// `achievements` and `stats`, as Steam holds them for `app`, as a file [`read`] reads back.
+///
+/// Each achievement has its API name, name, description and hidden flag, and each stat its API
+/// name, name and default. The `stats` list is always there, so that the stats are checked.
+///
+/// # Errors
+///
+/// When an achievement has no name in English, which a file must give. The error names each.
+pub fn saved(app: u32, achievements: &[Achievement], stats: &[Stat]) -> Result<String, String> {
+    let unnamed: Vec<&str> = achievements
+        .iter()
+        .filter(|achievement| achievement.name.is_empty())
+        .map(|achievement| achievement.api_name.as_str())
+        .collect();
+    if !unnamed.is_empty() {
+        return Err(format!(
+            "{} {} no name in English on Steam, which a file must give. Name {} in Steamworks, \
+             publish, then save again",
+            unnamed.join(", "),
+            if unnamed.len() == 1 { "has" } else { "have" },
+            if unnamed.len() == 1 { "it" } else { "them" }
+        ));
+    }
+    // Written by hand, as serde_json would order the keys alphabetically rather than as the
+    // documented file has them.
+    let text = |words: &str| Value::from(words).to_string();
+    let entries = |lines: Vec<String>| {
+        if lines.is_empty() {
+            "[]".to_owned()
+        } else {
+            format!("[\n{}\n  ]", lines.join(",\n"))
+        }
+    };
+    let achieved = achievements
+        .iter()
+        .map(|achievement| {
+            format!(
+                "    {{\n      \"api_name\": {},\n      \"name\": {},\n      \"description\": {},\n      \
+                 \"hidden\": {}\n    }}",
+                text(&achievement.api_name),
+                text(&achievement.name),
+                text(&achievement.description),
+                achievement.hidden
+            )
+        })
+        .collect();
+    // A float's own display gives a whole default as 0 rather than 0.0, and any other as JSON
+    // writes it.
+    let counted = stats
+        .iter()
+        .map(|stat| {
+            format!(
+                "    {{\n      \"api_name\": {},\n      \"name\": {},\n      \"default\": {}\n    }}",
+                text(&stat.api_name),
+                text(&stat.name),
+                stat.default
+            )
+        })
+        .collect();
+    Ok(format!(
+        "{{\n  \"app\": {app},\n  \"achievements\": {},\n  \"stats\": {}\n}}\n",
+        entries(achieved),
+        entries(counted)
+    ))
 }
 
 /// The keys of an achievement that set what Steam's Web API does not answer, with what that is.
@@ -1438,7 +1519,7 @@ pub fn tally(drift: &[Drift], wanted: usize, kind: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::po;
+    use crate::{po, saved};
 
     fn wanted(api_name: &str, name: &str) -> Wanted {
         Wanted {
@@ -1460,6 +1541,77 @@ mod tests {
             icon: format!("https://cdn/{api_name}.jpg"),
             icon_locked: format!("https://cdn/{api_name}_bw.jpg"),
         }
+    }
+
+    #[test]
+    fn saved_achievements_and_stats_read_back_as_a_file_steam_matches() {
+        let hush = Achievement {
+            hidden: true,
+            description: "Say \"nothing\".".to_owned(),
+            ..held("secret", "Hush")
+        };
+        let achievements = [held("early_win", "Opening day"), hush];
+        let stats = [
+            Stat {
+                api_name: "NumGames".to_owned(),
+                name: "Games played".to_owned(),
+                default: 0.0_f64,
+            },
+            Stat {
+                api_name: "Distance".to_owned(),
+                name: String::new(),
+                default: 1.5_f64,
+            },
+        ];
+        let text = saved(480, &achievements, &stats).unwrap();
+        assert!(text.contains("\"default\": 0\n"), "{text}");
+        assert!(text.contains("\"default\": 1.5\n"), "{text}");
+        assert_eq!(saved::replaceable(&text, &SAVED), Ok(()));
+        let listed = read(&text).unwrap();
+        assert_eq!(listed.app, Some(480));
+        assert_eq!(compare(&listed.achievements, &achievements), []);
+        let wanted_stats = listed.stats.unwrap();
+        assert_eq!(wanted_stats.len(), 2);
+        assert_eq!(compare_stats(&wanted_stats, &stats, None), []);
+        assert_eq!(listed.unchecked, Vec::<&str>::new());
+    }
+
+    #[test]
+    fn saved_achievements_are_laid_out_as_the_documented_file() {
+        let winner = Achievement {
+            description: "Win one game.".to_owned(),
+            ..held("ACH_WIN_ONE_GAME", "Winner")
+        };
+        let games = Stat {
+            api_name: "NumGames".to_owned(),
+            name: "Games played".to_owned(),
+            default: 0.0_f64,
+        };
+        assert_eq!(
+            saved(480, &[winner], &[games]).unwrap(),
+            "{\n  \"app\": 480,\n  \"achievements\": [\n    {\n      \"api_name\": \
+             \"ACH_WIN_ONE_GAME\",\n      \"name\": \"Winner\",\n      \"description\": \"Win one \
+             game.\",\n      \"hidden\": false\n    }\n  ],\n  \"stats\": [\n    {\n      \
+             \"api_name\": \"NumGames\",\n      \"name\": \"Games played\",\n      \"default\": 0\n    \
+             }\n  ]\n}\n"
+        );
+        assert_eq!(
+            saved(480, &[], &[]).unwrap(),
+            "{\n  \"app\": 480,\n  \"achievements\": [],\n  \"stats\": []\n}\n"
+        );
+    }
+
+    #[test]
+    fn achievements_without_a_name_are_named_rather_than_saved() {
+        let one = saved(480, &[held("named", "Named"), held("bare", "")], &[]).unwrap_err();
+        assert!(
+            one.starts_with("bare has no name in English on Steam"),
+            "{one}"
+        );
+        assert!(one.contains("Name it in Steamworks"), "{one}");
+        let two = saved(480, &[held("bare", ""), held("plain", "")], &[]).unwrap_err();
+        assert!(two.starts_with("bare, plain have no name"), "{two}");
+        assert!(two.contains("Name them in Steamworks"), "{two}");
     }
 
     #[test]
