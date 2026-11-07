@@ -8,6 +8,7 @@ use std::fmt;
 
 use serde_json::Value;
 
+use crate::saved::List;
 use crate::show;
 use crate::webapi::Leaderboard;
 
@@ -153,6 +154,63 @@ pub fn read(text: &str) -> Result<Listed, String> {
         app,
         leaderboards,
         templates,
+    })
+}
+
+/// What [`saved`] writes, which is all a file it writes over may hold.
+pub const SAVED: [List; 1] = [List {
+    key: "leaderboards",
+    entry: "leaderboard",
+    fields: &["name", "sort", "display", "trusted_writes", "friends_only"],
+}];
+
+/// `held`, Steam's leaderboards for `app`, as a file [`read`] reads back as the same boards.
+///
+/// # Errors
+///
+/// When a board has no display type, which a file cannot give. The error names each such board.
+pub fn saved(app: u32, held: &[Leaderboard]) -> Result<String, String> {
+    let undisplayed: Vec<&str> = held
+        .iter()
+        .filter(|board| board.display.is_empty())
+        .map(|board| board.name.as_str())
+        .collect();
+    if !undisplayed.is_empty() {
+        return Err(format!(
+            "{} {} no display type on Steam, which a file cannot give. Set one in Steamworks, \
+             under Stats & Achievements, Leaderboards, then save again",
+            undisplayed.join(", "),
+            if undisplayed.len() == 1 {
+                "has"
+            } else {
+                "have"
+            }
+        ));
+    }
+    // Written by hand, as serde_json would order the keys alphabetically rather than as the
+    // documented file has them.
+    let text = |word: &str| Value::from(word).to_string();
+    let boards: Vec<String> = held
+        .iter()
+        .map(|board| {
+            format!(
+                "    {{\n      \"name\": {},\n      \"sort\": {},\n      \"display\": {},\n      \
+                 \"trusted_writes\": {},\n      \"friends_only\": {}\n    }}",
+                text(&board.name),
+                text(&board.sort.to_ascii_lowercase()),
+                text(&board.display.to_ascii_lowercase()),
+                board.trusted_writes,
+                board.friends_only
+            )
+        })
+        .collect();
+    Ok(if boards.is_empty() {
+        format!("{{\n  \"app\": {app},\n  \"leaderboards\": []\n}}\n")
+    } else {
+        format!(
+            "{{\n  \"app\": {app},\n  \"leaderboards\": [\n{}\n  ]\n}}\n",
+            boards.join(",\n")
+        )
     })
 }
 
@@ -419,6 +477,7 @@ mod tests {
     use std::slice;
 
     use super::*;
+    use crate::saved;
 
     fn board(name: &str, sort: &str, display: &str) -> Leaderboard {
         Leaderboard {
@@ -455,6 +514,62 @@ mod tests {
                 templates: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn saved_leaderboards_read_back_as_the_same_boards_for_the_same_app() {
+        let mut fastest = board("fastest_season", "Ascending", "MilliSeconds");
+        fastest.trusted_writes = true;
+        fastest.entries = 12;
+        let mut gold = board("gold", "Descending", "Numeric");
+        gold.friends_only = true;
+        let text = saved(480, &[fastest.clone(), gold.clone()]).unwrap();
+        assert!(text.ends_with("}\n"), "{text}");
+        assert!(text.contains("\"display\": \"milliseconds\""), "{text}");
+        assert_eq!(saved::replaceable(&text, &SAVED), Ok(()));
+        let listed = read(&text).unwrap();
+        fastest.entries = 0;
+        assert_eq!(listed.app, Some(480));
+        assert_eq!(listed.leaderboards, [fastest, gold]);
+        assert_eq!(listed.templates, []);
+        assert_eq!(read(&saved(480, &[]).unwrap()).unwrap().leaderboards, []);
+        let quoted = board("say \"gg\"", "Ascending", "Numeric");
+        let escaped = saved(480, slice::from_ref(&quoted)).unwrap();
+        assert_eq!(read(&escaped).unwrap().leaderboards, [quoted]);
+    }
+
+    #[test]
+    fn saved_leaderboards_are_laid_out_as_the_documented_file() {
+        assert_eq!(
+            saved(480, &[board("fastest_season", "Ascending", "Seconds")]).unwrap(),
+            "{\n  \"app\": 480,\n  \"leaderboards\": [\n    {\n      \"name\": \"fastest_season\",\n      \
+             \"sort\": \"ascending\",\n      \"display\": \"seconds\",\n      \"trusted_writes\": \
+             false,\n      \"friends_only\": false\n    }\n  ]\n}\n"
+        );
+        assert_eq!(
+            saved(480, &[]).unwrap(),
+            "{\n  \"app\": 480,\n  \"leaderboards\": []\n}\n"
+        );
+    }
+
+    #[test]
+    fn leaderboards_without_a_display_type_are_named_rather_than_saved() {
+        let shown = board("shown", "Ascending", "Numeric");
+        let one = saved(480, &[shown.clone(), board("bare", "Ascending", "")]).unwrap_err();
+        assert!(
+            one.starts_with("bare has no display type on Steam"),
+            "{one}"
+        );
+        let two = saved(
+            480,
+            &[
+                board("bare", "Ascending", ""),
+                shown,
+                board("plain", "Descending", ""),
+            ],
+        )
+        .unwrap_err();
+        assert!(two.starts_with("bare, plain have no display type"), "{two}");
     }
 
     #[test]
