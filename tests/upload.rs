@@ -231,9 +231,11 @@ fn git(folder: &Path, args: &[&str]) {
                 "-c",
                 "user.email=steamship@example.invalid",
             ])
-            .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
-            // A hooks folder set in the machine's own git config would otherwise run here.
-            .args(["-c", "core.hooksPath=.git/hooks"])
+            .args(["-c", "core.autocrlf=false", "-c", "maintenance.auto=false"])
+            // The machine's own git config could sign each commit or run its hooks, which a
+            // `core.hooksPath` override does not stop when they are set as config.
+            .env("GIT_CONFIG_GLOBAL", folder.join("no-git-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .args(args)
             .current_dir(folder),
     )
