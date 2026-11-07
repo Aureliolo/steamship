@@ -45,8 +45,9 @@ const BRANCH: &str = "testing";
 const CORES: usize = 4;
 
 /// Every setting `steamship.toml` takes at its top, under `[workshop]` and under `[demo]`.
-const SETTINGS: [&str; 11] = [
+const SETTINGS: [&str; 12] = [
     "steamship",
+    "released",
     "script",
     "branch",
     "description",
@@ -59,7 +60,14 @@ const SETTINGS: [&str; 11] = [
     "demo",
 ];
 const WORKSHOP: [&str; 4] = ["mods", "items", "footer", "held_until_launch"];
-const DEMO: [&str; 5] = ["script", "build", "branch", "description", "feature"];
+const DEMO: [&str; 6] = [
+    "script",
+    "build",
+    "branch",
+    "description",
+    "feature",
+    "released",
+];
 
 /// The custom feature that marks a Godot export preset as the demo's when `steamship.toml` names
 /// none.
@@ -113,6 +121,9 @@ pub struct Project {
     pub script: PathBuf,
     /// The one branch the script may set live.
     pub branch: String,
+    /// Whether the app is released, so that an upload never sets a build live on the default
+    /// branch, whatever Steam shows.
+    pub released: bool,
     /// What an upload describes that branch as, when not the version.
     pub description: Option<String>,
     /// The program and arguments that build the game into the folders its depots ship. Empty
@@ -152,6 +163,8 @@ pub struct Demo {
     pub build: Vec<String>,
     /// The one branch the demo's script may set live.
     pub branch: String,
+    /// Whether the demo's app is released, as the game's `released` says for the game's.
+    pub released: bool,
     /// What an upload describes that branch as, when not the version.
     pub description: Option<String>,
 }
@@ -211,6 +224,7 @@ impl Project {
             configured: false,
             pin: None,
             branch: BRANCH.to_owned(),
+            released: false,
             description: None,
             build: Vec::new(),
             cores: CORES,
@@ -225,6 +239,7 @@ impl Project {
                 script: under(root, DEMO_SCRIPT),
                 build: Vec::new(),
                 branch: BRANCH.to_owned(),
+                released: false,
                 description: None,
             }),
             full: None,
@@ -250,6 +265,7 @@ impl Project {
             script: demo.script,
             build: demo.build,
             branch: demo.branch,
+            released: demo.released,
             description: demo.description,
             demo: None,
             full: Some(self.script.clone()),
@@ -296,6 +312,9 @@ impl Project {
                 ));
             }
             branch.clone_into(&mut project.branch);
+        }
+        if let Some(value) = table.get("released") {
+            project.released = release_flag(value, "released")?;
         }
         if let Some(value) = table.get("description") {
             project.description = Some(description(value, "description")?);
@@ -646,11 +665,27 @@ fn demo_configured(root: &Path, section: &toml::Value, game: &Project) -> Result
         .map(|value| description(value, "demo.description"))
         .transpose()?
         .or_else(|| game.description.clone());
+    let released = demo
+        .get("released")
+        .map(|value| release_flag(value, "demo.released"))
+        .transpose()?
+        .unwrap_or(false);
     Ok(Demo {
         script,
         build,
         branch,
+        released,
         description,
+    })
+}
+
+/// Whether the app is released, as the setting `name` gives it.
+fn release_flag(value: &toml::Value, name: &str) -> Result<bool, String> {
+    value.as_bool().ok_or_else(|| {
+        format!(
+            "`{name}` is not true or false. Write true once the app is released, so that builds go \
+             live on {BRANCH} alone, or leave it out"
+        )
     })
 }
 
@@ -986,7 +1021,11 @@ fn remote_head(printed: &str) -> Option<(String, String)> {
 
 /// What Git printed for `args` in `root`, without the line ending it closed with. The start is
 /// kept, as `status --porcelain` begins a line with a space for a file changed but not staged.
-fn git(root: &Path, args: &[&str]) -> Result<String, String> {
+///
+/// # Errors
+///
+/// When Git cannot be run or exits with a failure.
+pub fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_run(root, args)?;
     if !output.status.success() {
         let said = String::from_utf8_lossy(&output.stderr);
@@ -1007,7 +1046,11 @@ fn git(root: &Path, args: &[&str]) -> Result<String, String> {
 }
 
 /// Git run with `args` in `root`, however it ended.
-fn git_run(root: &Path, args: &[&str]) -> Result<process::Output, String> {
+///
+/// # Errors
+///
+/// When Git cannot be run.
+pub fn git_run(root: &Path, args: &[&str]) -> Result<process::Output, String> {
     run::output(
         run::command("git")
             .args(args)
@@ -1197,12 +1240,31 @@ mod tests {
     }
 
     #[test]
+    fn a_game_is_unreleased_until_its_file_says_it_is_released() {
+        let root = Path::new("game");
+        assert!(!configured("").unwrap().released);
+        assert!(configured("released = true").unwrap().released);
+        assert!(!configured("released = false").unwrap().released);
+        assert_eq!(
+            configured("released = \"yes\"").unwrap_err(),
+            "`released` is not true or false. Write true once the app is released, so that \
+             builds go live on testing alone, or leave it out"
+        );
+        let both = Project::configured(root, "released = true\n[demo]\nreleased = false").unwrap();
+        assert!(both.released);
+        assert!(!both.demo().unwrap().released);
+        let demo = Project::configured(root, "[demo]\nreleased = true").unwrap();
+        assert!(!demo.released);
+        assert!(demo.demo().unwrap().released);
+    }
+
+    #[test]
     fn a_file_saying_what_steamship_does_not_take_is_refused_naming_it() {
         for (text, said) in [
             (
                 "builds = []",
-                "`builds` is no setting steamship takes. It takes `steamship`, `script`, \
-                 `branch`, `description`, `build`, `cores`, `records`, `locale`, `import`, \
+                "`builds` is no setting steamship takes. It takes `steamship`, `released`, \
+                 `script`, `branch`, `description`, `build`, `cores`, `records`, `locale`, `import`, \
                  `workshop`, `demo`",
             ),
             (
@@ -1300,7 +1362,14 @@ mod tests {
             (
                 "[demo]\napp = 1000070",
                 "`demo.app` is no setting steamship takes. It takes `demo.script`, \
-                 `demo.build`, `demo.branch`, `demo.description`, `demo.feature`"
+                 `demo.build`, `demo.branch`, `demo.description`, `demo.feature`, \
+                 `demo.released`"
+                    .to_owned(),
+            ),
+            (
+                "[demo]\nreleased = \"yes\"",
+                "`demo.released` is not true or false. Write true once the app is released, so \
+                 that builds go live on testing alone, or leave it out"
                     .to_owned(),
             ),
             (

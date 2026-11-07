@@ -32,6 +32,7 @@ use steamship::account::Account;
 use steamship::install;
 use steamship::itself;
 use steamship::keychain;
+use steamship::ledger;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
 use steamship::run;
@@ -1773,7 +1774,7 @@ fn github_project() -> (tempfile::TempDir, PathBuf) {
         &root,
         &[
             "remote",
-            "add",
+            "set-url",
             "origin",
             "https://github.com/Aureliolo/some-game.git",
         ],
@@ -2951,6 +2952,26 @@ fn project(committed: bool) -> (tempfile::TempDir, PathBuf) {
         git(&root, &["init", "--quiet"]);
         git(&root, &["add", "."]);
         git(&root, &["commit", "--quiet", "-m", "scripts"]);
+        // An upload ships only a commit origin's green branch holds.
+        let origin = temp.path().join("origin.git");
+        git(
+            temp.path(),
+            &[
+                "init",
+                "--quiet",
+                "--bare",
+                "--initial-branch=main",
+                "origin.git",
+            ],
+        );
+        git(
+            &root,
+            &["remote", "add", "origin", &origin.to_string_lossy()],
+        );
+        git(
+            &root,
+            &["push", "--quiet", "origin", "HEAD:refs/heads/green"],
+        );
     }
     let script = root.join("steam").join("app_build.vdf");
     (temp, script)
@@ -8590,6 +8611,23 @@ fn pushed_game(toml: Option<&str>) -> (tempfile::TempDir, PathBuf) {
 fn pushed(root: &Path, message: &str) {
     git(root, &["add", "--all"]);
     git(root, &["commit", "--quiet", "--allow-empty", "-m", message]);
+    git(
+        root,
+        &[
+            "push",
+            "--quiet",
+            "origin",
+            "main",
+            "+main:refs/heads/green",
+        ],
+    );
+}
+
+/// Commits everything in the game at `root` and pushes it to its origin's `main` alone, so that
+/// `green` stays where it was.
+fn pushed_ungreen(root: &Path, message: &str) {
+    git(root, &["add", "--all"]);
+    git(root, &["commit", "--quiet", "--allow-empty", "-m", message]);
     git(root, &["push", "--quiet", "origin", "main"]);
 }
 
@@ -9160,6 +9198,226 @@ fn a_steamship_toml_saying_what_steamship_does_not_take_is_refused_naming_the_fi
         )),
         "{stderr}"
     );
+}
+
+#[test]
+fn an_upload_in_a_game_is_refused_unless_origins_green_holds_its_commit() {
+    let (_temp, root) = pushed_game(None);
+    git(&root, &["push", "--quiet", "origin", "--delete", "green"]);
+    // A version of noughts is refused after the green check, so nothing is built or sent.
+    let ran = |args: &[&str]| {
+        let (code, stdout, stderr) = in_game(&root, args);
+        assert_eq!(code, Some(2_i32), "{args:?}: {stdout}{stderr}");
+        (stdout, failure(&stderr).to_owned())
+    };
+    let (_, why) = ran(&["upload"]);
+    assert!(
+        why.contains(
+            "is not on origin's green branch (origin has no green branch). Run a round for this \
+             repository"
+        ),
+        "{why}"
+    );
+
+    pushed(&root, "Green again");
+    pushed_ungreen(&root, "Ahead of green");
+    let (_, ahead_why) = ran(&["upload"]);
+    assert!(
+        ahead_why.contains("is not on origin's green branch (green is at "),
+        "{ahead_why}"
+    );
+
+    let (allowed_out, allowed_why) = ran(&["upload", "--allow-ungreen", "--version", "0.0.0"]);
+    assert!(
+        allowed_out.contains("not on origin's green, let through by --allow-ungreen"),
+        "{allowed_out}"
+    );
+    assert!(
+        !allowed_why.contains("origin's green branch"),
+        "{allowed_why}"
+    );
+
+    let (preview_out, preview_why) = ran(&["upload", "--preview", "--version", "0.0.0"]);
+    assert!(
+        !format!("{preview_out}{preview_why}").contains("origin's green"),
+        "a preview uploads nothing and is not held to green: {preview_out}{preview_why}"
+    );
+
+    pushed(&root, "Green holds it");
+    let (held_out, _) = ran(&["upload", "--version", "0.0.0"]);
+    assert!(held_out.contains(", on origin's green"), "{held_out}");
+}
+
+#[test]
+fn an_upload_of_a_script_is_refused_unless_origins_green_holds_its_commit() {
+    let (project, script) = project(true);
+    let home = tempfile::tempdir().unwrap();
+    let root = script.parent().unwrap().parent().unwrap();
+    git(root, &["push", "--quiet", "origin", "--delete", "green"]);
+    let (code, _, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(
+        failure(&stderr).contains("is not on origin's green branch (origin has no green branch)"),
+        "{stderr}"
+    );
+    drop(project);
+}
+
+#[test]
+fn rollback_sets_a_branch_back_to_the_build_before_the_current_one_and_records_it() {
+    let home = tempfile::tempdir().unwrap();
+    let entry = |branch: &str, build_id: u64| ledger::Entry {
+        app: 1_000_010,
+        branch: branch.to_owned(),
+        build_id,
+        commit: format!("{build_id:040x}"),
+        green: true,
+    };
+    for each in [
+        entry("testing", 5),
+        entry("default", 6),
+        entry("testing", 7),
+    ] {
+        ledger::record(home.path(), each).unwrap();
+    }
+    let (host, requests) = web_api(vec![("200 OK", SET_LIVE)]);
+    let (code, stdout, stderr) = steamship(
+        &["rollback", "1000010", "testing"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    for line in [
+        "  from      BuildID 7, commit 000000000000\n",
+        "  to        BuildID 5, commit 000000000000\n",
+        "app 1000010: testing is back on BuildID 5",
+    ] {
+        assert!(stdout.contains(line), "{line:?} in {stdout}");
+    }
+    let setting = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        setting.starts_with("POST /ISteamApps/SetAppBuildLive/v2/ ")
+            && setting.ends_with("appid=1000010&buildid=5&betakey=testing"),
+        "{setting}"
+    );
+    let kept = ledger::load(home.path(), 1_000_010).unwrap();
+    assert_eq!(kept.last().map(|each| each.build_id), Some(5));
+    assert_eq!(kept.len(), 4);
+}
+
+#[test]
+fn rollback_refuses_a_branch_with_no_earlier_recorded_build_and_asks_steam_nothing() {
+    let home = tempfile::tempdir().unwrap();
+    ledger::record(
+        home.path(),
+        ledger::Entry {
+            app: 1_000_010,
+            branch: "testing".to_owned(),
+            build_id: 7,
+            commit: "7".repeat(40),
+            green: true,
+        },
+    )
+    .unwrap();
+    // A stand-in that answers nothing: a request would fail with 1, not be refused with 2.
+    let (silent, _unasked) = web_api::<&str>(vec![]);
+    for (branch, said) in [
+        (
+            "testing",
+            "steamship recorded only BuildID 7 on testing for app 1000010",
+        ),
+        (
+            "beta",
+            "steamship recorded no upload to beta for app 1000010",
+        ),
+    ] {
+        let (code, stdout, stderr) = steamship(
+            &["rollback", "1000010", branch],
+            Some(home.path()),
+            &[
+                ("STEAMSHIP_WEB_API_KEY", KEY),
+                ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+                (STAND_IN, &silent),
+            ],
+        );
+        assert_eq!(code, Some(2_i32), "{branch}: {stdout}{stderr}");
+        assert!(failure(&stderr).contains(said), "{branch}: {stderr}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn rollback_sets_the_default_branch_back_only_while_steam_shows_the_app_unreleased() {
+    let home = faked_with(&released_as("released"));
+    saved_login(home.path());
+    for build_id in [5_u64, 7] {
+        ledger::record(
+            home.path(),
+            ledger::Entry {
+                app: 1000,
+                branch: "default".to_owned(),
+                build_id,
+                commit: format!("{build_id:040x}"),
+                green: true,
+            },
+        )
+        .unwrap();
+    }
+    let (silent, _unasked) = web_api::<&str>(vec![]);
+    let (code, stdout, stderr) = steamship(
+        &["rollback", "1000", "public"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &silent),
+        ],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).starts_with("app 1000 is released, so "),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_released_game_is_held_to_green_too() {
+    let (_temp, root) = pushed_game(Some("released = true\n"));
+    git(&root, &["push", "--quiet", "origin", "--delete", "green"]);
+    let (code, shown, why) = in_game(&root, &["upload"]);
+    assert_eq!(code, Some(2_i32), "{shown}{why}");
+    assert!(
+        failure(&why).contains("is not on origin's green branch"),
+        "{why}"
+    );
+}
+
+#[test]
+fn a_demo_is_held_to_green_too() {
+    let (_temp, root) = pushed_game(Some("[demo]\nreleased = true\n"));
+    git(&root, &["push", "--quiet", "origin", "--delete", "green"]);
+    let (code, shown, why) = in_game(&root, &["upload", "--demo"]);
+    assert_eq!(code, Some(2_i32), "{shown}{why}");
+    assert!(
+        failure(&why).contains("is not on origin's green branch"),
+        "{why}"
+    );
+}
+
+#[test]
+fn the_help_names_allow_ungreen_and_marks_rollback_as_needing_the_owners_yes() {
+    for (command, said) in [
+        ("upload", "--allow-ungreen"),
+        ("rollback", "Needs the owner's yes"),
+    ] {
+        let (code, stdout, stderr) = steamship(&[command, "--help"], Some(Path::new(".")), &[]);
+        assert_eq!(code, Some(0_i32), "{command}: {stderr}");
+        assert!(stdout.contains(said), "{command}: {stdout}");
+    }
 }
 
 #[test]
@@ -10738,6 +10996,77 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
             && !shown_preview.contains("steamship builds"),
         "a preview ends with Valve's dry run: {shown_preview}"
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
+    let (_temp, root, home) = settled_inn(&format!("released = true\n{BUILDING}"));
+    let (host, requests) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(4242)),
+        ("200 OK", DESCRIBED),
+        ("200 OK", UPDATED),
+        ("200 OK", BETAS),
+        ("200 OK", BUILDS),
+    ]);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["upload"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("app 1000050: BuildID 4242, set live on testing\n")
+            && !stdout.contains("and default"),
+        "{stdout}"
+    );
+    let asked: Vec<String> =
+        iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
+            .take(4)
+            .collect();
+    assert!(
+        !asked
+            .iter()
+            .any(|request| request.contains("SetAppBuildLive")),
+        "a released game's default branch is never set: {asked:?}"
+    );
+    let head = run::output(
+        run::command("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&root),
+    )
+    .unwrap();
+    let kept = ledger::load(home.path(), 1_000_050).unwrap();
+    assert_eq!(
+        kept,
+        vec![ledger::Entry {
+            app: 1_000_050,
+            branch: "testing".to_owned(),
+            build_id: 4242,
+            commit: String::from_utf8(head.stdout).unwrap().trim().to_owned(),
+            green: true,
+        }]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreleased_game_records_its_build_on_testing_and_default() {
+    let (_temp, root, home) = settled_inn(BUILDING);
+    let (code, stdout, stderr, _asked) = uploaded_inn(&root, home.path());
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let kept = ledger::load(home.path(), 1_000_050).unwrap();
+    let branches: Vec<(&str, u64)> = kept
+        .iter()
+        .map(|each| (each.branch.as_str(), each.build_id))
+        .collect();
+    assert_eq!(branches, [("testing", 4242), ("default", 4242)]);
 }
 
 #[cfg(unix)]

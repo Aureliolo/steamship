@@ -31,8 +31,9 @@ use steamship::update::{self, Installed};
 use steamship::windows::Terminal;
 use steamship::{
     achievements, assets, check, ci, conversation, digest, download, drm, dump, editor, fetch,
-    init, itself, keychain, leaderboards, likeness, magic, picture, po, presence, presets, redist,
-    release, run, scripts, settings, steamcmd, storefront, text, upload, vdf, webapi, workshop,
+    green, init, itself, keychain, leaderboards, ledger, likeness, magic, picture, po, presence,
+    presets, redist, release, run, scripts, settings, steamcmd, storefront, text, upload, vdf,
+    webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -83,12 +84,15 @@ fn main() -> ExitCode {
     code
 }
 
+/// Prints the completions of `shell` for the command line.
+fn run_completions(shell: clap_complete::Shell) -> ExitCode {
+    clap_complete::generate(shell, &mut Cli::command(), "steamship", &mut io::stdout());
+    ExitCode::SUCCESS
+}
+
 fn run(command: Command) -> ExitCode {
     match command {
-        Command::Completions { shell } => {
-            clap_complete::generate(shell, &mut Cli::command(), "steamship", &mut io::stdout());
-            ExitCode::SUCCESS
-        }
+        Command::Completions { shell } => run_completions(shell),
         Command::Check {
             script,
             scripts_only,
@@ -164,6 +168,7 @@ fn run(command: Command) -> ExitCode {
         Command::Languages { json } => run_languages(json),
         Command::Itself(cli::Itself::Check) => either(try_self_check()),
         Command::Promote(request) => either(promote_in(request)),
+        Command::Rollback(request) => either(try_rollback(&request)),
         Command::Branch {
             app,
             branch,
@@ -212,6 +217,7 @@ fn upload_in(request: &cli::Upload) -> ExitCode {
         account: named(request.account.as_deref()),
         json: request.json,
         demo: request.demo,
+        green: green::Policy::from_flag(request.allow_ungreen),
     };
     let default = request.default;
     match (request.script.as_deref(), shipping.version) {
@@ -223,6 +229,7 @@ fn upload_in(request: &cli::Upload) -> ExitCode {
                 default,
                 account: shipping.account,
                 json: shipping.json,
+                green: shipping.green,
             })
             .0
         }
@@ -646,6 +653,7 @@ struct Shipping<'command> {
     account: Option<&'command str>,
     json: bool,
     demo: bool,
+    green: green::Policy,
 }
 
 /// `upload` in a game: the pushed commit, built, checked against Steam, uploaded, and its branch
@@ -656,6 +664,10 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     }
     let game = game_as(shipping.demo)?;
     shipped_from(&game)?;
+    // Before the build, which takes minutes, so that a commit no round has passed costs none.
+    if !shipping.preview {
+        drop(green_commit(&game.root, shipping.green)?);
+    }
     let version = match shipping.version {
         Some(version) => version.to_owned(),
         None => game.version().map_err(|why| fail(&why, REFUSED))?,
@@ -681,9 +693,13 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
         script: &game.script,
         version: &version,
         preview: shipping.preview,
-        default: !shipping.preview,
+        // A released app's default branch is Valve's to set live with an approval steamship
+        // cannot give (https://partner.steamgames.com/doc/store/application/builds), so its
+        // builds go to the game's branch alone without asking Steam.
+        default: !shipping.preview && !game.released,
         account: shipping.account,
         json: shipping.json,
+        green: shipping.green,
     });
     if uploaded != ExitCode::SUCCESS || shipping.preview {
         return Ok(uploaded);
@@ -1931,6 +1947,30 @@ struct Upload<'command> {
     default: bool,
     account: Option<&'command str>,
     json: bool,
+    green: green::Policy,
+}
+
+/// The commit at `root`, refused unless origin's green branch holds it or `policy` allows
+/// otherwise, and said either way.
+fn green_commit(root: &Path, policy: green::Policy) -> Result<green::Shipped, ExitCode> {
+    let spinner = Spinner::start("green", "asking origin whether the commit is green", false);
+    match green::require(root, policy) {
+        Ok(shipped) => {
+            spinner.done(&if shipped.green {
+                format!("{}, on origin's green", project::short(&shipped.commit))
+            } else {
+                format!(
+                    "{}, not on origin's green, let through by --allow-ungreen",
+                    project::short(&shipped.commit)
+                )
+            });
+            Ok(shipped)
+        }
+        Err(why) => {
+            spinner.failed("not green");
+            Err(fail(&why, REFUSED))
+        }
+    }
 }
 
 /// Uploads as `upload` asks, and answers the exit code with the branch the script sets live that
@@ -1940,6 +1980,61 @@ fn run_upload(upload: &Upload<'_>) -> (ExitCode, Option<String>) {
         Ok(uploaded) => uploaded,
         Err(code) => (code, None),
     }
+}
+
+/// The folder the app build script at `script` is in, where Git is asked about its commit.
+fn scripts_folder(script: &Path) -> &Path {
+    script
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+/// Records, for a rollback, the build just uploaded on each branch it was set live on.
+fn record_live(
+    home: &Path,
+    prepared: &upload::Prepared,
+    (build_id, live): (u64, Live),
+    shipped: &green::Shipped,
+) {
+    let branches = prepared
+        .set_live
+        .iter()
+        .filter(|_| live.branch)
+        .map(String::as_str)
+        .chain(live.default.then_some("default"));
+    for on in branches {
+        let kept = ledger::record(
+            home,
+            ledger::Entry {
+                app: prepared.app_id,
+                branch: on.to_owned(),
+                build_id,
+                commit: shipped.commit.clone(),
+                green: shipped.green,
+            },
+        );
+        if let Err(why) = kept {
+            show::note(&format!(
+                "BuildID {build_id} on {on} could not be recorded for a rollback: {why}"
+            ));
+        }
+    }
+}
+
+/// The description the build gets, and, unless the upload is a preview, the commit it is made
+/// from once origin's green branch is shown to hold it.
+fn described(request: &Upload<'_>) -> Result<(String, Option<green::Shipped>), ExitCode> {
+    let description = upload::commit(request.script)
+        .and_then(|commit| upload::description(request.version, &commit))
+        .map_err(|error| fail(&error, REFUSED))?;
+    show::field("build", &description);
+    let shipped = if request.preview {
+        None
+    } else {
+        Some(green_commit(scripts_folder(request.script), request.green)?)
+    };
+    Ok((description, shipped))
 }
 
 fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCode> {
@@ -1958,10 +2053,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
     };
     let (found, branch) = checked(request.script, false)?;
     let needing = needs_redistributable(&found)?;
-    let description = upload::commit(request.script)
-        .and_then(|commit| upload::description(request.version, &commit))
-        .map_err(|error| fail(&error, REFUSED))?;
-    show::field("build", &description);
+    let (description, shipped) = described(request)?;
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     if needing {
@@ -2025,6 +2117,9 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         default: default.as_ref().map(|(api, _)| api),
     };
     let (code, live) = report(&outcome, reporting);
+    if let (upload::Outcome::Built { build_id }, Some(shipped)) = (&outcome, &shipped) {
+        record_live(&home, &prepared, (*build_id, live), shipped);
+    }
     let setting_default = default.is_some();
     if let Some((api, from)) = default {
         offer_to_keep(&home, &api, from);
@@ -5804,6 +5899,69 @@ fn try_promote(request: &cli::Promote) -> Result<ExitCode, ExitCode> {
     offer_to_keep(&home, &api, from);
     show::success(
         &format!("app {app_id}: BuildID {build} live on {branch}"),
+        "",
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Sets `branch` of `app` back to the build the record shows live on it before the current one.
+fn try_rollback(request: &cli::Rollback) -> Result<ExitCode, ExitCode> {
+    show::title("rollback");
+    let app_id = app_named(&request.app)?;
+    let home = home()?;
+    let entries = ledger::load(&home, app_id).map_err(|why| fail(&why, FAILED))?;
+    let default = webapi::is_default(&request.branch);
+    let name = if default { "default" } else { &request.branch };
+    let (current, before) =
+        ledger::previous(&entries, app_id, name).map_err(|why| fail(&why, REFUSED))?;
+    show::field("branch", name);
+    show::field(
+        "from",
+        &format!(
+            "BuildID {}, commit {}",
+            current.build_id,
+            project::short(&current.commit)
+        ),
+    );
+    show::field(
+        "to",
+        &format!(
+            "BuildID {}, commit {}",
+            before.build_id,
+            project::short(&before.commit)
+        ),
+    );
+    let (api, from) = web_api(&home)?;
+    if default {
+        refused_once_released(
+            &home,
+            app_id,
+            named(request.account.as_deref()),
+            DEFAULT_RELEASED,
+        )?;
+    }
+    let key = if default { webapi::DEFAULT_KEY } else { name };
+    let spinner = Spinner::start("steam", "setting it live", false);
+    if let Err(error) = api.set_live(app_id, before.build_id, key) {
+        return Err(web_api_failed(spinner, &error));
+    }
+    spinner.done("set live");
+    offer_to_keep(&home, &api, from);
+    let back = ledger::Entry {
+        app: app_id,
+        branch: name.to_owned(),
+        build_id: before.build_id,
+        commit: before.commit.clone(),
+        green: before.green,
+    };
+    if let Err(why) = ledger::record(&home, back) {
+        show::note(&format!("the rollback could not be recorded: {why}"));
+    }
+    show::success(
+        &format!(
+            "app {app_id}: {name} is back on BuildID {}",
+            before.build_id
+        ),
         "",
     );
     Ok(ExitCode::SUCCESS)

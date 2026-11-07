@@ -156,7 +156,12 @@ pub enum Command {
     /// presence. Its version is the newest release `CHANGES.md` heads, or else the one
     /// `project.godot` gives.
     ///
-    /// While the app is unreleased, the build goes live on the default branch too. Once it is
+    /// Only a commit on origin's `green` branch goes up, unless `--allow-ungreen` is given. A
+    /// preview is not held to that.
+    ///
+    /// While the app is unreleased, the build goes live on the default branch too. A game whose
+    /// `steamship.toml` sets `released = true` never has a build set live on default: it goes
+    /// live on its branch alone. Once it is
     /// live, the branch's description becomes the version, or the file's `description`. An app
     /// with no branch but default gets the build on default alone. steamship then prints the
     /// commands that set it live on the game's branch and describe that branch, once it is made.
@@ -410,6 +415,15 @@ pub enum Command {
     /// account the app unreleased. Once the app is released, set its default branch live in
     /// Steamworks instead.
     Promote(Promote),
+    /// Set a branch back to the build that was live on it before. Needs the owner's yes.
+    ///
+    /// This changes what players get, so run it only with the owner's yes. It takes the build
+    /// steamship recorded on the branch before the current one and sets it live, through Steam's
+    /// partner Web API, with the publisher key as `builds` finds it. An upload records the commit
+    /// and the build ID of each branch it sets live in the steamship home. A branch steamship
+    /// recorded no earlier build for is refused. The default branch is set live only while Steam
+    /// shows the build account the app unreleased.
+    Rollback(Rollback),
     /// Set the description players see for a beta branch.
     ///
     /// Steam shows this text where players choose a beta branch, in the game's Betas properties.
@@ -648,6 +662,11 @@ pub struct Upload {
     /// else goes to standard error.
     #[arg(long)]
     pub json: bool,
+    /// Upload a commit that is not on origin's `green` branch. An upload is otherwise refused
+    /// unless a test round has moved `green` to the commit or past it. Only a hotfix round passes
+    /// this, with the hotfix's own green.
+    #[arg(long)]
+    pub allow_ungreen: bool,
 }
 
 /// The build `fetch` downloads, and where to.
@@ -709,6 +728,19 @@ pub struct Promote {
     pub build: u64,
     /// The branch to set it live on.
     #[arg(long)]
+    pub branch: String,
+    /// The build account that asks Steam whether the app is released, for the default branch, if
+    /// not the one the last login remembered.
+    #[arg(long, env = ACCOUNT)]
+    pub account: Option<String>,
+}
+
+/// The branch `rollback` sets back, and for which app.
+#[derive(Debug, Args)]
+pub struct Rollback {
+    /// The app, by its ID or its app build script.
+    pub app: String,
+    /// The branch to set back.
     pub branch: String,
     /// The build account that asks Steam whether the app is released, for the default branch, if
     /// not the one the last login remembered.
