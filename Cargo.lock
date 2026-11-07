@@ -953,6 +953,7 @@ dependencies = [
  "security-framework",
  "serde_json",
  "sha2",
+ "steamship",
  "tempfile",
  "toml",
  "ureq",

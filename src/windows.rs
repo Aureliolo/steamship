@@ -15,7 +15,7 @@ use std::os::windows::ffi::OsStrExt as _;
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle, RawHandle};
 use std::panic;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::ptr::{self, NonNull};
 use std::slice;
@@ -615,6 +615,35 @@ enum Streams {
     Console(HPCON),
 }
 
+/// In a test build whose test names a shell in `STEAMSHIP_FAKE_STEAMCMD`, that shell running the
+/// test's fake `steamcmd.sh` with `args`, in place of the `steamcmd.exe` beside it that `program`
+/// names. Windows cannot start a script itself, and a release build never has a fake to run.
+#[cfg_attr(
+    not(feature = "fake-steamcmd"),
+    expect(
+        clippy::missing_const_for_fn,
+        reason = "a test build reads the environment here, which no const fn can"
+    )
+)]
+fn faked(program: &Path, args: &[OsString]) -> Option<(PathBuf, Vec<OsString>)> {
+    #[cfg(feature = "fake-steamcmd")]
+    let shell = env::var_os("STEAMSHIP_FAKE_STEAMCMD")
+        .filter(|_| program.file_name() == Some(OsStr::new("steamcmd.exe")))
+        .map(|shell| {
+            let script = program.with_file_name("steamcmd.sh").into_os_string();
+            (
+                PathBuf::from(shell),
+                iter::once(script).chain(args.iter().cloned()).collect(),
+            )
+        });
+    #[cfg(not(feature = "fake-steamcmd"))]
+    let shell = {
+        let _: (&Path, &[OsString]) = (program, args);
+        None
+    };
+    shell
+}
+
 /// Starts `program` suspended, on `desktop`, in `job`, with `streams` and nothing else handed
 /// down, and only then lets it run, so that it never does anything outside the job.
 fn spawn(
@@ -626,6 +655,10 @@ fn spawn(
     job: &Job,
     streams: Streams,
 ) -> io::Result<Process> {
+    let shelled = faked(program, args);
+    let (program, args) = shelled.as_ref().map_or((program, args), |(shell, script)| {
+        (shell.as_path(), script.as_slice())
+    });
     let _handing_down = handing_down();
     let (mut list, [input, output], inherit, creation) = match streams {
         Streams::Handles(handles) => {

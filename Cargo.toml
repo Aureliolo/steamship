@@ -72,8 +72,15 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_System_Threading",
 ] }
 
+[features]
+# Lets the tests run a fake steamcmd script on Windows, which cannot start a script itself, in
+# place of steamcmd.exe. Only the tests turn it on, through the dev-dependency below: a release is
+# built without it, and its code is not compiled in.
+fake-steamcmd = []
+
 [dev-dependencies]
 proptest = "1.12.0"
+steamship = { path = ".", features = ["fake-steamcmd"] }
 tempfile = "3.27.0"
 
 [target.'cfg(windows)'.dev-dependencies]
