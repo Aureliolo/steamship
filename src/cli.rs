@@ -222,12 +222,13 @@ pub enum Command {
     /// steamcmd's console, where no other program sees it. `--password-on-command-line` gives it
     /// on steamcmd's command line instead. A kept password that Steam refuses is forgotten.
     Fetch(Fetch),
-    /// Show an app's achievements and stats, check them against files, or write their import.
+    /// Show or save an app's achievements and stats, check them against files, or write their
+    /// import.
     ///
     /// Lists the achievements and stats Steam holds for the app, in English. Each achievement
     /// shows the share of players who have it, and each aggregated stat its total over all
     /// players. This goes through Steam's partner Web API, with the publisher key as `builds`
-    /// finds it.
+    /// finds it. `--save` writes them to a file instead, which `--check` then reads.
     ///
     /// With `--check`, it compares them by API name with the files, read together. It exits 2
     /// and names every achievement missing on either side, and every display name, description
@@ -272,6 +273,12 @@ pub enum Command {
         /// Either must translate every achievement.
         #[arg(long, value_name = "FILE", num_args = 0..)]
         check: Option<Vec<PathBuf>>,
+        /// Write the achievements and stats Steam holds to this JSON file, as `--check` reads
+        /// it. Refused, exiting 2, when an achievement has no name in English, which a file must
+        /// give. Refused too when the file is there and holds more than `--save` writes, such as
+        /// an `icon` or a `sets` list.
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["files", "imported", "json"])]
+        save: Option<PathBuf>,
         #[command(flatten)]
         writing: Writing,
         /// Print the achievements and stats on standard output as one line of JSON, or what

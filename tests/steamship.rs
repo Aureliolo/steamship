@@ -357,8 +357,8 @@ fn help_lists_every_command_with_one_short_line() {
         "  workshop       Upload a Workshop item, then print its ID\n",
         "  builds         Show an app's branches and last builds\n",
         "  fetch          Download a branch's build as Steam serves it, into a folder of its own\n",
-        "  achievements   Show an app's achievements and stats, check them against files, or write \
-         their import\n",
+        "  achievements   Show or save an app's achievements and stats, check them against files, \
+         or write their import\n",
         "  assets         Check artwork and icons against Valve's sizes, before they are \
          uploaded\n",
         "  drm-wrap       Wrap a Windows executable in Steam DRM, before it is uploaded\n",
@@ -6139,6 +6139,80 @@ const TTI_UNAGGREGATED: [(&str, &str); 2] = [
 fn tti_checked_twice() -> Vec<(&'static str, &'static str)> {
     let once = iter::once(("200 OK", INN_SCHEMA)).chain(TTI_UNAGGREGATED);
     once.clone().chain(once).collect()
+}
+
+#[test]
+fn achievements_saved_from_steam_are_a_file_that_check_finds_steam_matches() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", INN_SCHEMA), ("200 OK", INN_SCHEMA)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let file = files.path().join("achievements.json");
+    let path = file.to_str().unwrap();
+
+    let (code, said, stderr) = steamship(
+        &["achievements", "1000050", "--save", path],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(code, Some(0_i32), "{said}{stderr}");
+    assert!(
+        said.contains(&format!(
+            "app 1000050: 2 achievements and 2 stats saved to {path}"
+        )),
+        "{said}"
+    );
+    let saved = fs::read_to_string(&file).unwrap();
+    assert!(saved.contains("\"api_name\": \"LONG_JOURNEY\""), "{saved}");
+    assert!(
+        saved.contains("\"name\": \"Floodwater held behind the sluice\""),
+        "{saved}"
+    );
+    assert!(
+        !saved.contains("steamcdn"),
+        "icons are Steam's, not settings: {saved}"
+    );
+
+    let (checked, matching, why) = steamship(
+        &["achievements", "1000050", "--check", path],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(checked, Some(0_i32), "{matching}{why}");
+    assert!(
+        matching.contains("Steam's achievements and stats match the file"),
+        "{matching}"
+    );
+
+    let (both, _, refused) = steamship(
+        &["achievements", "1000050", "--save", path, "--json"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(both, Some(2_i32), "{refused}");
+    assert!(refused.contains("cannot be used with"), "{refused}");
+
+    // A file kept by hand is never written over, and Steam is not asked.
+    let kept = r#"{"achievements": [{"api_name": "LONG_JOURNEY", "name": "Rising Water",
+        "icon": "rising.png"}]}"#;
+    fs::write(&file, kept).unwrap();
+    let (held, _, losing) = steamship(
+        &["achievements", "1000050", "--save", path],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(held, Some(2_i32), "{losing}");
+    assert_eq!(
+        failure(&losing),
+        format!(
+            "{path} holds \"icon\" in achievement 1, which --save would lose. Save to another file"
+        )
+    );
+    assert_eq!(fs::read_to_string(&file).unwrap(), kept);
 }
 
 #[test]
