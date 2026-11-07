@@ -580,19 +580,6 @@ pub fn entries(english: &English) -> Result<Vec<Entry>, Vec<String>> {
         .flat_map(|store| store.screenshots.iter().enumerate())
         .flat_map(|(index, alt)| escaped(STORE, "english", index.saturating_add(1), alt))
         .collect();
-    past.extend(english.store.iter().flat_map(|store| {
-        store.blocks.iter().filter_map(|part| {
-            if let Part::Image {
-                name,
-                alt: Some(alt),
-            } = part
-            {
-                straight_quoted(STORE, "english", name, alt)
-            } else {
-                None
-            }
-        })
-    }));
     past.extend(said.iter().filter_map(|entry| {
         let most = entry.most?;
         let file = if entry.context == WORKSHOP_CONTEXT {
@@ -752,43 +739,6 @@ fn escaped(file: &str, language: &str, number: usize, alt: &str) -> Vec<String> 
     why
 }
 
-/// Why the alt text `alt` of the About image `image`, in `language` as `file` gives it, would reach
-/// a screen reader as other than written, if it would.
-///
-/// Steam stores a straight double quote in an `alt_text` field as `&quot;`, and the store page
-/// then serves that escaped a second time.
-fn straight_quoted(file: &str, language: &str, image: &str, alt: &str) -> Option<String> {
-    alt.contains('"').then(|| {
-        format!(
-            "{file}: the alt_text of About image {image} in {language}, {alt:?}, holds a straight \
-             double quote. Steam stores it as \"&quot;\" and the store page serves that escaped \
-             again, so a screen reader reads it out. Use {language}'s own quotation marks \
-             instead, such as \u{201c} \u{201d} or \u{ab} \u{bb}, or single quotes"
-        )
-    })
-}
-
-/// What `straight_quoted` finds in the About images' alt text among `fields`, which
-/// `store_fields` returned for `language`.
-fn quoted_in_fields(
-    store: &Store,
-    file: &str,
-    language: &str,
-    fields: &[(String, String)],
-) -> Vec<String> {
-    fields
-        .iter()
-        .filter_map(|(name, alt)| {
-            let image = name
-                .strip_prefix(ALT_TEXT)
-                .and_then(|rest| rest.strip_suffix("][alt_text]"))
-                .and_then(|place| place.parse::<usize>().ok())
-                .and_then(|place| store.extras.get(place))?;
-            straight_quoted(file, language, image, alt)
-        })
-        .collect()
-}
-
 /// Every file of the text in English and in each language of `translations`, by its path from
 /// the build scripts' folder, with what it holds, or else every translation missing from them.
 ///
@@ -833,11 +783,11 @@ pub fn written(
                 screenshots.push((format!("{language} {number}"), alt));
             }
             if !store.item.is_empty() {
-                let all = store_fields(store, &mut said);
-                escapes.extend(quoted_in_fields(store, file, language, &all));
-                let (typed, fields): (Vec<_>, Vec<_>) = all.into_iter().partition(|(name, _)| {
-                    requirement(name).is_some_and(|(_, tier, _)| tier == RECOMMENDED)
-                });
+                let (typed, fields): (Vec<_>, Vec<_>) = store_fields(store, &mut said)
+                    .into_iter()
+                    .partition(|(name, _)| {
+                        requirement(name).is_some_and(|(_, tier, _)| tier == RECOMMENDED)
+                    });
                 recommended.extend(
                     typed
                         .into_iter()
@@ -1465,84 +1415,6 @@ msgstr "Die Erlenhexe"
             Err(vec![refused.clone()])
         );
         assert_eq!(entries(&written_in_english), Err(vec![refused]));
-    }
-
-    const ABOUT_WITH_ALT: &str = r#""extras": ["about_board", "about_score"],
-        "blocks": [{ "kind": "image", "image": "about_board", "alt": "ALT" },"#;
-
-    fn about_page(alt: &str) -> English {
-        let page = STORE_PAGE.replacen("\"blocks\": [", &ABOUT_WITH_ALT.replace("ALT", alt), 1);
-        English {
-            store: Some(store(&page).unwrap()),
-            ..English::default()
-        }
-    }
-
-    #[test]
-    fn an_about_image_s_alt_text_holding_a_straight_double_quote_is_refused_in_any_language() {
-        let english = about_page("The board, \\\"set\\\" for a duel.");
-        let in_english = format!(
-            "{STORE}: the alt_text of About image about_board in english, \
-             \"The board, \\\"set\\\" for a duel.\", holds a straight double quote. Steam stores \
-             it as \"&quot;\" and the store page serves that escaped again, so a screen reader \
-             reads it out. Use english's own quotation marks instead, such as \u{201c} \u{201d} \
-             or \u{ab} \u{bb}, or single quotes"
-        );
-        assert_eq!(
-            written(&english, &[]),
-            Err(vec![in_english.clone()]),
-            "the upload refuses it"
-        );
-        assert_eq!(entries(&english), Err(vec![in_english]));
-
-        let plain = about_page("The board, set for a duel.");
-        let translated = GERMAN.replace(
-            "Das Brett, bereit zum Duell.",
-            "Das Brett, \\\"bereit\\\" zum Duell.",
-        );
-        let Err(why) = written(&plain, &[german(&translated)]) else {
-            panic!("a straight quote in a German alt text went through");
-        };
-        assert_eq!(why.len(), 1, "{why:?}");
-        assert!(
-            why.first().is_some_and(|line| line.starts_with(
-                "de.po: the alt_text of About image about_board in german, \
-                 \"Das Brett, \\\"bereit\\\" zum Duell.\", holds a straight double quote."
-            )),
-            "{why:?}"
-        );
-    }
-
-    #[test]
-    fn typographic_quotes_apostrophes_and_a_straight_quote_outside_alt_text_pass() {
-        let english = about_page("The board\u{2019}s \u{201c}set\u{201d} and 'ready'.");
-        let files = written(&english, &[]).unwrap();
-        assert!(
-            file(&files, "store/english.json")
-                .contains("The board\u{2019}s \u{201c}set\u{201d} and 'ready'."),
-            "{files:?}"
-        );
-        assert!(
-            entries(&english)
-                .unwrap()
-                .iter()
-                .any(|entry| entry.english == "The board\u{2019}s \u{201c}set\u{201d} and 'ready'.")
-        );
-
-        let plain = about_page("The board, set for a duel.");
-        let translated = GERMAN
-            .replace(
-                "Das Brett, bereit zum Duell.",
-                "Das Brett \u{201e}bereit\u{201c}.",
-            )
-            .replace("Leg eine Note.", "Leg \\\"eine\\\" Note.");
-        let written_german = written(&plain, &[german(&translated)]).unwrap();
-        let upload = file(&written_german, "store/german.json");
-        assert!(
-            upload.contains("Das Brett \u{201e}bereit\u{201c}."),
-            "{upload}"
-        );
-        assert!(upload.contains("Leg \\\"eine\\\" Note."), "{upload}");
     }
 
     #[test]
