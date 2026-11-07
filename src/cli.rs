@@ -541,6 +541,10 @@ pub struct Leaderboards {
     /// once the app is released, as their players' scores would go with them.
     #[arg(long)]
     pub delete_missing: bool,
+    /// Print the leaderboards on standard output as one line of JSON, or what Steam failed with
+    /// as an `error` holding a `code`. Everything else goes to standard error.
+    #[arg(long, conflicts_with_all = ["check", "save", "create", "delete_missing"])]
+    pub json: bool,
     /// The build account that asks Steam whether the app is released, if not the one the last
     /// login remembered.
     #[arg(long, env = ACCOUNT)]

@@ -370,6 +370,26 @@ impl fmt::Display for Drift {
     }
 }
 
+/// `held`, Steam's leaderboards for `app`, as `leaderboards --json` prints them: each with the
+/// keys a file gives it and its count of `scores`. A display Steam has none of is null.
+#[must_use]
+pub fn json(app: u32, held: &[Leaderboard]) -> Value {
+    let boards: Vec<Value> = held
+        .iter()
+        .map(|board| {
+            serde_json::json!({
+                "name": board.name,
+                "sort": board.sort.to_ascii_lowercase(),
+                "display": (!board.display.is_empty()).then(|| board.display.to_ascii_lowercase()),
+                "trusted_writes": board.trusted_writes,
+                "friends_only": board.friends_only,
+                "scores": board.entries,
+            })
+        })
+        .collect();
+    serde_json::json!({"app": app, "leaderboards": boards})
+}
+
 /// `leaderboard` as `steamship leaderboards` lists it: its sort, its display, its scores, and
 /// who may write and read them when that is narrowed.
 #[must_use]
@@ -549,6 +569,27 @@ mod tests {
         assert_eq!(
             saved(480, &[]).unwrap(),
             "{\n  \"app\": 480,\n  \"leaderboards\": []\n}\n"
+        );
+    }
+
+    #[test]
+    fn leaderboards_as_json_have_a_files_keys_and_their_scores() {
+        let mut gold = board("gold", "Descending", "Numeric");
+        gold.trusted_writes = true;
+        gold.entries = 12;
+        let bare = board("bare", "Ascending", "");
+        assert_eq!(
+            json(480, &[gold, bare]),
+            serde_json::json!({"app": 480_u32, "leaderboards": [
+                {"name": "gold", "sort": "descending", "display": "numeric",
+                 "trusted_writes": true, "friends_only": false, "scores": 12_u64},
+                {"name": "bare", "sort": "ascending", "display": null,
+                 "trusted_writes": false, "friends_only": false, "scores": 0_u64}
+            ]})
+        );
+        assert_eq!(
+            json(480, &[]),
+            serde_json::json!({"app": 480_u32, "leaderboards": []})
         );
     }
 
