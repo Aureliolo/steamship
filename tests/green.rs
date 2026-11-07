@@ -25,9 +25,11 @@ fn git(folder: &Path, args: &[&str]) {
                 "-c",
                 "user.email=steamship@example.invalid",
             ])
-            .args(["-c", "commit.gpgsign=false"])
-            // A hooks folder set in the machine's own git config would otherwise run here.
-            .args(["-c", "core.hooksPath=.git/hooks"])
+            .args(["-c", "maintenance.auto=false"])
+            // The machine's own git config could sign each commit or run its hooks, which a
+            // `core.hooksPath` override does not stop when they are set as config.
+            .env("GIT_CONFIG_GLOBAL", folder.join("no-git-config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .args(args)
             .current_dir(folder),
     )
@@ -202,6 +204,29 @@ fn a_folder_outside_a_repository_is_refused_even_when_ungreen_is_allowed() {
     let temp = tempfile::tempdir().unwrap();
     let why = green::require(temp.path(), "green", Policy::Allowed).unwrap_err();
     assert!(why.contains("rev-parse HEAD failed"), "{why}");
+}
+
+#[test]
+fn an_origin_that_cannot_be_reached_refuses_the_commit_unless_ungreen_is_allowed() {
+    let game = repository();
+    let gone = game.root.parent().unwrap().join("gone.git");
+    git(
+        &game.root,
+        &["remote", "set-url", "origin", &gone.to_string_lossy()],
+    );
+    let why = green::require(&game.root, "green", Policy::Required).unwrap_err();
+    assert!(why.contains("ls-remote"), "{why}");
+    let shipped = green::require(&game.root, "green", Policy::Allowed).unwrap();
+    assert_eq!(shipped.commit, head(&game.root));
+    assert!(!shipped.green);
+}
+
+#[test]
+fn a_record_that_cannot_be_read_is_an_error_not_an_empty_record() {
+    let home = tempfile::tempdir().unwrap();
+    fs::create_dir_all(ledger::file(home.path(), 480)).unwrap();
+    let why = ledger::load(home.path(), 480).unwrap_err();
+    assert!(why.contains("480.json"), "{why}");
 }
 
 #[test]
