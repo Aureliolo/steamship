@@ -12,6 +12,8 @@ pub mod common;
 
 use common::pe::{settings_ticking, windows_library};
 
+#[cfg(windows)]
+use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, Read as _, Write};
@@ -27,7 +29,6 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-#[cfg(unix)]
 use steamship::account::Account;
 use steamship::install;
 use steamship::itself;
@@ -43,7 +44,6 @@ use steamship::unix::Terminal;
 use steamship::webapi::STAND_IN;
 #[cfg(windows)]
 use steamship::windows::Terminal;
-#[cfg(unix)]
 use steamship::{ci, fetch, steamcmd};
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
@@ -82,7 +82,6 @@ fn steamship_in(
 }
 
 /// [`steamship`] in `home`, with `typed` piped to it as a script would type it.
-#[cfg(unix)]
 fn steamship_typing(
     args: &[&str],
     home: &Path,
@@ -141,7 +140,33 @@ fn set_up(
     let _: &mut Command = command
         .envs(common::store::environment())
         .envs(variables.iter().copied());
+    #[cfg(windows)]
+    if let Some(home) = home
+        && home.join(install::FOLDER).join("steamcmd.sh").is_file()
+    {
+        let _: &mut Command = command.env("STEAMSHIP_FAKE_STEAMCMD", shell());
+    }
     command
+}
+
+/// Git's `sh`, which runs a fake steamcmd on Windows: the one on the PATH, or else the one beside
+/// the `git` on it.
+#[cfg(windows)]
+fn shell() -> PathBuf {
+    let path = env::var_os("PATH").unwrap_or_default();
+    let folders: Vec<PathBuf> = env::split_paths(&path).collect();
+    folders
+        .iter()
+        .map(|folder| folder.join("sh.exe"))
+        .chain(folders.iter().filter_map(|folder| {
+            folder
+                .join("git.exe")
+                .is_file()
+                .then(|| folder.parent().map(|git| git.join("bin").join("sh.exe")))
+                .flatten()
+        }))
+        .find(|shell| shell.is_file())
+        .unwrap()
 }
 
 /// The first failure steamship reported, without the cross before it. When it reported none,
@@ -538,7 +563,6 @@ fn status_with_nothing_saved_says_to_log_in_changes_nothing_and_exits_3() {
 }
 
 /// A home with a login saved where steamcmd keeps it on this system, for `build_bot`, remembered.
-#[cfg(unix)]
 fn saved_login(home: &Path) {
     let config = steamcmd::saved_login(home, Platform::THIS);
     fs::create_dir_all(config.parent().unwrap()).unwrap();
@@ -548,7 +572,6 @@ fn saved_login(home: &Path) {
 
 /// A home with the login `saved_login` makes, whose steamcmd keeps what it was started with in
 /// `args`, says `said` and exits `code`.
-#[cfg(unix)]
 fn checking(said: &str, code: u8) -> tempfile::TempDir {
     let home = answering(said, code);
     saved_login(home.path());
@@ -556,7 +579,6 @@ fn checking(said: &str, code: u8) -> tempfile::TempDir {
 }
 
 /// [`checking`] with no login saved.
-#[cfg(unix)]
 fn answering(said: &str, code: u8) -> tempfile::TempDir {
     faked_with(&format!(
         "#!/bin/sh\necho \"$*\" > \"$HOME/args\"\nprintf '%s\\r\\n' '{said}'\nexit {code}\n"
@@ -564,7 +586,6 @@ fn answering(said: &str, code: u8) -> tempfile::TempDir {
 }
 
 /// The login `saved_login` makes, packed as `steamship ci` packs it, on 2026-09-28.
-#[cfg(unix)]
 fn packed_login() -> String {
     let home = tempfile::tempdir().unwrap();
     let config = steamcmd::saved_login(home.path(), Platform::THIS);
@@ -577,13 +598,11 @@ fn packed_login() -> String {
 
 /// A packed login without the day it was packed, for one `steamship ci` packed today, which a
 /// test cannot know ahead.
-#[cfg(unix)]
 fn undated(packed: &str) -> String {
     let rest = packed.strip_prefix("steamship-login-2:").unwrap();
     rest.split_once(':').unwrap().1.to_owned()
 }
 
-#[cfg(unix)]
 #[test]
 fn status_in_ci_logs_in_with_the_login_handed_over_and_puts_it_where_steamcmd_looks() {
     let home = answering(
@@ -622,16 +641,15 @@ fn status_in_ci_logs_in_with_the_login_handed_over_and_puts_it_where_steamcmd_lo
 
 /// A steamcmd stopped from outside as it starts, as one was on a macOS runner: exit 137, with a
 /// line added to its own connection log and nothing said of why.
-#[cfg(unix)]
 const KILLED: &str = "#!/bin/sh\n\
     logs=\"$HOME/Steam/logs\"\n\
     [ \"$(uname)\" = Darwin ] && logs=\"$HOME/Library/Application Support/Steam/logs\"\n\
+    case \"$(uname)\" in MINGW* | MSYS*) logs=\"$HOME/steamcmd/logs\" ;; esac\n\
     mkdir -p \"$logs\"\n\
     echo 'this run: connecting' >> \"$logs/connection_log.txt\"\n\
     echo 'Loading Steam API...OK'\n\
     exit 137\n";
 
-#[cfg(unix)]
 #[test]
 fn a_login_check_that_fails_without_a_reason_shows_steams_logs_in_actions() {
     let home = faked_with(KILLED);
@@ -674,7 +692,6 @@ fn a_login_check_that_fails_without_a_reason_shows_steams_logs_in_actions() {
     assert!(!quiet.contains("::group::"), "{quiet}");
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_in_ci_logs_in_as_the_account_handed_over() {
     let home = faked();
@@ -692,11 +709,11 @@ fn an_upload_in_ci_logs_in_as_the_account_handed_over() {
 
 /// A steamcmd that has Valve build the upload as `BuildID` 777, then fails setting it live: it
 /// writes the app and depot logs where it was told to, adds to its own content log, and exits 6.
-#[cfg(unix)]
 const BUILT_THEN_FAILED: &str = "#!/bin/sh\n\
     output=\"$HOME/apps/1000/output\"\n\
     logs=\"$HOME/Steam/logs\"\n\
     [ \"$(uname)\" = Darwin ] && logs=\"$HOME/Library/Application Support/Steam/logs\"\n\
+    case \"$(uname)\" in MINGW* | MSYS*) logs=\"$HOME/steamcmd/logs\" ;; esac\n\
     mkdir -p \"$output\" \"$logs\"\n\
     echo 'Successfully finished AppID 1000 build (BuildID 777).' > \"$output/app_build_1000.log\"\n\
     echo 'depot 1001: 1 file' > \"$output/depot_build_1001.log\"\n\
@@ -709,7 +726,6 @@ const BUILT_THEN_FAILED: &str = "#!/bin/sh\n\
 /// A steamcmd whose build Steam keeps but will not set live, reporting it as steamcmd 1788292693
 /// did for Falcon Ridge Overseer's `SetLive` branch before the app had one: no build ID, only
 /// "Failed to commit build".
-#[cfg(unix)]
 const COMMIT_REFUSED: &str = "#!/bin/sh\n\
     output=\"$HOME/apps/1000/output\"\n\
     mkdir -p \"$output\"\n\
@@ -718,7 +734,6 @@ const COMMIT_REFUSED: &str = "#!/bin/sh\n\
     exit 6\n";
 
 /// A steamcmd that has Valve build the upload as `BuildID` 4242, set live as the script asks.
-#[cfg(unix)]
 const BUILT: &str = "#!/bin/sh\n\
     output=\"$HOME/apps/1000/output\"\n\
     mkdir -p \"$output\"\n\
@@ -726,7 +741,6 @@ const BUILT: &str = "#!/bin/sh\n\
     echo 'Logging in user build_bot to Steam Public...OK'\n";
 
 /// `GetAppBetas` showing `build` live on testing.
-#[cfg(unix)]
 fn testing_live(build: u64) -> &'static str {
     Box::leak(
         format!(
@@ -736,7 +750,6 @@ fn testing_live(build: u64) -> &'static str {
     )
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
     let home = faked_with(BUILT);
@@ -808,7 +821,6 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
 /// `ReleaseState` `state`, and asked to build, in the same run or alone, has Valve build the upload
 /// as `BuildID` 4242, as [`BUILT`] does, and adds a line to `builds` in the home. Each run adds its
 /// arguments to `runs` there.
-#[cfg(unix)]
 fn released_as(state: &str) -> String {
     format!(
         "#!/bin/sh\n\
@@ -829,7 +841,6 @@ fn released_as(state: &str) -> String {
     )
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_asked_for_default_too_is_set_live_there_while_steam_shows_the_app_unreleased() {
     let home = faked_with(&released_as("unavailable"));
@@ -878,7 +889,6 @@ fn an_upload_asked_for_default_too_is_set_live_there_while_steam_shows_the_app_u
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_asked_for_default_too_once_steam_shows_the_app_released_goes_to_its_branch_alone() {
     let home = faked_with(&released_as("released"));
@@ -922,7 +932,6 @@ fn an_upload_asked_for_default_too_once_steam_shows_the_app_released_goes_to_its
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_1() {
     let home = faked_with(&released_as("prerelease"));
@@ -956,12 +965,10 @@ fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_1() {
 }
 
 /// `GetAppList` for a key that holds app 1000.
-#[cfg(unix)]
 const HOLDS_1000: &str = r#"{"applist": {"apps": {"app": [
     {"appid": 1000, "app_type": "game", "app_name": "Spacewar"}
 ]}}}"#;
 
-#[cfg(unix)]
 #[test]
 fn an_upload_to_an_app_with_no_branch_yet_goes_live_on_default_alone_and_says_how_to_go_on() {
     let home = faked_with(&released_as("unavailable"));
@@ -1058,7 +1065,6 @@ fn an_upload_asked_for_default_too_cannot_be_a_preview() {
 /// A steamcmd whose first `failing` runs run the shell commands `fail`, which fail the build, and
 /// exit 6. Any run after has Valve build the upload as `BuildID` 4242. Each run adds a line to
 /// `runs` in the home.
-#[cfg(unix)]
 fn failing_then_built(fail: &str, failing: u32) -> String {
     format!(
         "#!/bin/sh\n\
@@ -1078,7 +1084,6 @@ fn failing_then_built(fail: &str, failing: u32) -> String {
 /// A steamcmd whose first `failing` runs fail as steamcmd 1791918946 did for Tidal Mill Inn 16
 /// minutes after the branch's last build, the CDN not serving that build's manifest yet, named
 /// here at `cdn`.
-#[cfg(unix)]
 fn unserved_then_built(cdn: &str, failing: u32) -> String {
     let manifest = format!(
         "{}/depot/1001/manifest/6076939079705630407/5/7060534466868254360",
@@ -1096,7 +1101,6 @@ fn unserved_then_built(cdn: &str, failing: u32) -> String {
 
 /// A steamcmd whose first `failing` runs fail as steamcmd 1788292693 did once in CI, having
 /// reached Steam but not its build server.
-#[cfg(unix)]
 fn unconnected_then_built(failing: u32) -> String {
     failing_then_built(
         "echo '[2026-10-12 15:35:56]: Building depot 1001...'\n\
@@ -1108,7 +1112,6 @@ fn unconnected_then_built(failing: u32) -> String {
 
 /// A steamcmd whose first `failing` runs fail as steamcmd 1791918946 did once in CI, Steam
 /// dropping it before it logged in.
-#[cfg(unix)]
 fn disconnected_then_built(failing: u32) -> String {
     failing_then_built(
         "echo 'Waiting for user info...'\n\
@@ -1120,7 +1123,6 @@ fn disconnected_then_built(failing: u32) -> String {
 
 /// A steamcmd whose first `failing` runs fail as steamcmd did on every system of one CI run
 /// within the same minute, Steam sending it no client config.
-#[cfg(unix)]
 fn no_client_config_then_built(failing: u32) -> String {
     failing_then_built(
         "echo 'Waiting for client config...ERROR! Info request for AppId 7 returned error Timeout.'\n\
@@ -1131,7 +1133,6 @@ fn no_client_config_then_built(failing: u32) -> String {
 }
 
 /// How many times the steamcmd of `failing_then_built` ran in `home`.
-#[cfg(unix)]
 fn runs(home: &Path) -> usize {
     fs::read_to_string(home.join("runs"))
         .unwrap()
@@ -1139,7 +1140,6 @@ fn runs(home: &Path) -> usize {
         .count()
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_waits_for_the_cdn_to_serve_the_last_manifest_then_uploads_again() {
     let (cdn, requests) = web_api(vec![("200 OK", "manifest")]);
@@ -1164,7 +1164,6 @@ fn an_upload_waits_for_the_cdn_to_serve_the_last_manifest_then_uploads_again() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_stops_asking_steamcmd_after_four_runs_the_cdn_never_served() {
     let (cdn, _requests) = web_api(vec![("401 Refused", ""); 3]);
@@ -1183,7 +1182,6 @@ fn an_upload_stops_asking_steamcmd_after_four_runs_the_cdn_never_served() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_runs_steamcmd_once_more_when_it_did_not_reach_steams_build_server() {
     let home = faked_with(&unconnected_then_built(1));
@@ -1208,7 +1206,6 @@ fn an_upload_runs_steamcmd_once_more_when_it_did_not_reach_steams_build_server()
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_runs_steamcmd_once_more_when_steam_disconnects_it() {
     let home = faked_with(&disconnected_then_built(1));
@@ -1230,7 +1227,6 @@ fn an_upload_runs_steamcmd_once_more_when_steam_disconnects_it() {
     assert!(why.contains("Timed out"), "{why}");
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_runs_steamcmd_once_more_when_steam_sends_it_no_client_config() {
     let home = faked_with(&no_client_config_then_built(1));
@@ -1261,7 +1257,6 @@ fn summary_of(stdout: &str) -> serde_json::Value {
     serde_json::from_str(line).unwrap()
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_with_json_prints_only_what_came_of_it_on_standard_output() {
     let home = faked_with(BUILT);
@@ -1303,7 +1298,6 @@ fn an_upload_with_json_prints_only_what_came_of_it_on_standard_output() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_with_json_draws_its_spinner_on_the_terminal_standard_error_is() {
     // Slow enough that the spinner is drawn before the upload ends.
@@ -1328,7 +1322,6 @@ fn an_upload_with_json_draws_its_spinner_on_the_terminal_standard_error_is() {
     assert!(written.starts_with("{\"app\":1000,"), "{written}");
 }
 
-#[cfg(unix)]
 #[test]
 fn a_failed_upload_with_json_still_says_what_steam_kept() {
     let home = faked_with(BUILT_THEN_FAILED);
@@ -1346,7 +1339,6 @@ fn a_failed_upload_with_json_still_says_what_steam_kept() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_key() {
     let home = faked_with(COMMIT_REFUSED);
@@ -1398,7 +1390,6 @@ fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_built_then_failed_keeps_its_build_id_and_shows_steams_logs_in_actions() {
     let home = faked_with(BUILT_THEN_FAILED);
@@ -1537,7 +1528,6 @@ fn an_upload_told_to_stop_stops_steamcmd_shows_what_it_said_and_ends_by_that_sig
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn a_failed_upload_outside_actions_shows_no_log_groups() {
     let home = faked_with(BUILT_THEN_FAILED);
@@ -1714,7 +1704,6 @@ fn ci_with_several_scripts_and_nobody_to_ask_names_them_and_exits_2() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn ci_writes_the_checked_login_to_a_file_for_another_ci() {
     let home = checking(
@@ -1744,7 +1733,6 @@ fn ci_writes_the_checked_login_to_a_file_for_another_ci() {
     assert!(unpacked.packed_on().is_some());
 }
 
-#[cfg(unix)]
 #[test]
 fn ci_with_no_saved_login_says_to_log_in_first_and_exits_3() {
     let home = answering("", 0);
@@ -1785,7 +1773,8 @@ fn github_project() -> (tempfile::TempDir, PathBuf) {
 /// A stand-in for the GitHub command line, first on a `PATH` that is otherwise the test's own.
 /// `gh secret set` keeps what it was given and how beside itself, and refuses when
 /// `STEAMSHIP_FAKE_GH_REFUSE` is set; `gh api` answers a commit, `STEAMSHIP_FAKE_GH_COMMIT` if
-/// set, or fails when `STEAMSHIP_FAKE_GH_OFFLINE` is set.
+/// set, or fails when `STEAMSHIP_FAKE_GH_OFFLINE` is set. Unix only: Windows would not start
+/// the script, and would find the real `gh` behind it.
 #[cfg(unix)]
 fn fake_gh() -> (tempfile::TempDir, String) {
     use std::env;
@@ -2125,7 +2114,6 @@ fn ci_on_a_terminal_asks_which_script_when_there_are_several() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn status_checks_the_saved_login_with_steam_and_says_it_is_ready() {
     let home = checking(
@@ -2151,7 +2139,6 @@ fn status_checks_the_saved_login_with_steam_and_says_it_is_ready() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn status_with_a_login_steam_refuses_says_why_without_the_account_and_exits_3() {
     let home = checking(
@@ -2177,7 +2164,6 @@ fn status_with_a_login_steam_refuses_says_why_without_the_account_and_exits_3() 
     assert!(!format!("{stdout}{stderr}").contains("build_bot"));
 }
 
-#[cfg(unix)]
 #[test]
 fn a_login_handed_over_that_steam_refuses_says_when_it_was_packed_and_how_to_pack_another() {
     let home = answering(
@@ -2206,7 +2192,6 @@ fn a_login_handed_over_that_steam_refuses_says_when_it_was_packed_and_how_to_pac
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn status_that_cannot_reach_steam_names_the_reason_and_exits_1() {
     let home = checking("ERROR! Timed out waiting for Steam", 6);
@@ -2219,7 +2204,6 @@ fn status_that_cannot_reach_steam_names_the_reason_and_exits_1() {
     assert_eq!(failure(&stderr), "Timed out waiting for Steam");
 }
 
-#[cfg(unix)]
 #[test]
 fn status_with_a_saved_login_and_no_account_says_to_log_in_and_exits_3() {
     let home = faked();
@@ -2235,7 +2219,6 @@ fn status_with_a_saved_login_and_no_account_says_to_log_in_and_exits_3() {
     assert_eq!(failure(&stderr), "no build account");
 }
 
-#[cfg(unix)]
 #[test]
 fn status_with_steamcmd_altered_says_so_and_exits_4() {
     let home = faked();
@@ -2256,21 +2239,20 @@ fn status_with_steamcmd_altered_says_so_and_exits_4() {
 /// A home whose recorded steamcmd is a script that prints what it was started with and exits
 /// with `STEAMSHIP_FAKE_EXIT`, or 0. With `STEAMSHIP_FAKE_CHANGE` set it first changes itself, as
 /// an update would. With `STEAMSHIP_FAKE_SAVED` set it logs in with the login it saved.
-#[cfg(unix)]
 fn faked() -> tempfile::TempDir {
     faked_with(
         "#!/bin/sh\n\
          [ -n \"$STEAMSHIP_FAKE_SAVED\" ] && echo 'Logging in using cached credentials.'\n\
+         shown() { if command -v cygpath > /dev/null; then cygpath -w \"$1\"; else echo \"$1\"; fi; }\n\
          echo \"args: $*\"\n\
-         echo \"home: $HOME\"\n\
-         echo \"folder: $PWD\"\n\
+         echo \"home: $(shown \"$HOME\")\"\n\
+         echo \"folder: $(shown \"$PWD\")\"\n\
          [ -n \"$STEAMSHIP_FAKE_CHANGE\" ] && echo >> \"$0\"\n\
          exit \"$((STEAMSHIP_FAKE_EXIT + 0))\"\n",
     )
 }
 
 /// A home whose recorded steamcmd is `script`.
-#[cfg(unix)]
 fn faked_with(script: &str) -> tempfile::TempDir {
     use steamship::digest;
 
@@ -2302,7 +2284,12 @@ fn write_program(program: &Path, script: &str) {
     assert!(writer.wait().unwrap().success(), "{}", program.display());
 }
 
-#[cfg(unix)]
+/// Writes `program`, which Windows runs through Git's `sh` and so needs no executable bit.
+#[cfg(windows)]
+fn write_program(program: &Path, script: &str) {
+    fs::write(program, script).unwrap();
+}
+
 #[test]
 fn login_runs_steamcmd_for_the_account_in_the_home_and_remembers_it() {
     let home = faked();
@@ -2319,7 +2306,11 @@ fn login_runs_steamcmd_for_the_account_in_the_home_and_remembers_it() {
         stdout.contains(&format!("home: {}\n", home.path().display())),
         "{stdout}"
     );
+    // macOS's temporary folder is reached through a link, which steamcmd's folder is not.
+    #[cfg(unix)]
     let root = fs::canonicalize(home.path().join(install::FOLDER)).unwrap();
+    #[cfg(windows)]
+    let root = home.path().join(install::FOLDER);
     assert!(
         stdout.contains(&format!("folder: {}\n", root.display())),
         "{stdout}"
@@ -2334,7 +2325,6 @@ fn login_runs_steamcmd_for_the_account_in_the_home_and_remembers_it() {
     assert!(said.contains(" +login build_bot "), "{said}");
 }
 
-#[cfg(unix)]
 #[test]
 fn login_with_a_saved_login_says_it_is_already_logged_in() {
     let home = faked();
@@ -2354,7 +2344,6 @@ fn login_with_a_saved_login_says_it_is_already_logged_in() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn login_that_steamcmd_ends_badly_exits_1_and_remembers_nothing() {
     let home = faked();
@@ -2379,7 +2368,6 @@ fn login_that_steamcmd_ends_badly_exits_1_and_remembers_nothing() {
 /// and taken only when it is `AB12C`. Set to `app`, it waits for the login to be approved in the
 /// Steam Mobile app, and says something steamship has no meaning for meanwhile. With
 /// `STEAMSHIP_FAKE_DENY` set the approval never comes.
-#[cfg(unix)]
 fn asking() -> tempfile::TempDir {
     faked_with(
         "#!/bin/sh\n\
@@ -2409,38 +2397,14 @@ fn asking() -> tempfile::TempDir {
 }
 
 /// `steamship login` in `home`, with `typed` piped to it as a script would, and `variables` set.
-#[cfg(unix)]
 fn login_typing(
     home: &Path,
     typed: &str,
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
-    let mut child = run::spawn(
-        steamship_command()
-            .args(["login", "--account", "build_bot"])
-            .env_remove("STEAMSHIP_ACCOUNT")
-            .env("STEAMSHIP_HOME", home)
-            .envs(variables.iter().copied())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped()),
-    )
-    .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(typed.as_bytes())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    (
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
-    )
+    steamship_typing(&["login", "--account", "build_bot"], home, variables, typed)
 }
 
-#[cfg(unix)]
 #[test]
 fn login_passes_the_password_to_steamcmd_and_never_shows_it() {
     let home = asking();
@@ -2459,7 +2423,6 @@ fn login_passes_the_password_to_steamcmd_and_never_shows_it() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn login_with_a_wrong_password_says_steam_refused_it_and_exits_1() {
     let home = asking();
@@ -2475,7 +2438,6 @@ fn login_with_a_wrong_password_says_steam_refused_it_and_exits_1() {
     assert!(!home.path().join("account").exists());
 }
 
-#[cfg(unix)]
 #[test]
 fn login_with_no_password_to_give_ends_steamcmd_and_exits_1() {
     let home = asking();
@@ -2488,7 +2450,6 @@ fn login_with_no_password_to_give_ends_steamcmd_and_exits_1() {
     assert!(!home.path().join("typed").exists());
 }
 
-#[cfg(unix)]
 #[test]
 fn login_passes_a_steam_guard_code_to_steamcmd() {
     let home = asking();
@@ -2505,7 +2466,6 @@ fn login_passes_a_steam_guard_code_to_steamcmd() {
     assert_eq!(failure(&said), "not logged in: Steam refused the code");
 }
 
-#[cfg(unix)]
 #[test]
 fn login_waits_for_approval_in_the_app_and_passes_on_what_it_cannot_place() {
     let home = asking();
@@ -2522,7 +2482,6 @@ fn login_waits_for_approval_in_the_app_and_passes_on_what_it_cannot_place() {
     assert!(stdout.ends_with("\u{2713} logged in\n    uploads use this login until it expires\n"));
 }
 
-#[cfg(unix)]
 #[test]
 fn login_never_approved_says_so_and_exits_1() {
     let home = asking();
@@ -2562,17 +2521,32 @@ impl Session {
     }
 
     /// [`Session::start`], with `variables` set instead.
+    /// On Windows, a home with a fake steamcmd takes its line in Git's `sh`, as on Unix, and any
+    /// other in `cmd`.
     fn start_with(line: &str, home: &Path, variables: &[(&str, &str)]) -> Self {
         #[cfg(windows)]
-        let (shell, args) = (r"C:\Windows\System32\cmd.exe", ["/d", "/s", "/c"]);
+        let fake = home.join(install::FOLDER).join("steamcmd.sh").is_file();
+        #[cfg(windows)]
+        let (shell, args) = if fake {
+            (shell(), &["-c"][..])
+        } else {
+            (
+                PathBuf::from(r"C:\Windows\System32\cmd.exe"),
+                &["/d", "/s", "/c"][..],
+            )
+        };
         #[cfg(unix)]
-        let (shell, args) = ("/bin/sh", ["-c"]);
+        let (shell, args) = (PathBuf::from("/bin/sh"), &["-c"][..]);
         let args: Vec<OsString> = args
             .iter()
             .copied()
             .chain([line])
             .map(OsString::from)
             .collect();
+        #[cfg(windows)]
+        let faked = fake.then(|| ("STEAMSHIP_FAKE_STEAMCMD", shell.clone().into_os_string()));
+        #[cfg(unix)]
+        let faked = None::<(&str, OsString)>;
         let environment: Vec<(OsString, OsString)> =
             iter::once(("STEAMSHIP_HOME", home.as_os_str()))
                 .chain(
@@ -2582,9 +2556,10 @@ impl Session {
                         .map(|&(name, value)| (name, OsStr::new(value))),
                 )
                 .map(|(name, value)| (OsString::from(name), value.to_owned()))
+                .chain(faked.map(|(name, value)| (OsString::from(name), value)))
                 .collect();
         let (terminal, mut output, input) =
-            Terminal::start(Path::new(shell), &args, &environment, home).unwrap();
+            Terminal::start(&shell, &args, &environment, home).unwrap();
         let (sender, chunks) = mpsc::channel();
         let _reading = thread::spawn(move || {
             let mut chunk = [0_u8; 4096];
@@ -2799,7 +2774,6 @@ fn login_on_a_terminal_can_be_given_up_with_ctrl_c() {
     looks_as_it_was(&mut session, "exited 1");
 }
 
-#[cfg(unix)]
 #[test]
 fn login_on_a_terminal_hides_the_password_and_waits_for_approval_with_a_spinner() {
     let home = asking();
@@ -2840,7 +2814,6 @@ fn login_on_a_terminal_hides_the_password_and_waits_for_approval_with_a_spinner(
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn login_after_which_steamcmd_has_changed_exits_4() {
     let home = faked();
@@ -3032,7 +3005,6 @@ fn upload_runs_check_first_and_exits_2_on_a_refusal() {
 }
 
 /// A token that logs the account in without a password, and a value from its local settings.
-#[cfg(unix)]
 const SECRETS: [&str; 2] = [
     "eyJhbGciOiJFZERTQSJ9.token.that.logs.in.without.a.password",
     "localconfig_secret_value_0123456789",
@@ -3043,7 +3015,6 @@ const SECRETS: [&str; 2] = [
 /// console and its build log. Then it reports the build finished. With
 /// `STEAMSHIP_FAKE_LOGGED_OUT` set it reports instead that it has no login, and with
 /// `STEAMSHIP_FAKE_FAIL` set that the server refused the build.
-#[cfg(unix)]
 fn leaking() -> tempfile::TempDir {
     let home = faked_with(
         "#!/bin/sh\n\
@@ -3086,8 +3057,8 @@ fn leaking() -> tempfile::TempDir {
     home
 }
 
-/// Every file under `folder` but those in `except`, relative to `folder`, with its contents.
-#[cfg(unix)]
+/// Every file under `folder` but those in `except`, relative to `folder` with `/` between its
+/// folders on every system, with its contents.
 fn written(folder: &Path, except: &[&str]) -> Vec<(String, Vec<u8>)> {
     let mut found = Vec::new();
     let mut pending = vec![folder.to_path_buf()];
@@ -3097,8 +3068,10 @@ fn written(folder: &Path, except: &[&str]) -> Vec<(String, Vec<u8>)> {
             let relative = path
                 .strip_prefix(folder)
                 .unwrap()
-                .to_string_lossy()
-                .into_owned();
+                .components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/");
             if path.is_dir() {
                 pending.push(path);
                 continue;
@@ -3111,7 +3084,6 @@ fn written(folder: &Path, except: &[&str]) -> Vec<(String, Vec<u8>)> {
     found
 }
 
-#[cfg(unix)]
 fn assert_no_secret_in(what: &str, contents: &[u8]) {
     // A failure names the secret by its place in SECRETS: printing it would be the leak itself.
     for (index, secret) in SECRETS.iter().enumerate() {
@@ -3124,7 +3096,6 @@ fn assert_no_secret_in(what: &str, contents: &[u8]) {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn nothing_upload_prints_or_writes_holds_the_login() {
     let home = leaking();
@@ -3157,7 +3128,6 @@ fn nothing_upload_prints_or_writes_holds_the_login() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_in_a_github_actions_step_hands_the_build_id_on_as_its_output() {
     let home = leaking();
@@ -3210,7 +3180,6 @@ fn workshop_item(extra: &str) -> (tempfile::TempDir, PathBuf) {
 
 /// A home whose steamcmd, given a Workshop item's script, says `said`, exits `code`, and gives
 /// the item ID 777 in that script when it had none, as steamcmd does with an item it makes.
-#[cfg(unix)]
 fn publishing(said: &str, code: u8) -> tempfile::TempDir {
     let home = faked_with(&format!(
         "#!/bin/sh\n\
@@ -3224,7 +3193,6 @@ fn publishing(said: &str, code: u8) -> tempfile::TempDir {
     home
 }
 
-#[cfg(unix)]
 #[test]
 fn a_new_workshop_item_is_uploaded_and_its_id_given_to_add_to_the_script() {
     let home = publishing("Success.", 0);
@@ -3255,7 +3223,6 @@ fn a_new_workshop_item_is_uploaded_and_its_id_given_to_add_to_the_script() {
     assert!(console.contains("Success."), "{console}");
 }
 
-#[cfg(unix)]
 #[test]
 fn a_workshop_upload_in_ci_logs_in_as_the_account_handed_over() {
     let home = publishing("Success.", 0);
@@ -3302,7 +3269,6 @@ fn a_new_workshop_item_in_ci_is_refused_unless_asked_for() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn a_new_workshop_item_asked_for_in_actions_hands_its_id_to_the_workflow() {
     let home = publishing("Success.", 0);
@@ -3324,7 +3290,6 @@ fn a_new_workshop_item_asked_for_in_actions_hands_its_id_to_the_workflow() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_workshop_item_named_by_its_id_is_updated() {
     let home = publishing("Success.", 0);
@@ -3345,7 +3310,6 @@ fn a_workshop_item_named_by_its_id_is_updated() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_workshop_upload_steam_will_not_log_in_for_exits_3() {
     let home = publishing(
@@ -3362,7 +3326,6 @@ fn a_workshop_upload_steam_will_not_log_in_for_exits_3() {
     assert_eq!(failure(&stderr), "not logged in: Expired Login Auth Code");
 }
 
-#[cfg(unix)]
 #[test]
 fn a_failed_workshop_upload_names_why_and_where_the_log_is_and_exits_1() {
     let home = publishing("ERROR! Failed to update workshop item (Access Denied).", 8);
@@ -3404,7 +3367,6 @@ fn by_fields(folder: &Path, items: &Path, extra: &[&str]) -> Vec<String> {
     args
 }
 
-#[cfg(unix)]
 #[test]
 fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci() {
     let home = publishing("Success.", 0);
@@ -3427,7 +3389,12 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci
     let made: Vec<&str> = made.iter().map(String::as_str).collect();
     let (code, stdout, stderr) = steamship(&made, Some(home.path()), &[]);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
-    let log = home.path().join("workshop/480/example/steamcmd.log");
+    let log = home
+        .path()
+        .join("workshop")
+        .join("480")
+        .join("example")
+        .join("steamcmd.log");
     let summary = |outcome: &str| {
         format!(
             "{}\n",
@@ -4464,7 +4431,6 @@ fn upload_refuses_a_dll_nothing_installs_before_it_logs_in() {
 
 /// A steamcmd that, asked for app 1000's info, prints what the home's `app_info` file holds as
 /// the settings, and otherwise has Valve build the upload as [`released_as`] does.
-#[cfg(unix)]
 const TICKING_ON_STEAM: &str = "#!/bin/sh\n\
     case \" $* \" in *' +app_info_print '*)\n\
     echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
@@ -4479,7 +4445,6 @@ const TICKING_ON_STEAM: &str = "#!/bin/sh\n\
     echo 'Successfully finished AppID 1000 build (BuildID 4242).' > \"$output/app_build_1000.log\"\n\
     echo 'Logging in user build_bot to Steam Public...OK'\n";
 
-#[cfg(unix)]
 #[test]
 fn upload_asks_steam_which_redistributables_the_app_ticks_when_the_build_needs_one() {
     let home = faked_with(TICKING_ON_STEAM);
@@ -6635,11 +6600,9 @@ fn leaderboards_are_listed_and_checked_and_those_missing_are_made_as_the_file_ha
 }
 
 /// `DeleteLeaderboard` answering that it deleted the one asked for, as Steam answered in a trial.
-#[cfg(unix)]
 const DELETED: &str = r#"{"result": {"result": 1}}"#;
 
 /// A leaderboards file for app 1000 holding `fastest_season` alone, as [`MADE`] makes it.
-#[cfg(unix)]
 fn without_gold(folder: &Path) -> String {
     let path = folder.join("leaderboards.json");
     fs::write(
@@ -6653,7 +6616,6 @@ fn without_gold(folder: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-#[cfg(unix)]
 #[test]
 fn a_leaderboard_the_file_no_longer_holds_is_deleted_only_while_the_app_is_unreleased() {
     let files = tempfile::tempdir().unwrap();
@@ -7173,7 +7135,6 @@ fn a_web_api_key_that_is_not_one_is_refused_without_repeating_it() {
     assert!(!format!("{stdout}{stderr}").contains("not_a_key"));
 }
 
-#[cfg(unix)]
 #[test]
 fn promote_sets_the_default_branch_live_only_while_steam_shows_the_app_unreleased() {
     let (_project, script) = project(false);
@@ -7282,7 +7243,6 @@ fn a_workshop_script_that_would_upload_the_wrong_thing_is_refused_and_exits_2() 
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_upload_without_a_login_says_to_log_in_and_exits_3() {
     let home = leaking();
@@ -7306,7 +7266,6 @@ fn an_upload_without_a_login_says_to_log_in_and_exits_3() {
     assert_no_secret_in("stderr", stderr.as_bytes());
 }
 
-#[cfg(unix)]
 #[test]
 fn a_preview_says_nothing_was_uploaded() {
     let home = leaking();
@@ -7331,7 +7290,6 @@ fn a_preview_says_nothing_was_uploaded() {
     assert!(copy.contains("\t\"Preview\"\t\t\"1\"\n"), "{copy}");
 }
 
-#[cfg(unix)]
 #[test]
 fn a_refused_build_names_every_reason_and_where_the_logs_are_and_exits_1() {
     let home = leaking();
@@ -7343,7 +7301,7 @@ fn a_refused_build_names_every_reason_and_where_the_logs_are_and_exits_1() {
         &[("STEAMSHIP_FAKE_FAIL", "1")],
     );
     assert_eq!(code, Some(1_i32));
-    let output = home.path().join("apps/1000/output");
+    let output = home.path().join("apps").join("1000").join("output");
     assert_eq!(
         stderr,
         format!(
@@ -7501,7 +7459,6 @@ fn a_signal_steamship_was_started_to_ignore_stays_ignored_and_the_others_still_e
 /// A steamcmd that prints app 1000's info as steamcmd 1788292693 printed Falcon Ridge
 /// Manager's, trimmed, with the executable `executable`, keeping what it was started with in
 /// `args`.
-#[cfg(unix)]
 fn app_info(executable: &str) -> String {
     format!(
         "#!/bin/sh\n\
@@ -7521,7 +7478,6 @@ fn app_info(executable: &str) -> String {
     )
 }
 
-#[cfg(unix)]
 #[test]
 fn settings_are_shown_saved_and_checked_leaving_steams_bookkeeping_out() {
     let home = faked_with(&app_info("spacewar"));
@@ -7596,7 +7552,6 @@ fn settings_are_shown_saved_and_checked_leaving_steams_bookkeeping_out() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn settings_in_ci_are_asked_for_as_the_account_handed_over() {
     // No login saved and no account remembered: only what `steamship ci` packed.
@@ -7615,7 +7570,6 @@ fn settings_in_ci_are_asked_for_as_the_account_handed_over() {
     assert!(steamcmd::saved_login(home.path(), Platform::THIS).exists());
 }
 
-#[cfg(unix)]
 #[test]
 fn a_snapshot_for_another_app_is_refused_before_steamcmd_and_an_app_steam_hides_is_a_failure() {
     let home = faked_with(
@@ -7649,7 +7603,6 @@ fn a_snapshot_for_another_app_is_refused_before_steamcmd_and_an_app_steam_hides_
 /// A steamcmd that wraps as steamcmd 1788292693 did an executable importing `GetModuleHandleA`:
 /// it writes the wrapped one where it was told and says so, keeping what it was started with in
 /// `args`.
-#[cfg(unix)]
 const WRAPS: &str = "#!/bin/sh\n\
     echo \"$*\" > \"$HOME/args\"\n\
     while [ $# -gt 0 ] && [ \"$1\" != +drm_wrap ]; do shift; done\n\
@@ -7660,7 +7613,6 @@ const WRAPS: &str = "#!/bin/sh\n\
 
 /// A steamcmd whose DRM wrap Valve's tool refuses, as it refused Falcon Ridge Overseer's Godot
 /// executable.
-#[cfg(unix)]
 const REFUSES_WRAP: &str = "#!/bin/sh\n\
     echo \"$*\" > \"$HOME/args\"\n\
     echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
@@ -7741,7 +7693,6 @@ fn an_executable_is_wrapped_in_place_or_into_the_output_keeping_its_permissions(
     assert!(compatible.ends_with("drmtoolp 6 +quit\n"), "{compatible}");
 }
 
-#[cfg(unix)]
 #[test]
 fn a_wrap_in_ci_is_done_as_the_account_handed_over() {
     // No login saved and no account remembered: only what `steamship ci` packed.
@@ -7764,7 +7715,6 @@ fn a_wrap_in_ci_is_done_as_the_account_handed_over() {
     assert_eq!(fs::read_to_string(&game).unwrap(), "MZwrapped");
 }
 
-#[cfg(unix)]
 #[test]
 fn a_wrap_said_done_that_wrote_nothing_is_a_failure_and_replaces_nothing() {
     let home = faked_with(WRAPS);
@@ -7789,7 +7739,6 @@ fn a_wrap_said_done_that_wrote_nothing_is_a_failure_and_replaces_nothing() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_refused_wrap_says_why_and_a_file_that_is_no_windows_program_is_refused_first() {
     let home = faked_with(REFUSES_WRAP);
@@ -7832,7 +7781,6 @@ fn a_refused_wrap_says_why_and_a_file_that_is_no_windows_program_is_refused_firs
 /// A steamcmd that fetches app 1000 as steamcmd 1792617903 did: it records the build,
 /// `STEAMSHIP_FAKE_BUILD` or 4242, and the branch `-beta` names in the folder it was given, and
 /// says the app is installed. It keeps what it was started with in `args`.
-#[cfg(unix)]
 const FETCHES: &str = "#!/bin/sh\n\
     echo \"$*\" > \"$HOME/args\"\n\
     folder=; beta=\n\
@@ -7851,7 +7799,6 @@ const FETCHES: &str = "#!/bin/sh\n\
 
 /// `GetAppBetas` showing build 4242 live on the default branch and testing, and 4100 on a branch
 /// that takes a password.
-#[cfg(unix)]
 const FETCHABLE: &str = r#"{"response": {"result": 1, "betas": {
     "public": {"BuildID": 4242},
     "testing": {"BuildID": 4242, "Description": "0.3.0"},
@@ -7860,7 +7807,6 @@ const FETCHABLE: &str = r#"{"response": {"result": 1, "betas": {
 
 /// `steamship fetch` with `args` from a home whose steamcmd is `home`'s, with the Web API
 /// answering [`FETCHABLE`] once, and `variables` set besides.
-#[cfg(unix)]
 fn fetching(
     home: &Path,
     args: &[&str],
@@ -7870,7 +7816,6 @@ fn fetching(
 }
 
 /// [`fetching`], with `typed`, when given, piped to it as a script would type it.
-#[cfg(unix)]
 fn fetching_typed(
     home: &Path,
     args: &[&str],
@@ -7892,7 +7837,6 @@ fn fetching_typed(
     )
 }
 
-#[cfg(unix)]
 #[test]
 fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with_it() {
     let home = faked_with(FETCHES);
@@ -7977,7 +7921,6 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
     assert_eq!(again, Some(0_i32), "{again_said}");
 }
 
-#[cfg(unix)]
 #[test]
 fn a_fetch_that_got_another_build_than_steam_shows_live_fails() {
     let home = faked_with(FETCHES);
@@ -7996,7 +7939,6 @@ fn a_fetch_that_got_another_build_than_steam_shows_live_fails() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_not_its_own() {
     let home = faked_with(FETCHES);
@@ -8089,7 +8031,6 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
 /// steamcmd's words. It then waits at the
 /// console again, and keeps what it was started with in `args`, what was typed in `typed`, and
 /// what was typed last in `quit`.
-#[cfg(unix)]
 const TYPED_FETCHES: &str = "#!/bin/sh\n\
     echo \"$*\" > \"$HOME/args\"\n\
     folder=\n\
@@ -8118,7 +8059,6 @@ const TYPED_FETCHES: &str = "#!/bin/sh\n\
     read -r quit\n\
     printf '%s' \"$quit\" > \"$HOME/quit\"\n";
 
-#[cfg(unix)]
 #[test]
 fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked() {
     let home = faked_with(TYPED_FETCHES);
@@ -8177,13 +8117,11 @@ fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked(
 }
 
 /// [`fetching`], with everything it printed on either stream as one text.
-#[cfg(unix)]
 fn fetching_said(home: &Path, args: &[&str], variables: &[(&str, &str)]) -> (Option<i32>, String) {
     let (code, stdout, stderr) = fetching(home, args, variables);
     (code, format!("{stdout}{stderr}"))
 }
 
-#[cfg(unix)]
 #[test]
 fn a_typed_password_is_kept_on_enter_or_when_asked_and_not_on_n() {
     let named = ["1000", "--branch", "friends"];
@@ -8218,7 +8156,6 @@ fn a_typed_password_is_kept_on_enter_or_when_asked_and_not_on_n() {
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn a_typed_fetch_whose_steamcmd_will_never_reach_steam_is_stopped_at_once() {
     let home = faked_with(
@@ -8246,7 +8183,6 @@ fn a_typed_fetch_whose_steamcmd_will_never_reach_steam_is_stopped_at_once() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn the_password_of_a_branch_goes_on_steamcmds_command_line_only_when_asked() {
     let home = faked_with(FETCHES);
@@ -8287,7 +8223,6 @@ fn the_password_of_a_branch_goes_on_steamcmds_command_line_only_when_asked() {
     assert!(!home.path().join("args").exists(), "steamcmd was not run");
 }
 
-#[cfg(unix)]
 #[test]
 fn a_fetch_in_ci_is_done_as_the_account_handed_over() {
     // No login saved and no account remembered: only what `steamship ci` packed.
@@ -8302,7 +8237,6 @@ fn a_fetch_in_ci_is_done_as_the_account_handed_over() {
     assert!(args.contains("+login build_bot "), "{args}");
 }
 
-#[cfg(unix)]
 #[test]
 fn a_fetch_steam_refuses_says_why() {
     let home = faked_with(
@@ -8321,7 +8255,6 @@ fn a_fetch_steam_refuses_says_why() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_fetch_steamcmd_gave_up_on_in_its_content_log_alone_says_why_from_there() {
     // Where steamcmd keeps its logs, from the home it is given as `HOME`.
@@ -9357,7 +9290,6 @@ fn rollback_refuses_a_branch_with_no_earlier_recorded_build_and_asks_steam_nothi
     }
 }
 
-#[cfg(unix)]
 #[test]
 fn rollback_sets_the_default_branch_back_only_while_steam_shows_the_app_unreleased() {
     let home = faked_with(&released_as("released"));
@@ -10731,7 +10663,6 @@ fn shipping_a_game_on_macos_says_its_cores_are_not_held() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_games_workshop_run_gives_its_visibility_only_to_the_items_it_makes() {
     let (_temp, root) = pushed_game(None);
@@ -10786,7 +10717,6 @@ fn a_games_workshop_run_gives_its_visibility_only_to_the_items_it_makes() {
 /// A steamcmd for Tidal Mill Inn that, asked for the app's info, prints it with `release` among
 /// its common settings, and otherwise publishes the Workshop item it is sent, adding a line to
 /// `sent` in the home.
-#[cfg(unix)]
 fn workshop_released_as(release: &str) -> String {
     format!(
         "#!/bin/sh\n\
@@ -10806,7 +10736,6 @@ fn workshop_released_as(release: &str) -> String {
 /// Runs `steamship workshop` with `args` in Tidal Mill Inn, whose `steamship.toml` holds its
 /// Workshop items until launch, and whose steamcmd shows the app's info with `release`: what it
 /// exits with, its output, and whether an item was sent.
-#[cfg(unix)]
 fn workshop_held(release: &str, args: &[&str]) -> (Option<i32>, String, String, bool) {
     let (_temp, root) = pushed_game(Some("[workshop]\nheld_until_launch = true\n"));
     fs::write(
@@ -10826,7 +10755,6 @@ fn workshop_held(release: &str, args: &[&str]) -> (Option<i32>, String, String, 
     (code, stdout, stderr, home.path().join("sent").exists())
 }
 
-#[cfg(unix)]
 #[test]
 fn a_game_holding_its_workshop_items_until_launch_sends_none_while_steam_shows_it_unreleased() {
     let state = "\\t\\t\"ReleaseState\"\\t\\t\"unavailable\"\\n";
@@ -10856,7 +10784,6 @@ fn a_game_holding_its_workshop_items_until_launch_sends_none_while_steam_shows_i
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_game_holding_its_workshop_items_until_launch_sends_them_for_launch_or_once_released() {
     let unreleased = "\\t\\t\"ReleaseState\"\\t\\t\"unavailable\"\\n";
@@ -10881,7 +10808,6 @@ fn a_game_holding_its_workshop_items_until_launch_sends_them_for_launch_or_once_
 /// A steamcmd for Tidal Mill Inn, still unreleased, that prints the app's info when asked for it,
 /// and otherwise has Valve build the upload as `BuildID` 4242, adding a line to `builds` in the
 /// home, or finish the preview the script asks for.
-#[cfg(unix)]
 const INN_STEAMCMD: &str = "#!/bin/sh\n\
     case \" $* \" in *' +app_info_print '*)\n\
     echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
@@ -10903,7 +10829,6 @@ const INN_STEAMCMD: &str = "#!/bin/sh\n\
 
 /// The game [`pushed_game`] makes with `toml`, without achievements, beside a home whose
 /// steamcmd is [`INN_STEAMCMD`] and whose settings snapshot is Steam's own, pushed.
-#[cfg(unix)]
 fn settled_inn(toml: &str) -> (tempfile::TempDir, PathBuf, tempfile::TempDir) {
     let (temp, root) = pushed_game(Some(toml));
     fs::remove_file(
@@ -10930,7 +10855,6 @@ fn settled_inn(toml: &str) -> (tempfile::TempDir, PathBuf, tempfile::TempDir) {
 
 /// `steamship upload` in the game at `root`, with a Web API that sets build 4242 live and
 /// describes `testing`, and the first five requests it was sent.
-#[cfg(unix)]
 fn uploaded_inn(root: &Path, home: &Path) -> (Option<i32>, String, String, Vec<String>) {
     let (host, requests) = web_api(vec![
         ("200 OK", BETAS),
@@ -10961,7 +10885,6 @@ fn uploaded_inn(root: &Path, home: &Path) -> (Option<i32>, String, String, Vec<S
     (code, stdout, stderr, asked)
 }
 
-#[cfg(unix)]
 #[test]
 fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described() {
     let (_temp, root, home) = settled_inn(BUILDING);
@@ -11007,7 +10930,6 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
     let (_temp, root, home) =
@@ -11066,7 +10988,6 @@ fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn an_unreleased_game_naming_no_green_branch_records_its_build_on_testing_and_default() {
     let (_temp, root, home) = settled_inn(BUILDING);
@@ -11084,7 +11005,6 @@ fn an_unreleased_game_naming_no_green_branch_records_its_build_on_testing_and_de
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_game_whose_steamship_toml_names_a_description_has_its_branch_described_so() {
     let (_temp, root, home) = settled_inn(&format!("description = \"nightly\"\n{BUILDING}"));
@@ -11103,7 +11023,6 @@ fn a_game_whose_steamship_toml_names_a_description_has_its_branch_described_so()
     );
 }
 
-#[cfg(unix)]
 #[test]
 fn a_games_first_upload_to_an_app_with_no_branch_yet_succeeds_and_says_how_to_describe_it() {
     let (_temp, root, home) = settled_inn(&format!("description = \"testing\"\n{BUILDING}"));

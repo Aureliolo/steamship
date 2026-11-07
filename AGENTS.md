@@ -91,7 +91,8 @@ typos
 
 `typos` comes from the `typos-cli` crate and `markdownlint-cli2` from npm. On Linux the tests
 start their own D-Bus and GNOME Keyring. They need `dbus-daemon` and `gnome-keyring-daemon`
-installed.
+installed. On Windows they run their fake steamcmd with Git's `sh`, through the `fake-steamcmd`
+feature that test builds alone turn on. `.github/pack.sh` refuses a binary built with it.
 
 `cargo test` covers the steamship crate alone. When `docs/`, `docs-site/` or a command's help
 changes, also run `cargo test --locked -p steamship-docs-site` and

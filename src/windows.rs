@@ -77,6 +77,8 @@ use zeroize::{Zeroize as _, Zeroizing};
 use crate::keychain;
 use crate::parallel;
 use crate::run::{self, Finished};
+#[cfg(feature = "fake-steamcmd")]
+use crate::steamcmd;
 use windows_sys::Win32::Security::Cryptography::{
     CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
 };
@@ -428,6 +430,12 @@ impl Terminal {
         environment: &[(OsString, OsString)],
         directory: &Path,
     ) -> io::Result<(Self, PipeReader, PipeWriter)> {
+        #[cfg(feature = "fake-steamcmd")]
+        let through = steamcmd::through_shell(program, args);
+        #[cfg(feature = "fake-steamcmd")]
+        let (program, args) = through.as_ref().map_or((program, args), |(shell, script)| {
+            (shell.as_path(), script.as_slice())
+        });
         silence_error_dialogues();
         let desktop = Desktop::create()?;
         let job = Job::create()?;

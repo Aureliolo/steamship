@@ -21,6 +21,8 @@ use crate::download;
 use crate::magic;
 use crate::manifest::{Manifest, Package};
 use crate::parallel;
+#[cfg(windows)]
+use crate::steamcmd;
 // What each system does differently lives in a module of its own, which is how every line of it
 // is compiled, tested and mutation-tested on the system it is for.
 #[cfg(unix)]
@@ -560,8 +562,9 @@ impl Inventory {
         }
         // With every file as recorded, what remains to ask is whether the pinned files are
         // Valve's at all, which a tampered pin would otherwise carry through unnoticed.
+        // A test's fake steamcmd is no one's signed program.
         #[cfg(windows)]
-        if changes.is_empty() {
+        if changes.is_empty() && steamcmd::faked().is_none() {
             changes.extend(native::unsigned(root, self.files.keys(), native::VALVE));
         }
         if changes.is_empty() {

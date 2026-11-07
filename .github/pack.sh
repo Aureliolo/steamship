@@ -22,8 +22,15 @@ binary="steamship"
 if [[ "${target}" == *windows* ]]; then
   binary="steamship.exe"
 fi
+built="target/${target}/${profile}/${binary}"
+# A test build reads this variable to run a fake steamcmd without Valve's signature. The
+# feature that adds it is for tests alone and must never ship.
+if grep -q -a STEAMSHIP_FAKE_STEAMCMD "${built}"; then
+  echo "${built} was built with the fake-steamcmd feature, which never ships." >&2
+  exit 1
+fi
 mkdir -p "dist/${name}"
-cp "target/${target}/${profile}/${binary}" README.md LICENSE-APACHE LICENSE-MIT "dist/${name}/"
+cp "${built}" README.md LICENSE-APACHE LICENSE-MIT "dist/${name}/"
 # Made by the docs generator from the same definitions as `--help`, so the program itself carries
 # no man writer.
 cargo run --locked --quiet -p steamship-docs-site -- package "dist/${name}"
