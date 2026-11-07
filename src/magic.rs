@@ -6,7 +6,7 @@ use std::path::Path;
 
 /// How a program starts on any of the three systems: a Windows executable, an ELF or Mach-O file
 /// (32-bit, 64-bit and universal, in either byte order), or a script.
-const PROGRAM_STARTS: [&[u8]; 8] = [
+const PROGRAM_STARTS: [&[u8]; 9] = [
     b"MZ",
     b"#!",
     b"\x7fELF",
@@ -15,6 +15,7 @@ const PROGRAM_STARTS: [&[u8]; 8] = [
     b"\xce\xfa\xed\xfe",
     b"\xcf\xfa\xed\xfe",
     b"\xca\xfe\xba\xbe",
+    b"\xca\xfe\xba\xbf",
 ];
 
 /// Whether `path` starts the way a program does.
@@ -50,7 +51,7 @@ mod tests {
     #[test]
     fn knows_a_program_by_how_it_starts() {
         let folder = tempfile::tempdir().unwrap();
-        let cases: [(&[u8], bool); 11] = [
+        let cases: [(&[u8], bool); 12] = [
             (b"MZ\x90\x00", true),
             (b"#!/bin/sh", true),
             (b"\x7fELF\x02", true),
@@ -59,6 +60,7 @@ mod tests {
             (b"\xce\xfa\xed\xfe", true),
             (b"\xcf\xfa\xed\xfe", true),
             (b"\xca\xfe\xba\xbe", true),
+            (b"\xca\xfe\xba\xbf", true),
             (b"text", false),
             (b"M", false),
             (b"", false),
