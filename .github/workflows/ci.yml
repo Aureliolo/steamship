@@ -239,8 +239,10 @@ jobs:
         if: '!cancelled()'
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
+      # Not on Linux, where coverage runs these tests on the same target and the static build's
+      # run below tests the binary that ships.
       - name: Test
-        if: '!cancelled()'
+        if: '!matrix.musl && !cancelled()'
         run: cargo test --locked
 
       # The Linux release binary is the static musl build, so it is tested as such on every change
