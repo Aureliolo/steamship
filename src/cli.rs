@@ -415,14 +415,13 @@ pub enum Command {
     /// account the app unreleased. Once the app is released, set its default branch live in
     /// Steamworks instead.
     Promote(Promote),
-    /// Set a branch back to the build that was live on it before. Needs the owner's yes.
+    /// Set a branch back to the build that was live on it before. Players get that build at once.
     ///
-    /// This changes what players get, so run it only with the owner's yes. It takes the build
-    /// steamship recorded on the branch before the current one and sets it live, through Steam's
-    /// partner Web API, with the publisher key as `builds` finds it. An upload records the commit
-    /// and the build ID of each branch it sets live in the steamship home. A branch steamship
-    /// recorded no earlier build for is refused. The default branch is set live only while Steam
-    /// shows the build account the app unreleased.
+    /// It sets live the build steamship recorded on the branch before the current one, through
+    /// Steam's partner Web API, with the publisher key as `builds` finds it. Each upload in a game
+    /// records the build it sets live on each branch, in the steamship home, so this works on the
+    /// machine that uploaded. A branch with no earlier recorded build is refused. The default
+    /// branch is set live only while Steam shows the build account the app unreleased.
     Rollback(Rollback),
     /// Set the description players see for a beta branch.
     ///
@@ -662,9 +661,8 @@ pub struct Upload {
     /// else goes to standard error.
     #[arg(long)]
     pub json: bool,
-    /// In a game that sets `green`, upload a commit that is not on that branch of origin. It is
-    /// otherwise refused unless a test round has moved the branch to the commit or past it. Only a
-    /// hotfix round passes this, with the hotfix's own green.
+    /// In a game that sets `green`, upload a commit that is not on that branch of origin, such as
+    /// a hotfix the tests have not passed yet.
     #[arg(long)]
     pub allow_ungreen: bool,
 }

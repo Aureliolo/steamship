@@ -1,5 +1,5 @@
 //! A game that names a branch as `green` in its `steamship.toml` ships only a commit on that
-//! branch on origin, the branch a test round moves once it has passed a commit.
+//! branch on origin, which the game's tests move to each commit they pass.
 
 use std::path::Path;
 
@@ -106,9 +106,8 @@ fn not_green(commit: &str, branch: &str, tip: Option<&str>) -> String {
         |tip| format!("{branch} is at {}", short(tip)),
     );
     format!(
-        "commit {} is not on origin's {branch} branch ({at}). Run a round for this repository so \
-         it tests the commit and moves {branch}, then upload again. A hotfix round passes \
-         --allow-ungreen",
+        "commit {} is not on origin's {branch} branch ({at}). Upload it once your tests have \
+         moved {branch} to it, or give --allow-ungreen to upload it as it is",
         short(commit)
     )
 }
@@ -143,7 +142,13 @@ mod tests {
             "{why}"
         );
         assert!(why.contains("passed is at cccccccccccc"), "{why}");
-        assert!(why.contains("Run a round"), "{why}");
+        assert!(
+            why.ends_with(
+                "Upload it once your tests have moved passed to it, or give --allow-ungreen to \
+                 upload it as it is"
+            ),
+            "{why}"
+        );
     }
 
     #[test]

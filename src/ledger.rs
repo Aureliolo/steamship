@@ -18,7 +18,8 @@ pub struct Entry {
     pub build_id: u64,
     /// The full commit the build was made from.
     pub commit: String,
-    /// Whether the commit was on the repository's `green` branch when it went up.
+    /// Whether the commit was on the branch the game names as `green` when it went up. Without one,
+    /// it is not.
     pub green: bool,
     /// Whether the entry is a rollback setting an earlier build live, not an upload.
     pub rollback: bool,

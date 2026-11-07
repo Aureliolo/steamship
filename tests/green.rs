@@ -124,7 +124,13 @@ fn a_commit_ahead_of_green_is_refused_naming_it_green_and_the_fix() {
         )),
         "{why}"
     );
-    assert!(why.contains("Run a round"), "{why}");
+    assert!(
+        why.ends_with(
+            "Upload it once your tests have moved green to it, or give --allow-ungreen to upload \
+             it as it is"
+        ),
+        "{why}"
+    );
 }
 
 #[test]

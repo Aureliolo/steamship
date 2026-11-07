@@ -374,11 +374,11 @@ An app is named by its ID or by its app build script.
 steamship rollback 480 testing
 ```
 
-`rollback` sets a branch back to the build that was live on it before the current one. It changes
-what players get, so run it only with the owner's yes. A game upload that sets `green` records the
-commit and the build ID of every branch it sets live, in the steamship home. The record lives
-there, so `rollback` works only on the machine that uploaded. A branch with no earlier recorded
-build is refused. The default branch is set only while the app is unreleased, as for `promote`.
+`rollback` sets a branch back to the build that was live on it before the current one. Each
+upload [in a game](games.md) records the commit and build ID it sets live on each branch, in the
+steamship home. So `rollback` works on the machine that uploaded. A branch with no earlier
+recorded build is refused. The default branch is set only while the app is unreleased, as for
+`promote`.
 
 ### The first branch of a new app
 

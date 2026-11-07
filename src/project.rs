@@ -125,8 +125,8 @@ pub struct Project {
     /// Whether the app is released, so that an upload never sets a build live on the default
     /// branch, whatever Steam shows.
     pub released: bool,
-    /// The branch on origin that a test round moves to each commit it passes. When set, an upload
-    /// ships only a commit on it.
+    /// The branch on origin that the game's tests move to each commit they pass. When set, an
+    /// upload ships only a commit on it.
     pub green: Option<String>,
     /// What an upload describes that branch as, when not the version.
     pub description: Option<String>,
@@ -692,8 +692,8 @@ fn green_branch(value: &toml::Value) -> Result<String, String> {
     let branch = text_of(value, "green")?;
     if branch.is_empty() || branch.contains(char::is_whitespace) {
         return Err(format!(
-            "`green` is \"{branch}\". Name the branch on origin that a test round moves, such as \
-             \"green\", or leave it out"
+            "`green` is \"{branch}\". Name the branch on origin that your tests move to each \
+             commit they pass, such as \"green\", or leave it out"
         ));
     }
     Ok(branch.to_owned())

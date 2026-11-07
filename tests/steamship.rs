@@ -9193,8 +9193,8 @@ fn a_game_naming_a_green_branch_is_refused_unless_origin_holds_its_commit_there(
     let (_, why) = ran(&["upload"]);
     assert!(
         why.contains(
-            "is not on origin's green branch (origin has no green branch). Run a round for this \
-             repository"
+            "is not on origin's green branch (origin has no green branch). Upload it once your \
+             tests have moved green to it"
         ),
         "{why}"
     );
@@ -9417,10 +9417,10 @@ fn a_demo_is_held_to_green_too() {
 }
 
 #[test]
-fn the_help_names_allow_ungreen_and_marks_rollback_as_needing_the_owners_yes() {
+fn the_help_names_allow_ungreen_and_says_a_rollback_reaches_players_at_once() {
     for (command, said) in [
         ("upload", "--allow-ungreen"),
-        ("rollback", "Needs the owner's yes"),
+        ("rollback", "Players get that build at once"),
     ] {
         let (code, stdout, stderr) = steamship(&[command, "--help"], Some(Path::new(".")), &[]);
         assert_eq!(code, Some(0_i32), "{command}: {stderr}");
@@ -11067,16 +11067,20 @@ fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
 
 #[cfg(unix)]
 #[test]
-fn an_unreleased_game_records_its_build_on_testing_and_default() {
-    let (_temp, root, home) = settled_inn(&format!("green = \"green\"\n{BUILDING}"));
+fn an_unreleased_game_naming_no_green_branch_records_its_build_on_testing_and_default() {
+    let (_temp, root, home) = settled_inn(BUILDING);
     let (code, stdout, stderr, _asked) = uploaded_inn(&root, home.path());
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(!stdout.contains("  green "), "{stdout}");
     let kept = ledger::load(home.path(), 1_000_050).unwrap();
-    let branches: Vec<(&str, u64)> = kept
+    let branches: Vec<(&str, u64, bool)> = kept
         .iter()
-        .map(|each| (each.branch.as_str(), each.build_id))
+        .map(|each| (each.branch.as_str(), each.build_id, each.green))
         .collect();
-    assert_eq!(branches, [("testing", 4242), ("default", 4242)]);
+    assert_eq!(
+        branches,
+        [("testing", 4242, false), ("default", 4242, false)]
+    );
 }
 
 #[cfg(unix)]

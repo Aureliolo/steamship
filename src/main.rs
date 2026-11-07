@@ -666,10 +666,13 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     shipped_from(&game)?;
     // Before the build, which takes minutes, so that a commit no round has passed costs none.
     let shipped = match &game.green {
-        Some(branch) if !shipping.preview => {
-            Some(green_commit(&game.root, branch, shipping.green)?)
-        }
-        _ => None,
+        _ if shipping.preview => None,
+        Some(branch) => Some(green_commit(&game.root, branch, shipping.green)?),
+        None => Some(green::Shipped {
+            commit: project::git(&game.root, &["rev-parse", "HEAD"])
+                .map_err(|why| fail(&why, FAILED))?,
+            green: false,
+        }),
     };
     let version = match shipping.version {
         Some(version) => version.to_owned(),
@@ -1950,7 +1953,8 @@ struct Upload<'command> {
     default: bool,
     account: Option<&'command str>,
     json: bool,
-    /// The commit a game's upload was checked against its green branch as, to record.
+    /// The commit a game's upload is made from, to record for a rollback, and whether its green
+    /// branch held it.
     shipped: Option<&'command green::Shipped>,
 }
 
