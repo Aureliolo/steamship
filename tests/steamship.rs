@@ -6647,6 +6647,55 @@ fn leaderboards_saved_from_steam_are_a_file_that_check_finds_steam_matches() {
     );
 }
 
+#[test]
+fn leaderboards_json_prints_only_what_steam_holds_or_how_it_failed_on_standard_output() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", LEADERBOARDS), ("403 Forbidden", "")]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let (code, stdout, stderr) =
+        steamship(&["leaderboards", "480", "--json"], Some(home.path()), &set);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&stdout).unwrap(),
+        serde_json::json!({"app": 480_u32, "leaderboards": [
+            {"name": "gold", "sort": "descending", "display": "numeric",
+             "trusted_writes": true, "friends_only": false, "scores": 12_u64}
+        ]})
+    );
+    assert!(
+        stdout.ends_with("}\n") && stdout.lines().count() == 1,
+        "{stdout}"
+    );
+    assert!(stderr.contains("1 leaderboard on Steam"), "{stderr}");
+
+    let (refused, said, why) =
+        steamship(&["leaderboards", "480", "--json"], Some(home.path()), &set);
+    assert_eq!(refused, Some(1_i32), "{said}{why}");
+    let answer: serde_json::Value = serde_json::from_str(&said).unwrap();
+    assert_eq!(
+        answer.pointer("/app").and_then(serde_json::Value::as_u64),
+        Some(480)
+    );
+    assert_eq!(
+        answer
+            .pointer("/error/code")
+            .and_then(serde_json::Value::as_str),
+        Some("key-refused")
+    );
+
+    let (both, _, conflict) = steamship(
+        &["leaderboards", "480", "--json", "--check", "x.json"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(both, Some(2_i32), "{conflict}");
+    assert!(conflict.contains("cannot be used with"), "{conflict}");
+}
+
 /// `DeleteLeaderboard` answering that it deleted the one asked for, as Steam answered in a trial.
 const DELETED: &str = r#"{"result": {"result": 1}}"#;
 

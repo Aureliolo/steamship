@@ -598,7 +598,7 @@ fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> {
         codes.push(either(try_leaderboards(
             app,
             &boards,
-            None,
+            Listing::Lines,
             Changes::default(),
         )));
     }
@@ -950,6 +950,17 @@ struct Changes<'command> {
     account: Option<&'command str>,
 }
 
+/// How `leaderboards` with no files to check gives what Steam holds.
+#[derive(Debug, Clone, Copy)]
+enum Listing<'command> {
+    /// A line for each.
+    Lines,
+    /// One line of JSON on standard output.
+    Json,
+    /// Written to this file, as `--check` reads it.
+    Saved(&'command Path),
+}
+
 /// `leaderboards` with whatever is not given taken from the game.
 fn leaderboards_in(request: cli::Leaderboards) -> Result<ExitCode, ExitCode> {
     let cli::Leaderboards {
@@ -958,8 +969,14 @@ fn leaderboards_in(request: cli::Leaderboards) -> Result<ExitCode, ExitCode> {
         save,
         create,
         delete_missing,
+        json,
         account,
     } = request;
+    let listing = match (save.as_deref(), json) {
+        (Some(path), _) => Listing::Saved(path),
+        (None, true) => Listing::Json,
+        (None, false) => Listing::Lines,
+    };
     let changes = Changes {
         create,
         delete_missing,
@@ -980,12 +997,7 @@ fn leaderboards_in(request: cli::Leaderboards) -> Result<ExitCode, ExitCode> {
             ));
         }
     }
-    try_leaderboards(
-        &app_given_or(app, game.as_ref()),
-        &files,
-        save.as_deref(),
-        changes,
-    )
+    try_leaderboards(&app_given_or(app, game.as_ref()), &files, listing, changes)
 }
 
 /// `rich-presence` with whatever is not given taken from the game: every language's file, sent
@@ -5735,12 +5747,28 @@ fn written_over(path: &Path, lists: &[saved::List]) -> Result<(), ExitCode> {
     })
 }
 
-/// Writes `held`, app `app_id`'s leaderboards on Steam, to `path` as `--check` reads them.
-fn save_leaderboards(
+/// Gives `held`, app `app_id`'s leaderboards on Steam, as `listing` asks.
+fn list_leaderboards(
     app_id: u32,
     held: &[webapi::Leaderboard],
-    path: &Path,
+    listing: Listing<'_>,
 ) -> Result<ExitCode, ExitCode> {
+    let path = match listing {
+        Listing::Lines => {
+            show::fields(
+                &held
+                    .iter()
+                    .map(|leaderboard| (leaderboard.name.clone(), leaderboards::line(leaderboard)))
+                    .collect::<Vec<_>>(),
+            );
+            return Ok(ExitCode::SUCCESS);
+        }
+        Listing::Json => {
+            show::plain(&format!("{}\n", leaderboards::json(app_id, held)));
+            return Ok(ExitCode::SUCCESS);
+        }
+        Listing::Saved(path) => path,
+    };
     let text = leaderboards::saved(app_id, held)
         .map_err(|why| fail(&format!("app {app_id}: {why}"), REFUSED))?;
     fs::write(path, text).map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
@@ -5758,12 +5786,16 @@ fn save_leaderboards(
 fn try_leaderboards(
     app: &str,
     check: &[PathBuf],
-    save: Option<&Path>,
+    listing: Listing<'_>,
     changes: Changes<'_>,
 ) -> Result<ExitCode, ExitCode> {
+    let json = matches!(listing, Listing::Json);
+    if json {
+        show::divert();
+    }
     show::title("leaderboards");
     let app_id = app_named(app)?;
-    if let Some(path) = save {
+    if let Listing::Saved(path) = listing {
         written_over(path, &leaderboards::SAVED)?;
     }
     let mut files = Vec::with_capacity(check.len());
@@ -5776,24 +5808,21 @@ fn try_leaderboards(
     let asking = Spinner::start("steam", "asking for the leaderboards", false);
     let mut held = match api.leaderboards(app_id) {
         Ok(held) => held,
-        Err(error) => return Err(web_api_failed(asking, &error)),
+        Err(error) => {
+            let code = web_api_failed(asking, &error);
+            if json {
+                show::plain(&format!("{}\n", webapi::error_json(app_id, &error, None)));
+            }
+            return Err(code);
+        }
     };
     asking.done(&format!(
         "{} on Steam",
         show::counted(held.len(), "leaderboard")
     ));
     offer_to_keep(&home, &api, from);
-    if let Some(path) = save {
-        return save_leaderboards(app_id, &held, path);
-    }
     if check.is_empty() {
-        show::fields(
-            &held
-                .iter()
-                .map(|leaderboard| (leaderboard.name.clone(), leaderboards::line(leaderboard)))
-                .collect::<Vec<_>>(),
-        );
-        return Ok(ExitCode::SUCCESS);
+        return list_leaderboards(app_id, &held, listing);
     }
     if changes.delete_missing {
         let gone: Vec<String> = held

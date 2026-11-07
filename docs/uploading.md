@@ -1049,6 +1049,10 @@ one in Steamworks and save again.
 `--save` writes over a file only when it holds nothing more than `--save` writes. A `period`, a
 key of your own or games-kit records exit 2 naming the first, so nothing kept by hand is lost.
 
+`--json` prints them as one line of JSON on standard output, each with the keys the file uses and
+its count of `scores`. A display Steam has none of is null. Steam failing is an `error` as
+`builds --json` gives it.
+
 With `--create` too, the file's leaderboards that Steam lacks are made first, as the file has them.
 A release can then bring in a new one before the build that uses it.
 
