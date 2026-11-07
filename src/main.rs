@@ -229,7 +229,7 @@ fn upload_in(request: &cli::Upload) -> ExitCode {
                 default,
                 account: shipping.account,
                 json: shipping.json,
-                green: shipping.green,
+                shipped: None,
             })
             .0
         }
@@ -665,9 +665,12 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     let game = game_as(shipping.demo)?;
     shipped_from(&game)?;
     // Before the build, which takes minutes, so that a commit no round has passed costs none.
-    if !shipping.preview {
-        drop(green_commit(&game.root, shipping.green)?);
-    }
+    let shipped = match &game.green {
+        Some(branch) if !shipping.preview => {
+            Some(green_commit(&game.root, branch, shipping.green)?)
+        }
+        _ => None,
+    };
     let version = match shipping.version {
         Some(version) => version.to_owned(),
         None => game.version().map_err(|why| fail(&why, REFUSED))?,
@@ -699,7 +702,7 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
         default: !shipping.preview && !game.released,
         account: shipping.account,
         json: shipping.json,
-        green: shipping.green,
+        shipped: shipped.as_ref(),
     });
     if uploaded != ExitCode::SUCCESS || shipping.preview {
         return Ok(uploaded);
@@ -1947,27 +1950,36 @@ struct Upload<'command> {
     default: bool,
     account: Option<&'command str>,
     json: bool,
-    green: green::Policy,
+    /// The commit a game's upload was checked against its green branch as, to record.
+    shipped: Option<&'command green::Shipped>,
 }
 
-/// The commit at `root`, refused unless origin's green branch holds it or `policy` allows
-/// otherwise, and said either way.
-fn green_commit(root: &Path, policy: green::Policy) -> Result<green::Shipped, ExitCode> {
-    let spinner = Spinner::start("green", "asking origin whether the commit is green", false);
-    match green::require(root, policy) {
+/// The commit at `root`, refused unless origin's `branch` holds it or `policy` allows otherwise,
+/// and said either way.
+fn green_commit(
+    root: &Path,
+    branch: &str,
+    policy: green::Policy,
+) -> Result<green::Shipped, ExitCode> {
+    let spinner = Spinner::start(
+        "green",
+        &format!("asking origin whether the commit is on {branch}"),
+        false,
+    );
+    match green::require(root, branch, policy) {
         Ok(shipped) => {
             spinner.done(&if shipped.green {
-                format!("{}, on origin's green", project::short(&shipped.commit))
+                format!("{}, on origin's {branch}", project::short(&shipped.commit))
             } else {
                 format!(
-                    "{}, not on origin's green, let through by --allow-ungreen",
+                    "{}, not on origin's {branch}, let through by --allow-ungreen",
                     project::short(&shipped.commit)
                 )
             });
             Ok(shipped)
         }
         Err(why) => {
-            spinner.failed("not green");
+            spinner.failed(&format!("not on {branch}"));
             Err(fail(&why, REFUSED))
         }
     }
@@ -1982,21 +1994,17 @@ fn run_upload(upload: &Upload<'_>) -> (ExitCode, Option<String>) {
     }
 }
 
-/// The folder the app build script at `script` is in, where Git is asked about its commit.
-fn scripts_folder(script: &Path) -> &Path {
-    script
-        .parent()
-        .filter(|folder| !folder.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."))
-}
-
 /// Records, for a rollback, the build just uploaded on each branch it was set live on.
 fn record_live(
     home: &Path,
     prepared: &upload::Prepared,
-    (build_id, live): (u64, Live),
-    shipped: &green::Shipped,
+    (outcome, live): (&upload::Outcome, Live),
+    shipped: Option<&green::Shipped>,
 ) {
+    let (upload::Outcome::Built { build_id: built }, Some(shipped)) = (outcome, shipped) else {
+        return;
+    };
+    let build_id = *built;
     let branches = prepared
         .set_live
         .iter()
@@ -2023,21 +2031,6 @@ fn record_live(
     }
 }
 
-/// The description the build gets, and, unless the upload is a preview, the commit it is made
-/// from once origin's green branch is shown to hold it.
-fn described(request: &Upload<'_>) -> Result<(String, Option<green::Shipped>), ExitCode> {
-    let description = upload::commit(request.script)
-        .and_then(|commit| upload::description(request.version, &commit))
-        .map_err(|error| fail(&error, REFUSED))?;
-    show::field("build", &description);
-    let shipped = if request.preview {
-        None
-    } else {
-        Some(green_commit(scripts_folder(request.script), request.green)?)
-    };
-    Ok((description, shipped))
-}
-
 fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCode> {
     if request.json {
         show::divert();
@@ -2054,7 +2047,10 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
     };
     let (found, branch) = checked(request.script, false)?;
     let needing = needs_redistributable(&found)?;
-    let (description, shipped) = described(request)?;
+    let description = upload::commit(request.script)
+        .and_then(|commit| upload::description(request.version, &commit))
+        .map_err(|error| fail(&error, REFUSED))?;
+    show::field("build", &description);
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     if needing {
@@ -2118,9 +2114,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         default: default.as_ref().map(|(api, _)| api),
     };
     let (code, live) = report(&outcome, reporting);
-    if let (upload::Outcome::Built { build_id }, Some(shipped)) = (&outcome, &shipped) {
-        record_live(&home, &prepared, (*build_id, live), shipped);
-    }
+    record_live(&home, &prepared, (&outcome, live), request.shipped);
     let setting_default = default.is_some();
     if let Some((api, from)) = default {
         offer_to_keep(&home, &api, from);

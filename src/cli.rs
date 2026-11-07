@@ -156,8 +156,8 @@ pub enum Command {
     /// presence. Its version is the newest release `CHANGES.md` heads, or else the one
     /// `project.godot` gives.
     ///
-    /// Only a commit on origin's `green` branch goes up, unless `--allow-ungreen` is given. A
-    /// preview is not held to that.
+    /// A game whose `steamship.toml` sets `green` ships only a commit on that branch of origin,
+    /// unless `--allow-ungreen` is given. A preview is not held to that.
     ///
     /// While the app is unreleased, the build goes live on the default branch too. A game whose
     /// `steamship.toml` sets `released = true` never has a build set live on default: it goes
@@ -662,9 +662,9 @@ pub struct Upload {
     /// else goes to standard error.
     #[arg(long)]
     pub json: bool,
-    /// Upload a commit that is not on origin's `green` branch. An upload is otherwise refused
-    /// unless a test round has moved `green` to the commit or past it. Only a hotfix round passes
-    /// this, with the hotfix's own green.
+    /// In a game that sets `green`, upload a commit that is not on that branch of origin. It is
+    /// otherwise refused unless a test round has moved the branch to the commit or past it. Only a
+    /// hotfix round passes this, with the hotfix's own green.
     #[arg(long)]
     pub allow_ungreen: bool,
 }

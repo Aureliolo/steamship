@@ -45,9 +45,10 @@ const BRANCH: &str = "testing";
 const CORES: usize = 4;
 
 /// Every setting `steamship.toml` takes at its top, under `[workshop]` and under `[demo]`.
-const SETTINGS: [&str; 12] = [
+const SETTINGS: [&str; 13] = [
     "steamship",
     "released",
+    "green",
     "script",
     "branch",
     "description",
@@ -124,6 +125,9 @@ pub struct Project {
     /// Whether the app is released, so that an upload never sets a build live on the default
     /// branch, whatever Steam shows.
     pub released: bool,
+    /// The branch on origin that a test round moves to each commit it passes. When set, an upload
+    /// ships only a commit on it.
+    pub green: Option<String>,
     /// What an upload describes that branch as, when not the version.
     pub description: Option<String>,
     /// The program and arguments that build the game into the folders its depots ship. Empty
@@ -225,6 +229,7 @@ impl Project {
             pin: None,
             branch: BRANCH.to_owned(),
             released: false,
+            green: None,
             description: None,
             build: Vec::new(),
             cores: CORES,
@@ -315,6 +320,9 @@ impl Project {
         }
         if let Some(value) = table.get("released") {
             project.released = release_flag(value, "released")?;
+        }
+        if let Some(value) = table.get("green") {
+            project.green = Some(green_branch(value)?);
         }
         if let Some(value) = table.get("description") {
             project.description = Some(description(value, "description")?);
@@ -677,6 +685,18 @@ fn demo_configured(root: &Path, section: &toml::Value, game: &Project) -> Result
         released,
         description,
     })
+}
+
+/// The branch on origin that `green` names, refused when it is empty or holds a space.
+fn green_branch(value: &toml::Value) -> Result<String, String> {
+    let branch = text_of(value, "green")?;
+    if branch.is_empty() || branch.contains(char::is_whitespace) {
+        return Err(format!(
+            "`green` is \"{branch}\". Name the branch on origin that a test round moves, such as \
+             \"green\", or leave it out"
+        ));
+    }
+    Ok(branch.to_owned())
 }
 
 /// Whether the app is released, as the setting `name` gives it.
@@ -1240,6 +1260,23 @@ mod tests {
     }
 
     #[test]
+    fn a_game_has_no_green_branch_until_its_file_names_one() {
+        assert_eq!(configured("").unwrap().green, None);
+        assert_eq!(
+            configured("green = \"passed\"").unwrap().green.as_deref(),
+            Some("passed")
+        );
+        for bad in ["green = \"\"", "green = \"a b\"", "green = \" x\""] {
+            let why = configured(bad).unwrap_err();
+            assert!(why.starts_with("`green` is \""), "{bad}: {why}");
+        }
+        assert_eq!(
+            configured("green = 1").unwrap_err(),
+            "`green` is not text. Write it in quotes"
+        );
+    }
+
+    #[test]
     fn a_game_is_unreleased_until_its_file_says_it_is_released() {
         let root = Path::new("game");
         assert!(!configured("").unwrap().released);
@@ -1264,7 +1301,7 @@ mod tests {
             (
                 "builds = []",
                 "`builds` is no setting steamship takes. It takes `steamship`, `released`, \
-                 `script`, `branch`, `description`, `build`, `cores`, `records`, `locale`, `import`, \
+                 `green`, `script`, `branch`, `description`, `build`, `cores`, `records`, `locale`, `import`, \
                  `workshop`, `demo`",
             ),
             (

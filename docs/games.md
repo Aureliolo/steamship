@@ -74,6 +74,8 @@ A command given its app or files works as it does outside a game, whatever `stea
 
 - `released`: `true` once the game is released, so an upload sets the build live on the game's
   branch alone. Under `[demo]` it says the same of the demo's app.
+- `green`: the branch on origin that a test round moves to each commit it passes. Without it,
+  nothing is checked and nothing recorded.
 
 The default branch is never named here. steamship sets it through the Web API while the game is
 unreleased and `released` is not set. Once the game is released, the publisher sets it.
@@ -119,10 +121,9 @@ first that fails:
 The tree is refused while it holds anything its commit does not, untracked files included. It is
 refused too while origin's default branch is at another commit.
 
-The commit has to be on origin's `green` branch, which a test round moves once it has passed a
-commit. The check runs before the build and names the commit, where `green` is and the fix. A
-rehearsal with `--preview` is not held to it. `--allow-ungreen` lifts it for a hotfix round, which
-passes it with the hotfix's own green.
+With `green` set, the commit has to be on that branch of origin. The check runs before the build
+and names the commit, where the branch is and the fix. A rehearsal with `--preview` is not held to
+it. `--allow-ungreen` lifts it for a hotfix round, which passes it with the hotfix's own green.
 
 The app build script has to set the game's branch live, and no other. The settings snapshot has
 to be there, with an install folder of letters and digits alone.

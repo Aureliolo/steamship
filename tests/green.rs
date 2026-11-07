@@ -90,7 +90,7 @@ fn move_green(root: &Path) {
 fn a_commit_at_the_tip_of_green_is_let_through_as_green() {
     let game = repository();
     move_green(&game.root);
-    let shipped = green::require(&game.root, Policy::Required).unwrap();
+    let shipped = green::require(&game.root, "green", Policy::Required).unwrap();
     assert_eq!(shipped.commit, head(&game.root));
     assert!(shipped.green);
 }
@@ -103,7 +103,7 @@ fn a_commit_green_has_moved_past_is_still_on_green() {
     commit(&game.root, "second");
     move_green(&game.root);
     git(&game.root, &["reset", "--quiet", "--hard", &earlier]);
-    let shipped = green::require(&game.root, Policy::Required).unwrap();
+    let shipped = green::require(&game.root, "green", Policy::Required).unwrap();
     assert_eq!(shipped.commit, earlier);
     assert!(shipped.green);
 }
@@ -114,7 +114,7 @@ fn a_commit_ahead_of_green_is_refused_naming_it_green_and_the_fix() {
     move_green(&game.root);
     let tip = head(&game.root);
     commit(&game.root, "second");
-    let why = green::require(&game.root, Policy::Required).unwrap_err();
+    let why = green::require(&game.root, "green", Policy::Required).unwrap_err();
     let ahead = head(&game.root);
     assert!(
         why.starts_with(&format!(
@@ -135,44 +135,66 @@ fn a_commit_on_another_line_than_green_is_refused() {
     move_green(&game.root);
     git(&game.root, &["checkout", "--quiet", "main"]);
     commit(&game.root, "main");
-    let why = green::require(&game.root, Policy::Required).unwrap_err();
+    let why = green::require(&game.root, "green", Policy::Required).unwrap_err();
     assert!(why.contains("is not on origin's green branch"), "{why}");
 }
 
 #[test]
 fn an_origin_with_no_green_branch_refuses_every_commit() {
     let game = repository();
-    let why = green::require(&game.root, Policy::Required).unwrap_err();
+    let why = green::require(&game.root, "green", Policy::Required).unwrap_err();
     assert!(why.contains("origin has no green branch"), "{why}");
     assert_eq!(
-        green::standing(&game.root, &head(&game.root)).unwrap(),
+        green::standing(&game.root, "green", &head(&game.root)).unwrap(),
         Standing::Off { tip: None }
     );
 }
 
 #[test]
+fn the_branch_checked_is_the_one_named_not_one_called_green() {
+    let game = repository();
+    move_green(&game.root);
+    let why = green::require(&game.root, "passed", Policy::Required).unwrap_err();
+    assert!(why.contains("origin has no passed branch"), "{why}");
+    git(
+        &game.root,
+        &["push", "--quiet", "origin", "HEAD:refs/heads/passed"],
+    );
+    let shipped = green::require(&game.root, "passed", Policy::Required).unwrap();
+    assert!(shipped.green);
+}
+
+#[test]
 fn allowing_ungreen_lets_a_commit_through_and_records_that_it_was_not_green() {
     let game = repository();
-    let shipped = green::require(&game.root, Policy::Allowed).unwrap();
+    let shipped = green::require(&game.root, "green", Policy::Allowed).unwrap();
     assert_eq!(shipped.commit, head(&game.root));
     assert!(!shipped.green);
 
     move_green(&game.root);
     commit(&game.root, "second");
-    assert!(!green::require(&game.root, Policy::Allowed).unwrap().green);
+    assert!(
+        !green::require(&game.root, "green", Policy::Allowed)
+            .unwrap()
+            .green
+    );
 }
 
 #[test]
 fn allowing_ungreen_still_marks_a_green_commit_green() {
     let game = repository();
     move_green(&game.root);
-    assert!(green::require(&game.root, Policy::Allowed).unwrap().green);
+    assert!(
+        green::require(&game.root, "green", Policy::Allowed)
+            .unwrap()
+            .green
+    );
 }
 
 #[test]
 fn a_folder_outside_a_repository_is_refused_even_when_ungreen_is_allowed() {
     let temp = tempfile::tempdir().unwrap();
-    let why = green::require(temp.path(), Policy::Allowed).unwrap_err();
+    let why = green::require(temp.path(), "green", Policy::Allowed).unwrap_err();
     assert!(why.contains("rev-parse HEAD failed"), "{why}");
 }
 

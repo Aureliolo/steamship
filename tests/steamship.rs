@@ -1774,7 +1774,7 @@ fn github_project() -> (tempfile::TempDir, PathBuf) {
         &root,
         &[
             "remote",
-            "set-url",
+            "add",
             "origin",
             "https://github.com/Aureliolo/some-game.git",
         ],
@@ -2952,26 +2952,6 @@ fn project(committed: bool) -> (tempfile::TempDir, PathBuf) {
         git(&root, &["init", "--quiet"]);
         git(&root, &["add", "."]);
         git(&root, &["commit", "--quiet", "-m", "scripts"]);
-        // An upload ships only a commit origin's green branch holds.
-        let origin = temp.path().join("origin.git");
-        git(
-            temp.path(),
-            &[
-                "init",
-                "--quiet",
-                "--bare",
-                "--initial-branch=main",
-                "origin.git",
-            ],
-        );
-        git(
-            &root,
-            &["remote", "add", "origin", &origin.to_string_lossy()],
-        );
-        git(
-            &root,
-            &["push", "--quiet", "origin", "HEAD:refs/heads/green"],
-        );
     }
     let script = root.join("steam").join("app_build.vdf");
     (temp, script)
@@ -9201,8 +9181,8 @@ fn a_steamship_toml_saying_what_steamship_does_not_take_is_refused_naming_the_fi
 }
 
 #[test]
-fn an_upload_in_a_game_is_refused_unless_origins_green_holds_its_commit() {
-    let (_temp, root) = pushed_game(None);
+fn a_game_naming_a_green_branch_is_refused_unless_origin_holds_its_commit_there() {
+    let (_temp, root) = pushed_game(Some("green = \"green\"\n"));
     git(&root, &["push", "--quiet", "origin", "--delete", "green"]);
     // A version of noughts is refused after the green check, so nothing is built or sent.
     let ran = |args: &[&str]| {
@@ -9249,18 +9229,42 @@ fn an_upload_in_a_game_is_refused_unless_origins_green_holds_its_commit() {
 }
 
 #[test]
-fn an_upload_of_a_script_is_refused_unless_origins_green_holds_its_commit() {
-    let (project, script) = project(true);
-    let home = tempfile::tempdir().unwrap();
-    let root = script.parent().unwrap().parent().unwrap();
-    git(root, &["push", "--quiet", "origin", "--delete", "green"]);
-    let (code, _, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
-    assert_eq!(code, Some(2_i32), "{stderr}");
+fn a_game_naming_no_green_branch_is_not_checked_against_one() {
+    let (_temp, root) = pushed_game(None);
+    git(&root, &["push", "--quiet", "origin", "--delete", "green"]);
+    // The version is refused where the green check would otherwise have come first.
+    let (code, stdout, stderr) = in_game(&root, &["upload", "--version", "0.0.0"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
     assert!(
-        failure(&stderr).contains("is not on origin's green branch (origin has no green branch)"),
-        "{stderr}"
+        !format!("{stdout}{stderr}").contains("origin's green"),
+        "{stdout}{stderr}"
     );
-    drop(project);
+    assert!(
+        failure(&stderr).contains("0.0.0"),
+        "refused for its version: {stderr}"
+    );
+}
+
+#[test]
+fn a_game_checks_the_branch_its_file_names_not_one_called_green() {
+    let (_temp, root) = pushed_game(Some("green = \"passed\"\n"));
+    let ran = |args: &[&str]| {
+        let (code, stdout, stderr) = in_game(&root, args);
+        assert_eq!(code, Some(2_i32), "{args:?}: {stdout}{stderr}");
+        (stdout, failure(&stderr).to_owned())
+    };
+    // `green` holds the commit, `passed` does not exist.
+    let (_, why) = ran(&["upload", "--version", "0.0.0"]);
+    assert!(
+        why.contains("is not on origin's passed branch (origin has no passed branch)"),
+        "{why}"
+    );
+    git(
+        &root,
+        &["push", "--quiet", "origin", "main:refs/heads/passed"],
+    );
+    let (held_out, _) = ran(&["upload", "--version", "0.0.0"]);
+    assert!(held_out.contains(", on origin's passed"), "{held_out}");
 }
 
 #[test]
@@ -9390,7 +9394,7 @@ fn rollback_sets_the_default_branch_back_only_while_steam_shows_the_app_unreleas
 
 #[test]
 fn a_released_game_is_held_to_green_too() {
-    let (_temp, root) = pushed_game(Some("released = true\n"));
+    let (_temp, root) = pushed_game(Some("released = true\ngreen = \"green\"\n"));
     git(&root, &["push", "--quiet", "origin", "--delete", "green"]);
     let (code, shown, why) = in_game(&root, &["upload"]);
     assert_eq!(code, Some(2_i32), "{shown}{why}");
@@ -9402,7 +9406,7 @@ fn a_released_game_is_held_to_green_too() {
 
 #[test]
 fn a_demo_is_held_to_green_too() {
-    let (_temp, root) = pushed_game(Some("[demo]\nreleased = true\n"));
+    let (_temp, root) = pushed_game(Some("green = \"green\"\n[demo]\nreleased = true\n"));
     git(&root, &["push", "--quiet", "origin", "--delete", "green"]);
     let (code, shown, why) = in_game(&root, &["upload", "--demo"]);
     assert_eq!(code, Some(2_i32), "{shown}{why}");
@@ -11005,7 +11009,8 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
 #[cfg(unix)]
 #[test]
 fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
-    let (_temp, root, home) = settled_inn(&format!("released = true\n{BUILDING}"));
+    let (_temp, root, home) =
+        settled_inn(&format!("released = true\ngreen = \"green\"\n{BUILDING}"));
     let (host, requests) = web_api(vec![
         ("200 OK", BETAS),
         ("200 OK", testing_live(4242)),
@@ -11063,7 +11068,7 @@ fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
 #[cfg(unix)]
 #[test]
 fn an_unreleased_game_records_its_build_on_testing_and_default() {
-    let (_temp, root, home) = settled_inn(BUILDING);
+    let (_temp, root, home) = settled_inn(&format!("green = \"green\"\n{BUILDING}"));
     let (code, stdout, stderr, _asked) = uploaded_inn(&root, home.path());
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     let kept = ledger::load(home.path(), 1_000_050).unwrap();

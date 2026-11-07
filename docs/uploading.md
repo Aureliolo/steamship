@@ -161,9 +161,6 @@ only a pushed commit, built and checked first. [Shipping a game](games.md) has t
 The build's description is the version and the Git commit the app script's own repository is at.
 That holds whatever folder steamship runs in. A script in a worktree names that worktree's commit.
 
-An upload is refused unless that commit is on origin's `green` branch. `--allow-ungreen` lifts
-this for a hotfix round, and `--preview` is not held to it.
-
 Build output (logs, manifests, the chunk cache) goes to steamship's own folder for the app, never
 into your content. It is kept between runs so that later uploads are faster. A failure or an
 expired token ends the run rather than waiting at a prompt.
@@ -378,8 +375,9 @@ steamship rollback 480 testing
 ```
 
 `rollback` sets a branch back to the build that was live on it before the current one. It changes
-what players get, so run it only with the owner's yes. Each upload records the commit and the
-build ID of every branch it sets live, in the steamship home. A branch with no earlier recorded
+what players get, so run it only with the owner's yes. A game upload that sets `green` records the
+commit and the build ID of every branch it sets live, in the steamship home. The record lives
+there, so `rollback` works only on the machine that uploaded. A branch with no earlier recorded
 build is refused. The default branch is set only while the app is unreleased, as for `promote`.
 
 ### The first branch of a new app

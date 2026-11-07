@@ -1,26 +1,23 @@
-//! Uploads ship only a commit that is on the repository's `green` branch on origin, the branch a
-//! test round moves once it has passed a commit.
+//! A game that names a branch as `green` in its `steamship.toml` ships only a commit on that
+//! branch on origin, the branch a test round moves once it has passed a commit.
 
 use std::path::Path;
 
 use crate::project::{git, git_run, short};
 
-/// The branch whose commits have passed a round.
-pub const BRANCH: &str = "green";
-
-/// The commit an upload is made from, and whether green held it.
+/// The commit an upload is made from, and whether the green branch held it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Shipped {
     pub commit: String,
     pub green: bool,
 }
 
-/// Where a commit stands against origin's `green`.
+/// Where a commit stands against origin's green branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Standing {
-    /// The commit is green's tip or one of its ancestors.
+    /// The commit is the branch's tip or one of its ancestors.
     On,
-    /// The commit is not on green. `tip` is where green is, when origin has the branch.
+    /// The commit is not on the branch. `tip` is where it is, when origin has the branch.
     Off { tip: Option<String> },
 }
 
@@ -43,22 +40,22 @@ impl Policy {
     }
 }
 
-/// The commit at `root`'s HEAD, refused unless origin's `green` holds it. Under `Allowed` it is
+/// The commit at `root`'s HEAD, refused unless origin's `branch` holds it. Under `Allowed` it is
 /// let through, and `green` says which it was.
 ///
 /// # Errors
 ///
-/// When Git cannot be run, `root` is in no repository, or the commit is not green and the policy
-/// is `Required`.
-pub fn require(root: &Path, policy: Policy) -> Result<Shipped, String> {
+/// When Git cannot be run, `root` is in no repository, or the commit is not on `branch` and the
+/// policy is `Required`.
+pub fn require(root: &Path, branch: &str, policy: Policy) -> Result<Shipped, String> {
     let commit = git(root, &["rev-parse", "HEAD"])?;
     let required = policy == Policy::Required;
-    match standing(root, &commit) {
+    match standing(root, branch, &commit) {
         Ok(Standing::On) => Ok(Shipped {
             commit,
             green: true,
         }),
-        Ok(Standing::Off { tip }) if required => Err(not_green(&commit, tip.as_deref())),
+        Ok(Standing::Off { tip }) if required => Err(not_green(&commit, branch, tip.as_deref())),
         Err(why) if required => Err(why),
         Ok(Standing::Off { .. }) | Err(_) => Ok(Shipped {
             commit,
@@ -67,16 +64,14 @@ pub fn require(root: &Path, policy: Policy) -> Result<Shipped, String> {
     }
 }
 
-/// Whether `commit` is on origin's `green`, asked of the remote.
+/// Whether `commit` is on origin's `branch`, asked of the remote.
 ///
 /// # Errors
 ///
 /// When Git cannot be run or origin cannot be asked.
-pub fn standing(root: &Path, commit: &str) -> Result<Standing, String> {
-    let printed = git(
-        root,
-        &["ls-remote", "origin", &format!("refs/heads/{BRANCH}")],
-    )?;
+pub fn standing(root: &Path, branch: &str, commit: &str) -> Result<Standing, String> {
+    let reference = format!("refs/heads/{branch}");
+    let printed = git(root, &["ls-remote", "origin", &reference])?;
     let Some(tip) = tip_of(&printed) else {
         return Ok(Standing::Off { tip: None });
     };
@@ -84,21 +79,13 @@ pub fn standing(root: &Path, commit: &str) -> Result<Standing, String> {
         return Ok(Standing::On);
     }
     // Fetched into FETCH_HEAD alone, so no branch of the game's own moves.
-    drop(git(
-        root,
-        &[
-            "fetch",
-            "--quiet",
-            "origin",
-            &format!("refs/heads/{BRANCH}"),
-        ],
-    )?);
+    drop(git(root, &["fetch", "--quiet", "origin", &reference])?);
     let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, "FETCH_HEAD"])?;
     match ancestry.status.code() {
         Some(0) => Ok(Standing::On),
         Some(1) => Ok(Standing::Off { tip: Some(tip) }),
         _ => Err(format!(
-            "git could not tell whether {} is on origin's {BRANCH}: {}",
+            "git could not tell whether {} is on origin's {branch}: {}",
             short(commit),
             String::from_utf8_lossy(&ancestry.stderr).trim()
         )),
@@ -113,14 +100,14 @@ fn tip_of(printed: &str) -> Option<String> {
         .map(|(sha, _)| sha.to_owned())
 }
 
-fn not_green(commit: &str, tip: Option<&str>) -> String {
+fn not_green(commit: &str, branch: &str, tip: Option<&str>) -> String {
     let at = tip.map_or_else(
-        || format!("origin has no {BRANCH} branch"),
-        |tip| format!("{BRANCH} is at {}", short(tip)),
+        || format!("origin has no {branch} branch"),
+        |tip| format!("{branch} is at {}", short(tip)),
     );
     format!(
-        "commit {} is not on origin's {BRANCH} branch ({at}). Run a round for this repository so \
-         it tests the commit and moves {BRANCH}, then upload again. A hotfix round passes \
+        "commit {} is not on origin's {branch} branch ({at}). Run a round for this repository so \
+         it tests the commit and moves {branch}, then upload again. A hotfix round passes \
          --allow-ungreen",
         short(commit)
     )
@@ -145,22 +132,23 @@ mod tests {
     }
 
     #[test]
-    fn the_refusal_names_the_commit_where_green_is_and_the_fix() {
+    fn the_refusal_names_the_commit_the_branch_where_it_is_and_the_fix() {
         let why = not_green(
             "aaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "passed",
             Some("ccccccccccccdddddddddddddddddddddddddddd"),
         );
         assert!(
-            why.starts_with("commit aaaaaaaaaaaa is not on origin's green branch"),
+            why.starts_with("commit aaaaaaaaaaaa is not on origin's passed branch"),
             "{why}"
         );
-        assert!(why.contains("green is at cccccccccccc"), "{why}");
+        assert!(why.contains("passed is at cccccccccccc"), "{why}");
         assert!(why.contains("Run a round"), "{why}");
     }
 
     #[test]
-    fn the_refusal_says_when_origin_has_no_green() {
-        let why = not_green("aaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbb", None);
-        assert!(why.contains("origin has no green branch"), "{why}");
+    fn the_refusal_says_when_origin_has_no_such_branch() {
+        let why = not_green("aaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbb", "passed", None);
+        assert!(why.contains("origin has no passed branch"), "{why}");
     }
 }
