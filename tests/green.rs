@@ -232,6 +232,9 @@ fn a_record_that_is_not_a_list_is_refused_naming_the_file() {
     fs::create_dir_all(file.parent().unwrap()).unwrap();
     fs::write(&file, "{}").unwrap();
     let why = ledger::load(home.path(), 480).unwrap_err();
-    assert!(why.ends_with("it is not a list of builds"), "{why}");
+    assert!(
+        why.ends_with("it is not a list of builds. Delete the file to start a new record"),
+        "{why}"
+    );
     assert!(why.contains("480.json"), "{why}");
 }

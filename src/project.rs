@@ -692,8 +692,8 @@ fn green_branch(value: &toml::Value) -> Result<String, String> {
     let branch = text_of(value, "green")?;
     if branch.is_empty() || branch.contains(char::is_whitespace) {
         return Err(format!(
-            "`green` is \"{branch}\". Name the branch on origin that your tests move to each \
-             commit they pass, such as \"green\", or leave it out"
+            "`green` is \"{branch}\". Give one branch name without spaces, such as \"green\", or \
+             leave it out"
         ));
     }
     Ok(branch.to_owned())
@@ -703,8 +703,7 @@ fn green_branch(value: &toml::Value) -> Result<String, String> {
 fn release_flag(value: &toml::Value, name: &str) -> Result<bool, String> {
     value.as_bool().ok_or_else(|| {
         format!(
-            "`{name}` is not true or false. Write true once the app is released, so that builds go \
-             live on {BRANCH} alone, or leave it out"
+            "`{name}` is not true or false. Write true once the app is released, or leave it out"
         )
     })
 }
@@ -1284,8 +1283,7 @@ mod tests {
         assert!(!configured("released = false").unwrap().released);
         assert_eq!(
             configured("released = \"yes\"").unwrap_err(),
-            "`released` is not true or false. Write true once the app is released, so that \
-             builds go live on testing alone, or leave it out"
+            "`released` is not true or false. Write true once the app is released, or leave it out"
         );
         let both = Project::configured(root, "released = true\n[demo]\nreleased = false").unwrap();
         assert!(both.released);
@@ -1405,8 +1403,8 @@ mod tests {
             ),
             (
                 "[demo]\nreleased = \"yes\"",
-                "`demo.released` is not true or false. Write true once the app is released, so \
-                 that builds go live on testing alone, or leave it out"
+                "`demo.released` is not true or false. Write true once the app is released, or \
+                 leave it out"
                     .to_owned(),
             ),
             (

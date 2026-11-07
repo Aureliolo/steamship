@@ -85,7 +85,8 @@ pub fn standing(root: &Path, branch: &str, commit: &str) -> Result<Standing, Str
         Some(0) => Ok(Standing::On),
         Some(1) => Ok(Standing::Off { tip: Some(tip) }),
         _ => Err(format!(
-            "git could not tell whether {} is on origin's {branch}: {}",
+            "git could not tell whether {} is on origin's {branch}: {}. Check that origin can be \
+             reached, or give --allow-ungreen",
             short(commit),
             String::from_utf8_lossy(&ancestry.stderr).trim()
         )),

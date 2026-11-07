@@ -94,7 +94,12 @@ pub fn render(entries: &[Entry]) -> String {
 pub fn load(home: &Path, app: u32) -> Result<Vec<Entry>, String> {
     let path = file(home, app);
     match fs::read_to_string(&path) {
-        Ok(text) => parse(&text).map_err(|why| format!("{}: {why}", path.display())),
+        Ok(text) => parse(&text).map_err(|why| {
+            format!(
+                "{}: {why}. Delete the file to start a new record",
+                path.display()
+            )
+        }),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(Vec::new()),
         Err(error) => Err(format!("{}: {error}", path.display())),
     }
@@ -132,7 +137,10 @@ pub fn previous<'entries>(
         .filter(|each| each.branch.eq_ignore_ascii_case(branch))
         .collect();
     let current = on_branch.last().copied().ok_or_else(|| {
-        format!("steamship recorded no upload to {branch} for app {app}, so it has no build to go back to")
+        format!(
+            "steamship has no recorded upload to {branch} for app {app}. A rollback works only on \
+             the machine that uploaded from the game"
+        )
     })?;
     // Rollbacks are stepped over, so that going back twice goes back twice.
     let uploads: Vec<&Entry> = on_branch
@@ -269,7 +277,7 @@ mod tests {
         let entries = vec![entry_of("testing", 1)];
         let why = previous(&entries, 480, "default").unwrap_err();
         assert!(
-            why.contains("recorded no upload to default for app 480"),
+            why.starts_with("steamship has no recorded upload to default for app 480. "),
             "{why}"
         );
     }

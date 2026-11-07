@@ -1976,14 +1976,14 @@ fn green_commit(
                 format!("{}, on origin's {branch}", project::short(&shipped.commit))
             } else {
                 format!(
-                    "{}, not on origin's {branch}, let through by --allow-ungreen",
+                    "{}, not on origin's {branch}, uploaded as --allow-ungreen asks",
                     project::short(&shipped.commit)
                 )
             });
             Ok(shipped)
         }
         Err(why) => {
-            spinner.failed(&format!("not on {branch}"));
+            spinner.failed(&format!("the commit is not on origin's {branch}"));
             Err(fail(&why, REFUSED))
         }
     }
@@ -2029,7 +2029,7 @@ fn record_live(
         );
         if let Err(why) = kept {
             show::note(&format!(
-                "BuildID {build_id} on {on} could not be recorded for a rollback: {why}"
+                "BuildID {build_id} on {on} was not recorded, so rollback cannot return to it: {why}"
             ));
         }
     }
@@ -5955,7 +5955,10 @@ fn try_rollback(request: &cli::Rollback) -> Result<ExitCode, ExitCode> {
         rollback: true,
     };
     if let Err(why) = ledger::record(&home, back) {
-        show::note(&format!("the rollback could not be recorded: {why}"));
+        show::note(&format!(
+            "the rollback is live on Steam but was not recorded, so another rollback of {name} \
+             would set the same build again: {why}"
+        ));
     }
     show::success(
         &format!(

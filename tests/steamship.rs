@@ -9209,7 +9209,7 @@ fn a_game_naming_a_green_branch_is_refused_unless_origin_holds_its_commit_there(
 
     let (allowed_out, allowed_why) = ran(&["upload", "--allow-ungreen", "--version", "0.0.0"]);
     assert!(
-        allowed_out.contains("not on origin's green, let through by --allow-ungreen"),
+        allowed_out.contains("not on origin's green, uploaded as --allow-ungreen asks"),
         "{allowed_out}"
     );
     assert!(
@@ -9339,7 +9339,8 @@ fn rollback_refuses_a_branch_with_no_earlier_recorded_build_and_asks_steam_nothi
         ),
         (
             "beta",
-            "steamship recorded no upload to beta for app 1000010",
+            "steamship has no recorded upload to beta for app 1000010. A rollback works only on \
+             the machine that uploaded from the game",
         ),
     ] {
         let (code, stdout, stderr) = steamship(
@@ -9417,10 +9418,10 @@ fn a_demo_is_held_to_green_too() {
 }
 
 #[test]
-fn the_help_names_allow_ungreen_and_says_a_rollback_reaches_players_at_once() {
+fn the_help_names_allow_ungreen_and_says_players_update_to_a_rolled_back_build() {
     for (command, said) in [
         ("upload", "--allow-ungreen"),
-        ("rollback", "Players get that build at once"),
+        ("rollback", "which players on it then update to"),
     ] {
         let (code, stdout, stderr) = steamship(&[command, "--help"], Some(Path::new(".")), &[]);
         assert_eq!(code, Some(0_i32), "{command}: {stderr}");
