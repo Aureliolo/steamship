@@ -1,7 +1,5 @@
 //! How steamcmd is started: which file, with what around it, and with which commands.
 
-#[cfg(feature = "fake-steamcmd")]
-use std::env;
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -13,47 +11,13 @@ use crate::drm;
 use crate::install;
 use crate::platform::Platform;
 
-/// The shell a test build runs a fake `steamcmd.sh` with on every system, when the test names
-/// one in `STEAMSHIP_FAKE_STEAMCMD`. Never, outside a test build.
-///
-/// One function for both builds, so that a mutant of it is one the tests build and can catch.
-#[must_use]
-#[cfg_attr(
-    not(feature = "fake-steamcmd"),
-    expect(
-        clippy::missing_const_for_fn,
-        reason = "a test build reads the environment here, which no const fn can"
-    )
-)]
-pub fn faked() -> Option<PathBuf> {
-    #[cfg(feature = "fake-steamcmd")]
-    let shell = env::var_os("STEAMSHIP_FAKE_STEAMCMD").map(PathBuf::from);
-    #[cfg(not(feature = "fake-steamcmd"))]
-    let shell = None;
-    shell
-}
-
-/// The shell and its arguments that run `program` with `args`, when `program` is a test's fake
-/// `steamcmd.sh`, which Windows cannot start itself.
-#[cfg(all(windows, feature = "fake-steamcmd"))]
-#[must_use]
-pub fn through_shell(program: &Path, args: &[OsString]) -> Option<(PathBuf, Vec<OsString>)> {
-    let shell = faked()?;
-    if program.extension().is_none_or(|ending| ending != "sh") {
-        return None;
-    }
-    let mut script = vec![program.as_os_str().to_owned()];
-    script.extend_from_slice(args);
-    Some((shell, script))
-}
-
 /// The file that starts steamcmd in the install at `root`. On Linux and macOS that is Valve's
 /// script, which sets up the library path steamcmd needs.
 #[must_use]
 pub fn program(root: &Path, platform: Platform) -> PathBuf {
     root.join(match platform {
-        Platform::Windows if faked().is_none() => "steamcmd.exe",
-        Platform::Windows | Platform::MacOs | Platform::Linux => "steamcmd.sh",
+        Platform::Windows => "steamcmd.exe",
+        Platform::MacOs | Platform::Linux => "steamcmd.sh",
     })
 }
 
@@ -65,8 +29,8 @@ pub fn program(root: &Path, platform: Platform) -> PathBuf {
 #[must_use]
 pub fn environment(home: &Path, platform: Platform) -> Vec<(OsString, OsString)> {
     match platform {
-        Platform::Windows if faked().is_none() => Vec::new(),
-        Platform::Windows | Platform::MacOs | Platform::Linux => {
+        Platform::Windows => Vec::new(),
+        Platform::MacOs | Platform::Linux => {
             vec![(OsString::from("HOME"), home.as_os_str().to_owned())]
         }
     }

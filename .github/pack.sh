@@ -23,8 +23,8 @@ if [[ "${target}" == *windows* ]]; then
   binary="steamship.exe"
 fi
 built="target/${target}/${profile}/${binary}"
-# A test build reads this variable to run a fake steamcmd without Valve's signature. The
-# feature that adds it is for tests alone and must never ship.
+# A test build reads this variable to run a fake steamcmd in place of Valve's. The feature that
+# adds it is for tests alone and must never ship.
 if grep -q -a STEAMSHIP_FAKE_STEAMCMD "${built}"; then
   echo "${built} was built with the fake-steamcmd feature, which never ships." >&2
   exit 1

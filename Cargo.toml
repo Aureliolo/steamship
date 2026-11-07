@@ -73,9 +73,9 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [features]
-# Lets the tests run a fake steamcmd script in place of Valve's on every system, Windows included,
-# where Valve's signature would otherwise refuse it. Only the tests turn it on, through the
-# dev-dependency below: a release is built without it, and its code is not compiled in.
+# Lets the tests run a fake steamcmd script on Windows, which cannot start a script itself, in
+# place of steamcmd.exe. Only the tests turn it on, through the dev-dependency below: a release is
+# built without it, and its code is not compiled in.
 fake-steamcmd = []
 
 [dev-dependencies]

@@ -144,7 +144,9 @@ fn set_up(
     if let Some(home) = home
         && home.join(install::FOLDER).join("steamcmd.sh").is_file()
     {
-        let _: &mut Command = command.env("STEAMSHIP_FAKE_STEAMCMD", shell());
+        let _: &mut Command = command
+            .env("STEAMSHIP_FAKE_STEAMCMD", shell())
+            .env("HOME", home);
     }
     command
 }
@@ -2544,9 +2546,16 @@ impl Session {
             .map(OsString::from)
             .collect();
         #[cfg(windows)]
-        let faked = fake.then(|| ("STEAMSHIP_FAKE_STEAMCMD", shell.clone().into_os_string()));
+        let faked = if fake {
+            vec![
+                ("STEAMSHIP_FAKE_STEAMCMD", shell.clone().into_os_string()),
+                ("HOME", home.as_os_str().to_owned()),
+            ]
+        } else {
+            Vec::new()
+        };
         #[cfg(unix)]
-        let faked = None::<(&str, OsString)>;
+        let faked = Vec::<(&str, OsString)>::new();
         let environment: Vec<(OsString, OsString)> =
             iter::once(("STEAMSHIP_HOME", home.as_os_str()))
                 .chain(
@@ -2556,7 +2565,11 @@ impl Session {
                         .map(|&(name, value)| (name, OsStr::new(value))),
                 )
                 .map(|(name, value)| (OsString::from(name), value.to_owned()))
-                .chain(faked.map(|(name, value)| (OsString::from(name), value)))
+                .chain(
+                    faked
+                        .into_iter()
+                        .map(|(name, value)| (OsString::from(name), value)),
+                )
                 .collect();
         let (terminal, mut output, input) =
             Terminal::start(&shell, &args, &environment, home).unwrap();

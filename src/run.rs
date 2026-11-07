@@ -21,8 +21,6 @@ use std::time::Duration;
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
 
-#[cfg(all(windows, feature = "fake-steamcmd"))]
-use crate::steamcmd;
 #[cfg(unix)]
 use crate::unix as native;
 #[cfg(windows)]
@@ -108,10 +106,6 @@ pub fn run(
     limit: Duration,
     hopeless: &'static [&'static str],
 ) -> io::Result<Finished> {
-    #[cfg(all(windows, feature = "fake-steamcmd"))]
-    if let Some((shell, script)) = steamcmd::through_shell(program, args) {
-        return native::run(&shell, &script, environment, directory, limit, hopeless);
-    }
     native::run(program, args, environment, directory, limit, hopeless)
 }
 
