@@ -368,6 +368,17 @@ description already reads so. The default branch's description is set in Steamwo
 
 An app is named by its ID or by its app build script.
 
+### Going back to the previous build
+
+```sh
+steamship rollback 480 testing
+```
+
+`rollback` sets a branch back to its previous build. Uploads [from a game](games.md) record the
+commit and build ID they set live on each branch, in steamship's own folder. So `rollback` works
+only on the machine that uploaded. A branch with no earlier recorded build is refused. The
+default branch can be rolled back only while the app is unreleased, as with `promote`.
+
 ### The first branch of a new app
 
 A new app has only its default branch. Steamworks lets you create others only once a build is

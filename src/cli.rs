@@ -156,8 +156,12 @@ pub enum Command {
     /// presence. Its version is the newest release `CHANGES.md` heads, or else the one
     /// `project.godot` gives.
     ///
-    /// While the app is unreleased, the build goes live on the default branch too. Once it is
-    /// live, the branch's description becomes the version, or the file's `description`. An app
+    /// A game whose `steamship.toml` sets `green` ships only a commit on that branch of origin,
+    /// unless `--allow-ungreen` is given. `--preview` skips that check.
+    ///
+    /// While the app is unreleased, the build goes live on the default branch too. A game whose
+    /// `steamship.toml` sets `released = true` never gets a build live on default. Once the build
+    /// is live, the branch's description becomes the version, or the file's `description`. An app
     /// with no branch but default gets the build on default alone. steamship then prints the
     /// commands that set it live on the game's branch and describe that branch, once it is made.
     Upload(Upload),
@@ -410,6 +414,14 @@ pub enum Command {
     /// account the app unreleased. Once the app is released, set its default branch live in
     /// Steamworks instead.
     Promote(Promote),
+    /// Set a branch back to its previous build, which players on it then update to.
+    ///
+    /// It sets live the build steamship recorded on the branch before the current one, through
+    /// Steam's partner Web API, with the publisher key as `builds` finds it. Uploads from a game
+    /// record the build they set live on each branch, in steamship's own folder. So this works
+    /// only on the machine that uploaded. A branch with no earlier recorded build is refused. The
+    /// default branch is set live only while Steam shows the build account the app unreleased.
+    Rollback(Rollback),
     /// Set the description players see for a beta branch.
     ///
     /// Steam shows this text where players choose a beta branch, in the game's Betas properties.
@@ -648,6 +660,9 @@ pub struct Upload {
     /// else goes to standard error.
     #[arg(long)]
     pub json: bool,
+    /// Upload a commit that is not on the game's `green` branch, such as a hotfix.
+    #[arg(long)]
+    pub allow_ungreen: bool,
 }
 
 /// The build `fetch` downloads, and where to.
@@ -709,6 +724,19 @@ pub struct Promote {
     pub build: u64,
     /// The branch to set it live on.
     #[arg(long)]
+    pub branch: String,
+    /// The build account that asks Steam whether the app is released, for the default branch, if
+    /// not the one the last login remembered.
+    #[arg(long, env = ACCOUNT)]
+    pub account: Option<String>,
+}
+
+/// The branch `rollback` sets back, and for which app.
+#[derive(Debug, Args)]
+pub struct Rollback {
+    /// The app, by its ID or its app build script.
+    pub app: String,
+    /// The branch to set back.
     pub branch: String,
     /// The build account that asks Steam whether the app is released, for the default branch, if
     /// not the one the last login remembered.
