@@ -46,6 +46,11 @@ fn a_program_inherits_only_the_handles_it_is_given() {
         )
     });
     while !marker.exists() {
+        assert!(
+            !running.is_finished(),
+            "cmd ended without writing {}",
+            marker.display()
+        );
         thread::sleep(Duration::from_millis(20));
     }
     drop(writer);
