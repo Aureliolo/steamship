@@ -4,6 +4,10 @@
     reason = "a test reports failure by panicking, its helpers included"
 )]
 
+pub mod common;
+
+use common::git::git;
+
 use std::fs;
 use std::path::{self, Path, PathBuf};
 
@@ -220,28 +224,6 @@ fn a_script_that_is_not_there_is_an_error() {
         upload::prepare(&project.home, &missing, "1 abc", false),
         Err(Error::Io { .. })
     ));
-}
-
-fn git(folder: &Path, args: &[&str]) {
-    let status = run::spawn(
-        run::command("git")
-            .args([
-                "-c",
-                "user.name=steamship",
-                "-c",
-                "user.email=steamship@example.invalid",
-            ])
-            .args(["-c", "core.autocrlf=false", "-c", "maintenance.auto=false"])
-            // The machine's own git config could sign each commit or run its hooks, which a
-            // `core.hooksPath` override does not stop when they are set as config.
-            .env("GIT_CONFIG_GLOBAL", folder.join("no-git-config"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .args(args)
-            .current_dir(folder),
-    )
-    .and_then(|mut git| git.wait())
-    .unwrap();
-    assert!(status.success(), "git {args:?}");
 }
 
 #[test]

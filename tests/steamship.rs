@@ -10,6 +10,7 @@
 
 pub mod common;
 
+use common::git::git;
 use common::pe::{settings_ticking, windows_library};
 
 #[cfg(windows)]
@@ -2894,28 +2895,6 @@ fn login_with_nowhere_to_look_for_an_account_exits_1() {
     );
 }
 
-fn git(folder: &Path, args: &[&str]) {
-    let status = run::spawn(
-        run::command("git")
-            .args([
-                "-c",
-                "user.name=steamship",
-                "-c",
-                "user.email=steamship@example.invalid",
-            ])
-            .args(["-c", "maintenance.auto=false"])
-            // The machine's own git config could sign each commit or run its hooks, which a
-            // `core.hooksPath` override does not stop when they are set as config.
-            .env("GIT_CONFIG_GLOBAL", folder.join("no-git-config"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .args(args)
-            .current_dir(folder),
-    )
-    .and_then(|mut git| git.wait())
-    .unwrap();
-    assert!(status.success(), "git {args:?}");
-}
-
 /// A game's scripts and content, committed or not, in a folder named the way a gate worktree is.
 fn project(committed: bool) -> (tempfile::TempDir, PathBuf) {
     let temp = tempfile::tempdir().unwrap();
@@ -3636,24 +3615,13 @@ fn builds_with_no_key_set_or_kept_and_no_one_to_ask_says_how_to_keep_one_and_exi
 #[test]
 fn login_with_web_api_key_refuses_what_is_not_a_key_before_asking_steam() {
     let home = tempfile::tempdir().unwrap();
-    let mut command = steamship_command();
-    let _: &mut Command = command
-        .args(["login", "--web-api-key"])
-        .env("STEAMSHIP_HOME", home.path())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = run::spawn(&mut command).unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"not_a_key_1234\n")
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(2_i32), "{stdout}{stderr}");
+    let (code, stdout, stderr) = steamship_typing(
+        &["login", "--web-api-key"],
+        home.path(),
+        &[],
+        "not_a_key_1234\n",
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
     assert!(
         stdout.contains("Manage Groups"),
         "says where the key is: {stdout}"
@@ -3749,28 +3717,11 @@ fn login_with_key(
     typed: &str,
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
-    let mut child = run::spawn(
-        steamship_command()
-            .args(["login", "--web-api-key"])
-            .env("STEAMSHIP_HOME", home)
-            .env(STAND_IN, host)
-            .envs(variables.iter().copied())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped()),
-    )
-    .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(format!("{typed}\n").as_bytes())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    (
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
+    steamship_typing(
+        &["login", "--web-api-key"],
+        home,
+        &[&[(STAND_IN, host)], variables].concat(),
+        &format!("{typed}\n"),
     )
 }
 
