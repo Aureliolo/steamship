@@ -186,6 +186,7 @@ fn builds_recorded_in_the_home_are_read_back_in_order() {
         build_id,
         commit: format!("{build_id:040x}"),
         green,
+        rollback: false,
     };
     ledger::record(home.path(), entry(1, true)).unwrap();
     ledger::record(home.path(), entry(2, false)).unwrap();

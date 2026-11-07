@@ -20,6 +20,8 @@ pub struct Entry {
     pub commit: String,
     /// Whether the commit was on the repository's `green` branch when it went up.
     pub green: bool,
+    /// Whether the entry is a rollback setting an earlier build live, not an upload.
+    pub rollback: bool,
 }
 
 /// The file recording `app`'s builds.
@@ -55,6 +57,10 @@ fn entry(value: &Value) -> Result<Entry, String> {
             .get("green")
             .and_then(Value::as_bool)
             .ok_or("a build does not say whether its commit was green")?,
+        rollback: value
+            .get("rollback")
+            .and_then(Value::as_bool)
+            .ok_or("a build does not say whether it is a rollback")?,
     })
 }
 
@@ -70,6 +76,7 @@ pub fn render(entries: &[Entry]) -> String {
                 "build_id": each.build_id,
                 "commit": each.commit,
                 "green": each.green,
+                "rollback": each.rollback,
             })
         })
         .collect();
@@ -119,15 +126,30 @@ pub fn previous<'entries>(
     app: u32,
     branch: &str,
 ) -> Result<(&'entries Entry, &'entries Entry), String> {
-    let mut on_branch = entries
+    let on_branch: Vec<&Entry> = entries
         .iter()
         .filter(|each| each.branch.eq_ignore_ascii_case(branch))
-        .rev();
-    let current = on_branch.next().ok_or_else(|| {
+        .collect();
+    let current = on_branch.last().copied().ok_or_else(|| {
         format!("steamship recorded no upload to {branch} for app {app}, so it has no build to go back to")
     })?;
-    let before = on_branch
-        .find(|each| each.build_id != current.build_id)
+    // Rollbacks are stepped over, so that going back twice goes back twice.
+    let uploads: Vec<&Entry> = on_branch
+        .iter()
+        .copied()
+        .filter(|each| !each.rollback)
+        .collect();
+    let before = uploads
+        .iter()
+        .rposition(|each| each.build_id == current.build_id)
+        .and_then(|at| {
+            uploads
+                .get(..at)?
+                .iter()
+                .rev()
+                .find(|each| each.build_id != current.build_id)
+                .copied()
+        })
         .ok_or_else(|| {
             format!(
                 "steamship recorded only BuildID {} on {branch} for app {app}, so it has no earlier build to go back to",
@@ -148,7 +170,56 @@ mod tests {
             build_id,
             commit: format!("{build_id:040x}"),
             green: true,
+            rollback: false,
         }
+    }
+
+    fn rolled_back_to(branch: &str, build_id: u64) -> Entry {
+        Entry {
+            rollback: true,
+            ..entry_of(branch, build_id)
+        }
+    }
+
+    #[test]
+    fn a_second_rollback_goes_back_again_instead_of_undoing_the_first() {
+        let mut entries = vec![
+            entry_of("testing", 5),
+            entry_of("testing", 7),
+            entry_of("testing", 9),
+        ];
+        let step = |entries: &[Entry]| {
+            let (current, before) = previous(entries, 480, "testing").unwrap();
+            (current.build_id, before.build_id)
+        };
+        assert_eq!(step(&entries), (9, 7));
+        entries.push(rolled_back_to("testing", 7));
+        assert_eq!(step(&entries), (7, 5));
+        entries.push(rolled_back_to("testing", 5));
+        let why = previous(&entries, 480, "testing").unwrap_err();
+        assert!(why.contains("only BuildID 5 on testing"), "{why}");
+    }
+
+    #[test]
+    fn an_upload_after_a_rollback_goes_back_to_the_newest_upload_before_it() {
+        let entries = vec![
+            entry_of("testing", 5),
+            entry_of("testing", 7),
+            rolled_back_to("testing", 5),
+            entry_of("testing", 9),
+        ];
+        let (current, before) = previous(&entries, 480, "testing").unwrap();
+        assert_eq!((current.build_id, before.build_id), (9, 7));
+    }
+
+    #[test]
+    fn rollback_entries_are_marked_in_the_file() {
+        let entries = vec![entry_of("testing", 5), rolled_back_to("testing", 5)];
+        let read = parse(&render(&entries)).unwrap();
+        assert_eq!(
+            read.iter().map(|each| each.rollback).collect::<Vec<_>>(),
+            [false, true]
+        );
     }
 
     #[test]
@@ -164,7 +235,9 @@ mod tests {
 
     #[test]
     fn an_entry_missing_its_commit_is_refused() {
-        let why = parse(r#"[{"app": 480, "branch": "testing", "build_id": 1, "green": true}]"#);
+        let why = parse(
+            r#"[{"app": 480, "branch": "testing", "build_id": 1, "green": true, "rollback": false}]"#,
+        );
         assert_eq!(why, Err("a build has no commit".to_owned()));
     }
 

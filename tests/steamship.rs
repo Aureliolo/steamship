@@ -9272,6 +9272,7 @@ fn rollback_sets_a_branch_back_to_the_build_before_the_current_one_and_records_i
         build_id,
         commit: format!("{build_id:040x}"),
         green: true,
+        rollback: false,
     };
     for each in [
         entry("testing", 5),
@@ -9306,6 +9307,7 @@ fn rollback_sets_a_branch_back_to_the_build_before_the_current_one_and_records_i
     );
     let kept = ledger::load(home.path(), 1_000_010).unwrap();
     assert_eq!(kept.last().map(|each| each.build_id), Some(5));
+    assert!(kept.last().is_some_and(|each| each.rollback));
     assert_eq!(kept.len(), 4);
 }
 
@@ -9320,6 +9322,7 @@ fn rollback_refuses_a_branch_with_no_earlier_recorded_build_and_asks_steam_nothi
             build_id: 7,
             commit: "7".repeat(40),
             green: true,
+            rollback: false,
         },
     )
     .unwrap();
@@ -9363,6 +9366,7 @@ fn rollback_sets_the_default_branch_back_only_while_steam_shows_the_app_unreleas
                 build_id,
                 commit: format!("{build_id:040x}"),
                 green: true,
+                rollback: false,
             },
         )
         .unwrap();
@@ -11051,6 +11055,7 @@ fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
             build_id: 4242,
             commit: String::from_utf8(head.stdout).unwrap().trim().to_owned(),
             green: true,
+            rollback: false,
         }]
     );
 }

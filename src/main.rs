@@ -2012,6 +2012,7 @@ fn record_live(
                 build_id,
                 commit: shipped.commit.clone(),
                 green: shipped.green,
+                rollback: false,
             },
         );
         if let Err(why) = kept {
@@ -5953,6 +5954,7 @@ fn try_rollback(request: &cli::Rollback) -> Result<ExitCode, ExitCode> {
         build_id: before.build_id,
         commit: before.commit.clone(),
         green: before.green,
+        rollback: true,
     };
     if let Err(why) = ledger::record(&home, back) {
         show::note(&format!("the rollback could not be recorded: {why}"));
