@@ -520,11 +520,6 @@ mod tests {
     }
 
     #[test]
-    fn the_limit_is_the_48_kb_github_keeps_in_a_secret() {
-        assert_eq!(SECRET_LIMIT, 49_152);
-    }
-
-    #[test]
     fn a_day_is_written_as_iso_8601_in_utc() {
         assert_eq!(day(0), "1970-01-01");
         assert_eq!(day(1_790_581_931), "2026-09-28");

@@ -9382,6 +9382,9 @@ fn outside_a_game_a_command_needing_one_says_to_start_one_or_name_the_app() {
         ["rich-presence", "480"].as_slice(),
         ["promote", "--build", "7", "--branch", "testing"].as_slice(),
         ["check"].as_slice(),
+        ["upload"].as_slice(),
+        ["text"].as_slice(),
+        ["workshop"].as_slice(),
     ] {
         let (refused, said, why) = steamship_in(
             empty.path(),
