@@ -188,8 +188,8 @@ mod tests {
             entry_of("testing", 7),
             entry_of("testing", 9),
         ];
-        let step = |entries: &[Entry]| {
-            let (current, before) = previous(entries, 480, "testing").unwrap();
+        let step = |recorded: &[Entry]| {
+            let (current, before) = previous(recorded, 480, "testing").unwrap();
             (current.build_id, before.build_id)
         };
         assert_eq!(step(&entries), (9, 7));
