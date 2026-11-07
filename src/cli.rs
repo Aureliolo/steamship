@@ -343,12 +343,13 @@ pub enum Command {
         #[arg(long, env = ACCOUNT)]
         account: Option<String>,
     },
-    /// Show an app's leaderboards, check them against files, or make and delete them to match.
+    /// Show or save an app's leaderboards, check them against files, or make and delete them to
+    /// match.
     ///
     /// Lists the leaderboards Steam holds for the app, through Steam's partner Web API with the
-    /// publisher key as `builds` finds it. With `--check`, it compares them by name with the
-    /// files. It exits 2 and names every leaderboard missing on either side and every setting
-    /// that differs.
+    /// publisher key as `builds` finds it. `--save` writes them to a file instead, which
+    /// `--check` then reads. With `--check`, it compares them by name with the files. It exits 2
+    /// and names every leaderboard missing on either side and every setting that differs.
     ///
     /// With `--create` too, leaderboards in the files that Steam lacks are made first, as the
     /// files have them. With `--delete-missing`, leaderboards on Steam that the files no longer
@@ -528,6 +529,11 @@ pub struct Leaderboards {
     /// leaderboard is in one file only.
     #[arg(long, value_name = "FILE", num_args = 0..)]
     pub check: Option<Vec<PathBuf>>,
+    /// Write the leaderboards Steam holds to this JSON file, as `--check` reads it. Refused,
+    /// exiting 2, when a leaderboard has no display type, which a file cannot give. Refused too
+    /// when the file is there and holds more than `--save` writes, such as a `period`.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["check", "create", "delete_missing"])]
+    pub save: Option<PathBuf>,
     /// Make the leaderboards in the files that Steam lacks, before checking.
     #[arg(long)]
     pub create: bool,

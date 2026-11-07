@@ -363,8 +363,8 @@ fn help_lists_every_command_with_one_short_line() {
          uploaded\n",
         "  drm-wrap       Wrap a Windows executable in Steam DRM, before it is uploaded\n",
         "  settings       Show an app's settings in Steamworks, or check them against a snapshot\n",
-        "  leaderboards   Show an app's leaderboards, check them against files, or make and \
-         delete them to match\n",
+        "  leaderboards   Show or save an app's leaderboards, check them against files, or make \
+         and delete them to match\n",
         "  rich-presence  Upload an app's rich presence localisation\n",
         "  text           Write a game's store, Workshop and rich presence text in every language \
          it speaks\n",
@@ -6560,6 +6560,90 @@ fn leaderboards_are_listed_and_checked_and_those_missing_are_made_as_the_file_ha
                  &createifnotfound=true&onlytrustedwrites=false&onlyfriendsreads=true"
             ),
         "only the one Steam lacks, as the file has it: {creating}"
+    );
+}
+
+#[test]
+fn leaderboards_saved_from_steam_are_a_file_that_check_finds_steam_matches() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", LEADERBOARDS), ("200 OK", LEADERBOARDS)]);
+    let set = [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, &host),
+    ];
+    let file = files.path().join("leaderboards.json");
+    let path = file.to_str().unwrap();
+
+    let (code, said, stderr) = steamship(
+        &["leaderboards", "480", "--save", path],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(code, Some(0_i32), "{said}{stderr}");
+    assert!(
+        said.contains(&format!("app 480: 1 leaderboard saved to {path}")),
+        "{said}"
+    );
+    let saved = fs::read_to_string(&file).unwrap();
+    assert!(saved.contains("\"name\": \"gold\""), "{saved}");
+    assert!(saved.contains("\"trusted_writes\": true"), "{saved}");
+    assert!(!saved.contains("12"), "scores are no setting: {saved}");
+
+    let (checked, matching, why) = steamship(
+        &["leaderboards", "480", "--check", path],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(checked, Some(0_i32), "{matching}{why}");
+    assert!(
+        matching.contains("Steam's leaderboards match the file"),
+        "{matching}"
+    );
+
+    let (both, _, refused) = steamship(
+        &["leaderboards", "480", "--save", path, "--create"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(both, Some(2_i32), "{refused}");
+    assert!(refused.contains("cannot be used with"), "{refused}");
+
+    // A file kept by hand is never written over, and Steam is not asked.
+    let kept = r#"{"leaderboards": [{"name": "daily", "sort": "ascending", "display": "numeric",
+        "period": "day"}]}"#;
+    fs::write(&file, kept).unwrap();
+    let (held, _, losing) = steamship(
+        &["leaderboards", "480", "--save", path],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(held, Some(2_i32), "{losing}");
+    assert_eq!(
+        failure(&losing),
+        format!(
+            "{path} holds \"period\" in leaderboard 1, which --save would lose. Save to another \
+             file"
+        )
+    );
+    assert_eq!(fs::read_to_string(&file).unwrap(), kept);
+
+    // A file there that cannot be read is a failure, before Steam is asked.
+    let folder = files.path().to_str().unwrap();
+    let (unread, _, unreadable) = steamship(
+        &["leaderboards", "480", "--save", folder],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", KEY),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, "http://127.0.0.1:9"),
+        ],
+    );
+    assert_eq!(unread, Some(1_i32), "{unreadable}");
+    assert!(
+        failure(&unreadable).starts_with(&format!("{folder}: ")),
+        "{unreadable}"
     );
 }
 

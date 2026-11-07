@@ -32,8 +32,8 @@ use steamship::windows::Terminal;
 use steamship::{
     achievements, assets, check, ci, conversation, digest, download, drm, dump, editor, fetch,
     green, init, itself, keychain, leaderboards, ledger, likeness, magic, picture, po, presence,
-    presets, redist, release, run, scripts, settings, steamcmd, storefront, text, upload, vdf,
-    webapi, workshop,
+    presets, redist, release, run, saved, scripts, settings, steamcmd, storefront, text, upload,
+    vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -595,7 +595,12 @@ fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> {
             &format!("no leaderboard records in {}", records()),
         );
     } else {
-        codes.push(either(try_leaderboards(app, &boards, Changes::default())));
+        codes.push(either(try_leaderboards(
+            app,
+            &boards,
+            None,
+            Changes::default(),
+        )));
     }
     compared_presence(game, app, codes)
 }
@@ -950,6 +955,7 @@ fn leaderboards_in(request: cli::Leaderboards) -> Result<ExitCode, ExitCode> {
     let cli::Leaderboards {
         app,
         check,
+        save,
         create,
         delete_missing,
         account,
@@ -974,7 +980,12 @@ fn leaderboards_in(request: cli::Leaderboards) -> Result<ExitCode, ExitCode> {
             ));
         }
     }
-    try_leaderboards(&app_given_or(app, game.as_ref()), &files, changes)
+    try_leaderboards(
+        &app_given_or(app, game.as_ref()),
+        &files,
+        save.as_deref(),
+        changes,
+    )
 }
 
 /// `rich-presence` with whatever is not given taken from the game: every language's file, sent
@@ -5709,13 +5720,52 @@ fn leaderboards_file(path: &Path, app: u32) -> Result<leaderboards::Listed, Exit
     Ok(listed)
 }
 
+/// Refuses `path` to `--save` when it is there and holds more than the `lists` it writes.
+fn written_over(path: &Path, lists: &[saved::List]) -> Result<(), ExitCode> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(fail(&format!("{}: {error}", path.display()), FAILED)),
+    };
+    saved::replaceable(&text, lists).map_err(|why| {
+        fail(
+            &format!("{} {why}. Save to another file", path.display()),
+            REFUSED,
+        )
+    })
+}
+
+/// Writes `held`, app `app_id`'s leaderboards on Steam, to `path` as `--check` reads them.
+fn save_leaderboards(
+    app_id: u32,
+    held: &[webapi::Leaderboard],
+    path: &Path,
+) -> Result<ExitCode, ExitCode> {
+    let text = leaderboards::saved(app_id, held)
+        .map_err(|why| fail(&format!("app {app_id}: {why}"), REFUSED))?;
+    fs::write(path, text).map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
+    show::success(
+        &format!(
+            "app {app_id}: {} saved to {}",
+            show::counted(held.len(), "leaderboard"),
+            path.display()
+        ),
+        "steamship leaderboards --check compares Steam's with them",
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
 fn try_leaderboards(
     app: &str,
     check: &[PathBuf],
+    save: Option<&Path>,
     changes: Changes<'_>,
 ) -> Result<ExitCode, ExitCode> {
     show::title("leaderboards");
     let app_id = app_named(app)?;
+    if let Some(path) = save {
+        written_over(path, &leaderboards::SAVED)?;
+    }
     let mut files = Vec::with_capacity(check.len());
     for path in check {
         files.push((path.display().to_string(), leaderboards_file(path, app_id)?));
@@ -5733,6 +5783,9 @@ fn try_leaderboards(
         show::counted(held.len(), "leaderboard")
     ));
     offer_to_keep(&home, &api, from);
+    if let Some(path) = save {
+        return save_leaderboards(app_id, &held, path);
+    }
     if check.is_empty() {
         show::fields(
             &held

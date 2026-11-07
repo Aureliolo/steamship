@@ -1032,6 +1032,7 @@ records.
 
 ```sh
 steamship leaderboards 480
+steamship leaderboards 480 --save steam/leaderboards.json
 steamship leaderboards 480 --check steam/leaderboards.json
 steamship leaderboards 480 --check steam/leaderboards.json --create
 steamship leaderboards 480 --check steam/leaderboards.json --create --delete-missing
@@ -1040,6 +1041,13 @@ steamship leaderboards 480 --check steam/leaderboards.json --create --delete-mis
 `leaderboards` lists those Steam holds for the app, with the same Web API key as `builds`. With
 `--check`, it compares them with a file, by name. It exits 2 naming each leaderboard that is in
 the file but not on Steam, or the other way round. It also names each setting that differs.
+
+`--save` writes the leaderboards Steam holds to that file. Leaderboards made by hand in Steamworks
+can then be checked. A leaderboard with no display type exits 2, as the file cannot give one. Set
+one in Steamworks and save again.
+
+`--save` writes over a file only when it holds nothing more than `--save` writes. A `period`, a
+key of your own or games-kit records exit 2 naming the first, so nothing kept by hand is lost.
 
 With `--create` too, the file's leaderboards that Steam lacks are made first, as the file has them.
 A release can then bring in a new one before the build that uses it.
