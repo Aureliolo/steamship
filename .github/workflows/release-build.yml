@@ -354,7 +354,7 @@ jobs:
           path: sbom-input
           config: .github/syft.yaml
           # renovate: datasource=github-releases depName=anchore/syft
-          syft-version: v1.56.0
+          syft-version: v1.57.0
           format: spdx-json
           output-file: dist/steamship-${{ needs.verify.outputs.version }}.spdx.json
           upload-artifact: false
