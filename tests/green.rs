@@ -4,6 +4,10 @@
     reason = "a test reports failure by panicking, its helpers included"
 )]
 
+pub mod common;
+
+use common::git::git;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -14,28 +18,6 @@ use steamship::{ledger, run};
 struct Repository {
     _temp: tempfile::TempDir,
     root: PathBuf,
-}
-
-fn git(folder: &Path, args: &[&str]) {
-    let status = run::spawn(
-        run::command("git")
-            .args([
-                "-c",
-                "user.name=steamship",
-                "-c",
-                "user.email=steamship@example.invalid",
-            ])
-            .args(["-c", "maintenance.auto=false"])
-            // The machine's own git config could sign each commit or run its hooks, which a
-            // `core.hooksPath` override does not stop when they are set as config.
-            .env("GIT_CONFIG_GLOBAL", folder.join("no-git-config"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .args(args)
-            .current_dir(folder),
-    )
-    .and_then(|mut git| git.wait())
-    .unwrap();
-    assert!(status.success(), "git {args:?}");
 }
 
 fn head(root: &Path) -> String {

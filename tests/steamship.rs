@@ -10,6 +10,7 @@
 
 pub mod common;
 
+use common::git::git;
 use common::pe::{settings_ticking, windows_library};
 
 #[cfg(windows)]
@@ -2892,28 +2893,6 @@ fn login_with_nowhere_to_look_for_an_account_exits_1() {
         failure(&stderr).starts_with("neither STEAMSHIP_HOME nor "),
         "{stderr}"
     );
-}
-
-fn git(folder: &Path, args: &[&str]) {
-    let status = run::spawn(
-        run::command("git")
-            .args([
-                "-c",
-                "user.name=steamship",
-                "-c",
-                "user.email=steamship@example.invalid",
-            ])
-            .args(["-c", "maintenance.auto=false"])
-            // The machine's own git config could sign each commit or run its hooks, which a
-            // `core.hooksPath` override does not stop when they are set as config.
-            .env("GIT_CONFIG_GLOBAL", folder.join("no-git-config"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .args(args)
-            .current_dir(folder),
-    )
-    .and_then(|mut git| git.wait())
-    .unwrap();
-    assert!(status.success(), "git {args:?}");
 }
 
 /// A game's scripts and content, committed or not, in a folder named the way a gate worktree is.
