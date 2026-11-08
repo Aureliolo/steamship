@@ -157,6 +157,7 @@ jobs:
           # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
           MACOS_ARM64_TAG: v0.7.7
           MACOS_ARM64_SHA256: a66ad6392861ca1abfe0b02b522622d91edf63e5d7b60f4d3088b5c23d240c72
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           case "${RUNNER_OS}-${RUNNER_ARCH}" in
@@ -173,14 +174,8 @@ jobs:
           if [[ "${RUNNER_OS}" == Windows ]]; then
             archive="cargo-auditable-${host}.zip"
           fi
-          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${RUNNER_TEMP}/${archive}" \
-            "https://github.com/rust-secure-code/cargo-auditable/releases/download/${tag}/${archive}"
-          # macOS has a sha256sum of BSD's, which knows no --strict.
-          if [[ "${RUNNER_OS}" == macOS ]]; then
-            echo "${digest}  ${RUNNER_TEMP}/${archive}" | shasum -a 256 --check
-          else
-            echo "${digest}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
-          fi
+          bash .github/tool-download.sh rust-secure-code/cargo-auditable "${tag}" "${archive}" \
+            "${digest}" "${RUNNER_TEMP}"
           tool="${RUNNER_TEMP}/cargo-auditable"
           mkdir -p "${tool}"
           # The Windows archives hold the program at their top; the others in a folder of the

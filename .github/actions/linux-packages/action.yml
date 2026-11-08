@@ -25,14 +25,14 @@ runs:
         # renovate: datasource=github-release-attachments depName=goreleaser/nfpm versioning=semver
         NFPM_TAG: v2.47.0
         NFPM_SHA256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-        archive="${RUNNER_TEMP}/nfpm.tar.gz"
-        curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
-          "https://github.com/goreleaser/nfpm/releases/download/${NFPM_TAG}/nfpm_${NFPM_TAG#v}_Linux_x86_64.tar.gz"
-        echo "${NFPM_SHA256}  ${archive}" | sha256sum --check --strict
+        archive="nfpm_${NFPM_TAG#v}_Linux_x86_64.tar.gz"
+        bash .github/tool-download.sh goreleaser/nfpm "${NFPM_TAG}" "${archive}" "${NFPM_SHA256}" \
+          "${RUNNER_TEMP}"
         mkdir -p "${RUNNER_TEMP}/nfpm"
-        tar -xzf "${archive}" -C "${RUNNER_TEMP}/nfpm" nfpm
+        tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/nfpm" nfpm
 
     - name: Build the packages
       shell: bash

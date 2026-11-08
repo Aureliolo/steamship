@@ -329,21 +329,22 @@ jobs:
           bash .github/packages.sh "${version}" release written
           mv written/winget winget
 
+      - name: Download winget at its pinned release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
+            Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle "${WINGET_BUNDLE_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
+            DesktopAppInstaller_Dependencies.zip "${WINGET_DEPENDENCIES_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
+            "${WINGET_LICENSE}" "${WINGET_LICENSE_SHA256}" "${RUNNER_TEMP}"
+
       - name: Install winget at its pinned release
         run: |
           $ErrorActionPreference = 'Stop'
-          $base = "https://github.com/microsoft/winget-cli/releases/download/$env:WINGET_TAG"
-          $files = @{
-            'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' = $env:WINGET_BUNDLE_SHA256
-            'DesktopAppInstaller_Dependencies.zip' = $env:WINGET_DEPENDENCIES_SHA256
-            $env:WINGET_LICENSE = $env:WINGET_LICENSE_SHA256
-          }
-          foreach ($name in $files.Keys) {
-            $path = "$env:RUNNER_TEMP\$name"
-            Invoke-WebRequest -Uri "$base/$name" -OutFile $path
-            $hash = (Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant()
-            if ($hash -ne $files[$name]) { throw "$name hashes to $hash, not the pinned $($files[$name])." }
-          }
           Expand-Archive "$env:RUNNER_TEMP\DesktopAppInstaller_Dependencies.zip" "$env:RUNNER_TEMP\dependencies"
           $machine = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
           $dependencies = Get-ChildItem "$env:RUNNER_TEMP\dependencies\$machine" -Filter *.appx | ForEach-Object FullName

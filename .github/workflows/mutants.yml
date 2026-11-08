@@ -119,13 +119,13 @@ jobs:
           # renovate: datasource=github-release-attachments depName=sourcefrog/cargo-mutants versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
           CARGO_MUTANTS_TAG: v27.1.0
           CARGO_MUTANTS_SHA256: dfe6dc37d0342c891d2829b5a695aa57c2d0edecef7e7d0399a30cc6e206411e
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          archive="${RUNNER_TEMP}/cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
-          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
-            "https://github.com/sourcefrog/cargo-mutants/releases/download/${CARGO_MUTANTS_TAG}/cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
-          echo "${CARGO_MUTANTS_SHA256}  ${archive}" | sha256sum --check --strict
-          tar -xzf "${archive}" -C "${RUNNER_TEMP}"
+          archive="cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
+          bash .github/tool-download.sh sourcefrog/cargo-mutants "${CARGO_MUTANTS_TAG}" "${archive}" \
+            "${CARGO_MUTANTS_SHA256}" "${RUNNER_TEMP}"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 
       - name: Install cargo-mutants
@@ -134,13 +134,13 @@ jobs:
           # renovate: datasource=github-release-attachments depName=sourcefrog/cargo-mutants versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
           CARGO_MUTANTS_TAG: v27.1.0
           CARGO_MUTANTS_SHA256: 2a2f00e47d4b458262a41501b0820aa26015fd35779903d2c8b30b2993f36791
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          archive="${RUNNER_TEMP}/cargo-mutants-x86_64-pc-windows-msvc.zip"
-          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${archive}" \
-            "https://github.com/sourcefrog/cargo-mutants/releases/download/${CARGO_MUTANTS_TAG}/cargo-mutants-x86_64-pc-windows-msvc.zip"
-          echo "${CARGO_MUTANTS_SHA256}  ${archive}" | sha256sum --check --strict
-          unzip -q "${archive}" -d "${RUNNER_TEMP}"
+          archive="cargo-mutants-x86_64-pc-windows-msvc.zip"
+          bash .github/tool-download.sh sourcefrog/cargo-mutants "${CARGO_MUTANTS_TAG}" "${archive}" \
+            "${CARGO_MUTANTS_SHA256}" "${RUNNER_TEMP}"
+          unzip -q "${RUNNER_TEMP}/${archive}" -d "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 
       # No arm64 macOS build is released, so it is built from source at an exact version, every
