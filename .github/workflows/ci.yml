@@ -334,7 +334,18 @@ jobs:
 
       # Spelling in British English everywhere, the code included.
       - name: Check spelling
-        uses: crate-ci/typos@4c8b7f51ca60df14e3c5ca82770dfbbe6c3dae85 # v1.52.0
+        env:
+          # renovate: datasource=github-release-attachments depName=crate-ci/typos versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          TYPOS_TAG: v1.52.0
+          TYPOS_SHA256: 6155d4114f9a0f5b8f6d4fda96266c9d5f6add71df80da7f684ee5e72eb14588
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="typos-${TYPOS_TAG}-x86_64-unknown-linux-musl.tar.gz"
+          bash .github/tool-download.sh crate-ci/typos "${TYPOS_TAG}" "${archive}" \
+            "${TYPOS_SHA256}" "${RUNNER_TEMP}"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}" ./typos
+          "${RUNNER_TEMP}/typos"
 
       # No em dash anywhere, and no en dash standing in for one.
       - name: Check for dashes

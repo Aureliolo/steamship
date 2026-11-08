@@ -34,7 +34,7 @@ if [[ "${downloaded}" != true ]]; then
 fi
 
 # macOS has a sha256sum of BSD's, which knows no --strict.
-if [[ "$(uname -s)" == Darwin ]]; then
+if [[ "${OSTYPE}" == darwin* ]]; then
   echo "${sha256}  ${folder}/${file}" | shasum -a 256 --check
 else
   echo "${sha256}  ${folder}/${file}" | sha256sum --check --strict
