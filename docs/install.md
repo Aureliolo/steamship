@@ -132,8 +132,9 @@ it. Every release also carries an SPDX SBOM of its five binaries, attested again
 in the same file.
 
 Once installed, `steamship self check` compares its own binary with the SHA-256 that SBOM lists
-for your system, fetched from the release. It exits 2 if they differ. A job can run it as a check
-before an upload.
+for your system, fetched from the release. When GitHub's download address fails, it reads the SBOM
+through GitHub's API instead. It exits 2 if they differ. A job can run it as a check before an
+upload.
 
 A release cannot be changed once published. A binary that differs was built elsewhere or altered
 since. A build from source differs from every release's.

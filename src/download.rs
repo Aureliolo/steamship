@@ -90,16 +90,100 @@ where
     Sleep: Fn(Duration),
 {
     let agent = agent();
-    with_retries(url, sleep, || {
-        let mut response = agent
-            .get(url)
-            .call()
-            .map_err(|error| classify(url, &error))?;
-        response
-            .body_mut()
-            .read_to_string()
-            .map_err(|error| Failure::Retry(error.to_string()))
+    with_retries(url, sleep, || read_text(&agent, url, None))
+}
+
+/// One attempt at `url`'s body as text. An `accept` given is sent as its Accept header.
+fn read_text(agent: &ureq::Agent, url: &str, accept: Option<&str>) -> Result<String, Failure> {
+    let mut request = agent.get(url);
+    if let Some(accept) = accept {
+        request = request.header("Accept", accept);
+    }
+    let mut response = request.call().map_err(|error| classify(url, &error))?;
+    response
+        .body_mut()
+        .read_to_string()
+        .map_err(|error| Failure::Retry(error.to_string()))
+}
+
+/// Where a GitHub release asset is served: its download address, and the API's listing of its
+/// release, whose asset of that name must be served from under `assets`.
+#[derive(Debug, Clone, Copy)]
+pub struct Asset<'url> {
+    pub download: &'url str,
+    pub release: &'url str,
+    pub name: &'url str,
+    pub assets: &'url str,
+}
+
+/// The body of `asset` as text. Each attempt asks its download address, and when that fails, the
+/// API for the same asset: GitHub's download front has answered 504 for one asset while the API
+/// served it.
+///
+/// # Errors
+///
+/// When both refuse, or keep failing, or the body is not UTF-8.
+pub fn asset_text(asset: Asset<'_>) -> Result<String, Error> {
+    asset_text_waiting(asset, thread::sleep)
+}
+
+fn asset_text_waiting<Sleep>(asset: Asset<'_>, sleep: Sleep) -> Result<String, Error>
+where
+    Sleep: Fn(Duration),
+{
+    let agent = agent();
+    with_retries(asset.download, sleep, || {
+        let direct = match read_text(&agent, asset.download, None) {
+            Ok(text) => return Ok(text),
+            Err(failure) => failure,
+        };
+        match (direct, through_api(&agent, asset)) {
+            (_, Ok(text)) => Ok(text),
+            (Failure::Stop(error), Err(Failure::Stop(_))) => Err(Failure::Stop(error)),
+            (direct, Err(api)) => Err(Failure::Retry(format!(
+                "{}, and through GitHub's API: {}",
+                reason(&direct),
+                reason(&api)
+            ))),
+        }
     })
+}
+
+/// What a failed attempt says of itself, as the last reason of a retried one.
+fn reason(failure: &Failure) -> String {
+    match failure {
+        Failure::Retry(reason) => reason.clone(),
+        Failure::Stop(Error::Gone { status, .. }) => format!("answered {status}"),
+        Failure::Stop(error) => error.to_string(),
+    }
+}
+
+/// One attempt at `asset` through the API: its release's listing, then the asset it names.
+fn through_api(agent: &ureq::Agent, asset: Asset<'_>) -> Result<String, Failure> {
+    let listing = read_text(agent, asset.release, Some("application/vnd.github+json"))?;
+    let release: serde_json::Value = serde_json::from_str(&listing)
+        .map_err(|error| Failure::Retry(format!("a release that is not JSON: {error}")))?;
+    let url = release
+        .get("assets")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|listed| listed.get("name").and_then(serde_json::Value::as_str) == Some(asset.name))
+        .and_then(|listed| listed.get("url"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            Failure::Stop(Error::Mismatch {
+                url: asset.release.to_owned(),
+                reason: format!("lists no {}", asset.name),
+            })
+        })?;
+    if !url.starts_with(asset.assets) {
+        return Err(Failure::Stop(Error::Mismatch {
+            url: asset.release.to_owned(),
+            reason: format!("serves {} from {url}, outside {}", asset.name, asset.assets),
+        }));
+    }
+    read_text(agent, url, Some("application/octet-stream"))
 }
 
 /// Downloads `url` to `into`. A file that is not exactly `size` bytes with SHA-256 `sha256` is
@@ -260,6 +344,7 @@ mod tests {
     use std::cell::{Cell, RefCell};
     use std::iter;
     use std::net::TcpListener;
+    use std::sync::mpsc;
 
     use crate::digest;
 
@@ -377,10 +462,22 @@ mod tests {
     /// Any request past the script is answered with a server error, so code that asks more often
     /// than it should fails at once instead of waiting on a server that has nothing to say.
     fn serve(responses: Vec<Vec<u8>>) -> String {
+        format!("{}/package", listen(|_| responses).0)
+    }
+
+    /// Serves what `script` gives for the server's own address, as `serve` does, and passes on
+    /// each request's head as it is read.
+    fn listen<Script>(script: Script) -> (String, mpsc::Receiver<String>)
+    where
+        Script: FnOnce(&str) -> Vec<Vec<u8>>,
+    {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/package", listener.local_addr().unwrap());
+        let address = format!("http://{}", listener.local_addr().unwrap());
         let unscripted = response("599 Not In The Script", b"");
-        let replies = responses.into_iter().chain(iter::repeat_n(unscripted, 16));
+        let replies = script(&address)
+            .into_iter()
+            .chain(iter::repeat_n(unscripted, 16));
+        let (heads, received) = mpsc::channel();
         drop(thread::spawn(move || {
             for reply in replies {
                 let (mut stream, _) = listener.accept().unwrap();
@@ -390,10 +487,171 @@ mod tests {
                     stream.read_exact(&mut byte).unwrap();
                     request.extend_from_slice(&byte);
                 }
+                drop(heads.send(String::from_utf8_lossy(&request).into_owned()));
                 stream.write_all(&reply).unwrap();
             }
         }));
-        url
+        (address, received)
+    }
+
+    const SBOM: &str = "steamship-1.spdx.json";
+
+    /// A release listing that serves `SBOM` from `url`.
+    fn release(url: &str) -> Vec<u8> {
+        let listing = serde_json::json!({
+            "assets": [
+                { "name": "steamship-1.zip", "url": "http://elsewhere/zip" },
+                { "name": SBOM, "url": url },
+            ]
+        });
+        response("200 OK", listing.to_string().as_bytes())
+    }
+
+    /// The answers of both routes, for every attempt.
+    fn attempts(both: [Vec<u8>; 2]) -> Vec<Vec<u8>> {
+        iter::repeat_n(both, 7).flatten().collect()
+    }
+
+    /// Fetches `SBOM` from a server playing both routes, with no waits between attempts.
+    fn fetch_asset<Script>(script: Script) -> (Result<String, Error>, Vec<String>)
+    where
+        Script: FnOnce(&str) -> Vec<Vec<u8>>,
+    {
+        let (address, heads) = listen(script);
+        let download = format!("{address}/download/{SBOM}");
+        let release = format!("{address}/api/releases/tags/v1");
+        let assets = format!("{address}/api/releases/assets/");
+        let asset = Asset {
+            download: &download,
+            release: &release,
+            name: SBOM,
+            assets: &assets,
+        };
+        let result = asset_text_waiting(asset, |_| {});
+        (result, heads.try_iter().collect())
+    }
+
+    #[test]
+    fn an_asset_the_download_address_fails_on_is_read_through_the_api_in_the_same_attempt() {
+        let (result, heads) = fetch_asset(|address| {
+            vec![
+                response("504 Gateway Timeout", b""),
+                release(&format!("{address}/api/releases/assets/7")),
+                response("200 OK", b"{\"files\": []}"),
+            ]
+        });
+        assert_eq!(result.ok().as_deref(), Some("{\"files\": []}"));
+        let [download, listing, asset] = heads.as_slice() else {
+            panic!("{heads:?}");
+        };
+        assert!(
+            download.starts_with(&format!("GET /download/{SBOM} ")),
+            "{download}"
+        );
+        assert!(
+            listing.starts_with("GET /api/releases/tags/v1 "),
+            "{listing}"
+        );
+        assert!(listing.contains("application/vnd.github+json"), "{listing}");
+        assert!(asset.starts_with("GET /api/releases/assets/7 "), "{asset}");
+        assert!(asset.contains("application/octet-stream"), "{asset}");
+    }
+
+    #[test]
+    fn an_asset_the_download_address_serves_is_not_asked_of_the_api() {
+        let (result, heads) = fetch_asset(|_| vec![response("200 OK", b"sbom")]);
+        assert_eq!(result.ok().as_deref(), Some("sbom"));
+        assert_eq!(heads.len(), 1, "{heads:?}");
+    }
+
+    #[test]
+    fn an_asset_neither_route_has_stops_at_once_with_what_the_download_address_answered() {
+        let (result, heads) = fetch_asset(|_| {
+            vec![
+                response("404 Not Found", b""),
+                response("404 Not Found", b""),
+            ]
+        });
+        assert!(
+            matches!(&result, Err(Error::Gone { url, status: 404 }) if url.ends_with(SBOM)),
+            "{result:?}"
+        );
+        assert_eq!(heads.len(), 2, "{heads:?}");
+    }
+
+    #[test]
+    fn an_asset_both_routes_keep_failing_on_gives_up_saying_what_each_answered() {
+        let (result, _) = fetch_asset(|_| {
+            attempts([
+                response("503 Service Unavailable", b""),
+                response("404 Not Found", b""),
+            ])
+        });
+        assert!(
+            matches!(&result, Err(Error::GaveUp { last, .. })
+                if last == "answered 503, and through GitHub's API: answered 404"),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn an_asset_the_api_serves_from_elsewhere_is_not_fetched() {
+        let (result, heads) = fetch_asset(|address| {
+            attempts([
+                response("503 Service Unavailable", b""),
+                release(&format!("{address}/other/7")),
+            ])
+        });
+        assert!(
+            matches!(&result, Err(Error::GaveUp { last, .. })
+                if last.starts_with("answered 503, and through GitHub's API: ")
+                    && last.contains(&format!("serves {SBOM} from "))
+                    && last.ends_with("/api/releases/assets/")),
+            "{result:?}"
+        );
+        assert!(
+            heads.iter().all(|head| !head.starts_with("GET /other/")),
+            "{heads:?}"
+        );
+    }
+
+    #[test]
+    fn a_release_that_does_not_list_the_asset_is_refused() {
+        let (result, _) = fetch_asset(|_| {
+            vec![
+                response("404 Not Found", b""),
+                response("200 OK", b"{\"assets\": []}"),
+            ]
+        });
+        assert!(
+            matches!(&result, Err(Error::Gone { status: 404, .. })),
+            "{result:?}"
+        );
+        let (listed, _) = fetch_asset(|_| {
+            attempts([
+                response("503 Service Unavailable", b""),
+                response("200 OK", b"{\"assets\": []}"),
+            ])
+        });
+        assert!(
+            matches!(&listed, Err(Error::GaveUp { last, .. })
+                if last.ends_with(&format!("lists no {SBOM}"))),
+            "{listed:?}"
+        );
+    }
+
+    #[test]
+    fn a_release_listing_that_is_not_json_is_tried_again() {
+        let (result, _) = fetch_asset(|address| {
+            vec![
+                response("503 Service Unavailable", b""),
+                response("200 OK", b"<html>"),
+                response("503 Service Unavailable", b""),
+                release(&format!("{address}/api/releases/assets/7")),
+                response("200 OK", b"sbom"),
+            ]
+        });
+        assert_eq!(result.ok().as_deref(), Some("sbom"));
     }
 
     fn pinned(body: &[u8]) -> (u64, [u8; 32]) {
