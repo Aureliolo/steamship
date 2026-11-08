@@ -42,6 +42,10 @@ reason = "ring 0.17 depends on it; everything else is on a newer windows-sys"
 crate = "miniz_oxide@0.8.9"
 reason = "png 0.18, the icon decoder, depends on it; zip's deflate is on a newer miniz_oxide"
 
+[[bans.skip]]
+crate = "syn@2.0.119"
+reason = "zeroize_derive 1.5, which zip 9.4.2 turns on, has no release on syn 3; clap is on syn 3"
+
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
