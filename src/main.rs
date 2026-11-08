@@ -4740,9 +4740,10 @@ fn try_self_check() -> Result<ExitCode, ExitCode> {
         .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
     let own = digest::sha256(&mut file)
         .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
-    let url = itself::sbom(version, |name| env::var(name).ok());
+    let published = itself::sbom(version, |name| env::var(name).ok());
+    let url = &published.download;
     let spinner = Spinner::start("release", &format!("reading {url}"), false);
-    let sbom = match download::text(&url) {
+    let sbom = match download::asset_text(published.asset()) {
         Ok(sbom) => sbom,
         Err(error) => {
             spinner.failed(&error.to_string());

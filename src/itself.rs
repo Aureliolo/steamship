@@ -6,9 +6,11 @@
 
 use serde_json::Value as Json;
 
-use crate::digest;
+use crate::{digest, download};
 
 const RELEASES: &str = "https://github.com/Aureliolo/steamship/releases/download";
+const REPOSITORY: &str = "/repos/Aureliolo/steamship";
+const API: &str = "https://api.github.com/repos/Aureliolo/steamship";
 
 /// The system a release builds a binary for, as its archives are named, when it builds one for
 /// the system this steamship was built for.
@@ -33,9 +35,31 @@ pub const fn target() -> Option<&'static str> {
 /// on this machine. A release build has no such place.
 pub const STAND_IN: &str = "STEAMSHIP_RELEASES_STAND_IN";
 
+/// Where the SBOM of a release is published: its download address, and the API's listing of its
+/// release, which must serve it from under `assets`.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Sbom {
+    pub download: String,
+    pub release: String,
+    pub name: String,
+    pub assets: String,
+}
+
+impl Sbom {
+    #[must_use]
+    pub fn asset(&self) -> download::Asset<'_> {
+        download::Asset {
+            download: &self.download,
+            release: &self.release,
+            name: &self.name,
+            assets: &self.assets,
+        }
+    }
+}
+
 /// Where the SBOM of the release of `version` is published, where `lookup` reads the
 /// environment.
-pub fn sbom<Lookup>(version: &str, lookup: Lookup) -> String
+pub fn sbom<Lookup>(version: &str, lookup: Lookup) -> Sbom
 where
     Lookup: Fn(&str) -> Option<String>,
 {
@@ -44,10 +68,18 @@ where
         host.strip_prefix("http://127.0.0.1:")
             .is_some_and(|port| !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()))
     };
-    let releases = lookup(STAND_IN)
-        .filter(|host| cfg!(debug_assertions) && loopback(host))
-        .unwrap_or_else(|| RELEASES.to_owned());
-    format!("{releases}/v{version}/steamship-{version}.spdx.json")
+    let stand_in = lookup(STAND_IN).filter(|host| cfg!(debug_assertions) && loopback(host));
+    let (releases, api) = stand_in.map_or_else(
+        || (RELEASES.to_owned(), API.to_owned()),
+        |host| (host.clone(), format!("{host}{REPOSITORY}")),
+    );
+    let name = format!("steamship-{version}.spdx.json");
+    Sbom {
+        download: format!("{releases}/v{version}/{name}"),
+        release: format!("{api}/releases/tags/v{version}"),
+        assets: format!("{api}/releases/assets/"),
+        name,
+    }
 }
 
 /// The SHA-256 the SBOM `text` gives the binary of the release of `version` built for `target`.
@@ -106,7 +138,27 @@ mod tests {
     fn the_sbom_is_the_one_published_with_this_versions_release() {
         assert_eq!(
             sbom("1.2.3", |_| None),
-            "https://github.com/Aureliolo/steamship/releases/download/v1.2.3/steamship-1.2.3.spdx.json"
+            Sbom {
+                download: "https://github.com/Aureliolo/steamship/releases/download/v1.2.3/steamship-1.2.3.spdx.json".to_owned(),
+                release: "https://api.github.com/repos/Aureliolo/steamship/releases/tags/v1.2.3".to_owned(),
+                name: "steamship-1.2.3.spdx.json".to_owned(),
+                assets: "https://api.github.com/repos/Aureliolo/steamship/releases/assets/".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn the_asset_fetched_is_the_one_named_by_the_sbom() {
+        let published = sbom("1.2.3", |_| None);
+        let asset = published.asset();
+        assert_eq!(
+            [asset.download, asset.release, asset.name, asset.assets],
+            [
+                published.download.as_str(),
+                &published.release,
+                &published.name,
+                &published.assets
+            ]
         );
     }
 
@@ -116,15 +168,23 @@ mod tests {
             |value: &'static str| move |name: &str| (name == STAND_IN).then(|| value.to_owned());
         assert_eq!(
             sbom("1.2.3", with("http://127.0.0.1:8123")),
-            "http://127.0.0.1:8123/v1.2.3/steamship-1.2.3.spdx.json"
+            Sbom {
+                download: "http://127.0.0.1:8123/v1.2.3/steamship-1.2.3.spdx.json".to_owned(),
+                release: "http://127.0.0.1:8123/repos/Aureliolo/steamship/releases/tags/v1.2.3"
+                    .to_owned(),
+                name: "steamship-1.2.3.spdx.json".to_owned(),
+                assets: "http://127.0.0.1:8123/repos/Aureliolo/steamship/releases/assets/"
+                    .to_owned(),
+            }
         );
         for elsewhere in [
             "http://127.0.0.1:80@example.com",
             "http://example.com:8123",
             "http://127.0.0.1:",
         ] {
-            assert!(
-                sbom("1.2.3", with(elsewhere)).starts_with("https://github.com/"),
+            assert_eq!(
+                sbom("1.2.3", with(elsewhere)),
+                sbom("1.2.3", |_| None),
                 "{elsewhere}"
             );
         }

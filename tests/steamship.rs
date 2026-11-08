@@ -3657,8 +3657,18 @@ fn web_api<Body>(answers: Vec<(&'static str, Body)>) -> (String, mpsc::Receiver<
 where
     Body: AsRef<[u8]> + Send + 'static,
 {
+    web_api_answering(|_| answers)
+}
+
+/// `web_api`, with answers that `script` writes knowing the stand-in's own address.
+fn web_api_answering<Body, Script>(script: Script) -> (String, mpsc::Receiver<String>)
+where
+    Body: AsRef<[u8]> + Send + 'static,
+    Script: FnOnce(&str) -> Vec<(&'static str, Body)>,
+{
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
+    let answers = script(&format!("http://{address}"));
     let (sender, requests) = mpsc::channel();
     let _serving = thread::spawn(move || {
         for (status, body) in answers {
@@ -11487,8 +11497,46 @@ fn a_binary_that_differs_from_its_release_is_refused() {
 }
 
 #[test]
+fn a_release_the_download_address_fails_on_is_read_through_githubs_api() {
+    use steamship::digest;
+    let own = digest::hex(
+        &digest::sha256(&mut File::open(env!("CARGO_BIN_EXE_steamship")).unwrap()).unwrap(),
+    );
+    let version = env!("CARGO_PKG_VERSION");
+    let name = format!("steamship-{version}.spdx.json");
+    let (host, requests) = web_api_answering(|host| {
+        let release = serde_json::json!({ "assets": [{
+            "name": name,
+            "url": format!("{host}/repos/Aureliolo/steamship/releases/assets/9"),
+        }]});
+        vec![
+            ("504 Gateway Timeout", String::new()),
+            ("200 OK", release.to_string()),
+            ("200 OK", sbom_listing(&own)),
+        ]
+    });
+
+    let (code, said, told) = self_check(&host);
+    assert_eq!(code, Some(0_i32), "{said}{told}");
+    assert!(said.contains(&own), "{said}");
+    let asked: Vec<String> = requests
+        .try_iter()
+        .map(|request| request.lines().next().unwrap_or_default().to_owned())
+        .collect();
+    assert_eq!(
+        asked,
+        [
+            format!("GET /v{version}/{name} HTTP/1.1"),
+            format!("GET /repos/Aureliolo/steamship/releases/tags/v{version} HTTP/1.1"),
+            "GET /repos/Aureliolo/steamship/releases/assets/9 HTTP/1.1".to_owned(),
+        ]
+    );
+}
+
+#[test]
 fn a_release_without_an_sbom_fails_the_self_check_saying_so() {
-    let (missing, said, told) = self_check(&web_api(vec![("404 Not Found", "{}")]).0);
+    let (host, _requests) = web_api(vec![("404 Not Found", "{}"), ("404 Not Found", "{}")]);
+    let (missing, said, told) = self_check(&host);
     assert_eq!(missing, Some(1_i32), "{said}{told}");
     assert!(said.contains("404"), "{said}{told}");
 
