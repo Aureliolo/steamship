@@ -157,6 +157,7 @@ jobs:
           # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
           MACOS_ARM64_TAG: v0.7.7
           MACOS_ARM64_SHA256: a66ad6392861ca1abfe0b02b522622d91edf63e5d7b60f4d3088b5c23d240c72
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           case "${RUNNER_OS}-${RUNNER_ARCH}" in
@@ -173,14 +174,8 @@ jobs:
           if [[ "${RUNNER_OS}" == Windows ]]; then
             archive="cargo-auditable-${host}.zip"
           fi
-          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${RUNNER_TEMP}/${archive}" \
-            "https://github.com/rust-secure-code/cargo-auditable/releases/download/${tag}/${archive}"
-          # macOS has a sha256sum of BSD's, which knows no --strict.
-          if [[ "${RUNNER_OS}" == macOS ]]; then
-            echo "${digest}  ${RUNNER_TEMP}/${archive}" | shasum -a 256 --check
-          else
-            echo "${digest}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
-          fi
+          bash .github/tool-download.sh rust-secure-code/cargo-auditable "${tag}" "${archive}" \
+            "${digest}" "${RUNNER_TEMP}"
           tool="${RUNNER_TEMP}/cargo-auditable"
           mkdir -p "${tool}"
           # The Windows archives hold the program at their top; the others in a folder of the
@@ -346,19 +341,22 @@ jobs:
           cp "${RUNNER_TEMP}/packages/bucket/steamship.json" dist/steamship.json
 
       - name: Generate the SBOM
-        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         env:
+          # renovate: datasource=github-release-attachments depName=anchore/syft versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
+          SYFT_TAG: v1.57.0
+          SYFT_SHA256: 9c077a7d43029b3b13e98a8db720661e700c4d58db6352153a06395ae4a2a704
+          GH_TOKEN: ${{ github.token }}
+          SYFT_CHECK_FOR_APP_UPDATE: 'false'
           SYFT_SOURCE_NAME: steamship
           SYFT_SOURCE_VERSION: ${{ needs.verify.outputs.version }}
-        with:
-          path: sbom-input
-          config: .github/syft.yaml
-          # renovate: datasource=github-releases depName=anchore/syft
-          syft-version: v1.57.0
-          format: spdx-json
-          output-file: dist/steamship-${{ needs.verify.outputs.version }}.spdx.json
-          upload-artifact: false
-          upload-release-assets: false
+        run: |
+          set -euo pipefail
+          archive="syft_${SYFT_TAG#v}_linux_amd64.tar.gz"
+          bash .github/tool-download.sh anchore/syft "${SYFT_TAG}" "${archive}" "${SYFT_SHA256}" \
+            "${RUNNER_TEMP}"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}" syft
+          "${RUNNER_TEMP}/syft" scan dir:sbom-input -c .github/syft.yaml \
+            -o "spdx-json=dist/steamship-${SYFT_SOURCE_VERSION}.spdx.json"
 
       - name: Install Rust
         run: rustup toolchain install
