@@ -1288,12 +1288,25 @@ mod tests {
                 "{signature}"
             );
         }
-        for signature in [
-            "", "a", "()", "(s", "a{vs}", "a{(s)s}", "{ss}x", "z", "a{s}", "a{sss}",
+        for (signature, why) in [
+            ("", "a signature"),
+            ("a", "a signature"),
+            ("()", "an empty structure"),
+            ("(s", "a signature"),
+            ("a{vs}", "a dictionary's key"),
+            ("a{(s)s}", "a signature"),
+            ("{ss}x", "a signature"),
+            ("z", "a signature"),
+            ("a{s}", "a signature"),
+            ("a{sss}", "a dictionary entry"),
         ] {
-            let whole = complete(signature.as_bytes(), 0, 0)
-                .is_ok_and(|end| end == signature.len() && !signature.starts_with('{'));
-            assert!(!whole, "{signature}");
+            assert!(
+                matches!(
+                    complete(signature.as_bytes(), 0, 0),
+                    Err(Error::Malformed(got)) if got == why
+                ),
+                "{signature}"
+            );
         }
         let deepest = format!("{}y", "a".repeat(DEEPEST));
         assert_eq!(

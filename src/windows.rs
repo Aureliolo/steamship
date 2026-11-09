@@ -1513,6 +1513,7 @@ mod tests {
     use std::os::windows::ffi::OsStringExt as _;
     use std::path::PathBuf;
     use std::slice;
+    use windows_sys::Win32::Foundation::E_INVALIDARG;
     use windows_sys::Win32::Foundation::{GetHandleInformation, HWND, LPARAM};
     use windows_sys::Win32::Globalization::lstrlenW;
     use windows_sys::Win32::Security::{
@@ -1834,7 +1835,8 @@ mod tests {
     fn a_pseudo_console_windows_will_not_make_is_an_error() {
         let (typed, _input) = io::pipe().unwrap();
         let (_output, written) = io::pipe().unwrap();
-        drop(PseudoConsole::create(&typed, &written, COORD { X: 0, Y: 0 }).unwrap_err());
+        let refused = PseudoConsole::create(&typed, &written, COORD { X: 0, Y: 0 }).unwrap_err();
+        assert_eq!(refused.raw_os_error(), Some(E_INVALIDARG));
         drop(PseudoConsole::create(&typed, &written, COORD { X: 80, Y: 25 }).unwrap());
     }
 
