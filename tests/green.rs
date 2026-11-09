@@ -6,28 +6,18 @@
 
 pub mod common;
 
-use common::git::git;
+use common::git::{commit, git, head, with_origin};
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use steamship::green::{self, Policy, Standing};
+use steamship::ledger;
 use steamship::project::short;
-use steamship::{ledger, run};
 
 struct Repository {
     _temp: tempfile::TempDir,
     root: PathBuf,
-}
-
-fn head(root: &Path) -> String {
-    let output = run::output(
-        run::command("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(root),
-    )
-    .unwrap();
-    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
 /// A repository with one commit and a bare origin that holds no `green` yet.
@@ -35,32 +25,9 @@ fn repository() -> Repository {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("game");
     fs::create_dir_all(&root).unwrap();
-    git(
-        temp.path(),
-        &[
-            "init",
-            "--quiet",
-            "--bare",
-            "--initial-branch=main",
-            "origin.git",
-        ],
-    );
-    git(&root, &["init", "--quiet", "--initial-branch=main"]);
-    git(
-        &root,
-        &[
-            "remote",
-            "add",
-            "origin",
-            &temp.path().join("origin.git").to_string_lossy(),
-        ],
-    );
+    with_origin(temp.path(), &root);
     commit(&root, "first");
     Repository { _temp: temp, root }
-}
-
-fn commit(root: &Path, message: &str) {
-    git(root, &["commit", "--quiet", "--allow-empty", "-m", message]);
 }
 
 fn move_green(root: &Path) {

@@ -10,7 +10,7 @@
 
 pub mod common;
 
-use common::git::git;
+use common::git::{bare, commit, git, head, with_origin};
 use common::pe::{settings_ticking, windows_library};
 
 #[cfg(windows)]
@@ -8531,26 +8531,7 @@ fn pushed_game(toml: Option<&str>) -> (tempfile::TempDir, PathBuf) {
     if let Some(toml) = toml {
         put("steamship.toml", toml.as_bytes());
     }
-    git(
-        temp.path(),
-        &[
-            "init",
-            "--quiet",
-            "--bare",
-            "--initial-branch=main",
-            "origin.git",
-        ],
-    );
-    git(&root, &["init", "--quiet", "--initial-branch=main"]);
-    git(
-        &root,
-        &[
-            "remote",
-            "add",
-            "origin",
-            &temp.path().join("origin.git").to_string_lossy(),
-        ],
-    );
+    with_origin(temp.path(), &root);
     pushed(&root, "The game");
     (temp, root)
 }
@@ -8558,7 +8539,7 @@ fn pushed_game(toml: Option<&str>) -> (tempfile::TempDir, PathBuf) {
 /// Commits everything in the game at `root` and pushes it to its origin.
 fn pushed(root: &Path, message: &str) {
     git(root, &["add", "--all"]);
-    git(root, &["commit", "--quiet", "--allow-empty", "-m", message]);
+    commit(root, message);
     git(
         root,
         &[
@@ -8575,7 +8556,7 @@ fn pushed(root: &Path, message: &str) {
 /// `green` stays where it was.
 fn pushed_ungreen(root: &Path, message: &str) {
     git(root, &["add", "--all"]);
-    git(root, &["commit", "--quiet", "--allow-empty", "-m", message]);
+    commit(root, message);
     git(root, &["push", "--quiet", "origin", "main"]);
 }
 
@@ -9733,16 +9714,7 @@ fn an_upload_in_a_game_asks_origin_and_refuses_when_origin_cannot_say_or_git_is_
          Install Git, or put it on the PATH"
     );
 
-    git(
-        temp.path(),
-        &[
-            "init",
-            "--quiet",
-            "--bare",
-            "--initial-branch=main",
-            "empty.git",
-        ],
-    );
+    bare(temp.path(), "empty.git");
     let empty = temp.path().join("empty.git");
     git(
         &root,
@@ -10975,12 +10947,6 @@ fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
             .any(|request| request.contains("SetAppBuildLive")),
         "a released game's default branch is never set: {asked:?}"
     );
-    let head = run::output(
-        run::command("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(&root),
-    )
-    .unwrap();
     let kept = ledger::load(home.path(), 1_000_050).unwrap();
     assert_eq!(
         kept,
@@ -10988,7 +10954,7 @@ fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
             app: 1_000_050,
             branch: "testing".to_owned(),
             build_id: 4242,
-            commit: String::from_utf8(head.stdout).unwrap().trim().to_owned(),
+            commit: head(&root),
             green: true,
             rollback: false,
         }]
