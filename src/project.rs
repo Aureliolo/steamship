@@ -757,7 +757,7 @@ fn footer_of(value: &toml::Value) -> Result<String, String> {
 fn unquoted(value: &str, key: &str, then: &str) -> Result<(), String> {
     if value.contains('"') {
         return Err(format!(
-            "`{key}` is {value}, which holds a double quote that a build script cannot hold. {then}"
+            "`{key}` is {value}. A build script cannot hold a double quote. {then}"
         ));
     }
     Ok(())
@@ -1460,8 +1460,7 @@ mod tests {
 
     fn path_refusal(key: &str) -> String {
         format!(
-            "`{key}` is a\"b, which holds a double quote that a build script cannot hold. Name a \
-             path without one"
+            "`{key}` is a\"b. A build script cannot hold a double quote. Name a path without one"
         )
     }
 
@@ -1469,8 +1468,8 @@ mod tests {
     fn a_branch_holding_a_double_quote_is_refused() {
         assert_eq!(
             refused("branch = 'te\"st'"),
-            "`branch` is te\"st, which holds a double quote that a build script cannot hold. \
-             Name a branch without one"
+            "`branch` is te\"st. A build script cannot hold a double quote. Name a branch \
+             without one"
         );
     }
 
@@ -1478,8 +1477,8 @@ mod tests {
     fn a_demo_branch_holding_a_double_quote_is_refused() {
         assert_eq!(
             refused("[demo]\nbranch = 'te\"st'"),
-            "`demo.branch` is te\"st, which holds a double quote that a build script cannot \
-             hold. Name a branch without one"
+            "`demo.branch` is te\"st. A build script cannot hold a double quote. Name a \
+             branch without one"
         );
     }
 
@@ -1487,8 +1486,8 @@ mod tests {
     fn a_workshop_footer_holding_a_double_quote_is_refused() {
         assert_eq!(
             refused("[workshop]\nfooter = 'a\"b'"),
-            "`workshop.footer` is a\"b, which holds a double quote that a build script cannot \
-             hold. Write a footer without one"
+            "`workshop.footer` is a\"b. A build script cannot hold a double quote. Write a \
+             footer without one"
         );
     }
 

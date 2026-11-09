@@ -486,8 +486,8 @@ fn init_refuses_a_game_branch_holding_a_double_quote_before_writing_a_script() {
     assert_eq!(code, Some(2_i32), "{stdout}");
     assert!(
         failure(&stderr).ends_with(
-            "steamship.toml: `branch` is te\"st, which holds a double quote that a build \
-             script cannot hold. Name a branch without one"
+            "steamship.toml: `branch` is te\"st. A build script cannot hold a double quote. \
+             Name a branch without one"
         ),
         "{stderr}"
     );
