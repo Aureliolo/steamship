@@ -149,9 +149,12 @@ impl fmt::Display for Unreached {
     }
 }
 
-/// What `error` says of why a request had no answer, in words of steamship's own: ureq's own
-/// message can hold a proxy's address with the credentials in it.
-fn unanswered(error: &ureq::Error) -> String {
+/// Why a request or the reading of its answer failed, in steamship's own words.
+///
+/// ureq's own message can hold a proxy's address with the credentials in it, so no message that
+/// a person reads takes ureq's text.
+#[must_use]
+pub fn unanswered(error: &ureq::Error) -> String {
     #[expect(
         clippy::wildcard_enum_match_arm,
         reason = "ureq's errors are non-exhaustive, and the rest come of a request or a TLS \
@@ -167,8 +170,18 @@ fn unanswered(error: &ureq::Error) -> String {
             "the proxy failed".to_owned()
         }
         ureq::Error::BodyStalled => "the answer stopped coming".to_owned(),
+        ureq::Error::BodyExceedsLimit(limit) => {
+            format!("the answer is longer than {limit} bytes")
+        }
         _ => "the request failed".to_owned(),
     }
+}
+
+fn image_unread(error: &ureq::Error) -> String {
+    format!(
+        "Steam's image could not be read whole: {}",
+        unanswered(error)
+    )
 }
 
 /// What a connection that failed with `error` came to: the system's error code, or the reason
@@ -981,7 +994,7 @@ impl Api {
             .with_config()
             .limit(IMAGE_LIMIT)
             .read_to_vec()
-            .map_err(|error| format!("Steam's image could not be read whole: {error}"))
+            .map_err(|error| image_unread(&error))
     }
 
     /// The key the calls are made with.
@@ -2197,6 +2210,24 @@ mod tests {
         ] {
             assert_eq!(Unreached::from(&error, after).to_string(), said);
         }
+    }
+
+    #[test]
+    fn an_image_that_cannot_be_read_whole_is_said_without_what_a_proxy_address_holds() {
+        assert_eq!(
+            image_unread(&ureq::Error::ConnectProxyFailed(
+                "user:secret@proxy.example".to_owned()
+            )),
+            "Steam's image could not be read whole: the proxy failed"
+        );
+    }
+
+    #[test]
+    fn an_image_over_the_size_limit_is_said_with_the_limit() {
+        assert_eq!(
+            image_unread(&ureq::Error::BodyExceedsLimit(1_024)),
+            "Steam's image could not be read whole: the answer is longer than 1024 bytes"
+        );
     }
 
     #[test]

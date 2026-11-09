@@ -88,9 +88,16 @@ impl Storefront {
             .with_config()
             .limit(LIMIT)
             .read_to_string()
-            .map_err(|error| format!("Steam's store's answer could not be read whole: {error}"))?;
+            .map_err(|error| unread(&error))?;
         shown(&body, app)
     }
+}
+
+fn unread(error: &ureq::Error) -> String {
+    format!(
+        "Steam's store's answer could not be read whole: {}",
+        webapi::unanswered(error)
+    )
 }
 
 /// What the app details in `body` show of `app`'s system requirements; `None` when they say there
@@ -220,6 +227,24 @@ mod tests {
             field: field.to_owned(),
             text: text.to_owned(),
         }
+    }
+
+    #[test]
+    fn an_answer_that_cannot_be_read_whole_is_said_without_what_a_proxy_address_holds() {
+        assert_eq!(
+            unread(&ureq::Error::ConnectProxyFailed(
+                "user:secret@proxy.example".to_owned()
+            )),
+            "Steam's store's answer could not be read whole: the proxy failed"
+        );
+    }
+
+    #[test]
+    fn an_answer_over_the_size_limit_is_said_with_the_limit() {
+        assert_eq!(
+            unread(&ureq::Error::BodyExceedsLimit(2_048)),
+            "Steam's store's answer could not be read whole: the answer is longer than 2048 bytes"
+        );
     }
 
     #[test]

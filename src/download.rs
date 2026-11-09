@@ -9,6 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::digest::Hashing;
+use crate::webapi;
 
 pub const CDN: &str = "https://cdn.steamstatic.com/client/";
 
@@ -103,7 +104,7 @@ fn read_text(agent: &ureq::Agent, url: &str, accept: Option<&str>) -> Result<Str
     response
         .body_mut()
         .read_to_string()
-        .map_err(|error| Failure::Retry(error.to_string()))
+        .map_err(|error| Failure::Retry(unread(&error)))
 }
 
 /// Where a GitHub release asset is served: its download address, and the API's listing of its
@@ -220,8 +221,8 @@ where
             .into_body()
             .into_reader()
             .take(size.saturating_add(1));
-        let received =
-            io::copy(&mut body, &mut hashing).map_err(|error| Failure::Retry(error.to_string()))?;
+        let received = io::copy(&mut body, &mut hashing)
+            .map_err(|error| Failure::Retry(copy_failed(error)))?;
         if received > size {
             return Err(Failure::Stop(Error::Mismatch {
                 url: url.to_owned(),
@@ -306,7 +307,23 @@ fn classify(url: &str, error: &ureq::Error) -> Failure {
             })
         }
     } else {
-        Failure::Retry(error.to_string())
+        Failure::Retry(webapi::unanswered(error))
+    }
+}
+
+/// Why reading a body failed, in steamship's own words.
+fn unread(error: &ureq::Error) -> String {
+    webapi::unanswered(error)
+}
+
+/// Why copying a body to disk failed. ureq carries its own errors inside an `io::Error`, and a
+/// plain one is the disk's, which a person should not read as a failed connection.
+fn copy_failed(error: io::Error) -> String {
+    let error = ureq::Error::from(error);
+    if let ureq::Error::Io(inner) = &error {
+        inner.to_string()
+    } else {
+        webapi::unanswered(&error)
     }
 }
 
@@ -417,6 +434,72 @@ mod tests {
             classify("u", &ureq::Error::HostNotFound),
             Failure::Retry(_)
         ));
+    }
+
+    fn retry_text(failure: Failure) -> String {
+        match failure {
+            Failure::Retry(text) => text,
+            Failure::Stop(error) => panic!("stopped: {error}"),
+        }
+    }
+
+    #[test]
+    fn a_proxy_that_fails_is_named_without_its_address() {
+        let failure = classify(
+            "u",
+            &ureq::Error::ConnectProxyFailed("user:secret@proxy.example".to_owned()),
+        );
+        assert_eq!(retry_text(failure), "the proxy failed");
+    }
+
+    #[test]
+    fn a_bad_address_is_named_without_its_text() {
+        let failure = classify(
+            "u",
+            &ureq::Error::BadUri("http://user:secret@proxy.example".to_owned()),
+        );
+        assert_eq!(retry_text(failure), "the request failed");
+    }
+
+    #[test]
+    fn giving_up_on_a_proxy_that_fails_says_so_without_its_address() {
+        let result: Result<(), _> = with_retries(
+            "u",
+            |_| {},
+            || {
+                Err(classify(
+                    "u",
+                    &ureq::Error::ConnectProxyFailed("user:secret@proxy.example".to_owned()),
+                ))
+            },
+        );
+        assert_eq!(
+            result.unwrap_err().to_string(),
+            "u failed 7 times (the last time: the proxy failed)"
+        );
+    }
+
+    #[test]
+    fn a_body_that_cannot_be_read_is_named_without_what_a_proxy_address_holds() {
+        assert_eq!(
+            unread(&ureq::Error::ConnectProxyFailed(
+                "user:secret@proxy.example".to_owned()
+            )),
+            "the proxy failed"
+        );
+    }
+
+    #[test]
+    fn a_copy_that_ureq_failed_is_named_without_what_a_proxy_address_holds() {
+        let wrapped =
+            ureq::Error::ConnectProxyFailed("user:secret@proxy.example".to_owned()).into_io();
+        assert_eq!(copy_failed(wrapped), "the proxy failed");
+    }
+
+    #[test]
+    fn a_copy_that_the_disk_failed_keeps_its_own_text() {
+        let plain = io::Error::new(io::ErrorKind::StorageFull, "no room left");
+        assert_eq!(copy_failed(plain), "no room left");
     }
 
     #[test]
