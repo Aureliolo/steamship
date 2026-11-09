@@ -56,7 +56,14 @@ pub fn judge(code: Option<i32>, console: &str, written: bool) -> Outcome {
     if code == Some(0_i32) && completed && written {
         return Outcome::Wrapped;
     }
-    Outcome::Failed(refusal(console).unwrap_or_else(|| upload::reasons(code, console, None)))
+    let exited_0 = if completed {
+        "steamcmd said the wrap completed, but the wrapped file is missing or empty"
+    } else {
+        "steamcmd exited 0 without saying the wrap completed"
+    };
+    Outcome::Failed(
+        refusal(console).unwrap_or_else(|| upload::reasons_with(code, console, None, exited_0)),
+    )
 }
 
 /// Why Valve's tool refused the executable, as steamcmd 1788292693 printed it: the tool's own
@@ -133,6 +140,53 @@ mod tests {
             judge(Some(0_i32), "Unloading Steam API...OK\n", true),
             Outcome::Failed(_)
         ));
+    }
+
+    fn said(code: Option<i32>, console: &str, written: bool) -> Vec<String> {
+        let Outcome::Failed(reasons) = judge(code, console, written) else {
+            panic!("the wrap did not fail");
+        };
+        reasons
+    }
+
+    #[test]
+    fn a_wrap_that_completed_but_left_no_file_says_the_file_is_missing_or_empty() {
+        assert_eq!(
+            said(Some(0_i32), WRAPPED, false),
+            ["steamcmd said the wrap completed, but the wrapped file is missing or empty"]
+        );
+    }
+
+    #[test]
+    fn a_wrap_that_exits_0_without_completing_says_so() {
+        assert_eq!(
+            said(Some(0_i32), "Unloading Steam API...OK\n", true),
+            ["steamcmd exited 0 without saying the wrap completed"]
+        );
+    }
+
+    #[test]
+    fn a_wrap_that_ends_otherwise_without_an_error_line_says_how_it_ended() {
+        assert_eq!(
+            said(Some(3_i32), WRAPPED, true),
+            ["steamcmd exited 3 without saying why"]
+        );
+        assert_eq!(
+            said(None, WRAPPED, true),
+            ["steamcmd did not finish in time and was stopped"]
+        );
+    }
+
+    #[test]
+    fn an_error_line_in_a_wrap_console_is_the_only_reason() {
+        assert_eq!(
+            said(
+                Some(0_i32),
+                "ERROR! Failed to log in (Rate Limit Exceeded).\n",
+                false
+            ),
+            ["Failed to log in (Rate Limit Exceeded)."]
+        );
     }
 
     #[test]
