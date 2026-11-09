@@ -243,11 +243,7 @@ fn unshipped_manifest(app: &AppScript, settings: &Block, problems: &mut Vec<Prob
     let Some(manifest) = settings::action_manifest(settings) else {
         return;
     };
-    let snapshot = app
-        .path
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(settings::SNAPSHOT);
+    let snapshot = settings::snapshot_beside(&app.path);
     if manifest.is_empty() {
         problems.push(Problem::new(
             &snapshot,
@@ -413,11 +409,7 @@ fn unlaunchable(
     settings: &Block,
     problems: &mut Vec<Problem>,
 ) {
-    let snapshot = app
-        .path
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(settings::SNAPSHOT);
+    let snapshot = settings::snapshot_beside(&app.path);
     let uploaded: Vec<u32> = app.depots.iter().map(|depot| depot.depot_id).collect();
     let mut all: Vec<Option<String>> = Vec::new();
     for depot in &uploaded {

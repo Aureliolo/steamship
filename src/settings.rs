@@ -8,12 +8,22 @@
 
 use std::fmt;
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 
 use crate::redist::REDISTRIBUTABLES;
 use crate::vdf::{self, Block, Pair, Value};
 
 /// The snapshot's name, beside the build scripts.
 pub const SNAPSHOT: &str = "settings.vdf";
+
+/// Where the snapshot lies beside the build script `script`.
+#[must_use]
+pub fn snapshot_beside(script: &Path) -> PathBuf {
+    script
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(SNAPSHOT)
+}
 
 /// The keys of `common` kept: what the app is, the app a demo or DLC belongs to, and the systems
 /// it runs on.

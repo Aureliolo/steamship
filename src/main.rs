@@ -1797,10 +1797,7 @@ fn checked(script: &Path, scripts_only: bool) -> Result<(check::Report, Branch),
 /// The settings snapshot beside `script`, for `app`, when there is one. Refused when it cannot be
 /// read.
 fn snapshot_beside(script: &Path, app: Option<u32>) -> Result<Option<vdf::Block>, ExitCode> {
-    let path = script
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(settings::SNAPSHOT);
+    let path = settings::snapshot_beside(script);
     match app {
         Some(app) if path.is_file() => {
             let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
