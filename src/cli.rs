@@ -20,8 +20,8 @@ pub const LOGIN: u8 = 3;
 /// steamcmd is missing or has been altered.
 pub const STEAMCMD: u8 = 4;
 
-/// What a shell sees when a signal stops the program steamship ran, which is no code of the table.
-pub const SIGNAL_NOTE: &str = "When a signal stops steamcmd on Linux or macOS, steamship prints its logs and then ends by that signal. A shell sees 128 plus the signal's number: 130 for SIGINT, 129 for SIGHUP and 143 for SIGTERM. On Windows nothing ends steamship this way.";
+/// What a shell sees when a signal reaches steamship, which is no code of the table.
+pub const SIGNAL_NOTE: &str = "On Linux and macOS, a SIGINT, SIGHUP or SIGTERM sent to steamship stops steamcmd. steamship prints its logs and ends as that signal would, so a shell sees 128 plus the signal's number: 130, 129 or 143. On Windows, steamcmd ends with steamship and its logs are not printed.";
 
 /// The codes steamship exits with itself, and what each means to whoever reads it.
 pub const EXIT_CODES: [(u8, &str); 5] = [
@@ -77,11 +77,11 @@ pub const VARIABLES: [(&str, &str); 14] = [
     ),
     (
         "CI",
-        "Set by CI systems. Any non-empty value silences the update notice, and a value other than `false` makes a Workshop item without an ID need `--new`",
+        "Set by CI systems. A non-empty value silences the update notice. Unless it is `false`, a Workshop item without an ID needs `--new`",
     ),
     (
         "GITHUB_ACTIONS",
-        "Set to `true` by GitHub Actions. Steamship then masks the CI account's name and prints Steam's logs as collapsed groups",
+        "Set to `true` by GitHub Actions. steamship then masks the CI account's name and prints Steam's logs as collapsed groups",
     ),
     (
         "GITHUB_OUTPUT",
@@ -89,19 +89,19 @@ pub const VARIABLES: [(&str, &str); 14] = [
     ),
     (
         "HOME",
-        "On Linux and macOS, the home folder that holds the default per-user folder",
+        "On macOS, and on Linux when `XDG_DATA_HOME` is not set, the folder the default per-user folder goes in",
     ),
     (
         "XDG_DATA_HOME",
-        "On Linux, the data folder that holds the default per-user folder, before `HOME`",
+        "On Linux, the folder the default per-user folder goes in, before `HOME`",
     ),
     (
         "LOCALAPPDATA",
-        "On Windows, the folder that holds the default per-user folder",
+        "On Windows, the folder the default per-user folder goes in",
     ),
     (
         "DBUS_SESSION_BUS_ADDRESS",
-        "On Linux, the session bus that reaches the keyring where `login` keeps secrets",
+        "On Linux, the address of the session bus that reaches GNOME Keyring or KWallet, where the kept Web API key and beta branch passwords are",
     ),
     (
         "XDG_RUNTIME_DIR",
