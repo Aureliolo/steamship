@@ -40,13 +40,27 @@ pub fn depot(text: &str) -> Result<Depot, String> {
 /// # Errors
 ///
 /// When `folder` climbs out of where it is written from, which the scripts could not name a way
-/// back from.
+/// back from. Also when a depot's folder or the branch holds a double quote, which a quoted value
+/// cannot hold and would be read back as other keys.
 pub fn scripts(
     app: u32,
     depots: &[Depot],
     folder: &Path,
     set_live: Option<&str>,
 ) -> Result<Vec<(String, String)>, String> {
+    if let Some(depot) = depots.iter().find(|depot| depot.folder.contains('"')) {
+        return Err(format!(
+            "depot {}'s folder {} holds a double quote, which a build script cannot hold. Name a \
+             folder without one",
+            depot.id, depot.folder
+        ));
+    }
+    if let Some(branch) = set_live.filter(|branch| branch.contains('"')) {
+        return Err(format!(
+            "the branch {branch} holds a double quote, which a build script cannot hold. Name a \
+             branch without one"
+        ));
+    }
     let mut back = String::new();
     for part in folder.components() {
         match part {
@@ -227,6 +241,103 @@ mod tests {
         assert_eq!(
             scripts(480, &one, Path::new("../steam"), None).unwrap_err(),
             "../steam is not a folder inside this one. Name a relative path inside it, without .."
+        );
+    }
+
+    fn one_depot(id: u32, folder: &str) -> Depot {
+        Depot {
+            id,
+            folder: folder.to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_depot_folder_holding_a_double_quote_is_refused() {
+        assert_eq!(
+            scripts(
+                480,
+                &[one_depot(481, "build/\"x")],
+                Path::new("steam"),
+                None
+            ),
+            Err(
+                "depot 481's folder build/\"x holds a double quote, which a build script cannot \
+                 hold. Name a folder without one"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn the_refusal_names_the_depot_whose_folder_holds_the_double_quote() {
+        let depots = [one_depot(481, "build"), one_depot(482, "b\"d")];
+        assert_eq!(
+            scripts(480, &depots, Path::new("steam"), None),
+            Err(
+                "depot 482's folder b\"d holds a double quote, which a build script cannot \
+                 hold. Name a folder without one"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn a_branch_holding_a_double_quote_is_refused() {
+        assert_eq!(
+            scripts(
+                480,
+                &[one_depot(481, "build")],
+                Path::new("steam"),
+                Some("te\"st")
+            ),
+            Err(
+                "the branch te\"st holds a double quote, which a build script cannot hold. Name \
+                 a branch without one"
+                    .to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn scripts_read_back_to_the_folder_and_branch_they_were_given() {
+        let written = scripts(
+            480,
+            &[one_depot(481, "my build [x]")],
+            Path::new("steam"),
+            Some("beta test"),
+        )
+        .unwrap();
+        let app = vdf::parse(&written.first().unwrap().1).unwrap();
+        assert_eq!(
+            app.block("AppBuild").unwrap().text("SetLive"),
+            Some("beta test")
+        );
+        let depot = vdf::parse(&written.last().unwrap().1).unwrap();
+        assert_eq!(
+            depot.block("DepotBuild").unwrap().text("ContentRoot"),
+            Some("my build [x]")
+        );
+    }
+
+    #[test]
+    fn other_characters_in_a_folder_or_branch_read_back_unchanged() {
+        let folder = "a\\b // c {d} [e]\nf";
+        let written = scripts(
+            480,
+            &[one_depot(481, folder)],
+            Path::new("steam"),
+            Some("x // y"),
+        )
+        .unwrap();
+        let app = vdf::parse(&written.first().unwrap().1).unwrap();
+        assert_eq!(
+            app.block("AppBuild").unwrap().text("SetLive"),
+            Some("x // y")
+        );
+        let depot = vdf::parse(&written.last().unwrap().1).unwrap();
+        assert_eq!(
+            depot.block("DepotBuild").unwrap().text("ContentRoot"),
+            Some(folder)
         );
     }
 }
