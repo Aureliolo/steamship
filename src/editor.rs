@@ -272,14 +272,11 @@ fn records(text: &str) -> Vec<Vec<String>> {
 /// Each achievement in `definitions` and its progress bar, as the editor shows it: the stat it
 /// counts and the values it runs between, or "no progress bar".
 fn progress_bars(definitions: &str) -> Vec<(String, String)> {
-    definitions
-        .lines()
+    records(definitions)
+        .into_iter()
         .skip(1)
-        .filter_map(|line| {
-            // An API name, a set ID, a permission, two flags, a stat's name and two numbers: no
-            // field of a row has a comma or a quote to escape, as the header's do.
-            let fields: Vec<&str> = line.split(',').collect();
-            let [api_name, _, _, _, _, stat, least, most] = fields.as_slice() else {
+        .filter_map(|record| {
+            let [api_name, _, _, _, _, stat, least, most] = record.as_slice() else {
                 return None;
             };
             let bar = if stat.is_empty() {
@@ -287,7 +284,7 @@ fn progress_bars(definitions: &str) -> Vec<(String, String)> {
             } else {
                 format!("{stat} {least} - {most}")
             };
-            Some(((*api_name).to_owned(), bar))
+            Some((api_name.clone(), bar))
         })
         .collect()
 }
@@ -717,6 +714,60 @@ mod tests {
             "neither a flag changed nor an achievement new to the definitions"
         );
         assert_eq!(rebarred("", &after), []);
+    }
+
+    fn bar_row(api_name: &str, stat: &str, most: &str) -> String {
+        row([api_name, "", "Client", "false", "false", stat, "0", most])
+    }
+
+    #[test]
+    fn a_progress_bar_is_named_for_an_api_name_that_holds_a_comma() {
+        let before = format!("head\n{}", bar_row("A,B", "DAYS", "3"));
+        let after = format!("head\n{}", bar_row("A,B", "DAYS", "4"));
+        assert_eq!(
+            rebarred(&before, &after),
+            [(
+                "A,B".to_owned(),
+                "DAYS 0 - 3".to_owned(),
+                "DAYS 0 - 4".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn a_progress_bar_is_named_with_a_stat_name_that_holds_a_comma() {
+        let before = format!("head\n{}", bar_row("PLAIN", "", "0"));
+        let after = format!("head\n{}", bar_row("PLAIN", "DAYS, TOTAL", "9"));
+        assert_eq!(
+            rebarred(&before, &after),
+            [(
+                "PLAIN".to_owned(),
+                "no progress bar".to_owned(),
+                "DAYS, TOTAL 0 - 9".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn a_progress_bar_is_named_for_a_field_that_holds_a_doubled_double_quote() {
+        let before = format!("head\n{}", bar_row("SAY \"HI\"", "DAYS", "3"));
+        let after = format!("head\n{}", bar_row("SAY \"HI\"", "DAYS", "4"));
+        assert!(before.contains("\"SAY \"\"HI\"\"\""));
+        assert_eq!(
+            rebarred(&before, &after),
+            [(
+                "SAY \"HI\"".to_owned(),
+                "DAYS 0 - 3".to_owned(),
+                "DAYS 0 - 4".to_owned()
+            )]
+        );
+    }
+
+    #[test]
+    fn a_header_row_is_never_named_as_a_progress_bar() {
+        let before = format!("a,b,c,d,e,f,g,h\n{}", bar_row("X", "DAYS", "3"));
+        let after = format!("a,b,c,d,e,stat,g,h\n{}", bar_row("X", "DAYS", "3"));
+        assert_eq!(rebarred(&before, &after), []);
     }
 
     #[test]
