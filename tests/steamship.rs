@@ -474,6 +474,63 @@ fn init_leaves_the_branch_to_choose_for_scripts_no_game_keeps() {
 }
 
 #[test]
+fn init_refuses_a_game_branch_holding_a_double_quote_before_writing_a_script() {
+    let folder = tempfile::tempdir().unwrap();
+    fs::write(folder.path().join("steamship.toml"), "branch = 'te\"st'\n").unwrap();
+    let (code, stdout, stderr) = steamship_in(
+        folder.path(),
+        &["init", "480"],
+        Some(&folder.path().join("home")),
+        &[],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}");
+    assert!(
+        failure(&stderr).ends_with(
+            "steamship.toml: `branch` is te\"st, which holds a double quote that a build \
+             script cannot hold. Name a branch without one"
+        ),
+        "{stderr}"
+    );
+    assert!(!folder.path().join("steam").exists());
+}
+
+#[test]
+fn init_refuses_a_steamship_toml_it_cannot_read_before_writing_a_script() {
+    let folder = tempfile::tempdir().unwrap();
+    fs::write(folder.path().join("steamship.toml"), "branch = 1\n").unwrap();
+    let (code, stdout, stderr) = steamship_in(
+        folder.path(),
+        &["init", "480"],
+        Some(&folder.path().join("home")),
+        &[],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}");
+    assert!(
+        failure(&stderr).ends_with("steamship.toml: `branch` is not text. Write it in quotes"),
+        "{stderr}"
+    );
+    assert!(!folder.path().join("steam").exists());
+}
+
+#[test]
+fn init_writes_scripts_for_a_game_whose_steamship_toml_names_no_branch() {
+    let folder = tempfile::tempdir().unwrap();
+    fs::write(folder.path().join("steamship.toml"), "released = false\n").unwrap();
+    let (code, stdout, stderr) = steamship_in(
+        folder.path(),
+        &["init", "480"],
+        Some(&folder.path().join("home")),
+        &[],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  branch    testing, the game's, set live\n"),
+        "{stdout}"
+    );
+    assert!(folder.path().join("steam").join("app_build.vdf").is_file());
+}
+
+#[test]
 fn completions_are_printed_for_each_shell_and_name_every_command() {
     for (shell, opening) in [
         ("bash", "_steamship() {"),
