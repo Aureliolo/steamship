@@ -190,9 +190,6 @@ pub fn run(
     Ok(Finished { code, output })
 }
 
-/// Only Windows puts up a dialogue of its own when a program crashes.
-pub const fn silence_error_dialogues() {}
-
 /// A program running on a pseudo terminal.
 ///
 /// The program reads and writes it as the terminal it takes it for: one that shows its prompts
