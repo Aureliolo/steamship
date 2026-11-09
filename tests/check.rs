@@ -5,6 +5,7 @@
     reason = "a test reports failure by panicking, its helpers included"
 )]
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -1335,4 +1336,464 @@ fn a_mapping_descends_into_folders_only_when_recursive() {
     let deep = project.file("scripts/deep.vdf", script("1", "bin/tools*").as_bytes());
     // In path order: bin/tool.exe sorts before game.exe.
     assert_eq!(names(&check(&deep), 1), ["tool.exe", "game.exe"]);
+}
+
+const PROGRAM: &[u8] = b"MZ";
+const DATA: &[u8] = b"pack";
+
+/// App 1000 with one depot mapping everything in `export`, holding `files` (each its bytes), and
+/// going live on `testing`.
+fn launch_project(files: &[(&str, &[u8])]) -> (Project, PathBuf) {
+    let project = Project::new();
+    for (name, contents) in files {
+        project.put(&format!("export/{name}"), contents);
+    }
+    project.put(
+        "steam/depot_game.vdf",
+        br#""DepotBuild" { "DepotID" "1001" "FileMapping" { "LocalPath" "*" "DepotPath" "." "Recursive" "1" } }"#,
+    );
+    let app = project.file(
+        "steam/app_build.vdf",
+        br#""AppBuild" { "AppID" "1000" "ContentRoot" "../export/" "SetLive" "testing" "Depots" { "1001" "depot_game.vdf" } }"#,
+    );
+    (project, app)
+}
+
+/// App 1000's settings with these launch options, each its program, the systems it runs on and the
+/// beta branch it is offered on alone, and these depots, each its id, the systems it installs on
+/// and one more line of its own, if any.
+fn launching_settings(
+    options: &[(&str, &str, Option<&str>)],
+    depots: &[(&str, &str, &str)],
+) -> vdf::Block {
+    let mut text = String::from("\"1000\"\n{\n\t\"config\"\n\t{\n\t\t\"launch\"\n\t\t{\n");
+    for (key, (program, systems, branch)) in options.iter().enumerate() {
+        let systems = if systems.is_empty() {
+            String::new()
+        } else {
+            format!("\t\t\t\t\t\"oslist\"\t\t\"{systems}\"\n")
+        };
+        let branch = branch.map_or_else(String::new, |branch| {
+            format!("\t\t\t\t\t\"betakey\"\t\t\"{branch}\"\n")
+        });
+        write!(
+            text,
+            "\t\t\t\"{key}\"\n\t\t\t{{\n\t\t\t\t\"executable\"\t\t\"{program}\"\n\
+             \t\t\t\t\"config\"\n\t\t\t\t{{\n{systems}{branch}\t\t\t\t}}\n\t\t\t}}\n"
+        )
+        .unwrap();
+    }
+    text.push_str("\t\t}\n\t}\n\t\"depots\"\n\t{\n");
+    for (id, systems, extra) in depots {
+        let systems = if systems.is_empty() {
+            String::new()
+        } else {
+            format!("\t\t\t\t\"oslist\"\t\t\"{systems}\"\n")
+        };
+        write!(
+            text,
+            "\t\t\"{id}\"\n\t\t{{\n\t\t\t\"config\"\n\t\t\t{{\n{systems}\t\t\t}}\n\
+             \t\t\t{extra}\n\t\t}}\n"
+        )
+        .unwrap();
+    }
+    text.push_str("\t}\n}\n");
+    settings::read(&text, 1000).unwrap()
+}
+
+/// What `check` says of launch option `key`, which starts `program` `on` a system, when the build
+/// installs `instead`.
+fn starts(key: usize, program: &str, on: &str, instead: &str) -> String {
+    format!(
+        "starts \"{program}\" in app 1000's launch option {key}{on}, which the build does not \
+         install. It installs {instead}. Name the build's program in the launch option, under \
+         Installation, General Installation in Steamworks, and save the settings again. Or ship \
+         the program under that name"
+    )
+}
+
+/// What `check` says of a build holding `files`, against `options` and `depots`.
+fn launch_said(
+    files: &[(&str, &[u8])],
+    options: &[(&str, &str, Option<&str>)],
+    depots: &[(&str, &str, &str)],
+) -> Vec<String> {
+    let (_project, app) = launch_project(files);
+    messages(&check::against(
+        &app,
+        Some(&launching_settings(options, depots)),
+    ))
+}
+
+#[test]
+fn a_build_with_no_program_where_its_launch_option_starts_one_says_so() {
+    assert_eq!(
+        launch_said(
+            &[("data.pck", DATA), ("steam_api64.dll", PROGRAM)],
+            &[("inn.exe", "windows", None)],
+            &[]
+        ),
+        [starts(
+            0,
+            "inn.exe",
+            " on windows",
+            "no program in the install folder"
+        )]
+    );
+}
+
+#[test]
+fn a_launch_option_in_a_folder_is_looked_for_in_that_folder_and_names_what_is_there_instead() {
+    let windows = [("bin/inn.exe", "windows", None)];
+    assert_eq!(
+        launch_said(
+            &[
+                ("top.exe", PROGRAM),
+                ("bin/old.exe", PROGRAM),
+                ("bin/steam_api64.dll", PROGRAM),
+                ("bin/data.pck", DATA),
+            ],
+            &windows,
+            &[]
+        ),
+        [starts(
+            0,
+            "bin/inn.exe",
+            " on windows",
+            "only \"old.exe\" in \"bin\""
+        )]
+    );
+    assert_eq!(
+        launch_said(
+            &[("top.exe", PROGRAM), ("bin/data.pck", DATA)],
+            &windows,
+            &[]
+        ),
+        [starts(
+            0,
+            "bin/inn.exe",
+            " on windows",
+            "no program in \"bin\""
+        )]
+    );
+    assert_eq!(
+        launch_said(
+            &[("bin/win/old.exe", PROGRAM), ("bin/other.exe", PROGRAM)],
+            &[("bin/win/inn.exe", "windows", None)],
+            &[]
+        ),
+        [starts(
+            0,
+            "bin/win/inn.exe",
+            " on windows",
+            "only \"old.exe\" in \"bin/win\""
+        )]
+    );
+    assert_eq!(
+        launch_said(
+            &[("apps/Other.app/Contents/MacOS/Other", PROGRAM)],
+            &[("apps/Inn.app", "macos", None)],
+            &[]
+        ),
+        [starts(
+            0,
+            "apps/Inn.app",
+            " on macos",
+            "only \"Other.app\" in \"apps\""
+        )]
+    );
+}
+
+#[test]
+fn a_system_served_by_a_depot_the_build_leaves_out_is_not_judged() {
+    let option = [("inn.exe", "windows", None)];
+    let files = [("data.pck", DATA)];
+    let with = |extra: &str| {
+        launch_said(
+            &files,
+            &option,
+            &[("1001", "windows", ""), ("2000", "windows", extra)],
+        )
+    };
+    assert_eq!(
+        with(r#""depotfromapp" "480""#),
+        Vec::<String>::new(),
+        "another app's depot"
+    );
+    assert_eq!(
+        with(""),
+        Vec::<String>::new(),
+        "a depot of the app that the script does not upload"
+    );
+    let refused = [starts(
+        0,
+        "inn.exe",
+        " on windows",
+        "no program in the install folder",
+    )];
+    assert_eq!(with(r#""dlcappid" "480""#), refused, "a DLC's depot");
+    assert_eq!(
+        with(r#""depotfromapp" "228980""#),
+        refused,
+        "the redistributables"
+    );
+}
+
+#[test]
+fn a_launch_option_for_a_system_no_uploaded_depot_installs_on_is_not_judged() {
+    let files = [("game.exe", PROGRAM)];
+    let depots = [("1001", "windows", "")];
+    assert_eq!(
+        launch_said(&files, &[("inn.x86_64", "linux", None)], &depots),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        launch_said(&files, &[("inn.exe", "windows", None)], &depots),
+        [starts(
+            0,
+            "inn.exe",
+            " on windows",
+            "only \"game.exe\" in the install folder"
+        )]
+    );
+}
+
+#[test]
+fn a_linux_or_macos_library_beside_the_program_is_not_named_as_a_program() {
+    assert_eq!(
+        launch_said(
+            &[
+                ("old.exe", PROGRAM),
+                ("libsteam.so", PROGRAM),
+                ("libsteam.so.1", PROGRAM),
+                ("libsteam.so.1.2", PROGRAM),
+                ("Steam.DYLIB", PROGRAM),
+                ("steam_api64.dll", PROGRAM),
+            ],
+            &[("inn.exe", "windows", None)],
+            &[]
+        ),
+        [starts(
+            0,
+            "inn.exe",
+            " on windows",
+            "only \"old.exe\" in the install folder"
+        )]
+    );
+}
+
+/// What `folder_launch` says of a folder `build` holding `files`, app 1000's, against `options`.
+fn folder_said(files: &[(&str, &[u8])], options: &[(&str, &str, Option<&str>)]) -> Option<String> {
+    let project = Project::new();
+    for (name, contents) in files {
+        project.put(&format!("build/{name}"), contents);
+    }
+    let build = project.root.join("build");
+    let problem = check::folder_launch(&build, 1000, &launching_settings(options, &[]));
+    if let Some(found) = &problem {
+        assert_eq!(found.file, build, "the problem names the folder");
+    }
+    problem.map(|found| found.message)
+}
+
+/// The refusal of a build folder holding `holding`, whose launch options start `started`.
+fn folder_refusal(holding: &str, started: &str) -> String {
+    format!(
+        "is a build of app 1000 holding {holding}, and none of the programs its launch options \
+         start: {started}. Name the build's program in a launch option, under Installation, \
+         General Installation in Steamworks, and save the settings again. Or ship the program \
+         under that name"
+    )
+}
+
+#[test]
+fn a_build_folder_is_judged_against_every_launch_option_but_a_beta_branch_s() {
+    assert_eq!(
+        folder_said(
+            &[
+                ("other.exe", PROGRAM),
+                ("beta.exe", PROGRAM),
+                ("data/level.pck", DATA)
+            ],
+            &[
+                ("inn.exe", "windows", None),
+                ("inn.x86_64", "linux", None),
+                ("Inn.app", "macos", None),
+                ("inn", "", None),
+                ("beta.exe", "windows", Some("experimental")),
+            ]
+        ),
+        Some(folder_refusal(
+            "\"beta.exe\" and \"other.exe\"",
+            "\"inn.exe\" on windows, \"inn.x86_64\" on linux, \"Inn.app\" on macos and \"inn\""
+        ))
+    );
+}
+
+#[test]
+fn a_build_folder_names_a_macos_app_and_a_program_in_a_folder_the_option_names() {
+    let app = [("Inn.app", "macos", None)];
+    let other_app = ("Other.app/Contents/MacOS/Other", PROGRAM);
+    assert_eq!(
+        folder_said(&[other_app, ("data/level.pck", DATA)], &app),
+        Some(folder_refusal("\"Other.app\"", "\"Inn.app\" on macos"))
+    );
+    assert_eq!(
+        folder_said(&[other_app, ("Inn.app/Contents/MacOS/Inn", PROGRAM)], &app),
+        None
+    );
+    assert_eq!(
+        folder_said(
+            &[("bin/old.exe", PROGRAM), ("top.exe", PROGRAM)],
+            &[("bin/inn.exe", "windows", None)]
+        ),
+        Some(folder_refusal(
+            "\"bin/old.exe\"",
+            "\"bin/inn.exe\" on windows"
+        ))
+    );
+}
+
+#[test]
+fn a_build_folder_matches_a_launch_option_by_the_case_its_system_tells_apart() {
+    assert_eq!(
+        folder_said(&[("inn.x86_64", PROGRAM)], &[("inn.x86_64", "linux", None)]),
+        None
+    );
+    assert_eq!(
+        folder_said(&[("INN.EXE", PROGRAM)], &[("inn.exe", "windows", None)]),
+        None,
+        "Windows finds a program by its name in any case"
+    );
+}
+
+// A file system that ignores case finds `Inn.x86_64` under the other name, so only Linux's can
+// show the difference.
+#[cfg(target_os = "linux")]
+#[test]
+fn on_linux_a_build_folder_does_not_match_a_linux_only_launch_option_by_another_case() {
+    assert_eq!(
+        folder_said(&[("Inn.x86_64", PROGRAM)], &[("inn.x86_64", "linux", None)]),
+        Some(folder_refusal("\"Inn.x86_64\"", "\"inn.x86_64\" on linux"))
+    );
+}
+
+/// A folder with its permissions taken away, given back when this drops so that its parent can be
+/// removed.
+#[cfg(unix)]
+struct Locked(PathBuf);
+
+#[cfg(unix)]
+impl Locked {
+    fn new(folder: &Path) -> Self {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::set_permissions(folder, fs::Permissions::from_mode(0o000)).unwrap();
+        let locked = Self(folder.to_owned());
+        assert!(
+            fs::read_dir(folder).is_err(),
+            "a user who can read any folder, such as root, cannot run this test"
+        );
+        locked
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Locked {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        drop(fs::set_permissions(
+            &self.0,
+            fs::Permissions::from_mode(0o755),
+        ));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_build_folder_that_cannot_be_read_is_refused_with_the_systems_reason() {
+    let project = Project::new();
+    project.put("build/game.exe", PROGRAM);
+    let build = project.root.join("build");
+    let _locked = Locked::new(&build);
+    let report = check::folder(&build, None);
+    assert_eq!(
+        messages(&report),
+        ["cannot be read: Permission denied (os error 13)"]
+    );
+    assert_eq!(report.problems.first().unwrap().file, build);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_content_folder_that_cannot_be_read_is_refused_with_the_systems_reason() {
+    let (project, app) = Project::shipping("");
+    let _locked = Locked::new(&project.root.join("export/windows"));
+    assert_eq!(
+        messages(&check(&app)),
+        [r#"depot 1001: LocalPath "windows\*" cannot be read: Permission denied (os error 13)"#]
+    );
+}
+
+/// A link at `at` to `target`, a folder or a file.
+fn link(target: &Path, at: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+
+        symlink(target, at).unwrap();
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{symlink_dir, symlink_file};
+
+        if target.is_dir() {
+            symlink_dir(target, at).unwrap();
+        } else {
+            symlink_file(target, at).unwrap();
+        }
+    }
+}
+
+#[test]
+fn a_link_to_a_folder_is_not_walked_a_loop_of_links_ends_and_a_link_to_a_file_counts() {
+    let (project, app) = Project::shipping("");
+    project.put("export/other/inside.pck", DATA);
+    let real = project.file("export/other/real.pck", DATA);
+    let windows = project.root.join("export/windows");
+    link(&project.root.join("export/other"), &windows.join("linked"));
+    link(&windows, &windows.join("again"));
+    link(&real, &windows.join("alias.pck"));
+    let report = check(&app);
+    assert_eq!(messages(&report), Vec::<String>::new());
+    assert_eq!(names(&report, 1001), ["alias.pck", "game.exe", "game.pck"]);
+}
+
+#[test]
+fn a_preview_of_0_and_a_blank_local_or_set_live_are_as_good_as_absent() {
+    for extra in [
+        r#""Preview" "0""#,
+        r#""Preview" " 0 ""#,
+        r#""Preview" """#,
+        r#""Local" """#,
+        r#""Local" "  ""#,
+    ] {
+        let (_project, app) = Project::shipping(extra);
+        assert_eq!(messages(&check(&app)), Vec::<String>::new(), "{extra}");
+        assert_eq!(
+            messages(&scripts_only(&app)),
+            Vec::<String>::new(),
+            "{extra}"
+        );
+    }
+    let (_project, app) = Project::shipping("");
+    assert_eq!(check(&app).set_live.as_deref(), Some("testing"));
+    let original = fs::read_to_string(&app).unwrap();
+    for blank in [r#""""#, r#""  ""#] {
+        fs::write(&app, original.replace(r#""testing""#, blank)).unwrap();
+        let report = check(&app);
+        assert_eq!(messages(&report), Vec::<String>::new(), "{blank}");
+        assert_eq!(report.set_live, None, "{blank}");
+    }
 }
