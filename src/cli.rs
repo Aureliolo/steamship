@@ -20,7 +20,10 @@ pub const LOGIN: u8 = 3;
 /// steamcmd is missing or has been altered.
 pub const STEAMCMD: u8 = 4;
 
-/// Every code steamship exits with, and what it means to whoever reads it.
+/// What a shell sees when a signal stops the program steamship ran, which is no code of the table.
+pub const SIGNAL_NOTE: &str = "When a signal stops steamcmd on Linux or macOS, steamship prints its logs and then ends by that signal. A shell sees 128 plus the signal's number: 130 for SIGINT, 129 for SIGHUP and 143 for SIGTERM. On Windows nothing ends steamship this way.";
+
+/// The codes steamship exits with itself, and what each means to whoever reads it.
 pub const EXIT_CODES: [(u8, &str); 5] = [
     (0, "Done"),
     (
@@ -41,10 +44,13 @@ pub const EXIT_CODES: [(u8, &str); 5] = [
 /// The build account, when it is not the one `login` remembered.
 pub const ACCOUNT: &str = "STEAMSHIP_ACCOUNT";
 
-/// Every environment variable steamship reads, and what it is for. The Steam account's password
-/// is never among them, nor anywhere else. A beta branch's password is, since every player let in
-/// shares it.
-pub const VARIABLES: [(&str, &str); 6] = [
+/// Every environment variable steamship's own code reads by name in a release build, and what it
+/// is for: its own first, then CI's, then the system's.
+///
+/// A test holds the list to that. A debug build's stand-in hosts, the tests' fake steamcmd and
+/// what only a dependency reads stay out. The Steam account's password is never among them, nor anywhere else. A beta branch's password
+/// is, since every player let in shares it.
+pub const VARIABLES: [(&str, &str); 14] = [
     (
         platform::HOME,
         "Where steamcmd, its token and build output live, by default a per-user folder",
@@ -68,6 +74,38 @@ pub const VARIABLES: [(&str, &str); 6] = [
     (
         update::OPT_OUT,
         "Set to anything to never ask GitHub for a newer release",
+    ),
+    (
+        "CI",
+        "Set by CI systems. Any non-empty value silences the update notice, and a value other than `false` makes a Workshop item without an ID need `--new`",
+    ),
+    (
+        "GITHUB_ACTIONS",
+        "Set to `true` by GitHub Actions. Steamship then masks the CI account's name and prints Steam's logs as collapsed groups",
+    ),
+    (
+        "GITHUB_OUTPUT",
+        "In GitHub Actions, the file steamship writes the build ID to, as a step output",
+    ),
+    (
+        "HOME",
+        "On Linux and macOS, the home folder that holds the default per-user folder",
+    ),
+    (
+        "XDG_DATA_HOME",
+        "On Linux, the data folder that holds the default per-user folder, before `HOME`",
+    ),
+    (
+        "LOCALAPPDATA",
+        "On Windows, the folder that holds the default per-user folder",
+    ),
+    (
+        "DBUS_SESSION_BUS_ADDRESS",
+        "On Linux, the session bus that reaches the keyring where `login` keeps secrets",
+    ),
+    (
+        "XDG_RUNTIME_DIR",
+        "On Linux, where the session bus socket is looked for when `DBUS_SESSION_BUS_ADDRESS` is not set",
     ),
 ];
 
@@ -824,6 +862,10 @@ pub struct WorkshopItem {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
+    use std::path::Path;
+
     use clap::CommandFactory as _;
 
     use super::*;
@@ -840,22 +882,240 @@ mod tests {
         assert_eq!(codes, [0, 1, 2, 3, 4], "the codes scripts already test for");
     }
 
-    #[test]
-    fn every_variable_is_one_steamship_reads_and_the_only_password_that_of_a_branch() {
-        let names: Vec<&str> = VARIABLES.iter().map(|&(name, _)| name).collect();
-        assert_eq!(
-            names,
-            [
-                "STEAMSHIP_HOME",
-                "STEAMSHIP_ACCOUNT",
-                "STEAMSHIP_LOGIN",
-                "STEAMSHIP_WEB_API_KEY",
-                "STEAMSHIP_BRANCH_PASSWORD",
-                "STEAMSHIP_NO_UPDATE_CHECK"
-            ]
+    /// Not names of variables, though they are in capitals in a file that reads some.
+    const NOT_VARIABLES: [&str; 2] = [
+        // The checksum algorithm steamship looks for in an SBOM.
+        "SHA256", // What an answer that is not JSON is called in an error.
+        "JSON",
+    ];
+
+    /// Names read only in a debug build or a test build, with a text that guards each one in its
+    /// file, so a release build cannot reach them.
+    const NOT_IN_RELEASE: [(&str, &str); 3] = [
+        // The stand-in hosts are used only under `cfg!(debug_assertions)`.
+        ("STEAMSHIP_WEB_API_STAND_IN", "cfg!(debug_assertions)"),
+        ("STEAMSHIP_RELEASES_STAND_IN", "cfg!(debug_assertions)"),
+        // The fake steamcmd is compiled only when the tests turn its feature on.
+        ("STEAMSHIP_FAKE_STEAMCMD", "feature = \"fake-steamcmd\""),
+    ];
+
+    /// Each source file's name without its extension and its code up to the test module, without
+    /// comment lines.
+    fn sources() -> Vec<(String, String)> {
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut found = Vec::new();
+        for entry in fs::read_dir(folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().is_none_or(|extension| extension != "rs") {
+                continue;
+            }
+            let text = fs::read_to_string(&path).unwrap();
+            let mut code = String::new();
+            let mut lines = text.lines();
+            while let Some(line) = lines.next() {
+                if line.trim() == "#[cfg(test)]" {
+                    // Code after a test-only item that is not the test module would go unread.
+                    let next = lines.next().unwrap_or_default();
+                    assert!(
+                        next.trim_start().starts_with("mod tests"),
+                        "{path:?}: {next}"
+                    );
+                    break;
+                }
+                if !line.trim_start().starts_with("//") {
+                    code.push_str(line);
+                    code.push('\n');
+                }
+            }
+            found.push((
+                path.file_stem().unwrap().to_string_lossy().into_owned(),
+                code,
+            ));
+        }
+        found
+    }
+
+    fn is_name_char(character: char) -> bool {
+        character.is_ascii_uppercase() || character.is_ascii_digit() || character == '_'
+    }
+
+    /// The string literals on `line` that are one name in capitals.
+    fn capitals(line: &str) -> Vec<&str> {
+        let mut found = Vec::new();
+        for (at, _) in line.match_indices('"') {
+            let rest = line.get(at.saturating_add(1)..).unwrap_or_default();
+            let name = rest
+                .split(|character| !is_name_char(character))
+                .next()
+                .unwrap_or_default();
+            let closed = rest
+                .get(name.len()..)
+                .is_some_and(|after| after.starts_with('"'));
+            // `env!` is read when steamship is built and names no variable of the one that runs.
+            let at_build = line
+                .get(..at)
+                .is_some_and(|before| before.ends_with("env!("));
+            if closed
+                && !at_build
+                && name.len() > 1
+                && !name.starts_with(|character: char| character.is_ascii_digit())
+            {
+                found.push(name);
+            }
+        }
+        found
+    }
+
+    /// The text of a `const NAME: &str = "text";` per file and name.
+    fn constants(sources: &[(String, String)]) -> BTreeMap<(String, String), String> {
+        let mut found = BTreeMap::new();
+        for (file, code) in sources {
+            for line in code.lines() {
+                let line = line.trim_start().trim_start_matches("pub ");
+                let Some((name, rest)) = line
+                    .strip_prefix("const ")
+                    .and_then(|line| line.split_once(": &str = \""))
+                else {
+                    continue;
+                };
+                if let Some((text, _)) = rest.split_once('"') {
+                    drop(found.insert((file.clone(), name.to_owned()), text.to_owned()));
+                }
+            }
+        }
+        found
+    }
+
+    /// The name an argument gives to a read: a literal, or a constant by its path or, in the
+    /// file that defines it, by its name. `None` for the closure parameter that forwards a name
+    /// some other code chose.
+    fn named(
+        argument: &str,
+        file: &str,
+        constants: &BTreeMap<(String, String), String>,
+    ) -> Option<String> {
+        if argument == "name" {
+            return None;
+        }
+        if let Some(text) = argument
+            .strip_prefix('"')
+            .and_then(|rest| rest.strip_suffix('"'))
+        {
+            return Some(text.to_owned());
+        }
+        let mut path = argument.rsplit("::");
+        let constant = path.next().unwrap_or_default();
+        let module = path.next().unwrap_or(file);
+        let text = constants.get(&(module.to_owned(), constant.to_owned()));
+        Some(
+            text.unwrap_or_else(|| {
+                panic!("{file}: a read of `{argument}` names no literal or constant")
+            })
+            .clone(),
+        )
+    }
+
+    /// Every variable named in the code of `file`.
+    fn reads(
+        file: &str,
+        code: &str,
+        constants: &BTreeMap<(String, String), String>,
+    ) -> BTreeSet<String> {
+        let mut found = BTreeSet::new();
+        assert!(
+            !code.contains("getenv"),
+            "{file}: the C library's environment is not scanned"
         );
-        let passwords: Vec<&str> = names
-            .into_iter()
+        let takes_lookup = code.contains("Fn(&str) -> Option<");
+        for line in code.lines() {
+            if takes_lookup {
+                // Names reach an injected lookup through helpers and tuples, so every literal in
+                // capitals counts.
+                found.extend(
+                    capitals(line)
+                        .into_iter()
+                        .filter(|name| !NOT_VARIABLES.contains(name))
+                        .map(str::to_owned),
+                );
+            }
+            if let Some((_, rest)) = line.split_once("env = ") {
+                let constant = rest
+                    .split(|character| !is_name_char(character))
+                    .next()
+                    .unwrap_or_default();
+                found.extend(named(constant, file, constants));
+            }
+            for (at, _) in line.match_indices("var") {
+                let word: String = line
+                    .get(at..)
+                    .unwrap_or_default()
+                    .chars()
+                    .take_while(|&character| character.is_ascii_alphanumeric() || character == '_')
+                    .collect();
+                let before = line.get(..at).unwrap_or_default();
+                if !["var", "var_os", "vars", "vars_os"].contains(&word.as_str())
+                    || before.ends_with(|character: char| {
+                        character.is_ascii_alphanumeric() || character == '_'
+                    })
+                {
+                    continue;
+                }
+                assert!(before.ends_with("env::"), "{file}: {line}");
+                let after = line
+                    .get(at.saturating_add(word.len())..)
+                    .unwrap_or_default();
+                if word.starts_with("vars") {
+                    // The whole environment is copied into a child's, and no name is read.
+                    assert_eq!(file, "windows", "{file}: {line}");
+                    continue;
+                }
+                let Some((argument, _)) = after
+                    .strip_prefix('(')
+                    .and_then(|call| call.split_once(')'))
+                else {
+                    panic!("{file}: {line}");
+                };
+                found.extend(named(argument, file, constants));
+            }
+        }
+        found
+    }
+
+    #[test]
+    fn every_variable_steamship_reads_by_name_is_listed_and_only_a_branch_has_a_password() {
+        let sources = sources();
+        let constants = constants(&sources);
+        let mut read = BTreeSet::new();
+        for (file, code) in &sources {
+            read.extend(reads(file, code, &constants));
+        }
+        for (name, guard) in NOT_IN_RELEASE {
+            let files: Vec<&String> = sources
+                .iter()
+                .filter(|(_, code)| code.contains(&format!("\"{name}\"")))
+                .map(|(_, code)| code)
+                .collect();
+            assert!(!files.is_empty(), "{name} is read nowhere");
+            assert!(
+                files.iter().all(|code| code.contains(guard)),
+                "{name} is not guarded by {guard}"
+            );
+            assert!(read.remove(name), "{name} is not read");
+        }
+        let listed: BTreeSet<String> = VARIABLES.iter().map(|&(name, _)| name.to_owned()).collect();
+        assert_eq!(
+            read.difference(&listed).collect::<Vec<_>>(),
+            Vec::<&String>::new(),
+            "read in release code and missing from VARIABLES"
+        );
+        assert_eq!(
+            listed.difference(&read).collect::<Vec<_>>(),
+            Vec::<&String>::new(),
+            "listed in VARIABLES and read nowhere"
+        );
+        let passwords: Vec<&str> = VARIABLES
+            .iter()
+            .map(|&(name, _)| name)
             .filter(|name| name.contains("PASSWORD"))
             .collect();
         assert_eq!(passwords, ["STEAMSHIP_BRANCH_PASSWORD"]);
