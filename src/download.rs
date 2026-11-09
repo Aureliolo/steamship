@@ -104,7 +104,7 @@ fn read_text(agent: &ureq::Agent, url: &str, accept: Option<&str>) -> Result<Str
     response
         .body_mut()
         .read_to_string()
-        .map_err(|error| Failure::Retry(unread(&error)))
+        .map_err(|error| Failure::Retry(webapi::unanswered(&error)))
 }
 
 /// Where a GitHub release asset is served: its download address, and the API's listing of its
@@ -311,11 +311,6 @@ fn classify(url: &str, error: &ureq::Error) -> Failure {
     }
 }
 
-/// Why reading a body failed, in steamship's own words.
-fn unread(error: &ureq::Error) -> String {
-    webapi::unanswered(error)
-}
-
 /// Why copying a body to disk failed. ureq carries its own errors inside an `io::Error`, and a
 /// plain one is the disk's, which a person should not read as a failed connection.
 fn copy_failed(error: io::Error) -> String {
@@ -476,16 +471,6 @@ mod tests {
         assert_eq!(
             result.unwrap_err().to_string(),
             "u failed 7 times (the last time: the proxy failed)"
-        );
-    }
-
-    #[test]
-    fn a_body_that_cannot_be_read_is_named_without_what_a_proxy_address_holds() {
-        assert_eq!(
-            unread(&ureq::Error::ConnectProxyFailed(
-                "user:secret@proxy.example".to_owned()
-            )),
-            "the proxy failed"
         );
     }
 
