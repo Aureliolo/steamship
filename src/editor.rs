@@ -825,6 +825,19 @@ mod tests {
             localisation.get(1).copied(),
             Some("FIVE_LEVELS,name,Five Turns Round,F\u{fc}nf Runden")
         );
+        assert_eq!(
+            localisation.get(2..),
+            Some(
+                [
+                    "FIVE_LEVELS,description,Spin the wheel five times in a tide.,\
+                     Drehe das Rad f\u{fc}nf Mal in einer Flut.",
+                    "FIRST_ANCHOR,name,Down by the Wheel,Hinab zum Rad",
+                    "FIRST_ANCHOR,description,\"Drain a mill's \"\"first\"\" sluice, at last.\",\
+                     Gib die erste Schleuse eines Mahlwerks frei.",
+                ]
+                .as_slice()
+            )
+        );
         assert_eq!(localisation.len(), 5);
         assert_eq!(
             table(&written, "-achievement-sets-localization.csv"),

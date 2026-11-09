@@ -625,7 +625,7 @@ mod tests {
             }
         });
         let mut service = opened(&address).unwrap();
-        assert!(service.kept(&home()).unwrap().is_some());
+        assert_eq!(service.kept(&home()).unwrap().unwrap().as_slice(), KEY);
         drop(service);
         drop(serving.join().unwrap());
     }

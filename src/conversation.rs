@@ -230,5 +230,29 @@ mod tests {
         assert_eq!(explain("Invalid Password"), "Steam refused the password");
         assert_eq!(explain("invalid password"), "Steam refused the password");
         assert_eq!(explain("Something New"), "steamcmd says: Something New");
+        for (said, plain) in [
+            ("Two-factor code mismatch", "Steam refused the code"),
+            ("Invalid Login Auth Code", "Steam refused the code"),
+            (
+                "Account Login Denied Throttle",
+                "Steam is limiting login attempts. Wait, then try again",
+            ),
+            (
+                "Rate Limit Exceeded",
+                "Steam is limiting login attempts. Wait, then try again",
+            ),
+            (
+                "Expired Login Auth Code",
+                "the code had expired. Try again with a new one",
+            ),
+        ] {
+            assert_eq!(explain(said), plain, "{said}");
+        }
+    }
+
+    #[test]
+    fn steamcmd_waiting_for_compat_after_logon_is_left_unshown() {
+        let line = "Waiting for compat in post-logon";
+        assert_eq!(step(&Event::Line(line.to_owned())), Step::Quiet);
     }
 }
