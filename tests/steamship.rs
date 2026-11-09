@@ -10,7 +10,7 @@
 
 pub mod common;
 
-use common::git::git;
+use common::git::{bare, commit, git, head, with_origin};
 use common::pe::{settings_ticking, windows_library};
 
 #[cfg(windows)]
@@ -3637,6 +3637,15 @@ fn login_with_web_api_key_refuses_what_is_not_a_key_before_asking_steam() {
 
 const KEY: &str = "0123456789abcdef0123456789abcdef";
 
+/// The variables that give a test a Web API key, no update check and a stand-in at `host`.
+const fn web_api_variables(host: &str) -> [(&'static str, &str); 3] {
+    [
+        ("STEAMSHIP_WEB_API_KEY", KEY),
+        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        (STAND_IN, host),
+    ]
+}
+
 const APPS: &str = r#"{"applist": {"apps": {"app": [
     {"appid": 1000010, "app_type": "game", "app_name": "Falcon Ridge Overseer"},
     {"appid": 1000030, "app_type": "game", "app_name": "Nocturne"}
@@ -3923,11 +3932,7 @@ fn builds_and_promote_use_the_key_set_and_say_what_steam_answered() {
         ("200 OK", BUILDS),
         ("200 OK", SET_LIVE),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let (built, listed, said) = steamship(&["builds", "1000010"], Some(home.path()), &set);
     assert_eq!((built, said.as_str()), (Some(0_i32), ""), "{listed}");
     assert!(
@@ -3972,11 +3977,7 @@ const SAMPLE_BUILDS: &str = r#"{"response":{"builds":{"20000003":{"BuildID":2000
 fn builds_json_prints_the_branches_and_builds_alone_on_standard_output() {
     let home = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(vec![("200 OK", SAMPLE_BETAS), ("200 OK", SAMPLE_BUILDS)]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let (code, stdout, stderr) = steamship(
         &["builds", "1000010", "--count", "2", "--json"],
         Some(home.path()),
@@ -4016,11 +4017,7 @@ fn builds_json_names_an_app_with_no_build_live_apart_from_steam_failing() {
         ("500 Internal Server Error", ""),
         ("200 OK", APPS),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     for (app, code) in [("1000030", "no-build-live"), ("480", "http-error")] {
         let (exit, stdout, stderr) = steamship(&["builds", app, "--json"], Some(home.path()), &set);
         assert_eq!(exit, Some(1_i32), "{stdout}{stderr}");
@@ -4079,11 +4076,7 @@ fn setting_live(branch: &str) -> (tempfile::TempDir, PathBuf) {
 fn check_asks_steam_whether_the_live_branch_exists_when_a_key_is_at_hand() {
     let home = tempfile::tempdir().unwrap();
     let (host, requests) = web_api(vec![("200 OK", BETAS), ("200 OK", BETAS)]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
 
     let (_there, found) = setting_live("Testing");
     let found = found.to_string_lossy().into_owned();
@@ -4121,11 +4114,7 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
     let (unanswered, said, _) = steamship(
         &["check", &script],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &host),
-        ],
+        &web_api_variables(&host),
     );
     assert_eq!(unanswered, Some(0_i32), "{said}");
     assert!(said.contains("\u{2717} not checked"), "{said}");
@@ -4139,11 +4128,7 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
     let (unbuilt, new, _) = steamship(
         &["check", &script],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &holding),
-        ],
+        &web_api_variables(&holding),
     );
     assert_eq!(unbuilt, Some(0_i32), "{new}");
     assert!(
@@ -4466,11 +4451,7 @@ fn builds_and_promote_that_steam_answers_with_an_error_say_its_status_and_exit_1
         ("500 Internal Server Error", ""),
         ("500 Internal Server Error", ""),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     for args in [
         &["builds", "1000010"][..],
         &["promote", "1000010", "--build", "7", "--branch", "testing"],
@@ -4488,11 +4469,7 @@ fn builds_and_promote_that_steam_answers_with_an_error_say_its_status_and_exit_1
     let (code, stdout, stderr) = steamship(
         &["builds", "1000010"],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &refusing),
-        ],
+        &web_api_variables(&refusing),
     );
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     assert!(
@@ -4547,11 +4524,7 @@ fn achievements_are_listed_and_checked_against_a_file_by_api_name() {
         ("200 OK", SCHEMA),
         ("500 Internal Server Error", ""),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
 
     let (code, listed, _) = steamship(&["achievements", "480"], Some(home.path()), &set);
     assert_eq!(code, Some(0_i32), "{listed}");
@@ -4664,11 +4637,7 @@ fn achievements_are_checked_in_each_language_a_localisation_has() {
         ("500 Internal Server Error", ""),
         ("200 OK", CELLAR),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let files = tempfile::tempdir().unwrap();
     let records = files.path().join("achievements.json");
     fs::write(
@@ -5125,15 +5094,7 @@ fn inn_at(game: &Path, imported: bool, host: &str) -> (Option<i32>, String, Stri
         all.extend(["--check", records]);
     }
     all.extend(["--out", out]);
-    steamship(
-        &all,
-        Some(game),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, host),
-        ],
-    )
+    steamship(&all, Some(game), &web_api_variables(host))
 }
 
 /// What a stand-in answers when steamship is refused before it asks Steam anything.
@@ -5701,11 +5662,7 @@ fn more_than_a_hundred_achievements_are_said_to_need_a_vetted_app() {
 fn achievements_are_checked_in_each_language_a_catalogue_is_in() {
     let home = tempfile::tempdir().unwrap();
     let (host, requests) = web_api(vec![("200 OK", CELLAR), ("200 OK", KELLER)]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let files = tempfile::tempdir().unwrap();
     let records = files.path().join("achievements.json");
     fs::write(
@@ -5754,11 +5711,7 @@ fn achievements_json_prints_them_alone_on_standard_output_and_not_with_check() {
         ("200 OK", NOT_AGGREGATED),
         ("200 OK", TOTALS),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let (code, stdout, stderr) =
         steamship(&["achievements", "480", "--json"], Some(home.path()), &set);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
@@ -5864,11 +5817,7 @@ fn stats_are_listed_and_checked_only_when_the_file_lists_them() {
         ("200 OK", WITH_STATS),
         ("200 OK", WITH_STATS),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
 
     let (code, listed, _) = steamship(&["achievements", "480"], Some(home.path()), &set);
     assert_eq!(code, Some(0_i32), "{listed}");
@@ -5943,11 +5892,7 @@ fn whether_a_stat_is_aggregated_is_checked_against_the_totals_steam_keeps() {
             r#"{"response":{"result":24,"error":"Insufficient Privilege"}}"#,
         ),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let both = files.path().join("both.json");
     fs::write(
         &both,
@@ -6028,11 +5973,7 @@ fn a_check_against_an_app_with_nothing_on_steam_says_so_once_for_each_kind_in_an
     let (refused, shown, why) = steamship(
         &["achievements", "1000050", "--check", records, german],
         Some(game.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &host),
-        ],
+        &web_api_variables(&host),
     );
     assert_eq!(refused, Some(2_i32), "{shown}{why}");
     assert!(
@@ -6056,11 +5997,7 @@ fn an_app_with_nothing_on_steam_is_listed_as_none_with_where_they_are_made() {
         ("200 OK", r#"{"game": {}}"#),
         ("200 OK", r#"{"game": {}}"#),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
 
     let (code, listed, _) = steamship(&["achievements", "480"], Some(home.path()), &set);
     assert_eq!(code, Some(0_i32), "{listed}");
@@ -6097,11 +6034,7 @@ fn a_check_with_drift_in_its_stats_still_says_its_achievements_match() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(vec![("200 OK", SCHEMA)]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let file = achievements_file(files.path(), "Travel 500 feet in one life.");
     let listed = fs::read_to_string(&file).unwrap();
     fs::write(
@@ -6156,11 +6089,7 @@ fn achievements_saved_from_steam_are_a_file_that_check_finds_steam_matches() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(vec![("200 OK", INN_SCHEMA), ("200 OK", INN_SCHEMA)]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let file = files.path().join("achievements.json");
     let path = file.to_str().unwrap();
 
@@ -6230,11 +6159,7 @@ fn games_kits_records_are_checked_saying_what_steam_does_not_give() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(tti_checked_twice());
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let records = |by_hand: &str| {
         let path = files.path().join("achievements.json");
         fs::write(
@@ -6296,11 +6221,7 @@ fn records_split_over_several_files_are_checked_as_one_and_none_may_repeat() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(tti_checked_twice());
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let file = |name: &str, records: &str| {
         let path = files.path().join(name);
         fs::write(&path, records).unwrap();
@@ -6448,11 +6369,7 @@ fn rich_presence_is_sent_whole_for_every_file_and_a_result_steam_refuses_is_a_fa
             r#"{"response": {}}"#,
         ),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let command = ["rich-presence", "480", &english, &german];
 
     let (code, stdout, stderr) = steamship(&command, Some(home.path()), &set);
@@ -6582,11 +6499,7 @@ fn leaderboards_are_listed_and_checked_and_those_missing_are_made_as_the_file_ha
         ("200 OK", LEADERBOARDS),
         ("200 OK", MADE),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
 
     let (code, listed, _) = steamship(&["leaderboards", "480"], Some(home.path()), &set);
     assert_eq!(code, Some(0_i32), "{listed}");
@@ -6652,11 +6565,7 @@ fn leaderboards_saved_from_steam_are_a_file_that_check_finds_steam_matches() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(vec![("200 OK", LEADERBOARDS), ("200 OK", LEADERBOARDS)]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let file = files.path().join("leaderboards.json");
     let path = file.to_str().unwrap();
 
@@ -6718,11 +6627,7 @@ fn leaderboards_saved_from_steam_are_a_file_that_check_finds_steam_matches() {
     let (unread, _, unreadable) = steamship(
         &["leaderboards", "480", "--save", folder],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, "http://127.0.0.1:9"),
-        ],
+        &web_api_variables("http://127.0.0.1:9"),
     );
     assert_eq!(unread, Some(1_i32), "{unreadable}");
     assert!(
@@ -6735,11 +6640,7 @@ fn leaderboards_saved_from_steam_are_a_file_that_check_finds_steam_matches() {
 fn leaderboards_json_prints_only_what_steam_holds_or_how_it_failed_on_standard_output() {
     let home = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(vec![("200 OK", LEADERBOARDS), ("403 Forbidden", "")]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let (code, stdout, stderr) =
         steamship(&["leaderboards", "480", "--json"], Some(home.path()), &set);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
@@ -6816,11 +6717,7 @@ fn a_leaderboard_the_file_no_longer_holds_is_deleted_only_while_the_app_is_unrel
         ("200 OK", DELETED),
         ("200 OK", MADE),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let (code, said, stderr) = steamship(&command, Some(unreleased.path()), &set);
     assert_eq!(code, Some(0_i32), "{said}{stderr}");
     for line in [
@@ -6842,15 +6739,8 @@ fn a_leaderboard_the_file_no_longer_holds_is_deleted_only_while_the_app_is_unrel
     let released = faked_with(&released_as("released"));
     saved_login(released.path());
     let (asked, _unasked) = web_api(vec![("200 OK", LEADERBOARDS)]);
-    let (refused, kept, why) = steamship(
-        &command,
-        Some(released.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &asked),
-        ],
-    );
+    let (refused, kept, why) =
+        steamship(&command, Some(released.path()), &web_api_variables(&asked));
     assert_eq!(refused, Some(2_i32), "{kept}{why}");
     assert_eq!(
         failure(&why),
@@ -6866,11 +6756,7 @@ fn a_leaderboard_the_file_no_longer_holds_is_deleted_only_while_the_app_is_unrel
     let (failed, _, unsaid) = steamship(
         &command,
         Some(unreleased.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &refusing),
-        ],
+        &web_api_variables(&refusing),
     );
     assert_eq!(failed, Some(1_i32), "{unsaid}");
     assert!(unsaid.contains("result 2"), "{unsaid}");
@@ -6908,11 +6794,7 @@ fn a_dated_board_a_template_made_is_checked_against_it_and_never_made_or_deleted
             "--delete-missing",
         ],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &host),
-        ],
+        &web_api_variables(&host),
     );
     assert_eq!(code, Some(0_i32), "{said}{stderr}");
     assert!(
@@ -6946,11 +6828,7 @@ fn delete_missing_with_nothing_to_delete_asks_steamcmd_nothing() {
             "--delete-missing",
         ],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &host),
-        ],
+        &web_api_variables(&host),
     );
     assert_eq!(code, Some(0_i32), "{said}{stderr}");
     assert!(
@@ -6964,11 +6842,7 @@ fn games_kits_leaderboard_records_are_checked_and_a_leaderboard_in_two_files_is_
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(vec![("200 OK", LEADERBOARDS), ("200 OK", LEADERBOARDS)]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     let records = files.path().join("achievements.json");
     fs::write(
         &records,
@@ -7087,11 +6961,7 @@ fn a_branch_is_described_only_when_its_description_differs() {
         ("200 OK", DESCRIBED),
         ("200 OK", DESCRIBED),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
 
     let (code, stdout, stderr) = steamship(
         &[
@@ -7173,11 +7043,7 @@ fn the_default_branch_is_described_in_steamworks_and_a_refusal_says_steams_reaso
     let (refused, _, why) = steamship(
         &["branch", "1000010", "testing", "--description", "x"],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &host),
-        ],
+        &web_api_variables(&host),
     );
     assert_eq!(refused, Some(1_i32), "{why}");
     assert!(
@@ -7195,11 +7061,7 @@ fn a_500_about_an_app_the_key_holds_is_said_to_be_an_app_with_no_build_yet() {
         ("500 Internal Server Error", ""),
         ("200 OK", APPS),
     ]);
-    let set = [
-        ("STEAMSHIP_WEB_API_KEY", KEY),
-        ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-        (STAND_IN, &host),
-    ];
+    let set = web_api_variables(&host);
     // As Steam answered for Nocturne's app while no build was live on its default branch.
     let (code, stdout, stderr) = steamship(&["builds", "1000030"], Some(home.path()), &set);
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
@@ -7326,11 +7188,7 @@ fn promote_sets_the_default_branch_live_only_while_steam_shows_the_app_unrelease
     let (code, stdout, stderr) = steamship(
         &["promote", script, "--build", "1234", "--branch", "public"],
         Some(unreleased.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &host),
-        ],
+        &web_api_variables(&host),
     );
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
     assert!(
@@ -7372,11 +7230,7 @@ fn promote_sets_the_default_branch_live_only_while_steam_shows_the_app_unrelease
     let (refused, said, why) = steamship(
         &["promote", script, "--build", "1234", "--branch", "default"],
         Some(released.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &silent),
-        ],
+        &web_api_variables(&silent),
     );
     assert_eq!(refused, Some(2_i32), "{said}{why}");
     assert_eq!(
@@ -8677,26 +8531,7 @@ fn pushed_game(toml: Option<&str>) -> (tempfile::TempDir, PathBuf) {
     if let Some(toml) = toml {
         put("steamship.toml", toml.as_bytes());
     }
-    git(
-        temp.path(),
-        &[
-            "init",
-            "--quiet",
-            "--bare",
-            "--initial-branch=main",
-            "origin.git",
-        ],
-    );
-    git(&root, &["init", "--quiet", "--initial-branch=main"]);
-    git(
-        &root,
-        &[
-            "remote",
-            "add",
-            "origin",
-            &temp.path().join("origin.git").to_string_lossy(),
-        ],
-    );
+    with_origin(temp.path(), &root);
     pushed(&root, "The game");
     (temp, root)
 }
@@ -8704,7 +8539,7 @@ fn pushed_game(toml: Option<&str>) -> (tempfile::TempDir, PathBuf) {
 /// Commits everything in the game at `root` and pushes it to its origin.
 fn pushed(root: &Path, message: &str) {
     git(root, &["add", "--all"]);
-    git(root, &["commit", "--quiet", "--allow-empty", "-m", message]);
+    commit(root, message);
     git(
         root,
         &[
@@ -8721,7 +8556,7 @@ fn pushed(root: &Path, message: &str) {
 /// `green` stays where it was.
 fn pushed_ungreen(root: &Path, message: &str) {
     git(root, &["add", "--all"]);
-    git(root, &["commit", "--quiet", "--allow-empty", "-m", message]);
+    commit(root, message);
     git(root, &["push", "--quiet", "origin", "main"]);
 }
 
@@ -9403,11 +9238,7 @@ fn rollback_sets_a_branch_back_to_the_build_before_the_current_one_and_records_i
     let (code, stdout, stderr) = steamship(
         &["rollback", "1000010", "testing"],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &host),
-        ],
+        &web_api_variables(&host),
     );
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
     for line in [
@@ -9460,11 +9291,7 @@ fn rollback_refuses_a_branch_with_no_earlier_recorded_build_and_asks_steam_nothi
         let (code, stdout, stderr) = steamship(
             &["rollback", "1000010", branch],
             Some(home.path()),
-            &[
-                ("STEAMSHIP_WEB_API_KEY", KEY),
-                ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-                (STAND_IN, &silent),
-            ],
+            &web_api_variables(&silent),
         );
         assert_eq!(code, Some(2_i32), "{branch}: {stdout}{stderr}");
         assert!(failure(&stderr).contains(said), "{branch}: {stderr}");
@@ -9493,11 +9320,7 @@ fn rollback_sets_the_default_branch_back_only_while_steam_shows_the_app_unreleas
     let (code, stdout, stderr) = steamship(
         &["rollback", "1000", "public"],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            (STAND_IN, &silent),
-        ],
+        &web_api_variables(&silent),
     );
     assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
     assert!(
@@ -9891,16 +9714,7 @@ fn an_upload_in_a_game_asks_origin_and_refuses_when_origin_cannot_say_or_git_is_
          Install Git, or put it on the PATH"
     );
 
-    git(
-        temp.path(),
-        &[
-            "init",
-            "--quiet",
-            "--bare",
-            "--initial-branch=main",
-            "empty.git",
-        ],
-    );
+    bare(temp.path(), "empty.git");
     let empty = temp.path().join("empty.git");
     git(
         &root,
@@ -11046,16 +10860,8 @@ fn uploaded_inn(root: &Path, home: &Path) -> (Option<i32>, String, String, Vec<S
         ("200 OK", BETAS),
         ("200 OK", BUILDS),
     ]);
-    let (code, stdout, stderr) = steamship_in(
-        root,
-        &["upload"],
-        Some(home),
-        &[
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            (STAND_IN, &host),
-        ],
-    );
+    let (code, stdout, stderr) =
+        steamship_in(root, &["upload"], Some(home), &web_api_variables(&host));
     let asked = if code == Some(0_i32) {
         iter::repeat_with(|| requests.recv_timeout(Duration::from_secs(10)).unwrap())
             .take(5)
@@ -11096,11 +10902,7 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
         &root,
         &["upload", "--preview"],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            (STAND_IN, &again),
-        ],
+        &web_api_variables(&again),
     );
     assert_eq!(previewed, Some(0_i32), "{shown_preview}{preview_why}");
     assert!(
@@ -11127,11 +10929,7 @@ fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
         &root,
         &["upload"],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            (STAND_IN, &host),
-        ],
+        &web_api_variables(&host),
     );
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     assert!(
@@ -11149,12 +10947,6 @@ fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
             .any(|request| request.contains("SetAppBuildLive")),
         "a released game's default branch is never set: {asked:?}"
     );
-    let head = run::output(
-        run::command("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(&root),
-    )
-    .unwrap();
     let kept = ledger::load(home.path(), 1_000_050).unwrap();
     assert_eq!(
         kept,
@@ -11162,7 +10954,7 @@ fn a_released_game_is_set_live_on_its_branch_alone_and_the_build_is_recorded() {
             app: 1_000_050,
             branch: "testing".to_owned(),
             build_id: 4242,
-            commit: String::from_utf8(head.stdout).unwrap().trim().to_owned(),
+            commit: head(&root),
             green: true,
             rollback: false,
         }]
@@ -11223,11 +11015,7 @@ fn a_games_first_upload_to_an_app_with_no_branch_yet_succeeds_and_says_how_to_de
         &root,
         &["upload"],
         Some(home.path()),
-        &[
-            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
-            ("STEAMSHIP_WEB_API_KEY", KEY),
-            (STAND_IN, &host),
-        ],
+        &web_api_variables(&host),
     );
     let shown = format!("{stdout}{stderr}");
     assert_eq!(code, Some(0_i32), "{shown}");
