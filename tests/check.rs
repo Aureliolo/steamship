@@ -292,6 +292,32 @@ fn a_build_must_install_the_action_manifest_its_settings_name_on_every_system() 
 }
 
 #[test]
+fn a_depot_another_app_shares_installs_on_the_systems_its_own_oslist_names() {
+    let (project, app) = Project::shipping("");
+    let path = "steam_input/action_manifest.vdf";
+    let settings = settings::read(
+        &format!(
+            "\"1000\"\n{{\n\t\"config\"\n\t{{\n\
+             \t\t\"steamcontrollertemplateindex\"\t\t\"13\"\n\
+             \t\t\"steaminputmanifestpath\"\t\t\"{path}\"\n\t}}\n\
+             \t\"depots\"\n\t{{\n\
+             \t\t\"1001\"\n\t\t{{\n\t\t\t\"config\"\n\t\t\t{{\n\
+             \t\t\t\t\"oslist\"\t\t\"windows\"\n\t\t\t}}\n\
+             \t\t\t\"depotfromapp\"\t\t\"228980\"\n\t\t}}\n\
+             \t\t\"1002\"\n\t\t{{\n\t\t\t\"config\"\n\t\t\t{{\n\
+             \t\t\t\t\"oslist\"\t\t\"linux\"\n\t\t\t}}\n\t\t}}\n\t}}\n}}\n"
+        ),
+        1000,
+    )
+    .unwrap();
+    project.put("export/linux/steam_input/action_manifest.vdf", MANIFEST);
+    assert_eq!(
+        messages(&check::against(&app, Some(&settings))),
+        [manifest_missing(path, " on windows")]
+    );
+}
+
+#[test]
 fn the_action_manifest_is_looked_for_where_the_depots_mappings_install_each_file() {
     let (project, _) = Project::shipping("");
     project.put(
@@ -683,6 +709,35 @@ fn a_dll_counts_as_shipped_by_any_depot_that_installs_on_windows() {
              Common Redistributable has. Ship it in a depot, or link its library in statically"
         ],
         "depot 1002 is for Linux alone"
+    );
+}
+
+#[test]
+fn a_depot_s_windows_files_are_judged_when_its_oslist_names_windows_among_several() {
+    let (project, app) = Project::shipping("");
+    project.put(
+        "export/linux/tool.exe",
+        &windows_library(&["vcruntime140.dll"]),
+    );
+    let report = check(&app);
+    let settings = settings_ticking(&[]);
+    let shared = vdf::parse(&settings.replace(
+        "\"1002\"\n\t\t{\n",
+        "\"1002\"\n\t\t{\n\t\t\t\"depotfromapp\"\t\t\"1000050\"\n",
+    ))
+    .unwrap();
+    let shared = shared.block("1000").unwrap();
+    assert_eq!(
+        redist::judged(&report, Some(shared)),
+        redist::Judged::default(),
+        "a shared depot for Linux alone"
+    );
+    let several = vdf::parse(&settings.replace("\"linux\"", "\"Linux, Windows\"")).unwrap();
+    let several = several.block("1000").unwrap();
+    assert_eq!(
+        texts(&redist::judged(&report, Some(several)).refused).len(),
+        1,
+        "a depot for Linux and Windows"
     );
 }
 
