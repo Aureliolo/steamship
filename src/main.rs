@@ -4377,11 +4377,10 @@ fn changed_notes(
         if !has_icons || redrawn {
             continue;
         }
-        let changed = match changed.as_slice() {
-            [only] => (*only).to_owned(),
-            [first @ .., last] => format!("{} and {last}", first.join(", ")),
-            [] => continue,
-        };
+        if changed.is_empty() {
+            continue;
+        }
+        let changed = show::listed(&changed, " and ");
         show::note(&format!(
             "{api_name}'s {changed} changed and its icons did not. Look at them, so that they \
              still show what it asks for"

@@ -10,7 +10,7 @@ use crate::scripts::{self, AppScript, DepotScript, FileMapping, Problem};
 #[cfg(unix)]
 use crate::unix;
 use crate::vdf::Block;
-use crate::{magic, pattern, pe, settings, vdf};
+use crate::{magic, pattern, pe, settings, show, vdf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
@@ -507,22 +507,14 @@ fn is_program(file: &Path, name: &str) -> bool {
     !library && magic::looks_like_program(file).unwrap_or(false)
 }
 
-/// `items` as a list read aloud: a, b and c.
-fn listed(mut items: Vec<String>) -> String {
-    match items.pop() {
-        Some(last) if !items.is_empty() => format!("{} and {last}", items.join(", ")),
-        Some(last) => last,
-        None => String::new(),
-    }
-}
-
 /// `names`, each quoted, as a list read aloud: "a", "b" and "c".
 fn quoted<'name>(names: impl IntoIterator<Item = &'name String>) -> String {
-    listed(
-        names
+    show::listed(
+        &names
             .into_iter()
             .map(|name| format!("\"{name}\""))
-            .collect(),
+            .collect::<Vec<_>>(),
+        " and ",
     )
 }
 
@@ -620,7 +612,7 @@ pub fn folder_launch(folder: &Path, app: u32, settings: &Block) -> Option<Proble
              Installation in Steamworks, and save the settings again. Or ship the program under \
              that name",
             quoted(&programs),
-            listed(started)
+            show::listed(&started, " and ")
         ),
     ))
 }

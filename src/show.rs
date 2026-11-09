@@ -278,6 +278,19 @@ pub fn counted(count: usize, noun: &str) -> String {
     format!("{grouped} {noun}{plural}")
 }
 
+/// `items` read aloud, the last two joined by `word`: `a`, `a and b`, `a, b and c`.
+#[must_use]
+pub fn listed<Item>(items: &[Item], word: &str) -> String
+where
+    Item: AsRef<str>,
+{
+    let words: Vec<&str> = items.iter().map(AsRef::as_ref).collect();
+    match words.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{}{word}{last}", rest.join(", ")),
+        _ => words.concat(),
+    }
+}
+
 /// A duration as a person reads it: seconds up to two minutes, then whole minutes.
 #[must_use]
 pub fn took(elapsed: Duration) -> String {
@@ -465,6 +478,16 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
+
+    #[test]
+    fn a_choice_reads_as_a_sentence() {
+        let words =
+            |list: &[&str]| -> Vec<String> { list.iter().map(|&word| word.to_owned()).collect() };
+        assert_eq!(listed(&words(&[]), " or "), "");
+        assert_eq!(listed(&words(&["a"]), " or "), "a");
+        assert_eq!(listed(&words(&["a", "b"]), " or "), "a or b");
+        assert_eq!(listed(&words(&["a", "b", "c"]), " or "), "a, b or c");
+    }
 
     #[test]
     fn the_banner_names_steamship_its_version_and_what_it_does() {

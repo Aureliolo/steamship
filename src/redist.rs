@@ -10,6 +10,7 @@ use std::path::Path;
 
 use crate::check::Report;
 use crate::scripts::Problem;
+use crate::show;
 use crate::vdf::{Block, Value};
 
 /// The app Steamworks' Common Redistributables are depots of.
@@ -358,10 +359,7 @@ fn named(depots: &[u32]) -> String {
         .filter(|(depot, _)| depots.contains(depot))
         .map(|&(_, name)| name)
         .collect();
-    match names.as_slice() {
-        [rest @ .., last] if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
-        _ => names.concat(),
-    }
+    show::listed(&names, " or ")
 }
 
 #[cfg(test)]

@@ -237,7 +237,10 @@ fn leaderboard(
             .ok_or_else(|| {
                 let lowered: Vec<String> =
                     words.iter().map(|word| word.to_ascii_lowercase()).collect();
-                format!("{name}: \"{key}\" is not {}", or_list(&lowered))
+                format!(
+                    "{name}: \"{key}\" is not {}",
+                    show::listed(&lowered, " or ")
+                )
             })
     };
     let flag = |key: &str| match entry.get(key) {
@@ -317,14 +320,6 @@ pub fn together(files: Vec<(String, Listed)>) -> Result<Wanted, String> {
         }
     }
     Ok(whole)
-}
-
-/// `words` as a sentence gives a choice: `a`, `a or b`, `a, b or c`.
-fn or_list(words: &[String]) -> String {
-    match words.split_last() {
-        Some((last, rest)) if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
-        _ => words.join(""),
-    }
 }
 
 /// A way Steam's leaderboards and the file's differ.
@@ -905,16 +900,6 @@ mod tests {
                  unreleased",
             ]
         );
-    }
-
-    #[test]
-    fn a_choice_reads_as_a_sentence() {
-        let words =
-            |list: &[&str]| -> Vec<String> { list.iter().map(|&word| word.to_owned()).collect() };
-        assert_eq!(or_list(&words(&[])), "");
-        assert_eq!(or_list(&words(&["a"])), "a");
-        assert_eq!(or_list(&words(&["a", "b"])), "a or b");
-        assert_eq!(or_list(&words(&["a", "b", "c"])), "a, b or c");
     }
 
     #[test]
