@@ -95,7 +95,7 @@ impl Storefront {
 
 fn unread(error: &ureq::Error) -> String {
     format!(
-        "Steam's store's answer could not be read whole: {}",
+        "The answer from Steam's store could not be read whole: {}",
         webapi::unanswered(error)
     )
 }
@@ -235,15 +235,15 @@ mod tests {
             unread(&ureq::Error::ConnectProxyFailed(
                 "user:secret@proxy.example".to_owned()
             )),
-            "Steam's store's answer could not be read whole: the proxy failed"
+            "The answer from Steam's store could not be read whole: the proxy failed"
         );
     }
 
     #[test]
     fn an_answer_over_the_size_limit_is_said_with_the_limit() {
         assert_eq!(
-            unread(&ureq::Error::BodyExceedsLimit(2_048)),
-            "Steam's store's answer could not be read whole: the answer is longer than 2048 bytes"
+            unread(&ureq::Error::BodyExceedsLimit(LIMIT)),
+            "The answer from Steam's store could not be read whole: it is longer than 8 MiB"
         );
     }
 

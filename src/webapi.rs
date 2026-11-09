@@ -171,9 +171,20 @@ pub fn unanswered(error: &ureq::Error) -> String {
         }
         ureq::Error::BodyStalled => "the answer stopped coming".to_owned(),
         ureq::Error::BodyExceedsLimit(limit) => {
-            format!("the answer is longer than {limit} bytes")
+            format!("it is longer than {}", size(*limit))
         }
         _ => "the request failed".to_owned(),
+    }
+}
+
+/// `bytes` as a person reads a size: whole MiB or KiB when it is one, else bytes.
+fn size(bytes: u64) -> String {
+    if bytes.trailing_zeros() >= 20 {
+        format!("{} MiB", bytes >> 20_u32)
+    } else if bytes.trailing_zeros() >= 10 {
+        format!("{} KiB", bytes >> 10_u32)
+    } else {
+        format!("{bytes} bytes")
     }
 }
 
@@ -2225,9 +2236,20 @@ mod tests {
     #[test]
     fn an_image_over_the_size_limit_is_said_with_the_limit() {
         assert_eq!(
-            image_unread(&ureq::Error::BodyExceedsLimit(1_024)),
-            "Steam's image could not be read whole: the answer is longer than 1024 bytes"
+            image_unread(&ureq::Error::BodyExceedsLimit(IMAGE_LIMIT)),
+            "Steam's image could not be read whole: it is longer than 4 MiB"
         );
+    }
+
+    #[test]
+    fn a_size_limit_is_said_in_the_largest_whole_unit() {
+        for (limit, said) in [
+            (8 * 1024 * 1024, "it is longer than 8 MiB"),
+            (1_024, "it is longer than 1 KiB"),
+            (1_500, "it is longer than 1500 bytes"),
+        ] {
+            assert_eq!(unanswered(&ureq::Error::BodyExceedsLimit(limit)), said);
+        }
     }
 
     #[test]
