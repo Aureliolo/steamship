@@ -522,27 +522,25 @@ fn is_bundle(name: &str) -> bool {
 fn holds(folder: &Path, wanted: &[String], any_case: bool) -> bool {
     let mut at = folder.to_path_buf();
     for part in wanted {
-        let exact = at.join(part);
-        at = if exact.exists() {
-            exact
-        } else if any_case {
-            let Some(found) = fs::read_dir(&at)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .find(|entry| {
-                    entry
-                        .file_name()
-                        .to_string_lossy()
-                        .eq_ignore_ascii_case(part)
-                })
-            else {
-                return false;
-            };
-            found.path()
-        } else {
+        // A file system that ignores case answers `exists` for a name in any case, so only what
+        // the folder lists tells the name apart.
+        let Some(found) = fs::read_dir(&at)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .find(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if any_case {
+                    name.eq_ignore_ascii_case(part)
+                } else {
+                    name == part.as_str()
+                }
+            })
+        else {
             return false;
         };
+        at = found.path();
     }
     true
 }

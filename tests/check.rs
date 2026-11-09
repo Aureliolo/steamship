@@ -1667,14 +1667,22 @@ fn a_build_folder_matches_a_launch_option_by_the_case_its_system_tells_apart() {
     );
 }
 
-// A file system that ignores case finds `Inn.x86_64` under the other name, so only Linux's can
-// show the difference.
-#[cfg(target_os = "linux")]
 #[test]
-fn on_linux_a_build_folder_does_not_match_a_linux_only_launch_option_by_another_case() {
+fn a_build_folder_does_not_match_a_linux_only_launch_option_by_another_case() {
     assert_eq!(
         folder_said(&[("Inn.x86_64", PROGRAM)], &[("inn.x86_64", "linux", None)]),
         Some(folder_refusal("\"Inn.x86_64\"", "\"inn.x86_64\" on linux"))
+    );
+}
+
+#[test]
+fn a_build_folder_matches_an_option_for_linux_and_another_system_in_any_case() {
+    assert_eq!(
+        folder_said(
+            &[("Inn.x86_64", PROGRAM)],
+            &[("inn.x86_64", "windows,linux", None)]
+        ),
+        None
     );
 }
 
@@ -1707,6 +1715,23 @@ impl Drop for Locked {
             &self.0,
             fs::Permissions::from_mode(0o755),
         ));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_build_folder_that_cannot_be_listed_is_judged_to_hold_no_program() {
+    let project = Project::new();
+    project.put("build/Inn.x86_64", PROGRAM);
+    let build = project.root.join("build");
+    let _locked = Locked::new(&build);
+    for system in ["linux", "windows"] {
+        let settings = launching_settings(&[("inn.x86_64", system, None)], &[]);
+        assert_eq!(
+            check::folder_launch(&build, 1000, &settings),
+            None,
+            "{system}"
+        );
     }
 }
 
