@@ -10,7 +10,7 @@ use crate::scripts::{self, AppScript, DepotScript, FileMapping, Problem};
 #[cfg(unix)]
 use crate::unix;
 use crate::vdf::Block;
-use crate::{magic, pattern, pe, settings, vdf};
+use crate::{magic, pattern, pe, settings, show, vdf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Report {
@@ -243,11 +243,7 @@ fn unshipped_manifest(app: &AppScript, settings: &Block, problems: &mut Vec<Prob
     let Some(manifest) = settings::action_manifest(settings) else {
         return;
     };
-    let snapshot = app
-        .path
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(settings::SNAPSHOT);
+    let snapshot = settings::snapshot_beside(&app.path);
     if manifest.is_empty() {
         problems.push(Problem::new(
             &snapshot,
@@ -413,11 +409,7 @@ fn unlaunchable(
     settings: &Block,
     problems: &mut Vec<Problem>,
 ) {
-    let snapshot = app
-        .path
-        .parent()
-        .unwrap_or_else(|| Path::new(""))
-        .join(settings::SNAPSHOT);
+    let snapshot = settings::snapshot_beside(&app.path);
     let uploaded: Vec<u32> = app.depots.iter().map(|depot| depot.depot_id).collect();
     let mut all: Vec<Option<String>> = Vec::new();
     for depot in &uploaded {
@@ -507,22 +499,14 @@ fn is_program(file: &Path, name: &str) -> bool {
     !library && magic::looks_like_program(file).unwrap_or(false)
 }
 
-/// `items` as a list read aloud: a, b and c.
-fn listed(mut items: Vec<String>) -> String {
-    match items.pop() {
-        Some(last) if !items.is_empty() => format!("{} and {last}", items.join(", ")),
-        Some(last) => last,
-        None => String::new(),
-    }
-}
-
 /// `names`, each quoted, as a list read aloud: "a", "b" and "c".
 fn quoted<'name>(names: impl IntoIterator<Item = &'name String>) -> String {
-    listed(
-        names
+    show::listed(
+        &names
             .into_iter()
             .map(|name| format!("\"{name}\""))
-            .collect(),
+            .collect::<Vec<_>>(),
+        " and ",
     )
 }
 
@@ -620,7 +604,7 @@ pub fn folder_launch(folder: &Path, app: u32, settings: &Block) -> Option<Proble
              Installation in Steamworks, and save the settings again. Or ship the program under \
              that name",
             quoted(&programs),
-            listed(started)
+            show::listed(&started, " and ")
         ),
     ))
 }
