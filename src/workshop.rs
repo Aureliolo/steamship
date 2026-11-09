@@ -516,7 +516,7 @@ pub fn judge(code: Option<i32>, console: &str, published: Option<u64>) -> Outcom
         code,
         console,
         None,
-        "steamcmd exited 0, but its copy of the script has no \"publishedfileid\"",
+        "steamcmd exited 0, but wrote no \"publishedfileid\" for the item",
     ))
 }
 
@@ -1000,7 +1000,7 @@ mod tests {
     fn an_item_that_exits_0_without_an_id_in_the_script_says_so() {
         assert_eq!(
             said(Some(0_i32), ""),
-            ["steamcmd exited 0, but its copy of the script has no \"publishedfileid\""]
+            ["steamcmd exited 0, but wrote no \"publishedfileid\" for the item"]
         );
     }
 
@@ -1040,8 +1040,7 @@ mod tests {
         assert_eq!(
             judge(Some(0_i32), "", None),
             Outcome::Failed(vec![
-                "steamcmd exited 0, but its copy of the script has no \"publishedfileid\""
-                    .to_owned()
+                "steamcmd exited 0, but wrote no \"publishedfileid\" for the item".to_owned()
             ])
         );
         assert_eq!(
