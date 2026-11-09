@@ -851,10 +851,10 @@ fn walk(folder: &Path, name: &str, recursive: bool, found: &mut Vec<PathBuf>) ->
     if !folder.is_dir() {
         return Ok(());
     }
-    for entry in fs::read_dir(folder)? {
-        let entry = entry?;
+    for entry in fs::read_dir(folder).map_err(naming(folder))? {
+        let entry = entry.map_err(naming(folder))?;
         let path = entry.path();
-        if entry.file_type()?.is_dir() {
+        if entry.file_type().map_err(naming(&path))?.is_dir() {
             if recursive {
                 walk(&path, name, recursive, found)?;
             }
@@ -862,13 +862,19 @@ fn walk(folder: &Path, name: &str, recursive: bool, found: &mut Vec<PathBuf>) ->
         }
         // The kind above is the entry's own, so a link to a folder is never walked into and a
         // loop of links cannot make the walk endless. A link to a file counts as that file.
-        if path.metadata()?.is_file()
+        if path.metadata().map_err(naming(&path))?.is_file()
             && pattern::matches(name, &entry.file_name().to_string_lossy())
         {
             found.push(path);
         }
     }
     Ok(())
+}
+
+/// An error that names `path` before the system's reason, which alone says nothing of which file,
+/// link or folder it is about.
+fn naming(path: &Path) -> impl FnOnce(io::Error) -> io::Error {
+    move |error| io::Error::new(error.kind(), format!("{}: {error}", path.display()))
 }
 
 /// A `FileExclusion` with a folder in it is matched against the path from the content root. One

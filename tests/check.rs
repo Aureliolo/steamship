@@ -1745,7 +1745,10 @@ fn a_build_folder_that_cannot_be_read_is_refused_with_the_systems_reason() {
     let report = check::folder(&build, None);
     assert_eq!(
         messages(&report),
-        ["cannot be read: Permission denied (os error 13)"]
+        [format!(
+            "cannot be read: {}: Permission denied (os error 13)",
+            build.display()
+        )]
     );
     assert_eq!(report.problems.first().unwrap().file, build);
 }
@@ -1757,9 +1760,31 @@ fn a_content_folder_that_cannot_be_read_is_refused_with_the_systems_reason() {
     let _locked = Locked::new(&project.root.join("export/windows"));
     assert_eq!(
         messages(&check(&app)),
-        [r#"depot 1001: LocalPath "windows\*" cannot be read: Permission denied (os error 13)"#]
+        [format!(
+            r#"depot 1001: LocalPath "windows\*" cannot be read: {}: Permission denied (os error 13)"#,
+            content_path(&project, "windows").display()
+        )]
     );
 }
+
+/// `relative` in app 1000's content, as `check` writes the path of what it walks.
+fn content_path(project: &Project, relative: &str) -> PathBuf {
+    relative
+        .split('/')
+        .fold(project.root.join("export"), |path, part| path.join(part))
+}
+
+#[cfg(windows)]
+const MISSING: &str = "The system cannot find the file specified. (os error 2)";
+#[cfg(not(windows))]
+const MISSING: &str = "No such file or directory (os error 2)";
+
+#[cfg(windows)]
+const LOOPING: &str = "The name of the file cannot be resolved by the system. (os error 1921)";
+#[cfg(target_os = "macos")]
+const LOOPING: &str = "Too many levels of symbolic links (os error 62)";
+#[cfg(all(unix, not(target_os = "macos")))]
+const LOOPING: &str = "Too many levels of symbolic links (os error 40)";
 
 /// A link at `at` to `target`, a folder or a file.
 fn link(target: &Path, at: &Path) {
@@ -1793,6 +1818,34 @@ fn a_link_to_a_folder_is_not_walked_a_loop_of_links_ends_and_a_link_to_a_file_co
     let report = check(&app);
     assert_eq!(messages(&report), Vec::<String>::new());
     assert_eq!(names(&report, 1001), ["alias.pck", "game.exe", "game.pck"]);
+}
+
+#[test]
+fn a_link_to_a_file_that_is_not_there_is_refused_naming_the_link() {
+    let (project, app) = Project::shipping("");
+    let windows = project.root.join("export/windows");
+    link(&windows.join("absent.pck"), &windows.join("gone.pck"));
+    assert_eq!(
+        messages(&check(&app)),
+        [format!(
+            r#"depot 1001: LocalPath "windows\*" cannot be read: {}: {MISSING}"#,
+            content_path(&project, "windows/gone.pck").display()
+        )]
+    );
+}
+
+#[test]
+fn a_link_that_leads_back_to_itself_is_refused_naming_the_link() {
+    let (project, app) = Project::shipping("");
+    let windows = project.root.join("export/windows");
+    link(&windows.join("a.pck"), &windows.join("a.pck"));
+    assert_eq!(
+        messages(&check(&app)),
+        [format!(
+            r#"depot 1001: LocalPath "windows\*" cannot be read: {}: {LOOPING}"#,
+            content_path(&project, "windows/a.pck").display()
+        )]
+    );
 }
 
 #[test]
