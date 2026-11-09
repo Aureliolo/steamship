@@ -8898,7 +8898,9 @@ fn a_store_answer_of_megabytes_is_read_whole_and_one_past_eight_is_refused() {
     let (refused, _, failure) = in_game_with(&root, &["text", "--steam"], &[(STAND_IN, &huge)]);
     assert_eq!(refused, Some(1_i32), "{failure}");
     assert!(
-        failure.contains("Steam's store's answer could not be read whole"),
+        failure.contains(
+            "The answer from Steam's store could not be read whole: it is longer than 8 MiB"
+        ),
         "{failure}"
     );
 }
