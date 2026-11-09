@@ -181,17 +181,16 @@ pub fn run(
     let output = reading
         .join()
         .unwrap_or_else(|panic| panic::resume_unwind(panic))?;
-    // A program ended by a signal has no exit code. The shell's convention stands in for one.
-    let code = status.filter(|_| told().is_none()).and_then(|status| {
-        status
-            .code()
-            .or_else(|| status.signal().map(|signal| signal.saturating_add(128)))
-    });
+    let code = status.filter(|_| told().is_none()).and_then(exit_code);
     Ok(Finished { code, output })
 }
 
-/// Only Windows puts up a dialogue of its own when a program crashes.
-pub const fn silence_error_dialogues() {}
+/// A program ended by a signal has no exit code. The shell's convention stands in for one.
+fn exit_code(status: ExitStatus) -> Option<i32> {
+    status
+        .code()
+        .or_else(|| status.signal().map(|signal| signal.saturating_add(128)))
+}
 
 /// A program running on a pseudo terminal.
 ///
@@ -300,11 +299,7 @@ impl Terminal {
                     .unwrap_or_else(|panic| panic::resume_unwind(panic))
             })
             .transpose()?;
-        Ok(status.and_then(|status| {
-            status
-                .code()
-                .or_else(|| status.signal().map(|signal| signal.saturating_add(128)))
-        }))
+        Ok(status.and_then(exit_code))
     }
 }
 
