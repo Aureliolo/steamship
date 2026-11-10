@@ -477,11 +477,12 @@ jobs:
             exit 1
           fi
 
-  # winget takes packages only through a pull request to microsoft/winget-pkgs, which Microsoft's
-  # wingetcreate opens from a fork with a classic token; GitHub lets no fine-grained token open
-  # one. The token belongs to a machine account that owns nothing but that fork. A new package
-  # waits on a moderator, so the first version is submitted by hand; this job runs once the
-  # repository variable WINGET is set to `submit`, after that one is accepted.
+  # winget takes packages only through a pull request to microsoft/winget-pkgs, which
+  # winget-submit.sh opens from the token's fork with a classic token; GitHub lets no fine-grained
+  # token open one. wingetcreate is not used, since its newest release cannot read the schema
+  # packages.sh writes. A new package waits on a moderator, so the first version is submitted by
+  # hand; this job runs once the repository variable WINGET is set to `submit`, after that one is
+  # accepted.
   winget:
     name: winget
     if: github.repository == 'Aureliolo/steamship' && vars.WINGET == 'submit'
@@ -496,9 +497,14 @@ jobs:
       run:
         shell: pwsh
     env:
-      # renovate: datasource=github-release-attachments depName=microsoft/winget-create versioning=loose
-      WINGETCREATE_TAG: v1.12.13.0
-      WINGETCREATE_SHA256: 24042bd37915805615e6cf969ac57c6439124c3fe85823327f5f3fb24bd9ffea
+      # winget itself, installed over the older one the runner image carries so that validation
+      # runs the client winget-pkgs validates with. Kept equal to packages.yml's pin.
+      # renovate: datasource=github-releases depName=microsoft/winget-cli
+      WINGET_TAG: v1.29.380
+      WINGET_BUNDLE_SHA256: 65dea9c01ce08ee7b763366b27c0e651f97db857c11ca9b9c301826c10092f2e
+      WINGET_DEPENDENCIES_SHA256: ba875afe9d190f61218985ac0292a99d1db710bf93e13c68944ca9d89f0d82d1
+      WINGET_LICENSE: e53e159d00e04f729cc2180cffd1c02e_License1.xml
+      WINGET_LICENSE_SHA256: bcb15118ec47df24e3e6013a7006147c3a15b3a8104ed660fe87c8b4ed01f485
 
     steps:
       - name: Refuse to go on without the token
@@ -515,14 +521,30 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download wingetcreate and check it
+      - name: Download winget at its pinned release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          bash .github/tool-download.sh microsoft/winget-create "${WINGETCREATE_TAG}" wingetcreate.exe \
-            "${WINGETCREATE_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
+            Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle "${WINGET_BUNDLE_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
+            DesktopAppInstaller_Dependencies.zip "${WINGET_DEPENDENCIES_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
+            "${WINGET_LICENSE}" "${WINGET_LICENSE_SHA256}" "${RUNNER_TEMP}"
+
+      - name: Install winget at its pinned release
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Expand-Archive "$env:RUNNER_TEMP\DesktopAppInstaller_Dependencies.zip" "$env:RUNNER_TEMP\dependencies"
+          $dependencies = Get-ChildItem "$env:RUNNER_TEMP\dependencies\x64" -Filter *.appx | ForEach-Object FullName
+          Add-AppxProvisionedPackage -Online -PackagePath "$env:RUNNER_TEMP\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" `
+            -DependencyPackagePath $dependencies -LicensePath "$env:RUNNER_TEMP\$env:WINGET_LICENSE" | Out-Null
+          Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+          "$env:LOCALAPPDATA\Microsoft\WindowsApps" >> $env:GITHUB_PATH
+          $running = & "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe" --version
+          if ($running -ne $env:WINGET_TAG) { throw "winget is $running after installing the pinned $env:WINGET_TAG." }
 
       - name: Download the manifests
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -566,15 +588,19 @@ jobs:
             if ($entries -cnotcontains ($path -replace '\\', '/')) { throw "$archive holds no $path." }
           }
 
-      - name: Submit them
-        env:
-          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
-          VERSION: ${{ needs.build.outputs.version }}
+      # The submission ticks winget-pkgs' validation box on the strength of this step.
+      - name: Validate the manifests
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          & "$env:RUNNER_TEMP\wingetcreate.exe" submit --prtitle "New version: Aureliolo.steamship version $env:VERSION" `
-            --no-open packages/winget
+          winget validate --manifest packages/winget
+
+      - name: Submit them
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: bash .github/winget-submit.sh "${VERSION}" packages/winget
 
   # crates.io, through trusted publishing: the OIDC token below is the whole credential, and no
   # crates.io token exists anywhere. A crate nobody has published cannot have a trusted publisher

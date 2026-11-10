@@ -51,6 +51,10 @@ jobs:
       - name: Run shellcheck on the workflows' scripts
         run: shellcheck --enable=all .github/*.sh
 
+      # Against a fake gh: the script would otherwise open a pull request on microsoft/winget-pkgs.
+      - name: Test the winget submission script
+        run: bash .github/winget-submit-test.sh
+
   zizmor:
     name: zizmor
     runs-on: ubuntu-26.04
