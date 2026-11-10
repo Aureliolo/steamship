@@ -1592,8 +1592,12 @@ fn an_upload_told_to_stop_stops_steamcmd_shows_what_it_said_and_ends_by_that_sig
 fn a_failed_upload_outside_actions_shows_no_log_groups() {
     let home = faked_with(BUILT_THEN_FAILED);
     let (_project, script) = project(true);
-    let (code, stdout, _) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
-    assert_eq!(code, Some(1_i32), "{stdout}");
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("Failed to set build live on branch testing"),
+        "{stdout}{stderr}"
+    );
     assert!(!stdout.contains("::group::"), "{stdout}");
 }
 
@@ -2712,8 +2716,12 @@ fn login_then_look() -> String {
     // not, so nothing in it is quoted.
     #[cfg(windows)]
     assert!(!steamship.contains(' '), "{steamship}");
+    // `call echo` with a caret reads the code after `login` ran, where a plain `%errorlevel%`
+    // would be filled in as the line is parsed.
     #[cfg(windows)]
-    let line = format!("set STEAMSHIP_ACCOUNT=& {steamship} login & set /p after=next: ");
+    let line = format!(
+        "set STEAMSHIP_ACCOUNT=& {steamship} login & call echo exited %^errorlevel% & set /p after=next: "
+    );
     #[cfg(unix)]
     let line = format!("unset STEAMSHIP_ACCOUNT; '{steamship}' login; echo \"exited $?\"; stty -a");
     line
@@ -2811,12 +2819,17 @@ fn a_newer_steamship_is_not_told_in_a_log() {
     let home = told_of_99();
     let (code, stdout, stderr) = steamship(&["logout"], Some(home.path()), &[("CI", "")]);
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  login     none saved\n  account   none remembered\n"),
+        "{stdout}"
+    );
     assert!(!stdout.contains("99.0.0"), "{stdout}");
 }
 
 /// Checks that `session`'s terminal is as steamship found it, once steamship has `exited` so.
 #[cfg(windows)]
-fn looks_as_it_was(session: &mut Session, _exited: &str) {
+fn looks_as_it_was(session: &mut Session, exited: &str) {
+    session.wait_for(exited);
     session.wait_for("next:");
     session.type_in("typed after\r");
     session.wait_for("next: typed after");
@@ -3232,6 +3245,7 @@ fn workshop_item(extra: &str) -> (tempfile::TempDir, PathBuf) {
 fn publishing(said: &str, code: u8) -> tempfile::TempDir {
     let home = faked_with(&format!(
         "#!/bin/sh\n\
+         echo \"$*\" > \"$HOME/args\"\n\
          while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
          grep -q publishedfileid \"$script\" || \
          printf '\"workshopitem\"\\n{{\\n\"appid\" \"480\"\\n\"publishedfileid\" \"777\"\\n}}\\n' > \"$script\"\n\
@@ -3285,6 +3299,8 @@ fn a_workshop_upload_in_ci_logs_in_as_the_account_handed_over() {
         &[("STEAMSHIP_LOGIN", &packed_login())],
     );
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(args.contains(" +login build_bot "), "{args}");
     assert!(
         saved.exists(),
         "the login is put back where steamcmd reads it"
@@ -8004,7 +8020,7 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
     );
 
     // Fetched again, the folder is checked and updated in place.
-    let (again, _, again_said) = fetching(
+    let (again, again_said, again_why) = fetching(
         home.path(),
         &[
             "1000",
@@ -8015,7 +8031,20 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
         ],
         &[],
     );
-    assert_eq!(again, Some(0_i32), "{again_said}");
+    assert_eq!(again, Some(0_i32), "{again_said}{again_why}");
+    assert!(
+        again_said.contains(&format!(
+            "app 1000: build 4242 of the default branch is in {}",
+            chosen.display()
+        )),
+        "{again_said}{again_why}"
+    );
+    let updated = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(
+        updated.contains(&format!("+force_install_dir {} ", chosen.display()))
+            && updated.ends_with("+app_update 1000 -beta public validate +quit\n"),
+        "{updated}"
+    );
 }
 
 #[test]
@@ -9831,11 +9860,18 @@ fn a_game_check_compares_what_the_game_holds_with_steam_and_lists_its_builds() {
         &["check"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
-    assert_ne!(
+    assert_eq!(
         code,
-        Some(0_i32),
+        Some(1_i32),
         "Steam refused every question: {stdout}{stderr}"
     );
+    for result in [
+        "  app       \u{2713} 1000050, 1 depot, scripts checked\n",
+        "  branch    \u{2717} not checked\n",
+        "  steam     \u{2717} key refused\n",
+    ] {
+        assert!(stdout.contains(result), "{result} in {stdout}{stderr}");
+    }
     for section in [
         "steamship check\n",
         "steamship achievements\n",
@@ -10035,24 +10071,60 @@ fn a_games_builds_settings_and_promotion_are_asked_for_its_own_app() {
     let asked = requests.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(asked.contains("appid=1000050"), "{asked}");
 
-    let refusing = refusing_web_api(4);
+    let (refusing, sent) = web_api(vec![("403 Forbidden", "{}"); 4]);
     let (promoted, said, why) = in_game_with(
         &root,
         &["promote", "--build", "7", "--branch", "testing"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &refusing)],
     );
-    assert_ne!(promoted, Some(0_i32), "Steam refused it: {said}{why}");
-    assert!(!why.contains("there is no game"), "{why}");
+    assert_eq!(promoted, Some(1_i32), "Steam refused it: {said}{why}");
+    assert!(
+        said.contains("  app       1000050\n  build     7\n  branch    testing\n")
+            && format!("{said}{why}").contains(
+                "Steam refused the Web API key. It must be the publisher key of a group that \
+                 holds the app"
+            ),
+        "{said}{why}"
+    );
+    let promotion = sent.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(promotion.contains("appid=1000050"), "{promotion}");
 
+    let steamcmd = home_recording_steamcmd();
     for args in [
         ["settings"].as_slice(),
         ["settings", "--save"].as_slice(),
         ["settings", "--check"].as_slice(),
     ] {
-        let (asked_for, shown, reason) = in_game(&root, args);
-        assert_ne!(asked_for, Some(0_i32), "no steamcmd here: {shown}{reason}");
-        assert!(!reason.contains("there is no game"), "{args:?}: {reason}");
+        let (asked_for, shown, reason) = steamship_in(
+            &root,
+            args,
+            Some(steamcmd.path()),
+            &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+        );
+        assert_eq!(asked_for, Some(1_i32), "{args:?}: {shown}{reason}");
+        assert!(
+            format!("{shown}{reason}").contains("steamcmd printed no settings for app 1000050"),
+            "{args:?}: {shown}{reason}"
+        );
+        let given = fs::read_to_string(steamcmd.path().join("args")).unwrap();
+        assert!(
+            given.contains("+app_info_print 1000050 "),
+            "{args:?}: {given}"
+        );
+        fs::remove_file(steamcmd.path().join("args")).unwrap();
     }
+}
+
+/// A home with a saved login whose steamcmd keeps what it was started with in `args` and shows
+/// no app information.
+fn home_recording_steamcmd() -> tempfile::TempDir {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"$*\" > \"$HOME/args\"\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n",
+    );
+    saved_login(home.path());
+    home
 }
 
 #[test]
