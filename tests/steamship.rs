@@ -7766,6 +7766,11 @@ fn a_wrap_said_done_that_wrote_nothing_is_a_failure_and_replaces_nothing() {
         ],
     );
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr
+            .contains("steamcmd said the wrap completed, but the wrapped file is missing or empty"),
+        "{stderr}"
+    );
     assert_eq!(fs::read_to_string(&game).unwrap(), "MZplain", "left alone");
     assert_eq!(
         fs::read_dir(files.path()).unwrap().count(),

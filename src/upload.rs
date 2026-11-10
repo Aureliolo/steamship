@@ -677,6 +677,37 @@ pub fn judge_login(code: Option<i32>, console: &str) -> Login {
 /// said when nothing else did. First of all comes what told steamship to stop it, if anything did.
 #[must_use]
 pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<String> {
+    reasons_with(
+        code,
+        console,
+        log,
+        "steamcmd exited 0, but its build log does not say the build finished",
+    )
+}
+
+/// As [`reasons`], with `exited_0` as the sentence for an exit 0 that printed no error. Each
+/// command words it by what it checked.
+#[must_use]
+pub fn reasons_with(
+    code: Option<i32>,
+    console: &str,
+    log: Option<&str>,
+    exited_0: &str,
+) -> Vec<String> {
+    let mut found = errors(console, log);
+    if found.is_empty() {
+        found.push(match code {
+            Some(0_i32) => exited_0.to_owned(),
+            Some(exit) => format!("steamcmd exited {exit} without saying why"),
+            None => "steamcmd did not finish in time and was stopped".to_owned(),
+        });
+    }
+    found
+}
+
+/// Every error steamcmd reported, from the log and the console, once each, after what told
+/// steamship to stop it, if anything did. Empty when the run printed none.
+fn errors(console: &str, log: Option<&str>) -> Vec<String> {
     let mut found: Vec<String> = run::told()
         .map(|signal| format!("steamship was told to stop by {signal}, and stopped steamcmd"))
         .into_iter()
@@ -698,15 +729,6 @@ pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<Strin
         if !found.contains(&error) {
             found.push(error);
         }
-    }
-    if found.is_empty() {
-        found.push(match code {
-            Some(0_i32) => {
-                "steamcmd exited 0, but its build log does not say the build finished".to_owned()
-            }
-            Some(code) => format!("steamcmd exited {code} without saying why"),
-            None => "steamcmd did not finish in time and was stopped".to_owned(),
-        });
     }
     found
 }

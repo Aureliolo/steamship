@@ -509,10 +509,15 @@ pub fn judge(code: Option<i32>, console: &str, published: Option<u64>) -> Outcom
     if let Some(reason) = upload::refused_login(console) {
         return Outcome::NotLoggedIn(reason);
     }
-    match (code, published) {
-        (Some(0_i32), Some(published)) => Outcome::Published { published },
-        _ => Outcome::Failed(upload::reasons(code, console, None)),
+    if let (Some(0_i32), Some(published)) = (code, published) {
+        return Outcome::Published { published };
     }
+    Outcome::Failed(upload::reasons_with(
+        code,
+        console,
+        None,
+        "steamcmd exited 0, but wrote no \"publishedfileid\" for the item",
+    ))
 }
 
 #[cfg(test)]
@@ -984,6 +989,44 @@ mod tests {
         }
     }
 
+    fn said(code: Option<i32>, console: &str) -> Vec<String> {
+        let Outcome::Failed(reasons) = judge(code, console, None) else {
+            panic!("the item did not fail");
+        };
+        reasons
+    }
+
+    #[test]
+    fn an_item_that_exits_0_without_an_id_in_the_script_says_so() {
+        assert_eq!(
+            said(Some(0_i32), ""),
+            ["steamcmd exited 0, but wrote no \"publishedfileid\" for the item"]
+        );
+    }
+
+    #[test]
+    fn an_item_that_ends_otherwise_without_an_error_line_says_how_it_ended() {
+        assert_eq!(
+            said(Some(3_i32), ""),
+            ["steamcmd exited 3 without saying why"]
+        );
+        assert_eq!(
+            said(None, ""),
+            ["steamcmd did not finish in time and was stopped"]
+        );
+    }
+
+    #[test]
+    fn an_error_line_in_an_item_console_is_the_only_reason() {
+        assert_eq!(
+            said(
+                Some(0_i32),
+                "ERROR! Failed to update workshop item (Access Denied).\r\n"
+            ),
+            ["Failed to update workshop item (Access Denied)."]
+        );
+    }
+
     #[test]
     fn a_run_is_published_refused_or_failed() {
         assert_eq!(
@@ -996,7 +1039,9 @@ mod tests {
         );
         assert_eq!(
             judge(Some(0_i32), "", None),
-            Outcome::Failed(upload::reasons(Some(0_i32), "", None))
+            Outcome::Failed(vec![
+                "steamcmd exited 0, but wrote no \"publishedfileid\" for the item".to_owned()
+            ])
         );
         assert_eq!(
             judge(
