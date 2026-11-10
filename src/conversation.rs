@@ -95,6 +95,34 @@ pub fn refusal(line: &str) -> Option<&str> {
     })
 }
 
+/// What steamcmd says in place of a login when it never reached Steam, which refused nothing.
+pub const NO_CONNECTION: &str = "No Connection";
+
+/// Why steamcmd could not log in with the login it saved, when that is what its `console` says.
+/// The reason is taken from the line and not the line itself, which names the account.
+///
+/// A missing saved login is a refusal here, though `step` treats the same words as chatter: a
+/// run that is asked for a password carries on to the prompt, and a saved-login run never is.
+#[must_use]
+pub fn refused_login(console: &str) -> Option<String> {
+    console.lines().find_map(|line| {
+        if line.contains("Cached credentials not found") {
+            return Some(line.trim().to_owned());
+        }
+        let logging_in = line.contains("Logging in");
+        match refusal(line) {
+            Some(NO_CONNECTION) => None,
+            Some(reason) if logging_in || reason.starts_with("No cached credentials") => {
+                Some(reason.to_owned())
+            }
+            None if logging_in && line.contains("FAILED") => {
+                Some("Steam refused the saved login".to_owned())
+            }
+            Some(_) | None => None,
+        }
+    })
+}
+
 /// A refusal in words for the person who typed the password, where steamcmd's own are terse.
 #[must_use]
 pub fn explain(reason: &str) -> String {
@@ -184,6 +212,17 @@ mod tests {
             steps(failed),
             [Step::Refused("Rate Limit Exceeded".to_owned())]
         );
+    }
+
+    #[test]
+    fn a_wrong_password_on_a_saved_login_is_a_refusal_through_every_reader() {
+        let line =
+            "Logging in user 'someone' [U:1:0] to Steam Public...ERROR (Invalid Password)\r\n";
+        assert_eq!(
+            steps(line.as_bytes()),
+            [Step::Refused("Invalid Password".to_owned())]
+        );
+        assert_eq!(refused_login(line), Some("Invalid Password".to_owned()));
     }
 
     #[test]

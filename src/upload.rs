@@ -369,7 +369,7 @@ pub fn judge(
     log: Option<&str>,
     preview: bool,
 ) -> Outcome {
-    if let Some(reason) = refused_login(console) {
+    if let Some(reason) = conversation::refused_login(console) {
         return Outcome::NotLoggedIn(reason);
     }
     let finished = log.and_then(|log| log.lines().find_map(|line| finished(app_id, line)));
@@ -622,31 +622,6 @@ pub fn still_unserved(outcome: &mut Outcome, depot: u32) {
     }
 }
 
-/// What steamcmd says in place of a login when it never reached Steam, which refused nothing.
-const NO_CONNECTION: &str = "No Connection";
-
-/// Why steamcmd could not log in with the login it saved, when that is what its `console` says.
-/// The reason is taken from the line and not the line itself, which names the account.
-#[must_use]
-pub fn refused_login(console: &str) -> Option<String> {
-    console.lines().find_map(|line| {
-        if line.contains("Cached credentials not found") {
-            Some(line.trim().to_owned())
-        } else if conversation::refusal(line) == Some(NO_CONNECTION) {
-            None
-        } else if line.contains("FAILED (No cached credentials")
-            || (line.contains("Logging in") && line.contains("FAILED"))
-        {
-            Some(conversation::refusal(line).map_or_else(
-                || "Steam refused the saved login".to_owned(),
-                ToOwned::to_owned,
-            ))
-        } else {
-            None
-        }
-    })
-}
-
 /// What checking the saved login with Steam came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Login {
@@ -661,7 +636,7 @@ pub enum Login {
 /// Reads steamcmd's exit `code` and `console` from a run that only logged in and quit.
 #[must_use]
 pub fn judge_login(code: Option<i32>, console: &str) -> Login {
-    refused_login(console).map_or_else(
+    conversation::refused_login(console).map_or_else(
         || {
             if code == Some(0_i32) {
                 Login::Taken
@@ -721,8 +696,11 @@ fn errors(console: &str, log: Option<&str>) -> Vec<String> {
                 .to_owned()
         } else if let Some((_, socket)) = line.split_once("CreateBoundSocket: ") {
             no_socket(socket.trim())
-        } else if conversation::refusal(line) == Some(NO_CONNECTION) {
-            format!("steamcmd could not connect to Steam ({NO_CONNECTION})")
+        } else if conversation::refusal(line) == Some(conversation::NO_CONNECTION) {
+            format!(
+                "steamcmd could not connect to Steam ({})",
+                conversation::NO_CONNECTION
+            )
         } else {
             continue;
         };
@@ -1167,7 +1145,9 @@ mod tests {
             Outcome::NotLoggedIn("Cached credentials not found.".to_owned())
         );
         assert_eq!(
-            refused_login("FAILED (No cached credentials and @NoPromptForPassword is set)"),
+            conversation::refused_login(
+                "FAILED (No cached credentials and @NoPromptForPassword is set)"
+            ),
             Some("No cached credentials and @NoPromptForPassword is set".to_owned())
         );
         let expired =
@@ -1177,10 +1157,24 @@ mod tests {
             Outcome::NotLoggedIn("Expired Login Auth Code".to_owned())
         );
         assert_eq!(
-            refused_login("Logging in user 'build_bot' to Steam Public...FAILED"),
+            conversation::refused_login("Logging in user 'build_bot' to Steam Public...FAILED"),
             Some("Steam refused the saved login".to_owned())
         );
-        assert_eq!(refused_login(LOGGED_IN), None);
+        assert_eq!(conversation::refused_login(LOGGED_IN), None);
+    }
+
+    #[test]
+    fn a_saved_login_refused_with_an_error_line_is_not_logged_in() {
+        let wrong =
+            "Logging in user 'build_bot' [U:1:0] to Steam Public...ERROR (Invalid Password)\r\n";
+        assert_eq!(
+            judge_login(Some(5_i32), wrong),
+            Login::Refused("Invalid Password".to_owned())
+        );
+        assert_eq!(
+            judge(480, Some(5_i32), wrong, None, false),
+            Outcome::NotLoggedIn("Invalid Password".to_owned())
+        );
     }
 
     #[test]
@@ -1253,7 +1247,7 @@ mod tests {
     fn a_login_that_never_reached_steam_is_not_one_steam_refused() {
         let unreachable =
             "Logging in user 'build_bot' to Steam Public...FAILED (No Connection)\r\n";
-        assert_eq!(refused_login(unreachable), None);
+        assert_eq!(conversation::refused_login(unreachable), None);
         assert_eq!(
             judge_login(Some(5_i32), unreachable),
             Login::Failed(vec![

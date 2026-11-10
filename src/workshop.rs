@@ -10,6 +10,7 @@ use std::fs;
 use std::io;
 use std::path::{self, Path, PathBuf};
 
+use crate::conversation;
 use crate::scripts::{self, Problem};
 use crate::upload;
 use crate::vdf::{self, Block, Pair, Value};
@@ -506,7 +507,7 @@ pub enum Outcome {
 /// the copy it was given afterwards.
 #[must_use]
 pub fn judge(code: Option<i32>, console: &str, published: Option<u64>) -> Outcome {
-    if let Some(reason) = upload::refused_login(console) {
+    if let Some(reason) = conversation::refused_login(console) {
         return Outcome::NotLoggedIn(reason);
     }
     if let (Some(0_i32), Some(published)) = (code, published) {
@@ -1024,6 +1025,18 @@ mod tests {
                 "ERROR! Failed to update workshop item (Access Denied).\r\n"
             ),
             ["Failed to update workshop item (Access Denied)."]
+        );
+    }
+
+    #[test]
+    fn a_wrong_password_on_an_error_line_is_named_in_a_workshop_run() {
+        assert_eq!(
+            judge(
+                Some(5_i32),
+                "Logging in user 'build_bot' [U:1:0] to Steam Public...ERROR (Invalid Password)\r\n",
+                None
+            ),
+            Outcome::NotLoggedIn("Invalid Password".to_owned())
         );
     }
 
