@@ -243,6 +243,16 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_named_like_a_refusal_is_not_a_refused_login() {
+        // steamcmd's own words for the log folder, as in `APPROVED`, with only the folder's name
+        // changed to what a user could have chosen.
+        for named in ["FAILED (old)", "ERROR (old)"] {
+            let line = format!("Logging directory: 'C:\\steamship\\{named}/logs'\r\n");
+            assert_eq!(refused_login(&line), None, "{line}");
+        }
+    }
+
+    #[test]
     fn a_wrong_password_on_a_saved_login_is_a_refusal_through_every_reader() {
         let line =
             "Logging in user 'someone' [U:1:0] to Steam Public...ERROR (Invalid Password)\r\n";
