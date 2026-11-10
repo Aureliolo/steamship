@@ -6,7 +6,7 @@
 use std::fmt::{self, Write as _};
 
 use clap::{Arg, Command, CommandFactory as _};
-use steamship::cli::{Cli, EXIT_CODES, VARIABLES};
+use steamship::cli::{Cli, EXIT_CODES, SIGNAL_NOTE, VARIABLES};
 
 use crate::markdown::{escaped, inline};
 
@@ -65,9 +65,12 @@ pub fn html() -> String {
             inline(meaning)
         );
     }
-    page.push_str(
-        "</tbody></table></div>\n<h2 id=\"environment\">Environment</h2>\n<div class=\"scroll\">\
-         <table><thead><tr><th>Variable</th><th>Meaning</th></tr></thead><tbody>\n",
+    let _note: fmt::Result = write!(
+        page,
+        "</tbody></table></div>\n<p>{}</p>\n<h2 id=\"environment\">Environment</h2>\n\
+         <div class=\"scroll\"><table><thead><tr><th>Variable</th><th>Meaning</th></tr></thead>\
+         <tbody>\n",
+        inline(SIGNAL_NOTE)
     );
     for (name, meaning) in VARIABLES {
         let _row: fmt::Result = writeln!(
@@ -111,6 +114,7 @@ pub fn text() -> String {
     for (code, meaning) in EXIT_CODES {
         let _row: fmt::Result = writeln!(page, "| {code} | {meaning} |");
     }
+    let _note: fmt::Result = write!(page, "\n{SIGNAL_NOTE}\n");
     page.push_str("\n## Environment\n\n| Variable | Meaning |\n| -------- | ------- |\n");
     for (name, meaning) in VARIABLES {
         let _row: fmt::Result = writeln!(page, "| `{name}` | {meaning} |");
