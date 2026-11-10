@@ -892,9 +892,10 @@ mod tests {
     /// Names read only in a debug build or a test build, with a text that guards each one in its
     /// file, so a release build cannot reach them.
     const NOT_IN_RELEASE: [(&str, &str); 3] = [
-        // The stand-in hosts are used only under `cfg!(debug_assertions)`.
-        ("STEAMSHIP_WEB_API_STAND_IN", "cfg!(debug_assertions)"),
-        ("STEAMSHIP_RELEASES_STAND_IN", "cfg!(debug_assertions)"),
+        // A stand-in host is taken only where `webapi::is_stand_in` allows it, and the test below
+        // holds that rule to a debug build.
+        ("STEAMSHIP_WEB_API_STAND_IN", "is_stand_in"),
+        ("STEAMSHIP_RELEASES_STAND_IN", "is_stand_in"),
         // The fake steamcmd is compiled only when the tests turn its feature on.
         ("STEAMSHIP_FAKE_STEAMCMD", "feature = \"fake-steamcmd\""),
     ];
@@ -1102,6 +1103,13 @@ mod tests {
             );
             assert!(read.remove(name), "{name} is not read");
         }
+        let (_, webapi) = sources.iter().find(|(file, _)| file == "webapi").unwrap();
+        let (_, rule) = webapi.split_once("fn is_stand_in").unwrap();
+        let (rule, _) = rule.split_once("\n}").unwrap();
+        assert!(
+            rule.contains("cfg!(debug_assertions)"),
+            "is_stand_in allows a stand-in host outside a debug build"
+        );
         let listed: BTreeSet<String> = VARIABLES.iter().map(|&(name, _)| name.to_owned()).collect();
         assert_eq!(
             read.difference(&listed).collect::<Vec<_>>(),
