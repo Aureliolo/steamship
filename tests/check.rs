@@ -7,6 +7,7 @@
 
 use std::fmt::Write as _;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use steamship::check::{self, Report, check, scripts_only};
@@ -1788,7 +1789,7 @@ const LOOPING: i32 = 40;
 /// The system's own words for the error `code`. They differ between systems and between C
 /// libraries, so the system gives them here and no test spells them out.
 fn system_says(code: i32) -> String {
-    std::io::Error::from_raw_os_error(code).to_string()
+    io::Error::from_raw_os_error(code).to_string()
 }
 
 /// A link at `at` to `target`, a folder or a file.
