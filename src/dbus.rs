@@ -1028,6 +1028,93 @@ pub mod session {
             message(&bytes)
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use std::collections::VecDeque;
+        use std::thread;
+
+        use proptest::prelude::*;
+
+        use super::*;
+        use crate::dbus::encode;
+
+        fn signal_of(kind: u8, id: u64) -> Message {
+            Message {
+                kind: Kind::Signal,
+                serial: 0,
+                reply_to: None,
+                path: Some(format!("/prompt/{kind}")),
+                interface: Some("org.example.Prompt".to_owned()),
+                member: Some("Completed".to_owned()),
+                error: None,
+                body: vec![Value::Number(b't', id)],
+            }
+        }
+
+        proptest! {
+            #[test]
+            fn a_held_signal_is_found_unless_sixty_four_later_ones_pushed_it_out(
+                before in prop::collection::vec(0_u8..3, 0..80),
+                wanted in prop::collection::vec(0_u8..3, 1..6),
+            ) {
+                let (ours, mut bus) = UnixStream::pair().unwrap();
+                let sent = before.clone();
+                let peer = thread::spawn(move || {
+                    let mut head = [0_u8; 16];
+                    bus.read_exact(&mut head).unwrap();
+                    let mut rest = vec![0_u8; length(&head).unwrap().saturating_sub(head.len())];
+                    bus.read_exact(&mut rest).unwrap();
+                    let mut serial = 0_u32;
+                    for (id, kind) in (0_u64..).zip(sent) {
+                        serial = serial.saturating_add(1);
+                        let message = Message { serial, ..signal_of(kind, id) };
+                        bus.write_all(&encode(&message, None).unwrap()).unwrap();
+                    }
+                    let answer = Message {
+                        kind: Kind::Return,
+                        serial: serial.saturating_add(1),
+                        reply_to: Some(1),
+                        path: None,
+                        interface: None,
+                        member: None,
+                        error: None,
+                        body: vec![Value::Bool(true)],
+                    };
+                    bus.write_all(&encode(&answer, None).unwrap()).unwrap();
+                });
+                let mut connection = Connection { stream: ours, serial: 0, held: Vec::new() };
+                let body = connection
+                    .call("org.example", "/", "org.example.Service", "Prompt", &[])
+                    .unwrap();
+                prop_assert_eq!(body, vec![Value::Bool(true)]);
+                peer.join().unwrap();
+
+                let mut model: VecDeque<(u8, u64)> = VecDeque::new();
+                for (id, kind) in (0_u64..).zip(&before) {
+                    if model.len() == HELD {
+                        let _: Option<(u8, u64)> = model.pop_front();
+                    }
+                    model.push_back((*kind, id));
+                }
+                for kind in wanted {
+                    let found = connection.signal(
+                        &format!("/prompt/{kind}"),
+                        "org.example.Prompt",
+                        "Completed",
+                        Duration::from_secs(5),
+                    );
+                    match model.iter().position(|held| held.0 == kind) {
+                        Some(at) => {
+                            let (_, id) = model.remove(at).unwrap();
+                            prop_assert_eq!(found.unwrap(), vec![Value::Number(b't', id)]);
+                        }
+                        None => prop_assert!(found.is_err()),
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
