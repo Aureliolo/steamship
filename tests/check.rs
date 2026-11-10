@@ -1774,17 +1774,22 @@ fn content_path(project: &Project, relative: &str) -> PathBuf {
         .fold(project.root.join("export"), |path, part| path.join(part))
 }
 
-#[cfg(windows)]
-const MISSING: &str = "The system cannot find the file specified. (os error 2)";
-#[cfg(not(windows))]
-const MISSING: &str = "No such file or directory (os error 2)";
+/// The system's code for a file that is not there.
+const MISSING: i32 = 2;
 
+/// The system's code for a link that leads back to itself.
 #[cfg(windows)]
-const LOOPING: &str = "The name of the file cannot be resolved by the system. (os error 1921)";
+const LOOPING: i32 = 1921;
 #[cfg(target_os = "macos")]
-const LOOPING: &str = "Too many levels of symbolic links (os error 62)";
+const LOOPING: i32 = 62;
 #[cfg(all(unix, not(target_os = "macos")))]
-const LOOPING: &str = "Too many levels of symbolic links (os error 40)";
+const LOOPING: i32 = 40;
+
+/// The system's own words for the error `code`. They differ between systems and between C
+/// libraries, so the system gives them here and no test spells them out.
+fn system_says(code: i32) -> String {
+    std::io::Error::from_raw_os_error(code).to_string()
+}
 
 /// A link at `at` to `target`, a folder or a file.
 fn link(target: &Path, at: &Path) {
@@ -1828,8 +1833,9 @@ fn a_link_to_a_file_that_is_not_there_is_refused_naming_the_link() {
     assert_eq!(
         messages(&check(&app)),
         [format!(
-            r#"depot 1001: LocalPath "windows\*": {} cannot be read: {MISSING}. Fix or remove that path"#,
-            content_path(&project, "windows/gone.pck").display()
+            r#"depot 1001: LocalPath "windows\*": {} cannot be read: {}. Fix or remove that path"#,
+            content_path(&project, "windows/gone.pck").display(),
+            system_says(MISSING)
         )]
     );
 }
@@ -1844,8 +1850,9 @@ fn a_build_folder_holding_a_link_to_a_file_that_is_not_there_is_refused_naming_i
     assert_eq!(
         messages(&report),
         [format!(
-            "{} cannot be read: {MISSING}. Fix or remove that path",
-            build.join("gone.pck").display()
+            "{} cannot be read: {}. Fix or remove that path",
+            build.join("gone.pck").display(),
+            system_says(MISSING)
         )]
     );
 }
@@ -1858,8 +1865,9 @@ fn a_link_that_leads_back_to_itself_is_refused_naming_the_link() {
     assert_eq!(
         messages(&check(&app)),
         [format!(
-            r#"depot 1001: LocalPath "windows\*": {} cannot be read: {LOOPING}. Fix or remove that path"#,
-            content_path(&project, "windows/a.pck").display()
+            r#"depot 1001: LocalPath "windows\*": {} cannot be read: {}. Fix or remove that path"#,
+            content_path(&project, "windows/a.pck").display(),
+            system_says(LOOPING)
         )]
     );
 }
