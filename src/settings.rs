@@ -255,12 +255,14 @@ pub fn action_manifest(settings: &Block) -> Option<&str> {
 
 /// The systems depot `depot` installs on as `settings` show it, by their names in `oslist`. None
 /// when it installs on every one, or when the settings do not show it.
+///
+/// A depot another app shares installs by its own `oslist` as well, so it is read the same way.
 #[must_use]
 pub fn depot_systems(settings: &Block, depot: u32) -> Vec<String> {
-    own_depots(settings)
-        .into_iter()
-        .find(|(id, _)| *id == depot)
-        .map(|(_, listed)| systems_of(listed.block("config")))
+    settings
+        .block("depots")
+        .and_then(|depots| depots.block(&depot.to_string()))
+        .map(|listed| systems_of(listed.block("config")))
         .unwrap_or_default()
 }
 
@@ -945,6 +947,30 @@ mod tests {
         let settings = demo(DEMO);
         assert_eq!(depot_systems(&settings, 1_000_072), ["linux"]);
         assert_eq!(depot_systems(&settings, 1_000_079), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_depot_with_no_oslist_or_an_empty_one_installs_on_every_system() {
+        let listed = "\"oslist\"\t\t\"linux\"\n";
+        let none = demo(&DEMO.replace(listed, ""));
+        assert_eq!(depot_systems(&none, 1_000_072), Vec::<String>::new());
+        let empty = demo(&DEMO.replace(listed, "\"oslist\"\t\t\"\"\n"));
+        assert_eq!(depot_systems(&empty, 1_000_072), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_depot_naming_several_systems_installs_on_each_in_lower_case() {
+        let several = demo(&DEMO.replace(
+            "\"oslist\"\t\t\"linux\"",
+            "\"oslist\"\t\t\"Windows, linux\"",
+        ));
+        assert_eq!(depot_systems(&several, 1_000_072), ["windows", "linux"]);
+    }
+
+    #[test]
+    fn a_depot_another_app_shares_installs_by_its_own_oslist() {
+        let settings = demo(DEMO);
+        assert_eq!(depot_systems(&settings, 228_988), ["windows"]);
     }
 
     #[test]

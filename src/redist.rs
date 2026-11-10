@@ -10,6 +10,7 @@ use std::path::Path;
 
 use crate::check::Report;
 use crate::scripts::Problem;
+use crate::settings;
 use crate::show;
 use crate::vdf::{Block, Value};
 
@@ -207,16 +208,10 @@ pub struct Judged {
 pub fn judged(report: &Report, settings: Option<&Block>) -> Judged {
     let depots = settings.and_then(|settings| settings.block("depots"));
     let on_windows = |depot_id: u32| {
-        depots
-            .and_then(|depots| depots.block(&depot_id.to_string()))
-            .and_then(|depot| depot.block("config"))
-            .and_then(|config| config.text("oslist"))
-            .is_none_or(|systems| {
-                systems.trim().is_empty()
-                    || systems
-                        .split(',')
-                        .any(|system| system.trim().eq_ignore_ascii_case("windows"))
-            })
+        settings.is_none_or(|settings| {
+            let on = settings::depot_systems(settings, depot_id);
+            on.is_empty() || on.iter().any(|system| system == "windows")
+        })
     };
     let installing: Vec<_> = report
         .depots
