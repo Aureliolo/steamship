@@ -2213,15 +2213,65 @@ fn status_with_a_login_steam_refuses_says_why_without_the_account_and_exits_3() 
     assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
     assert!(stdout.contains("  account   as named\n"), "{stdout}");
     assert!(
-        stdout.contains("  steam     \u{2717} Steam refused the saved login\n"),
+        stdout.contains("  steam     \u{2717} refused after "),
         "{stdout}"
     );
-    assert_eq!(failure(&stderr), "not logged in: Expired Login Auth Code");
+    assert_eq!(
+        failure(&stderr),
+        "not logged in: Steam refused the saved login (Expired Login Auth Code)"
+    );
     assert!(
         stderr.ends_with("log the build account in again with steamship login\n"),
         "{stderr}"
     );
     assert!(!format!("{stdout}{stderr}").contains("build_bot"));
+}
+
+#[test]
+fn status_with_a_login_steam_limits_says_to_wait_and_gives_no_hint_to_log_in() {
+    let home = checking(
+        "Logging in user 'build_bot' to Steam Public...FAILED (Rate Limit Exceeded)",
+        5,
+    );
+    let (code, stdout, stderr) = steamship(
+        &["status", "--account", "build_bot"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "not logged in: Steam is limiting login attempts. Wait, then try again"
+    );
+    assert!(
+        stderr
+            .trim_end()
+            .ends_with("Steam is limiting login attempts. Wait, then try again"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_login_handed_over_that_steam_limits_says_to_wait_and_not_when_it_was_packed() {
+    let home = answering(
+        "Logging in user 'build_bot' to Steam Public...FAILED (Rate Limit Exceeded)",
+        5,
+    );
+    let (code, stdout, stderr) = steamship(
+        &["status"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_LOGIN", &packed_login()),
+            ("STEAMSHIP_ACCOUNT", ""),
+        ],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "not logged in: Steam is limiting login attempts. Wait, then try again"
+    );
+    assert!(!stderr.contains("packed on"), "{stderr}");
+    assert!(!stderr.contains("steamship login"), "{stderr}");
 }
 
 #[test]
@@ -2241,8 +2291,8 @@ fn a_login_handed_over_that_steam_refuses_says_when_it_was_packed_and_how_to_pac
     assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
     assert_eq!(
         failure(&stderr),
-        "not logged in: Expired Login Auth Code. The login in STEAMSHIP_LOGIN was packed on \
-         2026-09-28"
+        "not logged in: Steam refused the saved login (Expired Login Auth Code). The login in \
+         STEAMSHIP_LOGIN was packed on 2026-09-28"
     );
     assert!(
         stderr.ends_with(
@@ -3372,7 +3422,10 @@ fn a_workshop_upload_steam_will_not_log_in_for_exits_3() {
         &[],
     );
     assert_eq!(code, Some(3_i32), "{stdout}");
-    assert_eq!(failure(&stderr), "not logged in: Expired Login Auth Code");
+    assert_eq!(
+        failure(&stderr),
+        "not logged in: Steam refused the saved login (Expired Login Auth Code)"
+    );
 }
 
 #[test]
@@ -7348,7 +7401,7 @@ fn an_upload_without_a_login_says_to_log_in_and_exits_3() {
     assert_eq!(code, Some(3_i32));
     assert_eq!(
         failure(&stderr),
-        "not logged in: Cached credentials not found."
+        "not logged in: steamcmd holds no saved login for the build account"
     );
     assert!(
         stderr.ends_with("log the build account in again with steamship login\n"),
