@@ -87,7 +87,7 @@
       "versioningTemplate": "regex:^(?<major>\\d+)$"
     },
     {
-      "description": "A release tag with the SHA-256 of the asset downloaded on the next line: actionlint, cargo-deny and wingetcreate. The tag and the digest move together.",
+      "description": "A release tag with the SHA-256 of the asset downloaded on the next line: actionlint, cargo-deny and the like. The tag and the digest move together.",
       "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
       "matchStrings": [
