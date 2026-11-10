@@ -71,7 +71,10 @@ pub fn folder(path: &Path, app: Option<u32>) -> Report {
     match walk(path, "*", true, &mut found) {
         Ok(()) if !path.is_dir() => problems.push(Problem::new(path, "is not a folder")),
         Ok(()) => {}
-        Err(error) => problems.push(Problem::new(path, format!("cannot be read: {error}"))),
+        Err(error) => problems.push(Problem::new(
+            path,
+            format!("{error}. Fix or remove that path"),
+        )),
     }
     let files: BTreeSet<PathBuf> = found.into_iter().collect();
     for file in &files {
@@ -522,27 +525,25 @@ fn is_bundle(name: &str) -> bool {
 fn holds(folder: &Path, wanted: &[String], any_case: bool) -> bool {
     let mut at = folder.to_path_buf();
     for part in wanted {
-        let exact = at.join(part);
-        at = if exact.exists() {
-            exact
-        } else if any_case {
-            let Some(found) = fs::read_dir(&at)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .find(|entry| {
-                    entry
-                        .file_name()
-                        .to_string_lossy()
-                        .eq_ignore_ascii_case(part)
-                })
-            else {
-                return false;
-            };
-            found.path()
-        } else {
+        // A file system that ignores case answers `exists` for a name in any case, so only what
+        // the folder lists tells the name apart.
+        let Some(found) = fs::read_dir(&at)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .find(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if any_case {
+                    name.eq_ignore_ascii_case(part)
+                } else {
+                    name == part.as_str()
+                }
+            })
+        else {
             return false;
         };
+        at = found.path();
     }
     true
 }
@@ -739,7 +740,7 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
             Err(message) => problems.push(Problem::new(
                 &depot.path,
                 format!(
-                    "depot {}: LocalPath \"{}\" {message}",
+                    "depot {}: LocalPath \"{}\"{message}",
                     depot.depot_id, mapping.local_path
                 ),
             )),
@@ -840,12 +841,12 @@ pub fn ships(depot: &DepotScript, file: &Path) -> bool {
 
 fn mapped_by(root: &Path, mapping: &FileMapping) -> Result<Vec<PathBuf>, String> {
     if let Some(message) = unmappable(mapping) {
-        return Err(message.to_owned());
+        return Err(format!(" {message}"));
     }
     let (folder, name) = split(mapping);
     let mut found = Vec::new();
     walk(&root.join(folder), &name, mapping.recursive, &mut found)
-        .map_err(|error| format!("cannot be read: {error}"))?;
+        .map_err(|error| format!(": {error}. Fix or remove that path"))?;
     Ok(found)
 }
 
@@ -853,10 +854,10 @@ fn walk(folder: &Path, name: &str, recursive: bool, found: &mut Vec<PathBuf>) ->
     if !folder.is_dir() {
         return Ok(());
     }
-    for entry in fs::read_dir(folder)? {
-        let entry = entry?;
+    for entry in fs::read_dir(folder).map_err(naming(folder))? {
+        let entry = entry.map_err(naming(folder))?;
         let path = entry.path();
-        if entry.file_type()?.is_dir() {
+        if entry.file_type().map_err(naming(&path))?.is_dir() {
             if recursive {
                 walk(&path, name, recursive, found)?;
             }
@@ -864,13 +865,23 @@ fn walk(folder: &Path, name: &str, recursive: bool, found: &mut Vec<PathBuf>) ->
         }
         // The kind above is the entry's own, so a link to a folder is never walked into and a
         // loop of links cannot make the walk endless. A link to a file counts as that file.
-        if path.metadata()?.is_file()
+        if path.metadata().map_err(naming(&path))?.is_file()
             && pattern::matches(name, &entry.file_name().to_string_lossy())
         {
             found.push(path);
         }
     }
     Ok(())
+}
+
+/// An error that names `path` as what cannot be read, since the system's reason alone does not.
+fn naming(path: &Path) -> impl FnOnce(io::Error) -> io::Error {
+    move |error| {
+        io::Error::new(
+            error.kind(),
+            format!("{} cannot be read: {error}", path.display()),
+        )
+    }
 }
 
 /// A `FileExclusion` with a folder in it is matched against the path from the content root. One
