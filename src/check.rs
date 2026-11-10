@@ -71,7 +71,10 @@ pub fn folder(path: &Path, app: Option<u32>) -> Report {
     match walk(path, "*", true, &mut found) {
         Ok(()) if !path.is_dir() => problems.push(Problem::new(path, "is not a folder")),
         Ok(()) => {}
-        Err(error) => problems.push(Problem::new(path, format!("cannot be read: {error}"))),
+        Err(error) => problems.push(Problem::new(
+            path,
+            format!("{error}. Fix or remove that path"),
+        )),
     }
     let files: BTreeSet<PathBuf> = found.into_iter().collect();
     for file in &files {
@@ -737,7 +740,7 @@ fn files(depot: &DepotScript, problems: &mut Vec<Problem>) -> BTreeSet<PathBuf> 
             Err(message) => problems.push(Problem::new(
                 &depot.path,
                 format!(
-                    "depot {}: LocalPath \"{}\" {message}",
+                    "depot {}: LocalPath \"{}\"{message}",
                     depot.depot_id, mapping.local_path
                 ),
             )),
@@ -838,12 +841,12 @@ pub fn ships(depot: &DepotScript, file: &Path) -> bool {
 
 fn mapped_by(root: &Path, mapping: &FileMapping) -> Result<Vec<PathBuf>, String> {
     if let Some(message) = unmappable(mapping) {
-        return Err(message.to_owned());
+        return Err(format!(" {message}"));
     }
     let (folder, name) = split(mapping);
     let mut found = Vec::new();
     walk(&root.join(folder), &name, mapping.recursive, &mut found)
-        .map_err(|error| format!("cannot be read: {error}"))?;
+        .map_err(|error| format!(": {error}. Fix or remove that path"))?;
     Ok(found)
 }
 
@@ -871,10 +874,14 @@ fn walk(folder: &Path, name: &str, recursive: bool, found: &mut Vec<PathBuf>) ->
     Ok(())
 }
 
-/// An error that names `path` before the system's reason, which alone says nothing of which file,
-/// link or folder it is about.
+/// An error that names `path` as what cannot be read, since the system's reason alone does not.
 fn naming(path: &Path) -> impl FnOnce(io::Error) -> io::Error {
-    move |error| io::Error::new(error.kind(), format!("{}: {error}", path.display()))
+    move |error| {
+        io::Error::new(
+            error.kind(),
+            format!("{} cannot be read: {error}", path.display()),
+        )
+    }
 }
 
 /// A `FileExclusion` with a folder in it is matched against the path from the content root. One

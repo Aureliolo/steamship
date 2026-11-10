@@ -1746,7 +1746,7 @@ fn a_build_folder_that_cannot_be_read_is_refused_with_the_systems_reason() {
     assert_eq!(
         messages(&report),
         [format!(
-            "cannot be read: {}: Permission denied (os error 13)",
+            "{} cannot be read: Permission denied (os error 13). Fix or remove that path",
             build.display()
         )]
     );
@@ -1761,7 +1761,7 @@ fn a_content_folder_that_cannot_be_read_is_refused_with_the_systems_reason() {
     assert_eq!(
         messages(&check(&app)),
         [format!(
-            r#"depot 1001: LocalPath "windows\*" cannot be read: {}: Permission denied (os error 13)"#,
+            r#"depot 1001: LocalPath "windows\*": {} cannot be read: Permission denied (os error 13). Fix or remove that path"#,
             content_path(&project, "windows").display()
         )]
     );
@@ -1828,8 +1828,24 @@ fn a_link_to_a_file_that_is_not_there_is_refused_naming_the_link() {
     assert_eq!(
         messages(&check(&app)),
         [format!(
-            r#"depot 1001: LocalPath "windows\*" cannot be read: {}: {MISSING}"#,
+            r#"depot 1001: LocalPath "windows\*": {} cannot be read: {MISSING}. Fix or remove that path"#,
             content_path(&project, "windows/gone.pck").display()
+        )]
+    );
+}
+
+#[test]
+fn a_build_folder_holding_a_link_to_a_file_that_is_not_there_is_refused_naming_it() {
+    let project = Project::new();
+    project.put("build/game.exe", PROGRAM);
+    let build = project.root.join("build");
+    link(&build.join("absent.pck"), &build.join("gone.pck"));
+    let report = check::folder(&build, None);
+    assert_eq!(
+        messages(&report),
+        [format!(
+            "{} cannot be read: {MISSING}. Fix or remove that path",
+            build.join("gone.pck").display()
         )]
     );
 }
@@ -1842,7 +1858,7 @@ fn a_link_that_leads_back_to_itself_is_refused_naming_the_link() {
     assert_eq!(
         messages(&check(&app)),
         [format!(
-            r#"depot 1001: LocalPath "windows\*" cannot be read: {}: {LOOPING}"#,
+            r#"depot 1001: LocalPath "windows\*": {} cannot be read: {LOOPING}. Fix or remove that path"#,
             content_path(&project, "windows/a.pck").display()
         )]
     );
