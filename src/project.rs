@@ -310,6 +310,7 @@ impl Project {
         }
         if let Some(value) = table.get("branch") {
             let branch = text_of(value, "branch")?;
+            unquoted(branch, "branch", "Name a branch without one")?;
             if branch.trim().is_empty() || webapi::is_default(branch) {
                 return Err(format!(
                     "`branch` is \"{branch}\". Name the branch the game's build goes live on, \
@@ -360,7 +361,7 @@ impl Project {
                 project.items = inside(root, items, "workshop.items")?;
             }
             if let Some(footer) = workshop.get("footer") {
-                project.footer = Some(text_of(footer, "workshop.footer")?.to_owned());
+                project.footer = Some(footer_of(footer)?);
             }
             if let Some(held) = workshop.get("held_until_launch") {
                 project.held_until_launch = held.as_bool().ok_or(
@@ -658,6 +659,7 @@ fn demo_configured(root: &Path, section: &toml::Value, game: &Project) -> Result
     let branch = match demo.get("branch") {
         Some(value) => {
             let branch = text_of(value, "demo.branch")?;
+            unquoted(branch, "demo.branch", "Name a branch without one")?;
             if branch.trim().is_empty() || webapi::is_default(branch) {
                 return Err(format!(
                     "`demo.branch` is \"{branch}\". Name the branch the demo's build goes live on, \
@@ -743,6 +745,24 @@ fn text_of<'value>(value: &'value toml::Value, key: &str) -> Result<&'value str,
         .ok_or_else(|| format!("`{key}` is not text. Write it in quotes"))
 }
 
+/// The Workshop footer `value` gives, which goes into each item's script.
+fn footer_of(value: &toml::Value) -> Result<String, String> {
+    let footer = text_of(value, "workshop.footer")?;
+    unquoted(footer, "workshop.footer", "Write a footer without one")?;
+    Ok(footer.to_owned())
+}
+
+/// Refuses a `value` of the setting `key` that holds a double quote, which ends a value in a build
+/// script. `then` is what to do about it.
+fn unquoted(value: &str, key: &str, then: &str) -> Result<(), String> {
+    if value.contains('"') {
+        return Err(format!(
+            "`{key}` is {value}. A build script cannot hold a double quote. {then}"
+        ));
+    }
+    Ok(())
+}
+
 /// A list of text, as `build` and `records` take it.
 fn texts(value: &toml::Value, key: &str) -> Result<Vec<String>, String> {
     let wrong = || format!("`{key}` is not a list of text. Write it as [\"one\", \"two\"]");
@@ -775,6 +795,7 @@ const fn named(path: PathBuf) -> Given {
 /// with it to every machine it is checked out on.
 fn inside(root: &Path, value: &toml::Value, key: &str) -> Result<PathBuf, String> {
     let written = text_of(value, key)?;
+    unquoted(written, key, "Name a path without one")?;
     let path = Path::new(written);
     if written.trim().is_empty() {
         return Err(format!(
@@ -1431,6 +1452,87 @@ mod tests {
         ] {
             assert_eq!(configured(text).unwrap_err(), said, "{text}");
         }
+    }
+
+    fn refused(text: &str) -> String {
+        configured(text).unwrap_err()
+    }
+
+    fn path_refusal(key: &str) -> String {
+        format!(
+            "`{key}` is a\"b. A build script cannot hold a double quote. Name a path without one"
+        )
+    }
+
+    #[test]
+    fn a_branch_holding_a_double_quote_is_refused() {
+        assert_eq!(
+            refused("branch = 'te\"st'"),
+            "`branch` is te\"st. A build script cannot hold a double quote. Name a branch \
+             without one"
+        );
+    }
+
+    #[test]
+    fn a_demo_branch_holding_a_double_quote_is_refused() {
+        assert_eq!(
+            refused("[demo]\nbranch = 'te\"st'"),
+            "`demo.branch` is te\"st. A build script cannot hold a double quote. Name a \
+             branch without one"
+        );
+    }
+
+    #[test]
+    fn a_workshop_footer_holding_a_double_quote_is_refused() {
+        assert_eq!(
+            refused("[workshop]\nfooter = 'a\"b'"),
+            "`workshop.footer` is a\"b. A build script cannot hold a double quote. Write a \
+             footer without one"
+        );
+    }
+
+    #[test]
+    fn a_script_path_holding_a_double_quote_is_refused() {
+        assert_eq!(refused("script = 'a\"b'"), path_refusal("script"));
+    }
+
+    #[test]
+    fn a_demo_script_path_holding_a_double_quote_is_refused() {
+        assert_eq!(
+            refused("[demo]\nscript = 'a\"b'"),
+            path_refusal("demo.script")
+        );
+    }
+
+    #[test]
+    fn a_records_path_holding_a_double_quote_is_refused() {
+        assert_eq!(refused("records = ['a\"b']"), path_refusal("records"));
+    }
+
+    #[test]
+    fn a_locale_path_holding_a_double_quote_is_refused() {
+        assert_eq!(refused("locale = 'a\"b'"), path_refusal("locale"));
+    }
+
+    #[test]
+    fn an_import_path_holding_a_double_quote_is_refused() {
+        assert_eq!(refused("import = 'a\"b'"), path_refusal("import"));
+    }
+
+    #[test]
+    fn a_workshop_mods_path_holding_a_double_quote_is_refused() {
+        assert_eq!(
+            refused("[workshop]\nmods = 'a\"b'"),
+            path_refusal("workshop.mods")
+        );
+    }
+
+    #[test]
+    fn a_workshop_items_path_holding_a_double_quote_is_refused() {
+        assert_eq!(
+            refused("[workshop]\nitems = 'a\"b'"),
+            path_refusal("workshop.items")
+        );
     }
 
     #[test]

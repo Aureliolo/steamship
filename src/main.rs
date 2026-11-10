@@ -1210,6 +1210,11 @@ fn run_init(app: u32, mut depots: Vec<init::Depot>, folder: &Path) -> ExitCode {
             folder: "build".to_owned(),
         });
     }
+    // The game's branch is read from its steamship.toml once the scripts are there, so a file that
+    // cannot be read is refused before anything is written.
+    if let Some(Err(why)) = env::current_dir().ok().map(|here| Project::find(&here)) {
+        return fail(&why, REFUSED);
+    }
     let scripts = match init::scripts(app, &depots, folder, None) {
         Ok(scripts) => scripts,
         Err(why) => return fail(&why, REFUSED),

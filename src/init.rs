@@ -50,14 +50,14 @@ pub fn scripts(
 ) -> Result<Vec<(String, String)>, String> {
     if let Some(depot) = depots.iter().find(|depot| depot.folder.contains('"')) {
         return Err(format!(
-            "depot {}'s folder {} holds a double quote, which a build script cannot hold. Name a \
+            "depot {}'s folder {} holds a double quote. A build script cannot hold one. Name a \
              folder without one",
             depot.id, depot.folder
         ));
     }
     if let Some(branch) = set_live.filter(|branch| branch.contains('"')) {
         return Err(format!(
-            "the branch {branch} holds a double quote, which a build script cannot hold. Name a \
+            "the branch {branch} holds a double quote. A build script cannot hold one. Name a \
              branch without one"
         ));
     }
@@ -261,8 +261,8 @@ mod tests {
                 None
             ),
             Err(
-                "depot 481's folder build/\"x holds a double quote, which a build script cannot \
-                 hold. Name a folder without one"
+                "depot 481's folder build/\"x holds a double quote. A build script cannot hold \
+                 one. Name a folder without one"
                     .to_owned()
             )
         );
@@ -274,8 +274,8 @@ mod tests {
         assert_eq!(
             scripts(480, &depots, Path::new("steam"), None),
             Err(
-                "depot 482's folder b\"d holds a double quote, which a build script cannot \
-                 hold. Name a folder without one"
+                "depot 482's folder b\"d holds a double quote. A build script cannot hold \
+                 one. Name a folder without one"
                     .to_owned()
             )
         );
@@ -291,7 +291,7 @@ mod tests {
                 Some("te\"st")
             ),
             Err(
-                "the branch te\"st holds a double quote, which a build script cannot hold. Name \
+                "the branch te\"st holds a double quote. A build script cannot hold one. Name \
                  a branch without one"
                     .to_owned()
             )
