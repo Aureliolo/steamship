@@ -1681,8 +1681,9 @@ mod tests {
 
     #[test]
     fn a_file_that_is_not_one_says_why() {
+        let broken = read("[").unwrap_err();
+        assert!(broken.starts_with("not JSON: "), "{broken}");
         for (text, why) in [
-            ("[", "not JSON: "),
             ("{}", "there is no \"achievements\" list"),
             (
                 r#"{"app": "x", "achievements": []}"#,
@@ -1734,7 +1735,7 @@ mod tests {
             ),
         ] {
             let error = read(text).unwrap_err();
-            assert!(error.starts_with(why), "{text}: {error}");
+            assert_eq!(error, why, "{text}");
         }
     }
 
@@ -1855,7 +1856,7 @@ mod tests {
             ),
         ] {
             let error = read(text).unwrap_err();
-            assert!(error.starts_with(why), "{text}: {error}");
+            assert_eq!(error, why, "{text}");
         }
     }
 

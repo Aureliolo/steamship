@@ -138,9 +138,7 @@ fn set_up(
         None => command.env_clear(),
     };
     // After the environment may have been cleared, so that nothing reaches the session's store.
-    let _: &mut Command = command
-        .envs(common::store::environment())
-        .envs(variables.iter().copied());
+    let _: &mut Command = command.envs(common::store::environment());
     #[cfg(windows)]
     if let Some(home) = home
         && home.join(install::FOLDER).join("steamcmd.sh").is_file()
@@ -149,6 +147,8 @@ fn set_up(
             .env("STEAMSHIP_FAKE_STEAMCMD", shell())
             .env("HOME", home);
     }
+    // Last, so that a test can name a shell that does not exist.
+    let _: &mut Command = command.envs(variables.iter().copied());
     command
 }
 
@@ -1592,8 +1592,12 @@ fn an_upload_told_to_stop_stops_steamcmd_shows_what_it_said_and_ends_by_that_sig
 fn a_failed_upload_outside_actions_shows_no_log_groups() {
     let home = faked_with(BUILT_THEN_FAILED);
     let (_project, script) = project(true);
-    let (code, stdout, _) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
-    assert_eq!(code, Some(1_i32), "{stdout}");
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("Failed to set build live on branch testing"),
+        "{stdout}{stderr}"
+    );
     assert!(!stdout.contains("::group::"), "{stdout}");
 }
 
@@ -2762,8 +2766,12 @@ fn login_then_look() -> String {
     // not, so nothing in it is quoted.
     #[cfg(windows)]
     assert!(!steamship.contains(' '), "{steamship}");
+    // `call echo` with a caret reads the code after `login` ran, where a plain `%errorlevel%`
+    // would be filled in as the line is parsed.
     #[cfg(windows)]
-    let line = format!("set STEAMSHIP_ACCOUNT=& {steamship} login & set /p after=next: ");
+    let line = format!(
+        "set STEAMSHIP_ACCOUNT=& {steamship} login & call echo exited %^errorlevel% & set /p after=next: "
+    );
     #[cfg(unix)]
     let line = format!("unset STEAMSHIP_ACCOUNT; '{steamship}' login; echo \"exited $?\"; stty -a");
     line
@@ -2861,12 +2869,17 @@ fn a_newer_steamship_is_not_told_in_a_log() {
     let home = told_of_99();
     let (code, stdout, stderr) = steamship(&["logout"], Some(home.path()), &[("CI", "")]);
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  login     none saved\n  account   none remembered\n"),
+        "{stdout}"
+    );
     assert!(!stdout.contains("99.0.0"), "{stdout}");
 }
 
 /// Checks that `session`'s terminal is as steamship found it, once steamship has `exited` so.
 #[cfg(windows)]
-fn looks_as_it_was(session: &mut Session, _exited: &str) {
+fn looks_as_it_was(session: &mut Session, exited: &str) {
+    session.wait_for(exited);
     session.wait_for("next:");
     session.type_in("typed after\r");
     session.wait_for("next: typed after");
@@ -3282,6 +3295,7 @@ fn workshop_item(extra: &str) -> (tempfile::TempDir, PathBuf) {
 fn publishing(said: &str, code: u8) -> tempfile::TempDir {
     let home = faked_with(&format!(
         "#!/bin/sh\n\
+         echo \"$*\" > \"$HOME/args\"\n\
          while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
          grep -q publishedfileid \"$script\" || \
          printf '\"workshopitem\"\\n{{\\n\"appid\" \"480\"\\n\"publishedfileid\" \"777\"\\n}}\\n' > \"$script\"\n\
@@ -3335,6 +3349,8 @@ fn a_workshop_upload_in_ci_logs_in_as_the_account_handed_over() {
         &[("STEAMSHIP_LOGIN", &packed_login())],
     );
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(args.contains(" +login build_bot "), "{args}");
     assert!(
         saved.exists(),
         "the login is put back where steamcmd reads it"
@@ -8057,7 +8073,7 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
     );
 
     // Fetched again, the folder is checked and updated in place.
-    let (again, _, again_said) = fetching(
+    let (again, again_said, again_why) = fetching(
         home.path(),
         &[
             "1000",
@@ -8068,7 +8084,20 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
         ],
         &[],
     );
-    assert_eq!(again, Some(0_i32), "{again_said}");
+    assert_eq!(again, Some(0_i32), "{again_said}{again_why}");
+    assert!(
+        again_said.contains(&format!(
+            "app 1000: build 4242 of the default branch is in {}",
+            chosen.display()
+        )),
+        "{again_said}{again_why}"
+    );
+    let updated = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(
+        updated.contains(&format!("+force_install_dir {} ", chosen.display()))
+            && updated.ends_with("+app_update 1000 -beta public validate +quit\n"),
+        "{updated}"
+    );
 }
 
 #[test]
@@ -9884,11 +9913,18 @@ fn a_game_check_compares_what_the_game_holds_with_steam_and_lists_its_builds() {
         &["check"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
-    assert_ne!(
+    assert_eq!(
         code,
-        Some(0_i32),
+        Some(1_i32),
         "Steam refused every question: {stdout}{stderr}"
     );
+    for result in [
+        "  app       \u{2713} 1000050, 1 depot, scripts checked\n",
+        "  branch    \u{2717} not checked\n",
+        "  steam     \u{2717} key refused\n",
+    ] {
+        assert!(stdout.contains(result), "{result} in {stdout}{stderr}");
+    }
     for section in [
         "steamship check\n",
         "steamship achievements\n",
@@ -10088,24 +10124,60 @@ fn a_games_builds_settings_and_promotion_are_asked_for_its_own_app() {
     let asked = requests.recv_timeout(Duration::from_secs(10)).unwrap();
     assert!(asked.contains("appid=1000050"), "{asked}");
 
-    let refusing = refusing_web_api(4);
+    let (refusing, sent) = web_api(vec![("403 Forbidden", "{}"); 4]);
     let (promoted, said, why) = in_game_with(
         &root,
         &["promote", "--build", "7", "--branch", "testing"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &refusing)],
     );
-    assert_ne!(promoted, Some(0_i32), "Steam refused it: {said}{why}");
-    assert!(!why.contains("there is no game"), "{why}");
+    assert_eq!(promoted, Some(1_i32), "Steam refused it: {said}{why}");
+    assert!(
+        said.contains("  app       1000050\n  build     7\n  branch    testing\n")
+            && format!("{said}{why}").contains(
+                "Steam refused the Web API key. It must be the publisher key of a group that \
+                 holds the app"
+            ),
+        "{said}{why}"
+    );
+    let promotion = sent.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(promotion.contains("appid=1000050"), "{promotion}");
 
+    let steamcmd = home_recording_steamcmd();
     for args in [
         ["settings"].as_slice(),
         ["settings", "--save"].as_slice(),
         ["settings", "--check"].as_slice(),
     ] {
-        let (asked_for, shown, reason) = in_game(&root, args);
-        assert_ne!(asked_for, Some(0_i32), "no steamcmd here: {shown}{reason}");
-        assert!(!reason.contains("there is no game"), "{args:?}: {reason}");
+        let (asked_for, shown, reason) = steamship_in(
+            &root,
+            args,
+            Some(steamcmd.path()),
+            &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+        );
+        assert_eq!(asked_for, Some(1_i32), "{args:?}: {shown}{reason}");
+        assert!(
+            format!("{shown}{reason}").contains("steamcmd printed no settings for app 1000050"),
+            "{args:?}: {shown}{reason}"
+        );
+        let given = fs::read_to_string(steamcmd.path().join("args")).unwrap();
+        assert!(
+            given.contains("+app_info_print 1000050 "),
+            "{args:?}: {given}"
+        );
+        fs::remove_file(steamcmd.path().join("args")).unwrap();
     }
+}
+
+/// A home with a saved login whose steamcmd keeps what it was started with in `args` and shows
+/// no app information.
+fn home_recording_steamcmd() -> tempfile::TempDir {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"$*\" > \"$HOME/args\"\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n",
+    );
+    saved_login(home.path());
+    home
 }
 
 #[test]
@@ -11448,4 +11520,191 @@ fn a_release_without_an_sbom_fails_the_self_check_saying_so() {
     let (unreadable, read, refusal) = self_check(&web_api(vec![("200 OK", "{}")]).0);
     assert_eq!(unreadable, Some(1_i32), "{read}{refusal}");
     assert!(refusal.contains(".spdx.json lists no files"), "{refusal}");
+}
+
+/// The six commands that start steamcmd, each with what it needs around it to get that far.
+#[derive(Clone, Copy, Debug)]
+enum Starter {
+    Status,
+    Upload,
+    Fetch,
+    Wrap,
+    Settings,
+    Workshop,
+}
+
+impl Starter {
+    /// Whether its step says how long steamcmd took, which the others have no clock for.
+    const fn timed(self) -> bool {
+        !matches!(self, Self::Status | Self::Settings)
+    }
+
+    /// The command, run from `home` with `variables` set.
+    fn run(self, home: &Path, variables: &[(&str, &str)]) -> (Option<i32>, String, String) {
+        let mut all = vec![("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+        all.extend_from_slice(variables);
+        match self {
+            Self::Status => steamship(&["status"], Some(home), &all),
+            Self::Upload => {
+                let (_project, script) = project(true);
+                upload(&script, home, &["--version", "1.4.0"], &all)
+            }
+            Self::Fetch => fetching(home, &["1000"], &all),
+            Self::Wrap => {
+                let files = tempfile::tempdir().unwrap();
+                let game = files.path().join("game.exe");
+                fs::write(&game, "MZplain").unwrap();
+                steamship(
+                    &["drm-wrap", "1000", &game.to_string_lossy()],
+                    Some(home),
+                    &all,
+                )
+            }
+            Self::Settings => steamship(&["settings", "1000"], Some(home), &all),
+            Self::Workshop => {
+                let (_item, script) = workshop_item("");
+                steamship(&["workshop", &script.to_string_lossy()], Some(home), &all)
+            }
+        }
+    }
+}
+
+/// A home with a saved login whose recorded steamcmd is `script`.
+fn stubbed(script: &str) -> tempfile::TempDir {
+    let home = faked_with(script);
+    saved_login(home.path());
+    home
+}
+
+/// `starter` in a home whose steamcmd matches the pinned hash but cannot be started: on Unix its
+/// interpreter is missing, and on Windows the shell that runs the fake is.
+fn assert_cannot_start(starter: Starter) {
+    let home = stubbed("#!/no/such/interpreter\n");
+    let shell = home.path().join("no-such-shell");
+    let (code, stdout, stderr) = starter.run(
+        home.path(),
+        &[("STEAMSHIP_FAKE_STEAMCMD", &shell.to_string_lossy())],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let program = steamcmd::program(&home.path().join(install::FOLDER), Platform::THIS);
+    let reason = io::Error::from_raw_os_error(2_i32);
+    assert_eq!(
+        failure(&stderr),
+        format!("{}: {reason}", program.display()),
+        "{stderr}"
+    );
+    let step = "  steam     \u{2717} could not start";
+    assert!(stdout.contains(step), "{stdout}");
+    let line = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix(step))
+        .unwrap();
+    if starter.timed() {
+        let seconds = line
+            .strip_prefix(" after ")
+            .and_then(|rest| rest.strip_suffix(" s"));
+        assert!(
+            seconds.is_some_and(|seconds| seconds.parse::<u64>().is_ok()),
+            "{line:?}"
+        );
+    } else {
+        assert_eq!(line, "", "this step has no clock: {stdout}");
+    }
+}
+
+/// A steamcmd that logs in anew during the run: it saves a login holding the first of
+/// [`SECRETS`], then fails with that file printed as an error.
+///
+/// steamcmd is not known to print a saved login. The `ERROR! ` prefix is what makes steamship
+/// show a line at these commands, so the test stands for the worst case.
+fn renewing() -> String {
+    let [token, _] = SECRETS;
+    format!(
+        "#!/bin/sh\n\
+         mkdir -p \"$HOME/Steam/config\"\n\
+         printf '\"InstallConfigStore\" {{ \"Software\" {{ \"Valve\" {{ \"Steam\" {{ \
+         \"ConnectCache\" {{ \"3a1f0c2e\" \"{token}\" }} }} }} }} }}\\n' \
+         > \"$HOME/Steam/config/config.vdf\"\n\
+         sed 's/^/ERROR! /' \"$HOME/Steam/config/config.vdf\"\n\
+         exit 8\n"
+    )
+}
+
+/// `starter` against [`renewing`], whose new login was in no file before the run.
+fn assert_renewed_login_kept_out(starter: Starter) {
+    let home = stubbed(&renewing());
+    let (code, stdout, stderr) = starter.run(home.path(), &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_no_secret_in("stdout", stdout.as_bytes());
+    assert_no_secret_in("stderr", stderr.as_bytes());
+    assert!(
+        stderr.contains("[redacted]"),
+        "the error is shown with the login blanked: {stderr}"
+    );
+    let steamcmd = format!("{}/steamcmd.sh", install::FOLDER);
+    let saved = format!("{}/config/config.vdf", install::FOLDER);
+    let except = [steamcmd.as_str(), saved.as_str(), "Steam/config/config.vdf"];
+    for (path, contents) in written(home.path(), &except) {
+        assert_no_secret_in(&path, &contents);
+    }
+}
+
+#[test]
+fn status_that_cannot_start_steamcmd_names_the_program_and_why_and_exits_1() {
+    assert_cannot_start(Starter::Status);
+}
+
+#[test]
+fn an_upload_that_cannot_start_steamcmd_names_the_program_and_why_and_exits_1() {
+    assert_cannot_start(Starter::Upload);
+}
+
+#[test]
+fn a_fetch_that_cannot_start_steamcmd_names_the_program_and_why_and_exits_1() {
+    assert_cannot_start(Starter::Fetch);
+}
+
+#[test]
+fn a_wrap_that_cannot_start_steamcmd_names_the_program_and_why_and_exits_1() {
+    assert_cannot_start(Starter::Wrap);
+}
+
+#[test]
+fn settings_that_cannot_start_steamcmd_name_the_program_and_why_and_exit_1() {
+    assert_cannot_start(Starter::Settings);
+}
+
+#[test]
+fn a_workshop_upload_that_cannot_start_steamcmd_names_the_program_and_why_and_exits_1() {
+    assert_cannot_start(Starter::Workshop);
+}
+
+#[test]
+fn status_keeps_a_login_steamcmd_saves_during_the_run_out_of_what_it_prints() {
+    assert_renewed_login_kept_out(Starter::Status);
+}
+
+#[test]
+fn an_upload_keeps_a_login_steamcmd_saves_during_the_run_out_of_what_it_prints_and_saves() {
+    assert_renewed_login_kept_out(Starter::Upload);
+}
+
+#[test]
+fn a_fetch_keeps_a_login_steamcmd_saves_during_the_run_out_of_what_it_prints() {
+    assert_renewed_login_kept_out(Starter::Fetch);
+}
+
+#[test]
+fn a_wrap_keeps_a_login_steamcmd_saves_during_the_run_out_of_what_it_prints() {
+    assert_renewed_login_kept_out(Starter::Wrap);
+}
+
+#[test]
+fn settings_keep_a_login_steamcmd_saves_during_the_run_out_of_what_they_print() {
+    assert_renewed_login_kept_out(Starter::Settings);
+}
+
+#[test]
+fn a_workshop_upload_keeps_a_login_steamcmd_saves_during_the_run_out_of_what_it_prints_and_saves() {
+    assert_renewed_login_kept_out(Starter::Workshop);
 }

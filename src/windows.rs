@@ -1510,9 +1510,11 @@ mod tests {
     use proptest::prelude::*;
     use std::env;
     use std::fs;
+    use std::mem;
     use std::os::windows::ffi::OsStringExt as _;
     use std::path::PathBuf;
     use std::slice;
+    use windows_sys::Win32::Foundation::E_INVALIDARG;
     use windows_sys::Win32::Foundation::{GetHandleInformation, HWND, LPARAM};
     use windows_sys::Win32::Globalization::lstrlenW;
     use windows_sys::Win32::Security::{
@@ -1834,7 +1836,8 @@ mod tests {
     fn a_pseudo_console_windows_will_not_make_is_an_error() {
         let (typed, _input) = io::pipe().unwrap();
         let (_output, written) = io::pipe().unwrap();
-        drop(PseudoConsole::create(&typed, &written, COORD { X: 0, Y: 0 }).unwrap_err());
+        let refused = PseudoConsole::create(&typed, &written, COORD { X: 0, Y: 0 }).unwrap_err();
+        assert_eq!(refused.raw_os_error(), Some(E_INVALIDARG));
         drop(PseudoConsole::create(&typed, &written, COORD { X: 80, Y: 25 }).unwrap());
     }
 
@@ -1965,6 +1968,104 @@ mod tests {
                 listed.contains(&format!("User: {}", item.label)),
                 "{listed}"
             );
+        }
+    }
+
+    /// What one thread of a run does: marks a pipe's handle to be handed down for a while, or
+    /// starts a program.
+    #[derive(Debug, Clone, Copy)]
+    enum Step {
+        Mark,
+        Start,
+    }
+
+    fn steps() -> impl Strategy<Value = Step> {
+        prop_oneof![Just(Step::Mark), Just(Step::Start)]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4))]
+
+        #[test]
+        fn no_program_starts_while_a_handle_is_marked_to_be_handed_down(
+            threads in prop::collection::vec(prop::collection::vec(steps(), 1..3), 2..3),
+        ) {
+            use std::process::Stdio;
+            use std::sync::Barrier;
+            use std::sync::mpsc;
+            use windows_sys::Win32::Foundation::SetHandleInformation;
+
+            let sort = Path::new(&env::var_os("SystemRoot").unwrap()).join(r"System32\sort.exe");
+            let begin = Arc::new(Barrier::new(threads.len()));
+            let readers = Arc::new(Mutex::new(Vec::new()));
+            let children = Arc::new(Mutex::new(Vec::new()));
+            let workers: Vec<_> = threads
+                .into_iter()
+                .map(|steps| {
+                    let (begin, readers, children, sort) =
+                        (Arc::clone(&begin), Arc::clone(&readers), Arc::clone(&children), sort.clone());
+                    thread::spawn(move || {
+                        let _leader = begin.wait().is_leader();
+                        for step in steps {
+                            match step {
+                                Step::Mark => {
+                                    let _held = handing_down();
+                                    let (reader, writer) = io::pipe().unwrap();
+                                    let handle = writer.as_raw_handle();
+                                    // SAFETY: the handle is open for the length of the call.
+                                    let set = unsafe {
+                                        SetHandleInformation(
+                                            handle,
+                                            HANDLE_FLAG_INHERIT,
+                                            HANDLE_FLAG_INHERIT,
+                                        )
+                                    };
+                                    assert_ne!(set, 0_i32);
+                                    thread::sleep(Duration::from_millis(20));
+                                    // SAFETY: as above.
+                                    let cleared =
+                                        unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
+                                    assert_ne!(cleared, 0_i32);
+                                    readers.lock().unwrap().push((reader, writer));
+                                }
+                                Step::Start => {
+                                    let mut command = run::command(&sort);
+                                    let _: &mut process::Command = command
+                                        .stdin(Stdio::piped())
+                                        .stdout(Stdio::null())
+                                        .stderr(Stdio::null());
+                                    children.lock().unwrap().push(run::spawn(&mut command).unwrap());
+                                }
+                            }
+                        }
+                    })
+                })
+                .collect();
+            for worker in workers {
+                worker.join().unwrap();
+            }
+            // Every program is still running, so a write end it inherited is still open.
+            let pipes: Vec<_> = mem::take(&mut *readers.lock().unwrap());
+            let (sender, receiver) = mpsc::channel();
+            let waiting = pipes.len();
+            for (mut reader, writer) in pipes {
+                drop(writer);
+                let sender = sender.clone();
+                drop(thread::spawn(move || {
+                    let mut rest = Vec::new();
+                    let read = io::Read::read_to_end(&mut reader, &mut rest);
+                    sender.send(read.is_ok()).unwrap();
+                }));
+            }
+            let ended = (0..waiting)
+                .filter(|_| receiver.recv_timeout(Duration::from_secs(1)).is_ok_and(|ok| ok))
+                .count();
+            let started = mem::take(&mut *children.lock().unwrap());
+            for mut child in started {
+                drop(child.stdin.take());
+                let _: process::ExitStatus = child.wait().unwrap();
+            }
+            prop_assert_eq!(ended, waiting, "a program inherited a marked handle");
         }
     }
 }

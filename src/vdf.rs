@@ -446,15 +446,32 @@ mod tests {
 
     #[test]
     fn refuses_to_write_what_would_not_read_back() {
-        for (key, value) in [("a", "say \"hi\""), ("#base", "x")] {
+        for (key, value, text, reason) in [
+            (
+                "a",
+                "say \"hi\"",
+                "say \"hi\"",
+                "holds a double quote, which a KeyValues file cannot hold",
+            ),
+            (
+                "#base",
+                "x",
+                "#base",
+                "would be read back as a directive, not a key",
+            ),
+        ] {
             let block = Block {
                 pairs: vec![Pair {
                     key: key.into(),
                     value: Value::Text(value.into()),
                 }],
             };
-            assert!(
-                matches!(write(&block), Err(WriteError { .. })),
+            assert_eq!(
+                write(&block),
+                Err(WriteError {
+                    text: text.to_owned(),
+                    reason
+                }),
                 "{key} {value}"
             );
         }

@@ -222,7 +222,7 @@ fn a_script_that_is_not_there_is_an_error() {
     let missing = project.root.join("steam/app_build.vdf");
     assert!(matches!(
         upload::prepare(&project.home, &missing, "1 abc", false),
-        Err(Error::Io { .. })
+        Err(Error::Io { path, .. }) if path == missing
     ));
 }
 
