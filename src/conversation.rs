@@ -95,6 +95,62 @@ pub fn refusal(line: &str) -> Option<&str> {
     })
 }
 
+/// steamcmd prints this in place of a refusal when it never reached Steam.
+pub const NO_CONNECTION: &str = "No Connection";
+
+/// The reason given when a login line says it failed and names none.
+const NO_REASON: &str = "Steam refused the saved login";
+
+/// Why steamcmd could not log in with the login it saved, when that is what its `console` says.
+/// The reason is taken from the line and not the line itself, which names the account.
+///
+/// A missing saved login is a refusal here. `step` treats the same words as chatter because a run
+/// that asks for a password carries on to the prompt.
+#[must_use]
+pub fn refused_login(console: &str) -> Option<String> {
+    console.lines().find_map(|line| {
+        if line.contains("Cached credentials not found") {
+            return Some(line.trim().to_owned());
+        }
+        let logging_in = line.contains("Logging in");
+        match refusal(line) {
+            Some(NO_CONNECTION) => None,
+            Some(reason) if logging_in || reason.starts_with("No cached credentials") => {
+                Some(reason.to_owned())
+            }
+            None if logging_in && line.contains("FAILED") => Some(NO_REASON.to_owned()),
+            Some(_) | None => None,
+        }
+    })
+}
+
+/// A refused saved login in words for the person who must act on it, from the `reason`
+/// [`refused_login`] gave. Also whether logging in again is the advice: it is not when Steam is
+/// limiting attempts.
+#[must_use]
+pub fn saved_login_words(reason: &str) -> (String, bool) {
+    let limited = ["Account Login Denied Throttle", "Rate Limit Exceeded"]
+        .iter()
+        .any(|said| reason.eq_ignore_ascii_case(said));
+    if limited {
+        (
+            "Steam is limiting login attempts. Wait, then try again".to_owned(),
+            false,
+        )
+    } else if reason.starts_with("Cached credentials not found")
+        || reason.starts_with("No cached credentials")
+    {
+        (
+            "steamcmd holds no saved login for the build account".to_owned(),
+            true,
+        )
+    } else if reason == NO_REASON {
+        (NO_REASON.to_owned(), true)
+    } else {
+        (format!("{NO_REASON} ({reason})"), true)
+    }
+}
+
 /// A refusal in words for the person who typed the password, where steamcmd's own are terse.
 #[must_use]
 pub fn explain(reason: &str) -> String {
@@ -183,6 +239,57 @@ mod tests {
         assert_eq!(
             steps(failed),
             [Step::Refused("Rate Limit Exceeded".to_owned())]
+        );
+    }
+
+    #[test]
+    fn a_folder_named_like_a_refusal_is_not_a_refused_login() {
+        // steamcmd's own words for the log folder, as in `APPROVED`, with only the folder's name
+        // changed to what a user could have chosen.
+        for named in ["FAILED (old)", "ERROR (old)"] {
+            let line = format!("Logging directory: 'C:\\steamship\\{named}/logs'\r\n");
+            assert_eq!(refused_login(&line), None, "{line}");
+        }
+    }
+
+    #[test]
+    fn a_wrong_password_on_a_saved_login_is_a_refusal_through_every_reader() {
+        let line =
+            "Logging in user 'someone' [U:1:0] to Steam Public...ERROR (Invalid Password)\r\n";
+        assert_eq!(
+            steps(line.as_bytes()),
+            [Step::Refused("Invalid Password".to_owned())]
+        );
+        assert_eq!(refused_login(line), Some("Invalid Password".to_owned()));
+    }
+
+    #[test]
+    fn a_refused_saved_login_is_put_in_words_for_the_person_who_must_act() {
+        let wait = (
+            "Steam is limiting login attempts. Wait, then try again".to_owned(),
+            false,
+        );
+        assert_eq!(saved_login_words("Rate Limit Exceeded"), wait);
+        assert_eq!(saved_login_words("account login denied throttle"), wait);
+        let none = (
+            "steamcmd holds no saved login for the build account".to_owned(),
+            true,
+        );
+        assert_eq!(saved_login_words("Cached credentials not found."), none);
+        assert_eq!(
+            saved_login_words("No cached credentials and @NoPromptForPassword is set"),
+            none
+        );
+        assert_eq!(
+            saved_login_words("Steam refused the saved login"),
+            ("Steam refused the saved login".to_owned(), true)
+        );
+        assert_eq!(
+            saved_login_words("Invalid Password"),
+            (
+                "Steam refused the saved login (Invalid Password)".to_owned(),
+                true
+            )
         );
     }
 

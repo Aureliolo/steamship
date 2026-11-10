@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
+use crate::conversation;
 use crate::platform::Platform;
 use crate::terminal::{Event, Reader};
 use crate::upload;
@@ -276,7 +277,7 @@ pub enum Outcome {
 /// content `log` meanwhile.
 #[must_use]
 pub fn judge(code: Option<i32>, console: &str, log: &str, app: u32) -> Outcome {
-    if let Some(reason) = upload::refused_login(console) {
+    if let Some(reason) = conversation::refused_login(console) {
         return Outcome::NotLoggedIn(reason);
     }
     let finished = [
@@ -774,6 +775,19 @@ mod tests {
             ),
             Outcome::NotLoggedIn(_)
         ));
+    }
+
+    #[test]
+    fn a_wrong_password_on_an_error_line_is_named_in_a_fetch() {
+        assert_eq!(
+            judge(
+                Some(5_i32),
+                "Logging in user 'build_bot' [U:1:0] to Steam Public...ERROR (Invalid Password)\n",
+                CANCELLED,
+                480
+            ),
+            Outcome::NotLoggedIn("Invalid Password".to_owned())
+        );
     }
 
     #[test]

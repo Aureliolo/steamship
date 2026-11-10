@@ -1,5 +1,6 @@
 //! Steam DRM, which Valve's servers add to a Windows executable through steamcmd's `drm_wrap`.
 
+use crate::conversation;
 use crate::upload;
 
 /// How the wrap is asked for: Valve's flags for the tool, `drmtoolp`.
@@ -47,7 +48,7 @@ pub enum Outcome {
 /// was `written`.
 #[must_use]
 pub fn judge(code: Option<i32>, console: &str, written: bool) -> Outcome {
-    if let Some(reason) = upload::refused_login(console) {
+    if let Some(reason) = conversation::refused_login(console) {
         return Outcome::NotLoggedIn(reason);
     }
     let completed = console
@@ -226,6 +227,18 @@ mod tests {
             ),
             Outcome::NotLoggedIn(_)
         ));
+    }
+
+    #[test]
+    fn a_wrong_password_on_an_error_line_is_named_in_a_wrap() {
+        assert_eq!(
+            judge(
+                Some(5_i32),
+                "Logging in user 'build_bot' [U:1:0] to Steam Public...ERROR (Invalid Password)\n",
+                false
+            ),
+            Outcome::NotLoggedIn("Invalid Password".to_owned())
+        );
     }
 
     #[test]

@@ -1636,9 +1636,10 @@ fn check_saved_login(
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
     let console = redactor.redact(&finished.output);
     let judged = upload::judge_login(finished.code, &String::from_utf8_lossy(&console));
+    let took = show::took(spinner.elapsed());
     match &judged {
         upload::Login::Taken => spinner.done("Steam takes the saved login"),
-        upload::Login::Refused(_) => spinner.failed("Steam refused the saved login"),
+        upload::Login::Refused(_) => spinner.failed(&format!("refused after {took}")),
         upload::Login::Failed(_) => {
             spinner.failed("could not check");
             dump_in_actions(
@@ -1656,14 +1657,16 @@ fn check_saved_login(
 /// Says Steam refused the login, and how to log in again: for one handed over in
 /// `STEAMSHIP_LOGIN`, with the day it was packed, since the token in it may simply have expired.
 fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCode {
+    let (words, log_in_again) = conversation::saved_login_words(reason);
     match packed.and_then(ci::Login::packed_on) {
+        _ if !log_in_again => show::failure("not logged in", &words, None),
         None => {
             let again = Hint {
                 before: "log the build account in again with ",
                 command: "steamship login",
                 after: "",
             };
-            show::failure("not logged in", reason, Some(again));
+            show::failure("not logged in", &words, Some(again));
         }
         Some(day) => {
             let again = Hint {
@@ -1673,10 +1676,7 @@ fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCode {
             };
             show::failure(
                 "not logged in",
-                &format!(
-                    "{reason}. The login in {} was packed on {day}",
-                    ci::VARIABLE
-                ),
+                &format!("{words}. The login in {} was packed on {day}", ci::VARIABLE),
                 Some(again),
             );
         }
