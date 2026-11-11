@@ -86,18 +86,38 @@ extern "C" fn on_ending(signal: libc::c_int) {
     let group = RUNNING.load(Ordering::SeqCst);
     if group != 0_i32 {
         stop_group(group);
-        // The first signal stops only the program, so that what it said is shown, as a job
-        // cancelled in CI would otherwise end with nothing to tell why it hung. Any later one
-        // ends steamship.
-        if SHOWN.load(Ordering::SeqCst)
-            && TOLD
-                .compare_exchange(0_i32, signal, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-        {
-            return;
-        }
     }
-    end_by(signal);
+    if ends(group, SHOWN.load(Ordering::SeqCst), &TOLD, signal) == Ends::Steamship {
+        end_by(signal);
+    }
+}
+
+/// What a signal ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ends {
+    /// Only the running program, whose group has been stopped.
+    Program,
+    /// Steamship.
+    Steamship,
+}
+
+/// What `signal` ends, with the program of `group` running (0 for none), its output `shown` or
+/// not, and `told` holding the signal that stopped a program before (0 for none).
+///
+/// The first signal during a shown run stops only the program, and `told` keeps it, so that what
+/// the program said is shown: a job cancelled in CI would otherwise end with nothing to tell why
+/// it hung. Any later one ends steamship, as does one while no program runs.
+fn ends(group: i32, shown: bool, told: &AtomicI32, signal: libc::c_int) -> Ends {
+    if group != 0_i32
+        && shown
+        && told
+            .compare_exchange(0_i32, signal, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    {
+        Ends::Program
+    } else {
+        Ends::Steamship
+    }
 }
 
 /// Ends steamship by `signal`, as it would have with no handler.
@@ -599,7 +619,32 @@ mod tests {
     use std::mem;
     use std::time::Instant;
 
+    use proptest::prelude::*;
+
     use super::*;
+
+    proptest! {
+        #[test]
+        fn the_first_signal_during_a_shown_run_stops_only_the_program_and_any_other_ends_steamship(
+            signals in prop::collection::vec(
+                (0_i32..3_i32, any::<bool>(), prop::sample::select(ENDING.to_vec())),
+                1..8,
+            ),
+        ) {
+            let told = AtomicI32::new(0_i32);
+            let mut held = 0_i32;
+            for (group, shown, signal) in signals {
+                let expected = if group != 0_i32 && shown && held == 0_i32 {
+                    held = signal;
+                    Ends::Program
+                } else {
+                    Ends::Steamship
+                };
+                prop_assert_eq!(ends(group, shown, &told, signal), expected);
+                prop_assert_eq!(told.load(Ordering::SeqCst), held);
+            }
+        }
+    }
 
     #[test]
     fn a_steamship_that_ignores_sigchld_waits_for_its_program_and_stops_its_group() {
