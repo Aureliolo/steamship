@@ -71,6 +71,15 @@ pub fn saved_login(home: &Path, platform: Platform) -> PathBuf {
         .join("config.vdf")
 }
 
+/// The log steamcmd adds to once its API has loaded, before it runs the first command it was
+/// given.
+#[must_use]
+pub fn connection_log(home: &Path, platform: Platform) -> PathBuf {
+    state_folder(home, platform)
+        .join("logs")
+        .join("connection_log.txt")
+}
+
 /// Every place steamcmd could have kept its state under `home`, whichever system wrote it, so that
 /// nothing it saved is overlooked.
 fn state_folders(home: &Path) -> [PathBuf; 3] {
@@ -690,6 +699,20 @@ mod tests {
                 "+login",
                 "build_bot",
                 "+quit"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_connection_log_is_in_the_logs_folder_steamcmd_names_on_each_system() {
+        let home = Path::new("home");
+        assert_eq!(
+            [Platform::Windows, Platform::Linux, Platform::MacOs]
+                .map(|platform| connection_log(home, platform)),
+            [
+                home.join("steamcmd/logs/connection_log.txt"),
+                home.join("Steam/logs/connection_log.txt"),
+                home.join("Library/Application Support/Steam/logs/connection_log.txt")
             ]
         );
     }
