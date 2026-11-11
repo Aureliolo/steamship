@@ -5,7 +5,7 @@
 #   .github/rerun-test.sh
 #
 # RERUN_SH names another copy of the script to test, such as one with a rule left out.
-# RERUN_CASE names the one case to run.
+# RERUN_CASE names the one case to run, RERUN_YML another copy of the workflow.
 # shellcheck disable=SC2016 # Log lines hold literal ${...} and backtick text from real logs.
 set -euo pipefail
 export LC_ALL=C
@@ -18,6 +18,9 @@ trap 'rm -rf "${work}"' EXIT
 mkdir "${work}/bin"
 cp "${here}/rerun-fake-gh.sh" "${work}/bin/gh"
 chmod +x "${work}/bin/gh"
+# A sleep that records its argument among the calls, so a wait is seen in order and never taken.
+printf '#!/usr/bin/env bash\necho "sleep $*" >> "${FAKE_CALLS}"\n' > "${work}/bin/sleep"
+chmod +x "${work}/bin/sleep"
 export PATH="${work}/bin:${PATH}"
 export GITHUB_REPOSITORY=Aureliolo/steamship GH_TOKEN=fake
 
@@ -111,8 +114,10 @@ expect_status() {
   [[ "${status}" == "${2}" ]] || fail "${1}: exit status ${status}, not ${2}"
 }
 
+# Every output checked is of a run that ended well, a left run included, so it exits 0.
 expect_out() {
   local have
+  expect_status "${1}" 0
   have="$(< "${dir}/out")"
   [[ "${have}" == "${2}" ]] || fail "${1}: output was
 ${have}
@@ -147,13 +152,16 @@ each_recorded_line_re_runs_its_run() {
 Run 1001 is re-run in 0 s.
 Re-ran the failed jobs of run 1001."
     expect_posts "each recorded line (${line})" 1
+    [[ ! -s "${dir}/err" ]] || fail "each recorded line (${line}): stderr was not empty"
   done
+  run_rerun 1001 3600
   local calls
   calls="$(< "${dir}/calls")"
   [[ "${calls}" == "gh api repos/${repo}/actions/runs/1001
 gh api repos/${repo}/actions/runs/1001/attempts/1/jobs?per_page=100
 gh run view 1001 --repo ${repo} --attempt 1 --log-failed
 gh api -X GET repos/${repo}/actions/workflows/368372655/runs -f branch=ci-tools-through-api -f event=pull_request -f per_page=1
+sleep 3600
 gh api repos/${repo}/actions/runs/1001
 gh api -X GET repos/${repo}/actions/workflows/368372655/runs -f branch=ci-tools-through-api -f event=pull_request -f per_page=1
 gh api -X POST repos/${repo}/actions/runs/1001/rerun-failed-jobs" ]] \
@@ -164,7 +172,7 @@ ${calls}"
 two_errors_in_one_step_are_one_step() {
   fixture_p two_errors
   : > "${dir}/failed.log"
-  log_line "${scoop_job}" "${scoop_step}" '##[group]Run brew install steamship'
+  log_line "${scoop_job}" "${scoop_step}" '##[group]Run set -euo pipefail'
   log_line "${scoop_job}" "${scoop_step}" '##[error]Failed to download resource "steamship (0.9.91)"'
   local _
   for _ in 1 2 3 4; do
@@ -232,7 +240,7 @@ Run 1001 is left as it is: ${scoop_job} did not end at a network step."
 a_commit_sha_is_no_504() {
   fixture_p sha
   : > "${dir}/failed.log"
-  log_line "${scoop_job}" "${scoop_step}" '##[group]Run .github/packages-pr.sh wait "${PR}"'
+  log_line "${scoop_job}" "${scoop_step}" '##[group]Run .github/packages-pr.sh wait "${PR}" >> "${GITHUB_OUTPUT}"'
   log_line "${scoop_job}" "${scoop_step}" '91fe38348fe0353c1de35cc503ef47ed7761a24c'
   log_line "${scoop_job}" "${scoop_step}" '##[error]Pull request #278 failed: deny.'
   run_rerun 1001 0
@@ -377,7 +385,7 @@ a_byte_order_mark_on_the_group_line_is_cut() {
   fixture_p bom
   : > "${dir}/failed.log"
   printf '%s\t%s\t%s%s %s\n' "${scoop_job}" "${scoop_step}" "${bom}" "${stamp}" \
-    '##[group]Run .github/packages-pr.sh wait "${PR}"' >> "${dir}/failed.log"
+    '##[group]Run .github/packages-pr.sh wait "${PR}" >> "${GITHUB_OUTPUT}"' >> "${dir}/failed.log"
   log_line "${scoop_job}" "${scoop_step}" 'curl: (22) The requested URL returned error: 504'
   log_line "${scoop_job}" "${scoop_step}" '##[error]Process completed with exit code 1.'
   run_rerun 1001 0
@@ -410,10 +418,62 @@ Run 1001 is left as it is: it has more jobs than one read holds."
 
 a_409_on_the_re_run_is_one_call() {
   fixture_p conflict
-  printf '{"message":"Cannot rerun a workflow that is already running"}\n' > "${dir}/post.fail"
+  printf '{"message":"Server Error"}\n' > "${dir}/post.fail"
   run_rerun 1001 0
   expect_status "a 409 on the re-run" 1
   expect_posts "a 409 on the re-run" 1
+}
+
+an_empty_newest_run_answer_stops_the_run() {
+  local failing
+  for failing in newest newest-2; do
+    fixture_p "empty_${failing}"
+    printf '{"total_count":0,"workflow_runs":[]}\n' > "${dir}/${failing}.json"
+    run_rerun 1001 0
+    expect_status "an empty ${failing} answer" 1
+    expect_posts "an empty ${failing} answer" 0
+  done
+}
+
+a_jobs_answer_without_a_count_stops_the_run() {
+  fixture_p no_count
+  printf '{"jobs":[]}\n' > "${dir}/jobs.json"
+  run_rerun 1001 0
+  expect_status "a jobs answer without a count" 1
+  expect_posts "a jobs answer without a count" 0
+  ! grep -q -F 'run view' "${dir}/calls" || fail "a jobs answer without a count: the log was read"
+}
+
+every_failed_conclusion_is_a_failed_job() {
+  local conclusion
+  for conclusion in timed_out neutral action_required; do
+    fixture_p "conclusion_${conclusion}"
+    write_jobs "${dir}/jobs.json" 2 "${scoop_job}=failure" "packages (winget x64)=${conclusion}"
+    run_rerun 1001 0
+    expect_out "a ${conclusion} job" "${scoop_ended}
+packages (winget x64): did not end at a network step.
+Run 1001 is left as it is: packages (winget x64) did not end at a network step."
+    expect_posts "a ${conclusion} job" 0
+  done
+}
+
+the_workflow_lists_name_the_same_workflows() {
+  local yml="${RERUN_YML:-${here}/workflows/rerun.yml}" in_yml in_script name file found
+  in_yml="$(sed -n 's/^    workflows: \[\(.*\)\]$/\1/p' "${yml}" | tr -d ' ')"
+  in_script="$(sed -n 's/^workflows=(\(.*\))$/\1/p' "${here}/rerun.sh" | tr ' ' ',')"
+  [[ -n "${in_yml}" && "${in_yml}" == "${in_script}" ]] \
+    || fail "the workflow lists: rerun.yml has [${in_yml}] and rerun.sh (${in_script})"
+  for name in ${in_yml//,/ }; do
+    found=0
+    for file in "${here}"/workflows/*.yml; do
+      if grep -q -x -F "name: ${name}" "${file}"; then
+        found=1
+      fi
+    done
+    [[ "${found}" == 1 ]] || fail "the workflow lists: no workflow file is named ${name}"
+  done
+  grep -q -F 'run: bash .github/rerun.sh "${RUN_ID}" 3600' "${yml}" \
+    || fail "the workflow lists: rerun.yml does not pass a wait of 3600 seconds"
 }
 
 cases=(
@@ -439,6 +499,10 @@ cases=(
   an_error_before_the_first_step_leaves_the_run
   more_than_100_jobs_leave_the_run
   a_409_on_the_re_run_is_one_call
+  an_empty_newest_run_answer_stops_the_run
+  a_jobs_answer_without_a_count_stops_the_run
+  every_failed_conclusion_is_a_failed_job
+  the_workflow_lists_name_the_same_workflows
 )
 
 if [[ -n "${RERUN_CASE:-}" ]]; then
