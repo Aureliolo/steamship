@@ -7,7 +7,7 @@ use std::mem;
 
 use serde_json::{Map, Value, json};
 
-use crate::achievements::{Drift, IconChange, Listed, Wanted};
+use crate::achievements::{Drift, Listed, Wanted};
 use crate::digest;
 use crate::webapi::Achievement;
 
@@ -449,20 +449,25 @@ impl Receipt {
                 if address.is_empty() {
                     return None;
                 }
-                let change = match self.icons.get(&icon.name) {
-                    None => IconChange::Unrecorded,
-                    Some(imported) if imported.sha256 != icon.sha256() => {
-                        IconChange::ChangedInFiles
-                    }
-                    Some(imported) if steam_image(address) != imported.steam => {
-                        IconChange::ChangedOnSteam
-                    }
+                let which = icon.which();
+                let how = match self.icons.get(&icon.name) {
+                    None => format!(
+                        "the {which} has no import in {RECEIPT}. Import it, publish, then run \
+                         --imported"
+                    ),
+                    Some(imported) if imported.sha256 != icon.sha256() => format!(
+                        "the {which} changed in the files since the import {RECEIPT} records. \
+                         Import it, publish, then run --imported"
+                    ),
+                    Some(imported) if steam_image(address) != imported.steam => format!(
+                        "the {which} on Steam changed since the import {RECEIPT} records, and \
+                         not from the files. Import it again, publish, then run --imported"
+                    ),
                     Some(_) => return None,
                 };
-                Some(Drift::IconImport {
+                Some(Drift::Worded {
                     api_name: icon.api_name.clone(),
-                    which: icon.which(),
-                    change,
+                    how,
                 })
             })
             .collect()
