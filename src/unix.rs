@@ -97,7 +97,7 @@ extern "C" fn on_ending(signal: libc::c_int) {
 enum Ends {
     /// Only the running program, whose group has been stopped.
     Program,
-    /// Steamship.
+    /// Steamship too, which ends by the same signal.
     Steamship,
 }
 
