@@ -252,17 +252,21 @@ jobs:
         if: '!matrix.musl && !cancelled()'
         run: cargo test --locked
 
+      # musl-gcc, for the C and assembly in ring.
+      - name: Install musl-gcc
+        if: matrix.musl && !cancelled()
+        uses: ./.github/actions/apt-packages # zizmor: ignore[self-repository]
+        with:
+          packages: musl-tools
+
       # The Linux release binary is the static musl build, so it is tested as such on every change
-      # rather than first at a release. musl-gcc, for the C and assembly in ring, comes from the
-      # image's own signed Ubuntu archive.
+      # rather than first at a release.
       - name: Test the static Linux build
         if: matrix.musl && !cancelled()
         env:
           MUSL: ${{ matrix.musl }}
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends musl-tools
           rustup target add "${MUSL}"
           cargo test --locked --target "${MUSL}"
 
@@ -481,14 +485,17 @@ jobs:
         with:
           persist-credentials: false
 
-      # musl-gcc, for the C and assembly in ring, from the image's own signed Ubuntu archive.
-      - name: Install Rust and musl-gcc
+      - name: Install Rust
         run: |
           set -euo pipefail
           rustup toolchain install
           rustup target add x86_64-unknown-linux-musl
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends musl-tools
+
+      # musl-gcc, for the C and assembly in ring.
+      - name: Install musl-gcc
+        uses: ./.github/actions/apt-packages # zizmor: ignore[self-repository]
+        with:
+          packages: musl-tools
 
       # As rust.
       - name: Restore the compiled dependencies

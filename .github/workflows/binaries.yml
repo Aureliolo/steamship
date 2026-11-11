@@ -87,10 +87,9 @@ jobs:
 
       - name: Install musl-gcc
         if: matrix.platform == 'linux'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends musl-tools
+        uses: ./.github/actions/apt-packages # zizmor: ignore[self-repository]
+        with:
+          packages: musl-tools
 
       - name: Build
         env:

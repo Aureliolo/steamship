@@ -1,0 +1,76 @@
+name: apt packages
+description: >-
+  Installs Ubuntu packages from a cache of their files, kept per runner image, and downloads them
+  from the image's own signed Ubuntu archive only when that cache has none. A job so passes while
+  GitHub's runners cannot reach the archive, which has lasted an hour. Releases install from the
+  archive itself, since they take nothing from a cache.
+
+inputs:
+  packages:
+    description: The packages to install, separated by spaces
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The image's version is in the key because the files downloaded are what its own installed
+    # packages lack. A newer image gets a cache of its own on its first job.
+    - name: Name the cache of the packages' files
+      id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+        sum=$(printf '%s' "${PACKAGES}" | sha256sum | cut -c1-16)
+        printf 'key=apt-%s-%s-%s-%s\n' "${ImageOS:?}" "${ImageVersion:?}" "${RUNNER_ARCH:?}" \
+          "${sum}" >> "${GITHUB_OUTPUT}"
+
+    - name: Restore the packages' files
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/apt-packages
+        key: ${{ steps.key.outputs.key }}
+
+    - name: Download the packages' files
+      if: steps.restore.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        FOLDER: ${{ runner.temp }}/apt-packages
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+        read -ra names <<< "${PACKAGES}"
+        sudo apt-get -o Acquire::Retries=3 update
+        sudo apt-get -o Acquire::Retries=3 install --yes --no-install-recommends --download-only \
+          "${names[@]}"
+        mkdir -p "${FOLDER}"
+        # The list keeps the folder from being empty when the image has every package already,
+        # since the cache refuses to keep an empty folder.
+        printf '%s\n' "${names[@]}" > "${FOLDER}/packages.txt"
+        find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t "${FOLDER}" {} +
+
+    # apt installs the files themselves, so each package's own install scripts run, and it needs
+    # no package lists to do it.
+    - name: Install the packages from their files
+      shell: bash
+      env:
+        FOLDER: ${{ runner.temp }}/apt-packages
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -euo pipefail
+        read -ra names <<< "${PACKAGES}"
+        shopt -s nullglob
+        files=("${FOLDER}"/*.deb)
+        if ((${#files[@]})); then
+          sudo apt-get install --yes --no-install-recommends "${files[@]}"
+        fi
+        dpkg-query --show "${names[@]}" > /dev/null
+
+    - name: Keep the packages' files for the next job on this image
+      if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/apt-packages
+        key: ${{ steps.key.outputs.key }}
