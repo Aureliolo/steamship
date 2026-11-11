@@ -2,14 +2,11 @@
 
 use std::collections::BTreeMap;
 use std::env;
-use std::ffi::OsString;
 use std::fmt::Display;
 use std::fs;
 use std::io::{self, IsTerminal as _};
-use std::panic;
 use std::path::{self, Path, PathBuf};
 use std::process::{self, ExitCode};
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -1613,24 +1610,14 @@ fn check_saved_login(
         None => show::field("login", "saved"),
     }
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
-    let root = home.join(install::FOLDER);
-    let program = steamcmd::program(&root, Platform::THIS);
     let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
     let marks = dump::Marks::take(&steamcmd_logs);
     let spinner = Spinner::start("steam", "checking the saved login", true);
-    let finished = run::run(
-        &program,
-        &steamcmd::check_login(account),
-        &steamcmd::environment(&home, Platform::THIS),
-        &root,
-        steamcmd::CHECK_LIMIT,
-        steamcmd::HOPELESS,
-    );
-    let finished = match finished {
+    let finished = match steamcmd::check_login(account).run(&home) {
         Ok(finished) => finished,
         Err(error) => {
             spinner.failed("could not start");
-            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+            return Err(fail(&error, FAILED));
         }
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
@@ -2108,15 +2095,11 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         (&held, &home, &manifest),
         (&account, prepared.app_id, packed.as_ref()),
     )?;
-    let root = home.join(install::FOLDER);
-    let program = steamcmd::program(&root, Platform::THIS);
     let saved = prepared.output.join("steamcmd.log");
     let steam = Steam {
-        program: &program,
         account: &account,
         prepared: &prepared,
         home: &home,
-        root: &root,
         saved: &saved,
         preview: request.preview,
         info_of: in_run.then_some(prepared.app_id),
@@ -2263,11 +2246,9 @@ fn dump_failed(
 
 /// What every run of steamcmd for one upload is given.
 struct Steam<'upload> {
-    program: &'upload Path,
     account: &'upload Account,
     prepared: &'upload upload::Prepared,
     home: &'upload Path,
-    root: &'upload Path,
     /// Where steamcmd's console is written, redacted.
     saved: &'upload Path,
     preview: bool,
@@ -2362,23 +2343,13 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
     upload::clear_log(steam.prepared).map_err(|error| fail(&error, FAILED))?;
     let before = Redactor::for_home(steam.home).map_err(|error| fail(&error, FAILED))?;
     let spinner = Spinner::start("steam", doing, true);
-    let finished = run::run(
-        steam.program,
-        &steamcmd::upload(steam.account, &steam.prepared.script, info_of),
-        &steamcmd::environment(steam.home, Platform::THIS),
-        steam.root,
-        steamcmd::UPLOAD_LIMIT,
-        steamcmd::HOPELESS,
-    );
+    let finished = steamcmd::upload(steam.account, &steam.prepared.script, info_of).run(steam.home);
     let took = show::took(spinner.elapsed());
     let finished = match finished {
         Ok(finished) => finished,
         Err(error) => {
             spinner.failed(&format!("could not start after {took}"));
-            return Err(fail(
-                &format!("{}: {error}", steam.program.display()),
-                FAILED,
-            ));
+            return Err(fail(&error, FAILED));
         }
     };
     let redactor =
@@ -3555,8 +3526,6 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
-    let root = home.join(install::FOLDER);
-    let program = steamcmd::program(&root, Platform::THIS);
     let secret = fetching
         .password
         .map_or_else(Zeroizing::default, |password| password.text.clone());
@@ -3569,7 +3538,7 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
         Ok(finished) => finished,
         Err(error) => {
             spinner.failed(&format!("could not start after {took}"));
-            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+            return Err(fail(&error, FAILED));
         }
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
@@ -3623,40 +3592,28 @@ fn run_fetch(
     home: &Path,
     secret: &Zeroizing<String>,
 ) -> io::Result<run::Finished> {
-    let root = home.join(install::FOLDER);
-    let program = steamcmd::program(&root, Platform::THIS);
     let branch = if branch::is_default(&fetching.branch.name) {
         branch::DEFAULT_KEY
     } else {
         &fetching.branch.name
     };
     let system = fetch::system_name(fetching.system);
-    let environment = steamcmd::environment(home, Platform::THIS);
     if fetching.password.is_some() && !fetching.on_command_line {
-        return typed_fetch(
-            &program,
-            &steamcmd::fetch_console(account, system, fetching.folder),
-            &environment,
-            &root,
+        return steamcmd::fetch_console(account, system, fetching.folder).typed(
+            home,
             fetch::typed_command(fetching.app, branch, secret),
             secret.clone(),
         );
     }
-    run::run(
-        &program,
-        &steamcmd::fetch(
-            account,
-            fetching.app,
-            branch,
-            fetching.password.map(|_| secret.as_str()),
-            system,
-            fetching.folder,
-        ),
-        &environment,
-        &root,
-        steamcmd::FETCH_LIMIT,
-        steamcmd::HOPELESS,
+    steamcmd::fetch(
+        account,
+        fetching.app,
+        branch,
+        fetching.password.map(|_| secret.as_str()),
+        system,
+        fetching.folder,
     )
+    .run(home)
 }
 
 /// Forgets the branch's password Steam refused, when it was the one kept, so that the next fetch
@@ -3676,50 +3633,6 @@ fn forget_refused_password(home: &Path, fetching: &Fetching<'_>) {
         )),
         Err(error) => show::failure(&error.to_string(), "", None),
     }
-}
-
-/// Runs `program` with `args` at a console of its own and types `command` at its prompt, as
-/// [`fetch::typed`] does with `secret` hidden, within a fetch's time or it is stopped. A
-/// password typed there is seen by no other program, as one on the command line is.
-fn typed_fetch(
-    program: &Path,
-    args: &[OsString],
-    environment: &[(OsString, OsString)],
-    directory: &Path,
-    command: Zeroizing<String>,
-    secret: Zeroizing<String>,
-) -> io::Result<run::Finished> {
-    let (terminal, mut output, mut input) = Terminal::start(program, args, environment, directory)?;
-    let (ended, ending) = mpsc::channel();
-    let reading = thread::spawn(move || {
-        let read = fetch::typed(
-            &mut output,
-            &mut input,
-            &command,
-            &secret,
-            steamcmd::HOPELESS,
-        );
-        // The receiver has gone only once the limit passed, and then nothing waits to hear.
-        let _told = ended.send(());
-        read
-    });
-    let in_time = ending.recv_timeout(steamcmd::FETCH_LIMIT).is_ok();
-    // Dropping the terminal unwaited ends steamcmd, and with it the output being read.
-    let terminal = in_time.then_some(terminal);
-    let lines = reading
-        .join()
-        .unwrap_or_else(|panic| panic::resume_unwind(panic))?;
-    let given_up = lines
-        .last()
-        .is_some_and(|line| steamcmd::HOPELESS.iter().any(|words| line.contains(words)));
-    let code = match terminal {
-        Some(terminal) if !given_up => terminal.wait()?,
-        _ => None,
-    };
-    Ok(run::Finished {
-        code,
-        output: lines.join("\n").into_bytes(),
-    })
 }
 
 /// The achievements file at `path`, read, and refused when it is not one or names another app
@@ -5388,24 +5301,15 @@ fn try_drm_wrap(
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
-    let root = home.join(install::FOLDER);
-    let program = steamcmd::program(&root, Platform::THIS);
     drop(fs::remove_file(&wrapped));
     let spinner = Spinner::start("steam", "wrapping", true);
-    let finished = run::run(
-        &program,
-        &steamcmd::drm_wrap(&account, app_id, &input, &wrapped, mode),
-        &steamcmd::environment(&home, Platform::THIS),
-        &root,
-        steamcmd::WRAP_LIMIT,
-        steamcmd::HOPELESS,
-    );
+    let finished = steamcmd::drm_wrap(&account, app_id, &input, &wrapped, mode).run(&home);
     let took = show::took(spinner.elapsed());
     let finished = match finished {
         Ok(finished) => finished,
         Err(error) => {
             spinner.failed(&format!("could not start after {took}"));
-            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+            return Err(fail(&error, FAILED));
         }
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
@@ -5465,21 +5369,12 @@ fn app_info(
     doing: &str,
 ) -> Result<(String, Spinner), ExitCode> {
     let before = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
-    let root = home.join(install::FOLDER);
-    let program = steamcmd::program(&root, Platform::THIS);
     let spinner = Spinner::start("steam", doing, true);
-    let finished = match run::run(
-        &program,
-        &steamcmd::app_info(account, app),
-        &steamcmd::environment(home, Platform::THIS),
-        &root,
-        steamcmd::CHECK_LIMIT,
-        steamcmd::HOPELESS,
-    ) {
+    let finished = match steamcmd::app_info(account, app).run(home) {
         Ok(finished) => finished,
         Err(error) => {
             spinner.failed("could not start");
-            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+            return Err(fail(&error, FAILED));
         }
     };
     let redactor = before.and(Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?);
@@ -6136,25 +6031,16 @@ fn try_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     }
     .map_err(|error| fail(&error, FAILED))?;
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
-    let root = home.join(install::FOLDER);
-    let program = steamcmd::program(&root, Platform::THIS);
     let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
     let marks = dump::Marks::take(&steamcmd_logs);
     let spinner = Spinner::start("steam", "uploading", true);
-    let finished = run::run(
-        &program,
-        &steamcmd::workshop(&account, &copy),
-        &steamcmd::environment(&home, Platform::THIS),
-        &root,
-        steamcmd::UPLOAD_LIMIT,
-        steamcmd::HOPELESS,
-    );
+    let finished = steamcmd::workshop(&account, &copy).run(&home);
     let took = show::took(spinner.elapsed());
     let finished = match finished {
         Ok(finished) => finished,
         Err(error) => {
             spinner.failed(&format!("could not start after {took}"));
-            return Err(fail(&format!("{}: {error}", program.display()), FAILED));
+            return Err(fail(&error, FAILED));
         }
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
