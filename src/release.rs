@@ -5,9 +5,38 @@
 //! branch is the one they play. So steamship sets default live only for an app whose
 //! `ReleaseState` Steam gives as unreleased, and takes anything else, or nothing, for released.
 
+use std::fmt;
 use std::ops::Range;
 
 use crate::vdf::{self, Block};
+
+/// Why an app's info could not be read out of steamcmd's console.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unread {
+    /// steamcmd printed none, or none that can be read. Another run may print it whole.
+    Printed(String),
+    /// Steam showed the build account nothing for the app, which another run would show again.
+    Hidden(String),
+}
+
+impl Unread {
+    /// What happened, and running the command again where that may help.
+    #[must_use]
+    pub fn and_again(&self) -> String {
+        match self {
+            Self::Printed(why) => format!("{why}. Run the command again"),
+            Self::Hidden(why) => why.clone(),
+        }
+    }
+}
+
+impl fmt::Display for Unread {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Printed(why) | Self::Hidden(why) => formatter.write_str(why),
+        }
+    }
+}
 
 /// The `ReleaseState` values of an app nobody can buy yet: `unavailable` for Tidal Mill Inn,
 /// Brewhouse and Falcon Ridge Overseer before their store pages, `prerelease` for apps whose
@@ -22,23 +51,27 @@ const UNRELEASED: [&str; 2] = ["unavailable", "prerelease"];
 /// When steamcmd printed none, what it printed cannot be read, as when its closing brace is
 /// missing, or Steam showed the build account nothing, as for an app it cannot see. Each says
 /// what happened, and the command that asked adds what to do next.
-pub fn info_from_console(console: &str, app: u32) -> Result<Block, String> {
+pub fn info_from_console(console: &str, app: u32) -> Result<Block, Unread> {
     let Some(cut) = info_at(console, app).and_then(|at| console.get(at)) else {
-        return Err(format!("steamcmd printed no app info for app {app}"));
+        return Err(Unread::Printed(format!(
+            "steamcmd printed no app info for app {app}"
+        )));
     };
     // A carriage return before a line's end goes, so a value over several lines reads alike on
     // every system.
     let printed: String = cut.lines().flat_map(|line| [line, "\n"]).collect();
     let document = vdf::parse(&printed).map_err(|error| {
-        format!("steamcmd printed app info for app {app} that cannot be read: {error}")
+        Unread::Printed(format!(
+            "steamcmd printed app info for app {app} that cannot be read: {error}"
+        ))
     })?;
     let shown = document.block(&app.to_string()).unwrap_or(&document);
     if shown.pairs.is_empty() {
-        return Err(format!(
+        return Err(Unread::Hidden(format!(
             "Steam shows the build account no app info for app {app}: it cannot see the app, or \
              there is no such app. Check the app ID, and that the account is in a permission \
              group that holds the app"
-        ));
+        )));
     }
     Ok(shown.clone())
 }
@@ -155,9 +188,9 @@ mod tests {
             )
         );
         assert_eq!(
-            info_from_console(&lost, 413_150).unwrap_err(),
+            info_from_console(&lost, 413_150).unwrap_err().and_again(),
             "steamcmd printed app info for app 413150 that cannot be read: line 9, column 1: a \
-             block is missing its closing }"
+             block is missing its closing }. Run the command again"
         );
     }
 

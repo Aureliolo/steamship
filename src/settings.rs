@@ -50,7 +50,7 @@ const BOOKKEEPING: [&str; 4] = [
 /// # Errors
 ///
 /// As [`release::info_from_console`].
-pub fn from_console(console: &str, app: u32) -> Result<Block, String> {
+pub fn from_console(console: &str, app: u32) -> Result<Block, release::Unread> {
     release::info_from_console(console, app).map(|shown| kept(&shown))
 }
 
@@ -1185,25 +1185,32 @@ mod tests {
     #[test]
     fn nothing_printed_or_shown_is_said_so() {
         assert_eq!(
-            from_console("Logging in...FAILED\n", 1_000_010).unwrap_err(),
-            "steamcmd printed no app info for app 1000010"
+            from_console("Logging in...FAILED\n", 1_000_010)
+                .unwrap_err()
+                .and_again(),
+            "steamcmd printed no app info for app 1000010. Run the command again"
         );
-        // As steamcmd printed an app ID the build account holds nothing for.
+        // As steamcmd printed an app ID the build account holds nothing for, which another run
+        // would print again.
         assert_eq!(
             from_console(
                 "AppID : 3999999, change number : 1/1, last change : Thu Jan  1 01:00:00 1970 \n\
                  \"3999999\"\n{\n}\nUnloading Steam API...OK\n",
                 3_999_999
             )
-            .unwrap_err(),
+            .unwrap_err()
+            .and_again(),
             "Steam shows the build account no app info for app 3999999: it cannot see the app, \
              or there is no such app. Check the app ID, and that the account is in a permission \
              group that holds the app"
         );
+        let garbled = from_console("\"1\"\n{\n\t\"a\"\n}\n", 1)
+            .unwrap_err()
+            .and_again();
         assert!(
-            from_console("\"1\"\n{\n\t\"a\"\n}\n", 1)
-                .unwrap_err()
-                .starts_with("steamcmd printed app info for app 1 that cannot be read: ")
+            garbled.starts_with("steamcmd printed app info for app 1 that cannot be read: ")
+                && garbled.ends_with(". Run the command again"),
+            "{garbled}"
         );
     }
 
@@ -1211,9 +1218,9 @@ mod tests {
     fn info_cut_off_before_its_closing_brace_gives_no_settings_and_says_it_cannot_be_read() {
         let (cut, _) = CONSOLE.split_once("\t\t\"oslist\"").unwrap();
         assert_eq!(
-            from_console(cut, 1_000_010).unwrap_err(),
+            from_console(cut, 1_000_010).unwrap_err().and_again(),
             "steamcmd printed app info for app 1000010 that cannot be read: line 9, column 1: a \
-             block is missing its closing }"
+             block is missing its closing }. Run the command again"
         );
     }
 

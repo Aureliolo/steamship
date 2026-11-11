@@ -987,8 +987,8 @@ fn assert_default_left(steamcmd: &str, why: &str) {
     );
     assert!(
         stderr.contains(&format!(
-            "{why}. The build goes up with its default branch left as it is. While the app is \
-             unreleased, steamship promote 1000 --build 4242 --branch default sets it live there\n"
+            "{why}. The build goes up without being set live on default. While the app is \
+             unreleased, steamship promote 1000 --build 4242 --branch default does that\n"
         )) && stderr.contains("app 1000: BuildID 4242, set live on testing")
             && !stderr.contains("and default"),
         "{stderr}"
@@ -1051,7 +1051,8 @@ fn an_upload_asked_for_default_too_once_steam_shows_the_app_released_goes_to_its
         stderr.contains("released, as Steam shows it (released)")
             && stderr.contains(
                 "app 1000 is released, so its default branch is set live in Steamworks, where \
-                 Valve asks for a Steam Mobile confirmation. The build goes up without it"
+                 Valve asks for a Steam Mobile confirmation. The build goes up without being set \
+                 live on default"
             )
             && stderr.contains("app 1000: BuildID 4242, set live on testing")
             && !stderr.contains("and default"),
@@ -1097,7 +1098,8 @@ fn an_upload_asked_for_default_too_with_no_key_once_steam_shows_the_app_released
         said.contains("  steam     \u{2717} released, as Steam shows it (released)\n")
             && said.contains(
                 "app 1000 is released, so its default branch is set live in Steamworks, where \
-                 Valve asks for a Steam Mobile confirmation. The build goes up without it"
+                 Valve asks for a Steam Mobile confirmation. The build goes up without being set \
+                 live on default"
             ),
         "{said}"
     );
@@ -7939,8 +7941,11 @@ fn a_snapshot_for_another_app_is_refused_before_steamcmd_and_an_app_steam_hides_
 
     let (hidden, _, why) = steamship(&["settings", "1000"], Some(home.path()), &quiet);
     assert_eq!(hidden, Some(1_i32), "{why}");
+    // Running it again would show the same, so the step is the one the message gives.
     assert!(
-        why.contains("Steam shows the build account no app info for app 1000: "),
+        why.contains("Steam shows the build account no app info for app 1000: ")
+            && why.contains("permission group that holds the app")
+            && !why.contains("Run the command again"),
         "{why}"
     );
 }

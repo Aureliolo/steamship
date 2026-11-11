@@ -1874,7 +1874,7 @@ fn ticked_on_steam(
         }
         Err(why) => {
             spinner.failed("none shown");
-            Err(fail(&format!("{why}. Run the command again"), FAILED))
+            Err(fail(&why.and_again(), FAILED))
         }
     }
 }
@@ -2181,7 +2181,9 @@ fn default_key(
     Ok(match shown? {
         Ok(()) => (Some(web_api(home)?), false),
         Err(why) => {
-            show::note(&format!("{why}. The build goes up without it"));
+            show::note(&format!(
+                "{why}. The build goes up without being set live on default"
+            ));
             (None, false)
         }
     })
@@ -2211,15 +2213,16 @@ fn shown_unreleased<Key>(
         Ok(shown) => {
             let (judged, said) = release_judged(release::state(&shown), app, DEFAULT_RELEASED);
             (
-                judged.map_err(|why| format!("{why}. The build goes up without it")),
+                judged.map_err(|why| {
+                    format!("{why}. The build goes up without being set live on default")
+                }),
                 said,
             )
         }
         Err(why) => (
             Err(format!(
-                "{why}. The build goes up with its default branch left as it is. While the app \
-                 is unreleased, steamship promote {app} --build {build_id} --branch default sets \
-                 it live there"
+                "{why}. The build goes up without being set live on default. While the app is \
+                 unreleased, steamship promote {app} --build {build_id} --branch default does that"
             )),
             "not shown".to_owned(),
         ),
@@ -5507,7 +5510,7 @@ fn release_shown(
         Ok(info) => Ok((release::state(&info).map(str::to_owned), spinner)),
         Err(why) => {
             spinner.failed("not shown");
-            Err(fail(&format!("{why}. Run the command again"), FAILED))
+            Err(fail(&why.and_again(), FAILED))
         }
     }
 }
@@ -5596,7 +5599,7 @@ fn asked_settings(
         }
         Err(why) => {
             spinner.failed("none shown");
-            Err(fail(&format!("{why}. Run the command again"), FAILED))
+            Err(fail(&why.and_again(), FAILED))
         }
     }
 }
