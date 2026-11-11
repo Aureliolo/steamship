@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use steamship::install;
-use steamship::platform::Platform;
+use steamship::platform::{self, Platform};
 use steamship::run::{self, Finished, Startup};
 use steamship::steamcmd;
 
@@ -50,9 +50,10 @@ fn held(file: &Path, _input: &Path) -> (PathBuf, Vec<OsString>) {
     (file.to_path_buf(), LOGIN.map(OsString::from).into())
 }
 
-/// The home CI installed steamcmd into.
+/// The home CI installed steamcmd into. Never `Platform::home`, whose fallback is the user's
+/// own home and its saved login.
 fn home() -> Option<PathBuf> {
-    env::var_os("STEAMSHIP_HOME").map(PathBuf::from)
+    env::var_os(platform::HOME).map(PathBuf::from)
 }
 
 /// One steamcmd in `home`, held for `hold` at most and stopped sooner when it has not added to
@@ -108,8 +109,8 @@ fn the_pinned_steamcmd_adds_to_its_connection_log_while_it_still_runs() {
     }
     panic!(
         "steamcmd was not held at its prompt for {HOLD:?} in any of three rounds. steamship \
-         stops one that adds nothing to {} within {START:?}, and one that ends by itself shows \
-         nothing.\n{}",
+         stops one that adds nothing to {} within {START:?}. One that ends by itself was not \
+         held.\n{}",
         steamcmd::connection_log(&home, Platform::THIS).display(),
         rounds.join("\n")
     );
