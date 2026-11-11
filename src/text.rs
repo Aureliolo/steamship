@@ -417,7 +417,7 @@ pub fn presence(text: &str, records: &[Json]) -> Result<Presence, String> {
 /// # Errors
 ///
 /// When it is not a rich presence file, as `rich-presence` reads one, in English, or a token is
-/// one [`presence`] would refuse.
+/// one [`presence()`] would refuse.
 pub fn presence_english(text: &str) -> Result<Presence, String> {
     let read = presence::read(text)?;
     if read.language != "english" {

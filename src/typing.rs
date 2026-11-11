@@ -114,7 +114,7 @@ where
 ///
 /// # Errors
 ///
-/// As [`line`] and [`piped`], and when the prompt cannot be shown.
+/// As [`line()`] and [`piped`], and when the prompt cannot be shown.
 pub fn ask(label: &str, echo: Echo) -> io::Result<Zeroizing<String>> {
     let keys = native::Keys::open()?;
     show::prompt(label)?;

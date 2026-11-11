@@ -239,6 +239,13 @@ jobs:
         if: '!cancelled()'
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
+      # On every system, since a link can name an item that only one system builds.
+      - name: Check the API docs
+        if: '!cancelled()'
+        env:
+          RUSTDOCFLAGS: -D warnings
+        run: cargo doc --locked --workspace --no-deps --document-private-items
+
       # Not on Linux, where coverage runs these tests on the same target and the static build's
       # run below tests the binary that ships.
       - name: Test
