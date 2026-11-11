@@ -161,11 +161,38 @@ fn named(file: &Path) -> impl FnOnce(io::Error) -> io::Error {
     move |error| io::Error::new(error.kind(), format!("{}: {error}", file.display()))
 }
 
-/// The commands of one run of steamcmd with nobody at it, and the longest it may take over them.
+/// What steamship says of a steamcmd it stopped before it had started.
+const NOT_STARTED: &str = "did not finish starting up and was stopped. Run steamship again";
+
+/// Whether a run of steamcmd was stopped before it had started, with nothing telling steamship to
+/// stop and steamcmd not having said that it never will finish.
+fn stalled(finished: &Finished, startup: run::Startup<'_>) -> bool {
+    let said = String::from_utf8_lossy(&finished.output);
+    finished.code.is_none()
+        && run::told().is_none()
+        && !startup.begun()
+        && !HOPELESS.iter().any(|words| said.contains(words))
+}
+
+/// What a run of steamcmd gave, unless it was stopped before steamcmd had started.
+///
+/// # Errors
+///
+/// When the run was stopped before steamcmd had started.
+fn started(finished: Finished, startup: run::Startup<'_>) -> io::Result<Finished> {
+    if stalled(&finished, startup) {
+        return Err(io::Error::new(io::ErrorKind::TimedOut, NOT_STARTED));
+    }
+    Ok(finished)
+}
+
+/// The commands of one run of steamcmd with nobody at it, the longest it may take over them, and
+/// the longest it may take to start.
 #[derive(Debug)]
 pub struct Commands {
     args: Vec<OsString>,
     limit: Duration,
+    startup: Duration,
 }
 
 impl Commands {
@@ -173,16 +200,19 @@ impl Commands {
     ///
     /// It starts in its own folder with [`environment`] around it. It is stopped at the commands'
     /// limit, or once it says that it will never reach Steam. It is not started while its
-    /// [`connection_log`] cannot be added to.
+    /// [`connection_log`] cannot be added to. It is stopped as well when it has added nothing to
+    /// that log within the commands' time to start.
     ///
     /// # Errors
     ///
-    /// When steamcmd cannot be started, its output cannot be read, or its log cannot be added to.
-    /// The error names the file that starts steamcmd.
+    /// When steamcmd cannot be started, its output cannot be read, its log cannot be added to, or
+    /// it was stopped before it had started. The error names the file that starts steamcmd.
     pub fn run(&self, home: &Path) -> io::Result<Finished> {
         let root = home.join(install::FOLDER);
         let file = program(&root, Platform::THIS);
         log_is_free(home, Platform::THIS).map_err(named(&file))?;
+        let log = connection_log(home, Platform::THIS);
+        let startup = run::Startup::new(self.startup, &log);
         run::run(
             &file,
             &self.args,
@@ -190,8 +220,9 @@ impl Commands {
             &root,
             self.limit,
             HOPELESS,
-            None,
+            Some(startup),
         )
+        .and_then(|finished| started(finished, startup))
         .map_err(named(&file))
     }
 
@@ -204,8 +235,8 @@ impl Commands {
     /// # Errors
     ///
     /// When steamcmd cannot be started, its console cannot be read or typed into, or it cannot be
-    /// waited for, or when its log cannot be added to. The error names the file that starts
-    /// steamcmd.
+    /// waited for, or when its log cannot be added to, or when it was stopped before it had
+    /// started. The error names the file that starts steamcmd.
     pub fn typed(
         &self,
         home: &Path,
@@ -215,55 +246,60 @@ impl Commands {
         let root = home.join(install::FOLDER);
         let file = program(&root, Platform::THIS);
         log_is_free(home, Platform::THIS).map_err(named(&file))?;
-        typed_at(
-            &file,
+        let log = connection_log(home, Platform::THIS);
+        let startup = run::Startup::new(self.startup, &log);
+        self.typed_at(&file, home, startup, command, secret)
+            .and_then(|finished| started(finished, startup))
+            .map_err(named(&file))
+    }
+
+    /// Runs `file` in its folder under `home` with these commands at a console of its own and
+    /// types `command` at its prompt, as [`fetch::typed`] does with `secret` hidden. It is
+    /// stopped at the commands' limit, or sooner when `startup` has not begun in its time.
+    fn typed_at(
+        &self,
+        file: &Path,
+        home: &Path,
+        startup: run::Startup<'_>,
+        command: Zeroizing<String>,
+        secret: Zeroizing<String>,
+    ) -> io::Result<Finished> {
+        let (terminal, mut output, mut input) = Terminal::start(
+            file,
             &self.args,
             &environment(home, Platform::THIS),
-            &root,
-            self.limit,
-            command,
-            secret,
-        )
-        .map_err(named(&file))
+            &home.join(install::FOLDER),
+        )?;
+        let (ended, ending) = mpsc::channel();
+        let reading = thread::spawn(move || {
+            let read = fetch::typed(&mut output, &mut input, &command, &secret, HOPELESS);
+            // The receiver has gone only once a limit passed, and then nothing waits to hear.
+            let _told = ended.send(());
+            read
+        });
+        let first = self.startup.min(self.limit);
+        let in_time = ending.recv_timeout(first).is_ok()
+            || (startup.begun()
+                && ending
+                    .recv_timeout(self.limit.saturating_sub(first))
+                    .is_ok());
+        // Dropping the terminal unwaited ends steamcmd, and with it the output being read.
+        let terminal = in_time.then_some(terminal);
+        let lines = reading
+            .join()
+            .unwrap_or_else(|panic| panic::resume_unwind(panic))?;
+        let given_up = lines
+            .last()
+            .is_some_and(|line| HOPELESS.iter().any(|words| line.contains(words)));
+        let code = match terminal {
+            Some(terminal) if !given_up => terminal.wait()?,
+            _ => None,
+        };
+        Ok(Finished {
+            code,
+            output: lines.join("\n").into_bytes(),
+        })
     }
-}
-
-/// Runs `program` with `args` at a console of its own and types `command` at its prompt, as
-/// [`fetch::typed`] does with `secret` hidden, within `limit` or it is stopped.
-fn typed_at(
-    program: &Path,
-    args: &[OsString],
-    environment: &[(OsString, OsString)],
-    directory: &Path,
-    limit: Duration,
-    command: Zeroizing<String>,
-    secret: Zeroizing<String>,
-) -> io::Result<Finished> {
-    let (terminal, mut output, mut input) = Terminal::start(program, args, environment, directory)?;
-    let (ended, ending) = mpsc::channel();
-    let reading = thread::spawn(move || {
-        let read = fetch::typed(&mut output, &mut input, &command, &secret, HOPELESS);
-        // The receiver has gone only once the limit passed, and then nothing waits to hear.
-        let _told = ended.send(());
-        read
-    });
-    let in_time = ending.recv_timeout(limit).is_ok();
-    // Dropping the terminal unwaited ends steamcmd, and with it the output being read.
-    let terminal = in_time.then_some(terminal);
-    let lines = reading
-        .join()
-        .unwrap_or_else(|panic| panic::resume_unwind(panic))?;
-    let given_up = lines
-        .last()
-        .is_some_and(|line| HOPELESS.iter().any(|words| line.contains(words)));
-    let code = match terminal {
-        Some(terminal) if !given_up => terminal.wait()?,
-        _ => None,
-    };
-    Ok(Finished {
-        code,
-        output: lines.join("\n").into_bytes(),
-    })
 }
 
 /// The commands that log `account` in and quit: steamcmd asks for the password and a Steam
@@ -298,6 +334,7 @@ pub fn check_login(account: &Account) -> Commands {
         .map(OsString::from)
         .into(),
         limit: CHECK_LIMIT,
+        startup: STARTUP_LIMIT,
     }
 }
 
@@ -326,6 +363,7 @@ pub fn app_info(account: &Account, app: u32) -> Commands {
         .map(OsString::from)
         .into(),
         limit: CHECK_LIMIT,
+        startup: STARTUP_LIMIT,
     }
 }
 
@@ -360,6 +398,7 @@ pub fn drm_wrap(
     Commands {
         args,
         limit: WRAP_LIMIT,
+        startup: STARTUP_LIMIT,
     }
 }
 
@@ -383,6 +422,7 @@ pub fn workshop(account: &Account, script: &Path) -> Commands {
     Commands {
         args,
         limit: UPLOAD_LIMIT,
+        startup: STARTUP_LIMIT,
     }
 }
 
@@ -414,6 +454,7 @@ pub fn fetch(
     Commands {
         args,
         limit: FETCH_LIMIT,
+        startup: STARTUP_LIMIT,
     }
 }
 
@@ -440,6 +481,7 @@ pub fn fetch_console(account: &Account, system: &str, folder: &Path) -> Commands
     Commands {
         args,
         limit: FETCH_LIMIT,
+        startup: STARTUP_LIMIT,
     }
 }
 
@@ -463,6 +505,11 @@ const UPLOAD_LIMIT: Duration = Duration::from_hours(6);
 /// against (on Linux, with the system's certificate store missing), it says this at once and then
 /// waits to connect for good.
 const HOPELESS: &[&str] = &[conversation::NO_CERTIFICATES];
+
+/// The longest steamcmd may take to add to its connection log. In 224 starts on CI's four systems
+/// it took 3 s at most. On macOS one start in 30 CI runs hung before it, having asked Steam
+/// nothing.
+const STARTUP_LIMIT: Duration = Duration::from_mins(1);
 
 /// The commands that log `account` in with the login steamcmd saved, print the info of the app
 /// `info_of` names, as [`app_info`] does, build `script` and quit.
@@ -492,6 +539,7 @@ pub fn upload(account: &Account, script: &Path, info_of: Option<u32>) -> Command
     Commands {
         args,
         limit: UPLOAD_LIMIT,
+        startup: STARTUP_LIMIT,
     }
 }
 
@@ -824,15 +872,8 @@ mod tests {
         log_is_free(home.path(), Platform::THIS).unwrap();
     }
 
-    /// The arguments that have the stand-in of `waiting` leave the file `ran` in its folder.
-    fn leaving_ran() -> Vec<OsString> {
-        let args: &[&str] = if cfg!(windows) {
-            &["/d", "/s", "/c", "echo ran > ran"]
-        } else {
-            &["-c", "echo ran > ran"]
-        };
-        args.iter().map(OsString::from).collect()
-    }
+    /// The line that leaves the file `ran` in the folder steamcmd runs in.
+    const RAN: &str = "echo ran > ran";
 
     /// What a refused run's error must read for the stand-in in `home`, and that nothing ran.
     fn refused(home: &Path, error: &io::Error) {
@@ -852,14 +893,12 @@ mod tests {
 
     #[test]
     fn a_run_whose_connection_log_cannot_be_added_to_is_refused_and_steamcmd_never_starts() {
-        let (home, _) = waiting(None);
-        let log = connection_log(home.path(), Platform::THIS);
-        fs::create_dir_all(log.parent().unwrap()).unwrap();
-        fs::write(&log, "an earlier run\n").unwrap();
-        read_only(&log);
+        let (home, args) = stand_in(RAN);
+        read_only(&connection_log(home.path(), Platform::THIS));
         let commands = Commands {
-            args: leaving_ran(),
+            args,
             limit: Duration::from_mins(1),
+            startup: Duration::from_mins(1),
         };
         let error = commands.run(home.path()).unwrap_err();
         refused(home.path(), &error);
@@ -868,14 +907,12 @@ mod tests {
     #[test]
     fn a_run_typed_into_whose_connection_log_cannot_be_added_to_is_refused_and_steamcmd_never_starts()
      {
-        let (home, _) = waiting(None);
-        let log = connection_log(home.path(), Platform::THIS);
-        fs::create_dir_all(log.parent().unwrap()).unwrap();
-        fs::write(&log, "an earlier run\n").unwrap();
-        read_only(&log);
+        let (home, args) = stand_in(RAN);
+        read_only(&connection_log(home.path(), Platform::THIS));
         let commands = Commands {
-            args: leaving_ran(),
+            args,
             limit: Duration::from_mins(1),
+            startup: Duration::from_mins(1),
         };
         let error = commands
             .typed(home.path(), Zeroizing::default(), Zeroizing::default())
@@ -904,35 +941,89 @@ mod tests {
             ],
             [Duration::from_hours(6); 4]
         );
+        assert_eq!(
+            [
+                check_login(&account).startup,
+                app_info(&account, 480).startup,
+                drm_wrap(&account, 480, file, file, drm::Mode::Default).startup,
+                upload(&account, file, None).startup,
+                workshop(&account, file).startup,
+                fetch(&account, 480, "public", None, "linux", file).startup,
+                fetch_console(&account, "linux", file).startup
+            ],
+            [Duration::from_mins(1); 7]
+        );
     }
 
-    /// A home whose steamcmd is the system's shell, and the arguments that have it say `saying`,
-    /// when given, then wait half a minute: longer than the limit a test gives it, and over by
-    /// itself when nothing stops it. On Unix the stand-in is a link, since a file this process
-    /// writes can be held open by a program another test starts meanwhile, and then refuses to
-    /// run. Windows hands no file on to a program unasked, so a copy is safe there.
-    fn waiting(saying: Option<&str>) -> (tempfile::TempDir, Vec<OsString>) {
-        let home = tempfile::tempdir().unwrap();
+    /// A home whose steamcmd is the system's shell and whose connection log holds one line, and
+    /// the arguments that have the shell run `line`. On Unix the stand-in is a link, since a file
+    /// this process writes can be held open by a program another test starts meanwhile, and then
+    /// refuses to run. Windows hands no file on to a program unasked, so a copy is safe there.
+    fn stand_in(line: &str) -> (tempfile::TempDir, Vec<OsString>) {
+        let (home, _) = logged();
         let root = home.path().join(install::FOLDER);
         fs::create_dir_all(&root).unwrap();
         let stand_in = program(&root, Platform::THIS);
         #[cfg(unix)]
         let args = {
             unix::make_link("/bin/sh", &stand_in).unwrap();
-            let said = saying.map_or_else(String::new, |words| format!("echo {words}; "));
-            vec!["-c".to_owned(), format!("{said}sleep 30")]
+            vec!["-c".to_owned(), line.to_owned()]
         };
         #[cfg(windows)]
         let args = {
             let _: u64 = fs::copy(r"C:\Windows\System32\cmd.exe", &stand_in).unwrap();
-            let said = saying.map_or_else(String::new, |words| format!("echo {words}& "));
             ["/d", "/s", "/c"]
                 .map(str::to_owned)
                 .into_iter()
-                .chain([format!("{said}ping -n 30 127.0.0.1 > nul")])
+                .chain([line.to_owned()])
                 .collect::<Vec<String>>()
         };
         (home, args.into_iter().map(OsString::from).collect())
+    }
+
+    /// The line that waits half a minute: longer than the limit a test gives it, and over by
+    /// itself when nothing stops it.
+    const WAIT: &str = if cfg!(windows) {
+        "ping -n 30 127.0.0.1 > nul"
+    } else {
+        "sleep 30"
+    };
+
+    /// The line that adds to steamcmd's connection log from the folder steamcmd runs in, as a
+    /// steamcmd that has started does.
+    fn starts() -> String {
+        if cfg!(windows) {
+            r"echo this run>> logs\connection_log.txt".to_owned()
+        } else {
+            let log = connection_log(Path::new(".."), Platform::THIS);
+            format!("echo this run >> '{}'", log.display())
+        }
+    }
+
+    /// `first`, then `second`, as the system's shell joins two commands.
+    fn then(first: &str, second: &str) -> String {
+        let joined = if cfg!(windows) { "& " } else { "; " };
+        format!("{first}{joined}{second}")
+    }
+
+    /// A home whose stand-in steamcmd says `saying`, when given, then starts and waits.
+    fn waiting(saying: Option<&str>) -> (tempfile::TempDir, Vec<OsString>) {
+        let started = then(&starts(), WAIT);
+        stand_in(&saying.map_or_else(
+            || started.clone(),
+            |words| then(&format!("echo {words}"), &started),
+        ))
+    }
+
+    /// What steamship says of the stand-in in `home` when it never started.
+    fn not_started(home: &Path) -> String {
+        let file = program(&home.join(install::FOLDER), Platform::THIS);
+        format!("{}: {NOT_STARTED}", file.display())
+    }
+
+    /// Input for a run typed into.
+    fn quit() -> (Zeroizing<String>, Zeroizing<String>) {
+        (Zeroizing::new("quit".to_owned()), Zeroizing::default())
     }
 
     #[test]
@@ -941,6 +1032,7 @@ mod tests {
         let commands = Commands {
             args,
             limit: Duration::from_secs(1),
+            startup: Duration::from_mins(1),
         };
         let started = Instant::now();
         let finished = commands.run(home.path()).unwrap();
@@ -953,11 +1045,105 @@ mod tests {
     }
 
     #[test]
+    fn a_run_that_does_not_start_in_time_is_stopped_and_is_an_error_that_names_the_file() {
+        let (home, args) = stand_in(WAIT);
+        let commands = Commands {
+            args,
+            limit: Duration::from_mins(1),
+            startup: Duration::from_secs(1),
+        };
+        let started = Instant::now();
+        let error = commands.run(home.path()).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), not_started(home.path()));
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_run_typed_into_that_does_not_start_in_time_is_an_error_that_names_the_file() {
+        let (home, args) = stand_in(WAIT);
+        let commands = Commands {
+            args,
+            limit: Duration::from_mins(1),
+            startup: Duration::from_secs(1),
+        };
+        let started = Instant::now();
+        let (command, secret) = quit();
+        let error = commands.typed(home.path(), command, secret).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(error.to_string(), not_started(home.path()));
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_run_stopped_at_its_limit_after_it_started_is_no_error() {
+        let (home, args) = stand_in(&then(&starts(), WAIT));
+        let commands = Commands {
+            args,
+            limit: Duration::from_secs(2),
+            startup: Duration::from_secs(1),
+        };
+        let finished = commands.run(home.path()).unwrap();
+        assert_eq!(finished.code, None);
+    }
+
+    #[test]
+    fn a_run_that_says_it_never_will_finish_before_it_starts_is_no_error() {
+        let said = format!("echo {}", conversation::NO_CERTIFICATES);
+        let (home, args) = stand_in(&then(&said, WAIT));
+        let commands = Commands {
+            args,
+            limit: Duration::from_mins(1),
+            startup: Duration::from_secs(20),
+        };
+        let started = Instant::now();
+        let finished = commands.run(home.path()).unwrap();
+        assert_eq!(finished.code, None);
+        assert!(
+            String::from_utf8_lossy(&finished.output).contains(conversation::NO_CERTIFICATES),
+            "{:?}",
+            String::from_utf8_lossy(&finished.output)
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(15),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_run_typed_into_that_started_runs_on_past_the_start_up_limit() {
+        let ends = if cfg!(windows) {
+            "ping -n 4 127.0.0.1 > nul& exit 3"
+        } else {
+            "sleep 3; exit 3"
+        };
+        let (home, args) = stand_in(&then(&starts(), ends));
+        let commands = Commands {
+            args,
+            limit: Duration::from_mins(1),
+            startup: Duration::from_secs(1),
+        };
+        let (command, secret) = quit();
+        let finished = commands.typed(home.path(), command, secret).unwrap();
+        assert_eq!(finished.code, Some(3_i32));
+    }
+
+    #[test]
     fn a_run_typed_into_is_stopped_at_the_limit_of_its_commands() {
         let (home, args) = waiting(None);
         let commands = Commands {
             args,
             limit: Duration::from_secs(1),
+            startup: Duration::from_mins(1),
         };
         let started = Instant::now();
         let finished = commands
@@ -981,6 +1167,7 @@ mod tests {
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
+            startup: Duration::from_mins(1),
         };
         let started = Instant::now();
         let finished = commands
