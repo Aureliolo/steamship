@@ -76,7 +76,7 @@ use zeroize::{Zeroize as _, Zeroizing};
 
 use crate::keychain;
 use crate::parallel;
-use crate::run::{self, Finished};
+use crate::run::{self, Finished, Startup};
 use windows_sys::Win32::Security::Cryptography::{
     CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
 };
@@ -120,6 +120,7 @@ pub fn run(
     directory: &Path,
     limit: Duration,
     hopeless: &'static [&'static str],
+    startup: Option<Startup<'_>>,
 ) -> io::Result<Finished> {
     silence_error_dialogues();
     let desktop = Desktop::create()?;
@@ -141,7 +142,7 @@ pub fn run(
     let seen = Arc::new(AtomicBool::new(false));
     let watching = Arc::clone(&seen);
     let reading = thread::spawn(move || run::watch(reader, hopeless, &watching));
-    let code = run::waited(limit, &seen, |pause| process.ended_within(pause))?;
+    let code = run::waited(limit, &seen, startup, |pause| process.ended_within(pause))?;
     if code.is_none() {
         job.stop_all();
         process.ended();
