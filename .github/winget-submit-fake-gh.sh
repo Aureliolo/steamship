@@ -66,7 +66,7 @@ case "${call}" in
     echo "{\"items\": [${joined}]}"
     ;;
   "api repos/microsoft/winget-pkgs --jq .default_branch") echo master ;;
-  "api repos/microsoft/winget-pkgs/commits/HEAD --jq "*) echo "${head_id} ${base_tree_id}" ;;
+  "api repos/releaser/winget-pkgs/commits/HEAD --jq "*) echo "${head_id} ${base_tree_id}" ;;
   "api repos/releaser/winget-pkgs/git/trees "*)
     write "$@"
     echo "${tree_id}"

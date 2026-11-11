@@ -82,11 +82,14 @@ fi
 
 base="$(gh api "repos/${upstream}" --jq .default_branch)"
 [[ "${base}" =~ ^[A-Za-z0-9._-]+$ ]] || fail "${upstream}'s default branch has a name this script does not accept."
-head="$(gh api "repos/${upstream}/commits/HEAD" --jq '.sha + " " + .commit.tree.sha')"
+# The commit builds on the fork's own newest commit. One on upstream's would bring the fork the
+# workflow files upstream changed since, and GitHub refuses that branch to a token without the
+# workflow scope. The pull request still shows only the manifests.
+head="$(gh api "repos/${fork}/commits/HEAD" --jq '.sha + " " + .commit.tree.sha')"
 tree_base="${head#* }"
 head="${head%% *}"
 [[ "${head}" =~ ^[0-9a-f]{40}$ && "${tree_base}" =~ ^[0-9a-f]{40}$ ]] \
-  || fail "${upstream}'s newest commit has an id this script does not accept."
+  || fail "${fork}'s newest commit has an id this script does not accept."
 
 request="$(mktemp)"
 trap 'rm -f "${request}"' EXIT

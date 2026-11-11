@@ -162,7 +162,8 @@ first version is submitted by hand, once, for a moderator to review.
 After the first version is accepted:
 
 1. Fork `microsoft/winget-pkgs` to the account that will own the token. No separate account is
-   needed, and it needs no access to this repository.
+   needed, and it needs no access to this repository. The fork is never synced: each submission
+   builds on its newest commit, so the token needs no `workflow` scope.
 2. On that account, create a classic token with only the `public_repo` scope and an expiry.
 3. Create an environment named `winget`, limited to tags matching `v*`. Put the token in its
    secret `WINGET_TOKEN`.
