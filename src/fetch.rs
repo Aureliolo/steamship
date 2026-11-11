@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
+use crate::branch;
 use crate::conversation;
 use crate::platform::Platform;
 use crate::terminal::{Event, Reader};
 use crate::vdf;
-use crate::webapi::{self, Branch};
+use crate::webapi::Branch;
 
 /// The systems a build is fetched for, in the order they are listed.
 const SYSTEMS: [Platform; 3] = [Platform::Windows, Platform::Linux, Platform::MacOs];
@@ -65,7 +66,7 @@ pub fn chosen<'branches>(
         (None, Some(build)) => branches
             .iter()
             .filter(|found| found.build_id == build)
-            .min_by_key(|found| (!webapi::is_default(&found.name), found.locked))
+            .min_by_key(|found| (!branch::is_default(&found.name), found.locked))
             .ok_or_else(|| {
                 format!(
                     "build {build} is live on no branch of app {app}, and Steam serves only a \
@@ -75,10 +76,10 @@ pub fn chosen<'branches>(
             })?,
         (None, None) => branches
             .iter()
-            .find(|found| webapi::is_default(&found.name))
+            .find(|found| branch::is_default(&found.name))
             .ok_or_else(|| format!("app {app} has no default branch"))?,
     };
-    let shown = webapi::shown_name(&found.name);
+    let shown = branch::shown_name(&found.name);
     if found.build_id == 0 {
         return Err(format!("no build is live on app {app}'s {shown} branch"));
     }
@@ -190,8 +191,8 @@ where
 
 /// Whether the branch `given` on the command line is the one Steam calls `name`.
 fn named(given: &str, name: &str) -> bool {
-    if webapi::is_default(given) {
-        webapi::is_default(name)
+    if branch::is_default(given) {
+        branch::is_default(name)
     } else {
         given == name
     }
@@ -201,7 +202,7 @@ fn named(given: &str, name: &str) -> bool {
 fn listed(branches: &[Branch]) -> String {
     let names: Vec<&str> = branches
         .iter()
-        .map(|branch| webapi::shown_name(&branch.name))
+        .map(|branch| branch::shown_name(&branch.name))
         .collect();
     names.join(", ")
 }
@@ -212,7 +213,7 @@ fn listed(branches: &[Branch]) -> String {
 pub fn folder(home: &Path, app: u32, branch: &str, platform: Platform) -> PathBuf {
     home.join("fetched").join(app.to_string()).join(format!(
         "{}-{}",
-        webapi::shown_name(branch),
+        branch::shown_name(branch),
         system_name(platform)
     ))
 }
@@ -252,7 +253,7 @@ pub fn installed(text: &str) -> Result<Installed, String> {
         .into_iter()
         .find_map(|config| state.block(config)?.text("BetaKey"))
         .filter(|branch| !branch.is_empty())
-        .map_or("default", webapi::shown_name);
+        .map_or("default", branch::shown_name);
     Ok(Installed {
         build_id,
         branch: branch.to_owned(),

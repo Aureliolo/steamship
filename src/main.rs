@@ -30,10 +30,10 @@ use steamship::update::{self, Installed};
 #[cfg(windows)]
 use steamship::windows::Terminal;
 use steamship::{
-    achievements, assets, check, ci, conversation, digest, download, drm, dump, editor, fetch,
-    green, init, itself, keychain, leaderboards, ledger, likeness, magic, picture, po, presence,
-    presets, redist, release, run, saved, scripts, settings, steamcmd, storefront, text, upload,
-    vdf, webapi, workshop,
+    achievements, assets, branch, builds, check, ci, conversation, digest, download, drm, dump,
+    editor, fetch, green, init, itself, keychain, leaderboards, ledger, likeness, magic, picture,
+    po, presence, presets, redist, release, run, saved, scripts, settings, steamcmd, storefront,
+    text, upload, vdf, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -2703,7 +2703,7 @@ fn first_on_default(
 /// did. The build is already live on `branch`, if the script sets one live.
 fn live_on_default(api: &webapi::Api, app: u32, build_id: u64, branch: Option<&str>) -> bool {
     let spinner = Spinner::start("default", "setting it live", false);
-    let Err(error) = api.set_live(app, build_id, webapi::DEFAULT_KEY) else {
+    let Err(error) = api.set_live(app, build_id, branch::DEFAULT_KEY) else {
         spinner.done("set live");
         return true;
     };
@@ -3248,17 +3248,17 @@ fn try_builds(app: &str, count: u32, json: bool) -> Result<ExitCode, ExitCode> {
             if json {
                 show::plain(&format!(
                     "{}\n",
-                    webapi::error_json(app_id, &error, why.as_deref())
+                    builds::error_json(app_id, &error, why.as_deref())
                 ));
             }
             return Err(code);
         }
     };
-    spinner.done(&overview.summary());
-    show::fields(&overview.lines());
+    spinner.done(&builds::summary(&overview));
+    show::fields(&builds::lines(&overview));
     offer_to_keep(&home, &api, from);
     if json {
-        show::plain(&format!("{}\n", overview.json(app_id)));
+        show::plain(&format!("{}\n", builds::json(app_id, &overview)));
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -3272,7 +3272,7 @@ fn try_fetch(request: &cli::Fetch) -> Result<ExitCode, ExitCode> {
     let app_id = app_named(&app)?;
     let home = home()?;
     let branch = branch_to_fetch(&home, app_id, request)?;
-    let shown = webapi::shown_name(&branch.name);
+    let shown = branch::shown_name(&branch.name);
     let system = request.system.unwrap_or(Platform::THIS);
     let given = request
         .into
@@ -3417,7 +3417,7 @@ fn branch_password(
     branch: &str,
     on_command_line: bool,
 ) -> Result<GivenPassword, ExitCode> {
-    let shown = webapi::shown_name(branch);
+    let shown = branch::shown_name(branch);
     let given = if let Some(text) = env::var_os(fetch::PASSWORD).filter(|text| !text.is_empty()) {
         let text = text
             .into_string()
@@ -3625,8 +3625,8 @@ fn run_fetch(
 ) -> io::Result<run::Finished> {
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
-    let branch = if webapi::is_default(&fetching.branch.name) {
-        webapi::DEFAULT_KEY
+    let branch = if branch::is_default(&fetching.branch.name) {
+        branch::DEFAULT_KEY
     } else {
         &fetching.branch.name
     };
@@ -3937,7 +3937,7 @@ fn try_achievements(
         Err(error) => {
             let code = web_api_failed(spinner, &error);
             if json {
-                show::plain(&format!("{}\n", webapi::error_json(app_id, &error, None)));
+                show::plain(&format!("{}\n", builds::error_json(app_id, &error, None)));
             }
             return Err(code);
         }
@@ -4091,7 +4091,10 @@ fn list_achievements(
             ),
         );
         if json {
-            show::plain(&format!("{}\n", held.json(app, &webapi::Global::default())));
+            show::plain(&format!(
+                "{}\n",
+                achievements::json(app, held, &webapi::Global::default())
+            ));
         }
         return Ok(ExitCode::SUCCESS);
     }
@@ -4106,7 +4109,7 @@ fn list_achievements(
         Err(error) => {
             let code = web_api_failed(spinner, &error);
             if json {
-                show::plain(&format!("{}\n", webapi::error_json(app, &error, None)));
+                show::plain(&format!("{}\n", builds::error_json(app, &error, None)));
             }
             return Err(code);
         }
@@ -4145,7 +4148,7 @@ fn list_achievements(
     });
     show::fields(&achievements.chain(stats).collect::<Vec<_>>());
     if json {
-        show::plain(&format!("{}\n", held.json(app, &global)));
+        show::plain(&format!("{}\n", achievements::json(app, held, &global)));
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -5851,7 +5854,7 @@ fn try_leaderboards(
         Err(error) => {
             let code = web_api_failed(asking, &error);
             if json {
-                show::plain(&format!("{}\n", webapi::error_json(app_id, &error, None)));
+                show::plain(&format!("{}\n", builds::error_json(app_id, &error, None)));
             }
             return Err(code);
         }
@@ -5934,7 +5937,7 @@ fn try_leaderboards(
 fn try_branch(app: &str, branch: &str, description: &str) -> Result<ExitCode, ExitCode> {
     show::title("branch");
     let app_id = app_named(app)?;
-    if webapi::is_default(branch) {
+    if branch::is_default(branch) {
         return Err(fail(
             &"the default branch's description is set in Steamworks, not by steamship",
             REFUSED,
@@ -5994,12 +5997,9 @@ fn try_promote(request: &cli::Promote) -> Result<ExitCode, ExitCode> {
     show::title("promote");
     let app_id = app_named(request.app.as_deref().unwrap_or_default())?;
     let build = request.build;
-    let default = webapi::is_default(&request.branch);
-    let (branch, key) = if default {
-        ("default", webapi::DEFAULT_KEY)
-    } else {
-        (request.branch.as_str(), request.branch.as_str())
-    };
+    let default = branch::is_default(&request.branch);
+    let branch = branch::shown_name(&request.branch);
+    let key = if default { branch::DEFAULT_KEY } else { branch };
     show::field("build", &build.to_string());
     show::field("branch", branch);
     let home = home()?;
@@ -6031,8 +6031,8 @@ fn try_rollback(request: &cli::Rollback) -> Result<ExitCode, ExitCode> {
     let app_id = app_named(&request.app)?;
     let home = home()?;
     let entries = ledger::load(&home, app_id).map_err(|why| fail(&why, FAILED))?;
-    let default = webapi::is_default(&request.branch);
-    let name = if default { "default" } else { &request.branch };
+    let default = branch::is_default(&request.branch);
+    let name = branch::shown_name(&request.branch);
     let (current, before) =
         ledger::previous(&entries, app_id, name).map_err(|why| fail(&why, REFUSED))?;
     show::field("branch", name);
@@ -6061,7 +6061,7 @@ fn try_rollback(request: &cli::Rollback) -> Result<ExitCode, ExitCode> {
             DEFAULT_RELEASED,
         )?;
     }
-    let key = if default { webapi::DEFAULT_KEY } else { name };
+    let key = if default { branch::DEFAULT_KEY } else { name };
     let spinner = Spinner::start("steam", "setting it live", false);
     if let Err(error) = api.set_live(app_id, before.build_id, key) {
         return Err(web_api_failed(spinner, &error));

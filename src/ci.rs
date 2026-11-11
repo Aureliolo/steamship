@@ -15,13 +15,13 @@ use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
 use crate::account::Account;
+use crate::calendar;
 use crate::digest;
 use crate::platform::Platform;
 use crate::steamcmd;
 #[cfg(unix)]
 use crate::unix as native;
 use crate::vdf;
-use crate::webapi;
 #[cfg(windows)]
 use crate::windows as native;
 
@@ -219,7 +219,7 @@ fn is_day(text: &str) -> bool {
 /// The day `seconds` since 1970 fall on, in UTC, as YYYY-MM-DD.
 #[must_use]
 pub fn day(seconds: u64) -> String {
-    let (year, month, day) = webapi::date(seconds);
+    let (year, month, day) = calendar::date(seconds);
     format!("{year:04}-{month:02}-{day:02}")
 }
 

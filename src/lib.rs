@@ -4,6 +4,9 @@
 pub mod account;
 pub mod achievements;
 pub mod assets;
+pub mod branch;
+pub mod builds;
+pub mod calendar;
 pub mod check;
 pub mod ci;
 pub mod cli;

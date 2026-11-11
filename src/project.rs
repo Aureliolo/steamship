@@ -21,7 +21,7 @@ use toml::de::Error as TomlError;
 use crate::unix as native;
 #[cfg(windows)]
 use crate::windows as native;
-use crate::{check, run, settings, show, upload, webapi, workshop};
+use crate::{branch, check, run, settings, show, upload, workshop};
 
 /// The file a game names its own layout in, at its root.
 pub const FILE: &str = "steamship.toml";
@@ -311,7 +311,7 @@ impl Project {
         if let Some(value) = table.get("branch") {
             let branch = text_of(value, "branch")?;
             unquoted(branch, "branch", "Name a branch without one")?;
-            if branch.trim().is_empty() || webapi::is_default(branch) {
+            if branch.trim().is_empty() || branch::is_default(branch) {
                 return Err(format!(
                     "`branch` is \"{branch}\". Name the branch the game's build goes live on, \
                      such as \"{BRANCH}\". The default branch is the publisher's to set"
@@ -660,7 +660,7 @@ fn demo_configured(root: &Path, section: &toml::Value, game: &Project) -> Result
         Some(value) => {
             let branch = text_of(value, "demo.branch")?;
             unquoted(branch, "demo.branch", "Name a branch without one")?;
-            if branch.trim().is_empty() || webapi::is_default(branch) {
+            if branch.trim().is_empty() || branch::is_default(branch) {
                 return Err(format!(
                     "`demo.branch` is \"{branch}\". Name the branch the demo's build goes live on, \
                      such as \"{BRANCH}\". The default branch is the publisher's to set"
