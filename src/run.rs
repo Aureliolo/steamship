@@ -398,6 +398,31 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_program_is_stopped_at_its_limit_and_not_a_look_later() {
+        // A look a whole pause late takes 50 ms or more in every run, so that over half of the
+        // runs end sooner shows the pause is cut short at the limit.
+        for (limit, bound) in [
+            (Duration::ZERO, Duration::from_millis(50)),
+            (Duration::from_millis(1), Duration::from_millis(50)),
+            (Duration::from_millis(51), Duration::from_millis(100)),
+        ] {
+            let sooner = (0..40_i32)
+                .filter(|_| {
+                    let started = Instant::now();
+                    let finished = shell("sleep 2", limit);
+                    assert_eq!(finished.code, None);
+                    started.elapsed() < bound
+                })
+                .count();
+            assert!(
+                sooner > 20,
+                "{sooner} of 40 runs took under {bound:?} at {limit:?}"
+            );
+        }
+    }
+
     /// A line that reads its input to the end and exits 0 only when that input was empty.
     #[cfg(windows)]
     const READS_INPUT: &str = "findstr /r \"^\" > nul && exit 3 || exit 0";

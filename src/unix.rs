@@ -162,6 +162,11 @@ pub fn run(
     let reading = thread::spawn(move || run::watch(reader, hopeless, &watching));
     let deadline = Instant::now().checked_add(limit);
     let status = loop {
+        // The pause comes first and is cut short at the limit, so that a look is never later than
+        // the limit by a whole pause.
+        thread::sleep(deadline.map_or(POLL, |deadline| {
+            deadline.saturating_duration_since(Instant::now()).min(POLL)
+        }));
         if let Some(status) = child.try_wait()? {
             break Some(status);
         }
@@ -170,7 +175,6 @@ pub fn run(
         {
             break None;
         }
-        thread::sleep(POLL);
     };
     // Whatever the program left running goes too, which is also what lets the reading end: a
     // straggler would hold the output open.
