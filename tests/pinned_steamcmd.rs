@@ -1,10 +1,13 @@
 //! The steamcmd `steamship install` put into `STEAMSHIP_HOME`, started for real. `cargo test`
-//! leaves this out. CI runs it with `--ignored` once it has installed the pinned steamcmd.
+//! leaves these out. CI runs them with `--ignored` once it has installed the pinned steamcmd.
 
 use std::env;
 use std::ffi::OsString;
+use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use steamship::install;
@@ -19,6 +22,10 @@ const HOLD: Duration = Duration::from_secs(15);
 /// steamship gives it, and eight times the slowest of twelve starts timed on CI's four systems.
 const START: Duration = Duration::from_secs(10);
 
+/// How long the first of two steamcmd in one home is held: past the ten seconds its log may take
+/// to come to rest and the hold of the second.
+const FIRST: Duration = Duration::from_secs(30);
+
 /// The commands that log steamcmd in anonymously and leave it at its prompt.
 const LOGIN: [&str; 6] = [
     "+@ShutdownOnFailedCommand",
@@ -28,6 +35,9 @@ const LOGIN: [&str; 6] = [
     "+login",
     "anonymous",
 ];
+
+/// Both tests start steamcmd in the one home, so they take turns.
+static HOME: Mutex<()> = Mutex::new(());
 
 /// The program and arguments that hold `file`, steamcmd, at its prompt after [`LOGIN`]. On Unix
 /// its input is the pipe at `input`, made anew, which a `sleep` outlasting every hold keeps open
@@ -96,6 +106,7 @@ fn shown((finished, took): &(Finished, Duration)) -> String {
 #[test]
 #[ignore = "starts the steamcmd in STEAMSHIP_HOME, which CI installs from Valve"]
 fn the_pinned_steamcmd_adds_to_its_connection_log_while_it_still_runs() {
+    let _turn = HOME.lock().unwrap_or_else(PoisonError::into_inner);
     let home = home().expect("STEAMSHIP_HOME names the home");
     let folder = tempfile::tempdir().unwrap();
     let mut rounds = Vec::new();
@@ -113,5 +124,68 @@ fn the_pinned_steamcmd_adds_to_its_connection_log_while_it_still_runs() {
          held.\n{}",
         steamcmd::connection_log(&home, Platform::THIS).display(),
         rounds.join("\n")
+    );
+}
+
+/// A steamcmd still running in a home keeps its logs to itself on Windows, and a second one there
+/// works on without a line in them, which steamship would take for one that never started. So
+/// either steamship turns the second away before it starts, or the second adds to the log too.
+#[test]
+#[ignore = "starts the steamcmd in STEAMSHIP_HOME, which CI installs from Valve"]
+fn a_second_steamcmd_in_a_home_is_turned_away_or_adds_to_the_connection_log_too() {
+    let _turn = HOME.lock().unwrap_or_else(PoisonError::into_inner);
+    let home = home().expect("STEAMSHIP_HOME names the home");
+    let folder = tempfile::tempdir().unwrap();
+    let log = steamcmd::connection_log(&home, Platform::THIS);
+    let length = || fs::metadata(&log).map_or(0, |found| found.len());
+    let mut tries = Vec::new();
+    // On macOS one start in 30 hangs before steamcmd's API has loaded, so a try may fail.
+    for _ in 0_u8..3_u8 {
+        let before = length();
+        let first = {
+            let (home, input) = (home.clone(), folder.path().join("first"));
+            thread::spawn(move || round(&home, &input, FIRST, None))
+        };
+        // The first has settled once its log has grown and then stood still for two seconds.
+        let began = Instant::now();
+        let (mut last, mut still) = (before, Instant::now());
+        while began.elapsed() < Duration::from_secs(10)
+            && (last == before || still.elapsed() < Duration::from_secs(2))
+        {
+            thread::sleep(Duration::from_millis(100));
+            if length() != last {
+                (last, still) = (length(), Instant::now());
+            }
+        }
+        let free = steamcmd::log_is_free(&home, Platform::THIS);
+        let second = (last != before && free.is_ok())
+            .then(|| round(&home, &folder.path().join("second"), HOLD, Some(START)).unwrap());
+        let first = first.join().unwrap().unwrap();
+        let stayed = last != before && first.0.code.is_none() && first.1 >= FIRST;
+        let turned_away = free.as_ref().is_err_and(|refusal| {
+            refusal
+                .to_string()
+                .contains("End any steamcmd left running")
+        });
+        let added = second
+            .as_ref()
+            .is_some_and(|second| second.0.code.is_none() && second.1 >= HOLD);
+        if stayed && (turned_away || added) {
+            return;
+        }
+        tries.push(format!(
+            "The first added {} bytes to its log. {}\nsteamship's answer for a second: {free:?}\n{}",
+            last.saturating_sub(before),
+            shown(&first),
+            second
+                .as_ref()
+                .map_or_else(|| "No second was started.".to_owned(), shown)
+        ));
+    }
+    panic!(
+        "In none of three tries did a first steamcmd stay at its prompt for {FIRST:?} while a \
+         second was turned away, or was held for {HOLD:?} and added to the connection log within \
+         {START:?}.\n{}",
+        tries.join("\n")
     );
 }

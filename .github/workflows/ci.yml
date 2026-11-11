@@ -123,7 +123,7 @@ jobs:
       # steamship is to stop a steamcmd that has not added to its connection log within a minute,
       # as one that never started. The pinned steamcmd, held at its prompt, must add to that log
       # while it still runs: one that wrote it only as it ended would be stopped in every run past
-      # a minute.
+      # a minute. So must a second one beside it, unless steamship turns that one away.
       - name: Hold steamcmd at its prompt, which must add to its connection log meanwhile
         timeout-minutes: 10
         run: |
