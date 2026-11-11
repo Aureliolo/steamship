@@ -1,0 +1,51 @@
+name: Probe steamcmd start-up
+
+on: pull_request
+
+permissions: {}
+
+jobs:
+  probe:
+    name: probe (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-26.04
+          - platform: windows
+            runner: windows-2025
+          - platform: windows-arm
+            runner: windows-11-arm
+          - platform: macos
+            runner: macos-26
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install
+      - name: Restore the compiled dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: false
+      - name: Install steamcmd
+        run: |
+          export STEAMSHIP_HOME="${RUNNER_TEMP}/home"
+          cargo run --locked -- install
+      - name: Hold steamcmd at its prompt three times
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          for round in 1 2 3; do
+            echo "== round ${round}"
+            python .github/probe-startup.py "${RUNNER_TEMP}/home" "${PLATFORM}" 15
+          done
