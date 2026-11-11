@@ -336,8 +336,8 @@ jobs:
       - name: Check spelling
         env:
           # renovate: datasource=github-release-attachments depName=crate-ci/typos versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          TYPOS_TAG: v1.52.0
-          TYPOS_SHA256: 6155d4114f9a0f5b8f6d4fda96266c9d5f6add71df80da7f684ee5e72eb14588
+          TYPOS_TAG: v1.52.2
+          TYPOS_SHA256: 3b13d1291281d39d01822e54035636487a7a0f228e70097899b1e33aeb0e7e93
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail

@@ -343,8 +343,8 @@ jobs:
       - name: Generate the SBOM
         env:
           # renovate: datasource=github-release-attachments depName=anchore/syft versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          SYFT_TAG: v1.57.0
-          SYFT_SHA256: 9c077a7d43029b3b13e98a8db720661e700c4d58db6352153a06395ae4a2a704
+          SYFT_TAG: v1.57.1
+          SYFT_SHA256: bf52519eb57f675d47c07d43213cb6dff6449f3d6d1147ff6701ed91f44eef0c
           GH_TOKEN: ${{ github.token }}
           SYFT_CHECK_FOR_APP_UPDATE: 'false'
           SYFT_SOURCE_NAME: steamship
