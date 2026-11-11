@@ -23,7 +23,7 @@ runs:
       run: |
         set -euo pipefail
         sum=$(printf '%s' "${PACKAGES}" | sha256sum | cut -c1-16)
-        printf 'key=apt-%s-%s-%s-%s\n' "${ImageOS:?}" "${ImageVersion:?}" "${RUNNER_ARCH:?}" \
+        printf 'key=deb-files-%s-%s-%s-%s\n' "${ImageOS:?}" "${ImageVersion:?}" "${RUNNER_ARCH:?}" \
           "${sum}" >> "${GITHUB_OUTPUT}"
 
     - name: Restore the packages' files
@@ -44,18 +44,21 @@ runs:
         read -ra names <<< "${PACKAGES}"
         # Every archive name the image lists is under ubuntu.com, whose name servers have stopped
         # answering for over an hour. apt then waits out each name in turn for over 17 minutes,
-        # so a name that does not resolve leaves kernel.org's mirror alone in the list. apt checks
-        # it against the archive's signature as it does any mirror.
+        # so when the first mirror's name does not resolve, kernel.org's mirror is left alone in
+        # the list. apt checks it against the archive's signature as it does any mirror.
         mirrors=/etc/apt/apt-mirrors.txt
         kernel=https://mirrors.edge.kernel.org/ubuntu/
         if [[ -f "${mirrors}" ]]; then
-          if timeout 10 getent hosts archive.ubuntu.com > /dev/null; then
+          first=$(sed -n '1s#^[a-z]*://\([^/]*\)/.*#\1#p' "${mirrors}")
+          if timeout 10 getent hosts "${first:-archive.ubuntu.com}" > /dev/null; then
             echo "${kernel}" | sudo tee -a "${mirrors}"
           else
             echo "${kernel}" | sudo tee "${mirrors}"
           fi
         fi
         sudo apt-get -o Acquire::Retries=3 update
+        # An empty apt cache first, so that the files kept are these packages' alone.
+        sudo apt-get clean
         sudo apt-get -o Acquire::Retries=3 install --yes --no-install-recommends --download-only \
           "${names[@]}"
         mkdir -p "${FOLDER}"
@@ -64,9 +67,9 @@ runs:
         printf '%s\n' "${names[@]}" > "${FOLDER}/packages.txt"
         find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t "${FOLDER}" {} +
 
-    # apt installs the files themselves, so each package's own install scripts run, and it needs
-    # no package lists to do it. It reads them as its own user, `_apt`, which cannot enter the
-    # runner's temporary folder, so they are copied to a folder of their own first.
+    # dpkg installs the files themselves and runs each package's own install scripts. apt would
+    # download the same version from the archive again, which a cache is there to spare. The
+    # files hold everything the image lacks, so dpkg finds every dependency among them.
     - name: Install the packages from their files
       shell: bash
       env:
@@ -78,10 +81,7 @@ runs:
         shopt -s nullglob
         files=("${FOLDER}"/*.deb)
         if ((${#files[@]})); then
-          staged=/var/cache/steamship-apt-packages
-          sudo install -d -m 0755 "${staged}"
-          sudo install -m 0644 "${files[@]}" "${staged}"
-          sudo apt-get install --yes --no-install-recommends "${staged}"/*.deb
+          sudo dpkg --install "${files[@]}"
         fi
         dpkg-query --show "${names[@]}" > /dev/null
 
