@@ -512,7 +512,7 @@ fn exports_apart(game: &Project, script: &scripts::AppScript) -> Result<(), Exit
         for depot in script
             .depots
             .iter()
-            .filter(|depot| check::ships(depot, &preset.export))
+            .filter(|depot| depot.ships(&preset.export))
         {
             let (whose, made) = if demo {
                 ("the demo's", "without")
@@ -2968,7 +2968,7 @@ fn demos_alone(game: &Project, here: &Path, found: &check::Report) -> bool {
         scripts::load(script).is_ok_and(|app| {
             files
                 .iter()
-                .any(|file| app.depots.iter().any(|depot| check::ships(depot, file)))
+                .any(|file| app.depots.iter().any(|depot| depot.ships(file)))
         })
     };
     ships(&demo.script) && !ships(&game.script)

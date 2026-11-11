@@ -3,13 +3,15 @@
 //! Paths follow steamcmd, as tried: the app script's `ContentRoot` and depot script names are
 //! relative to the app script, and `LocalPath` is relative to the content root. A depot script's
 //! own `ContentRoot` is relative to the app's, or to the app script when it has none, never to
-//! the depot script.
+//! the depot script. It also says which files a depot's mappings take, and where they install
+//! them.
 
 use std::fmt;
 use std::fs;
 use std::io;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path, PathBuf, is_separator};
 
+use crate::pattern;
 use crate::vdf::{self, Block, Value};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,6 +65,124 @@ pub struct FileMapping {
     pub local_path: String,
     pub depot_path: String,
     pub recursive: bool,
+}
+
+impl DepotScript {
+    /// Whether the depot ships `file`, as its mappings and exclusions take files from its content
+    /// root, whether or not the file is there yet.
+    #[must_use]
+    pub fn ships(&self, file: &Path) -> bool {
+        let root = &self.content_root;
+        let (Some(parent), Some(file_name)) = (file.parent(), file.file_name()) else {
+            return false;
+        };
+        let file_name = file_name.to_string_lossy();
+        !self.excludes(file)
+            && self.mappings.iter().any(|mapping| {
+                let (folder, name) = mapping.split();
+                let folder = root.join(folder);
+                mapping.unmappable().is_none()
+                    && pattern::matches(&name, &file_name)
+                    && (parent == folder || (mapping.recursive && parent.starts_with(&folder)))
+            })
+    }
+
+    /// Whether the depot installs a file of its content at `path`, a path from the install folder.
+    pub(crate) fn installs(&self, path: &str) -> bool {
+        let wanted = parts(path);
+        self.mappings.iter().any(|mapping| {
+            let Some(rest) = wanted.strip_prefix(parts(&mapping.depot_path).as_slice()) else {
+                return false;
+            };
+            let Some((name, folders)) = rest.split_last() else {
+                return false;
+            };
+            let (folder, pattern) = mapping.split();
+            let file = folders
+                .iter()
+                .fold(self.content_root.join(folder), |file, part| file.join(part))
+                .join(name);
+            (folders.is_empty() || mapping.recursive)
+                && pattern::matches(&pattern, name)
+                && !self.excludes(&file)
+                && file.is_file()
+        })
+    }
+
+    /// Where the depot's mappings install `file`, one of its content's, each as its folders and
+    /// name from the install folder.
+    pub(crate) fn installed(&self, file: &Path) -> Vec<Vec<String>> {
+        self.mappings
+            .iter()
+            .filter(|mapping| mapping.unmappable().is_none())
+            .filter_map(|mapping| {
+                let (folder, pattern) = mapping.split();
+                let rest: Vec<String> = file
+                    .strip_prefix(self.content_root.join(folder))
+                    .ok()?
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect();
+                let (name, folders) = rest.split_last()?;
+                if !(folders.is_empty() || mapping.recursive) || !pattern::matches(&pattern, name) {
+                    return None;
+                }
+                let mut at = parts(&mapping.depot_path);
+                at.extend(rest);
+                Some(at)
+            })
+            .collect()
+    }
+
+    /// A `FileExclusion` with a folder in it is matched against the path from the content root. One
+    /// without is matched against the file name at any depth, as Valve's `"*.pdb"` example is.
+    pub(crate) fn excludes(&self, file: &Path) -> bool {
+        let relative = file.strip_prefix(&self.content_root).unwrap_or(file);
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        let name = file
+            .file_name()
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_default();
+        self.exclusions.iter().any(|exclusion| {
+            let exclusion = exclusion.replace('\\', "/");
+            if exclusion.contains('/') {
+                pattern::matches(&exclusion, &relative)
+            } else {
+                pattern::matches(&exclusion, &name)
+            }
+        })
+    }
+}
+
+impl FileMapping {
+    /// Why the mapping can never be mapped, if it cannot.
+    pub(crate) fn unmappable(&self) -> Option<&'static str> {
+        self.split().0.contains(['*', '?']).then_some(
+            "has a wildcard in a folder name, which steamship cannot map as steamcmd does. Name the \
+             folder without one",
+        )
+    }
+
+    /// The files the mapping takes under `root`.
+    pub(crate) fn files_under(&self, root: &Path) -> Result<Vec<PathBuf>, String> {
+        if let Some(message) = self.unmappable() {
+            return Err(format!(" {message}"));
+        }
+        let (folder, name) = self.split();
+        let mut found = Vec::new();
+        walk(&root.join(folder), &name, self.recursive, &mut found)
+            .map_err(|error| format!(": {error}. Fix or remove that path"))?;
+        Ok(found)
+    }
+
+    /// The local path's folder and file name, split where steamcmd splits them.
+    fn split(&self) -> (String, String) {
+        let local = native(&self.local_path);
+        let (folder, name) = local
+            .rsplit_once(is_separator)
+            .unwrap_or(("", local.as_str()));
+        (folder.to_owned(), name.to_owned())
+    }
 }
 
 /// The app the app script at `path` names, or none while it names none Steamworks gave, as before
@@ -345,6 +465,54 @@ pub fn native(written: &str) -> String {
     }
 }
 
+/// The folders and file name of `written`, a path from the install folder or a depot's.
+pub(crate) fn parts(written: &str) -> Vec<String> {
+    native(written)
+        .split(is_separator)
+        .filter(|part| !part.is_empty() && *part != ".")
+        .map(str::to_owned)
+        .collect()
+}
+
+pub(crate) fn walk(
+    folder: &Path,
+    name: &str,
+    recursive: bool,
+    found: &mut Vec<PathBuf>,
+) -> io::Result<()> {
+    if !folder.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(folder).map_err(naming(folder))? {
+        let entry = entry.map_err(naming(folder))?;
+        let path = entry.path();
+        if entry.file_type().map_err(naming(&path))?.is_dir() {
+            if recursive {
+                walk(&path, name, recursive, found)?;
+            }
+            continue;
+        }
+        // The kind above is the entry's own, so a link to a folder is never walked into and a
+        // loop of links cannot make the walk endless. A link to a file counts as that file.
+        if path.metadata().map_err(naming(&path))?.is_file()
+            && pattern::matches(name, &entry.file_name().to_string_lossy())
+        {
+            found.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// An error that names `path` as what cannot be read, since the system's reason alone does not.
+fn naming(path: &Path) -> impl FnOnce(io::Error) -> io::Error {
+    move |error| {
+        io::Error::new(
+            error.kind(),
+            format!("{} cannot be read: {error}", path.display()),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::MAIN_SEPARATOR;
@@ -353,6 +521,71 @@ mod tests {
     use crate::unix::make_link;
 
     use super::*;
+
+    fn depot(mappings: &[(&str, bool)], exclusions: &[&str]) -> DepotScript {
+        DepotScript {
+            path: PathBuf::from("steam/depot.vdf"),
+            depot_id: 1_000_051,
+            content_root: PathBuf::from("export"),
+            mappings: mappings
+                .iter()
+                .map(|(local_path, recursive)| FileMapping {
+                    local_path: (*local_path).to_owned(),
+                    depot_path: ".".to_owned(),
+                    recursive: *recursive,
+                })
+                .collect(),
+            exclusions: exclusions
+                .iter()
+                .map(|&exclusion| exclusion.to_owned())
+                .collect(),
+            install_scripts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_depot_ships_a_file_its_mappings_take_and_its_exclusions_leave() {
+        let windows = Path::new("export").join("windows").join("sample.exe");
+        let demo = Path::new("export")
+            .join("demo")
+            .join("windows")
+            .join("sample.exe");
+        assert!(depot(&[("windows/*", false)], &[]).ships(&windows));
+        assert!(!depot(&[("windows/*", false)], &[]).ships(&demo));
+        assert!(depot(&[("*", true)], &[]).ships(&demo));
+        assert!(!depot(&[("*", false)], &[]).ships(&demo));
+        assert!(depot(&[("demo/windows/*.exe", false)], &[]).ships(&demo));
+        assert!(!depot(&[("demo/windows/*.pck", false)], &[]).ships(&demo));
+        assert!(!depot(&[("*/windows/*", true)], &[]).ships(&demo));
+        assert!(!depot(&[("*", true)], &["demo/windows/*"]).ships(&demo));
+        assert!(!depot(&[("*", true)], &[]).ships(Path::new("")));
+    }
+
+    #[test]
+    fn a_file_is_installed_where_each_mapping_taking_it_puts_it() {
+        let top = Path::new("export").join("windows").join("sample.exe");
+        let inside = Path::new("export")
+            .join("windows")
+            .join("bin")
+            .join("sample.exe");
+        let at = |path: &[&str]| path.iter().map(|&part| part.to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            depot(&[("windows/*", false)], &[]).installed(&top),
+            [at(&["sample.exe"])]
+        );
+        assert_eq!(
+            depot(&[("windows/*", false)], &[]).installed(&inside),
+            Vec::<Vec<String>>::new()
+        );
+        assert_eq!(
+            depot(&[("windows/*", true)], &[]).installed(&inside),
+            [at(&["bin", "sample.exe"])]
+        );
+        assert_eq!(
+            depot(&[("windows/*.pck", true)], &[]).installed(&top),
+            Vec::<Vec<String>>::new()
+        );
+    }
 
     fn separators(path: &Path) -> Vec<char> {
         let mut found: Vec<char> = path
