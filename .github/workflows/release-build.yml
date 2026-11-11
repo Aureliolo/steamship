@@ -60,7 +60,7 @@ jobs:
           fi
 
       - name: Install Rust
-        run: rustup toolchain install
+        run: bash .github/rust-install.sh
 
       - name: Verify the tag names the crate's version
         id: version
@@ -127,10 +127,7 @@ jobs:
       - name: Install Rust
         env:
           TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-          rustup toolchain install
-          rustup target add "${TARGET}"
+        run: bash .github/rust-install.sh "${TARGET}"
 
       # musl's C compiler wrapper, for the C and assembly in ring, from the image's own signed
       # Ubuntu archive.
@@ -359,7 +356,7 @@ jobs:
             -o "spdx-json=dist/steamship-${SYFT_SOURCE_VERSION}.spdx.json"
 
       - name: Install Rust
-        run: rustup toolchain install
+        run: bash .github/rust-install.sh
 
       # Every crate linked into each binary, as the lock file resolves it for that target, listed
       # at its exact version; and every file shipped, with a SHA-256. Procedural macros run while

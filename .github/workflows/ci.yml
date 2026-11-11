@@ -77,7 +77,7 @@ jobs:
       # The toolchain rust-toolchain.toml pins, fetched by the runner's rustup, which checks every
       # component against the hashes in Rust's release manifest.
       - name: Install Rust
-        run: rustup toolchain install
+        run: bash .github/rust-install.sh
 
       # The dependencies as main last compiled them, for this job and system. Only a run on main
       # saves them, so a pull request reads what main built and writes nothing main reads; the
@@ -278,7 +278,7 @@ jobs:
           MUSL: ${{ matrix.musl }}
         run: |
           set -euo pipefail
-          rustup target add "${MUSL}"
+          bash .github/rust-install.sh "${MUSL}"
           cargo test --locked --target "${MUSL}"
 
       # The crate as crates.io would receive it, built from its package alone: a file the build
@@ -308,7 +308,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        run: rustup toolchain install
+        run: bash .github/rust-install.sh
 
       # As rust.
       - name: Restore the compiled dependencies
@@ -352,7 +352,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        run: rustup toolchain install
+        run: bash .github/rust-install.sh
 
       # Spelling in British English everywhere, the code included.
       - name: Check spelling
@@ -499,8 +499,7 @@ jobs:
       - name: Install Rust
         run: |
           set -euo pipefail
-          rustup toolchain install
-          rustup target add x86_64-unknown-linux-musl
+          bash .github/rust-install.sh x86_64-unknown-linux-musl
 
       # musl-gcc, for the C and assembly in ring.
       - name: Install musl-gcc
@@ -555,7 +554,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        run: rustup toolchain install
+        run: bash .github/rust-install.sh
 
       # As rust; cargo-fuzz too, which is installed into the cargo home it keeps.
       - name: Restore the compiled dependencies

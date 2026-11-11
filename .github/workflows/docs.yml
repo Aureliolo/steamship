@@ -47,7 +47,7 @@ jobs:
       # The toolchain rust-toolchain.toml pins, fetched by the runner's rustup, which checks every
       # component against the hashes in Rust's release manifest.
       - name: Install Rust
-        run: rustup toolchain install
+        run: bash .github/rust-install.sh
 
       - name: Test the generator
         run: cargo test --locked -p steamship-docs-site

@@ -98,7 +98,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        run: rustup toolchain install
+        run: bash .github/rust-install.sh
 
       # The raise below runs offline, so that it can change nothing but the version; what it reads
       # has to be here first, exactly as the lock file names it.
