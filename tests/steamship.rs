@@ -7590,7 +7590,7 @@ fn promote_sets_the_default_branch_live_only_while_steam_shows_the_app_unrelease
 
     // In CI, Steam is asked as the account the login handed over is for, which no home remembers.
     let handed_over = faked_with(&released_as("unavailable"));
-    let (ci_host, _ci_requests) = web_api(vec![("200 OK", SET_LIVE)]);
+    let (ci_host, ci_requests) = web_api(vec![("200 OK", SET_LIVE)]);
     let (from_ci, ci_said, ci_why) = steamship(
         &["promote", script, "--build", "1234", "--branch", "default"],
         Some(handed_over.path()),
@@ -7605,6 +7605,12 @@ fn promote_sets_the_default_branch_live_only_while_steam_shows_the_app_unrelease
     assert!(
         ci_said.contains("app 1000: BuildID 1234 live on default"),
         "{ci_said}"
+    );
+    // Steam knows the default branch only as public, whichever name was typed.
+    let ci_setting = ci_requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        ci_setting.ends_with("appid=1000&buildid=1234&betakey=public"),
+        "{ci_setting}"
     );
 
     let released = faked_with(&released_as("released"));
@@ -9728,8 +9734,9 @@ fn rollback_sets_the_default_branch_back_only_while_steam_shows_the_app_unreleas
     };
     let unreleased = recorded("prerelease");
     let (host, requests) = web_api(vec![("200 OK", SET_LIVE)]);
+    // Typed as default, sent as public: Steam has no branch named default.
     let (set, said, why) = steamship(
-        &["rollback", "1000", "public"],
+        &["rollback", "1000", "default"],
         Some(unreleased.path()),
         &web_api_variables(&host),
     );
