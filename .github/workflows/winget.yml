@@ -1,9 +1,9 @@
 name: winget
 
 # winget-pkgs deprecates older manifest versions on its own schedule and then refuses submissions
-# that use them, with nothing here changing, so the version the winget manifests are written in is
-# held to the newest schema winget-cli publishes weekly; a pull request that changes the manifests
-# or this workflow runs it too.
+# that use them, with nothing here changing. So each week the version the winget manifests are
+# written in is held to the newest schema winget-cli publishes, and the winget the jobs install to
+# its newest release. A pull request that changes either runs it too.
 #
 # Dispatched on a release's tag, it also submits that release to winget. Each submission is a pull
 # request Microsoft's moderators review, so winget is offered the releases chosen, never each one.
@@ -15,6 +15,7 @@ on:
     paths:
       - .github/packages.sh
       - .github/release-packages.sh
+      - .github/actions/winget/action.yml
       - .github/workflows/winget.yml
 
 permissions: {}
@@ -30,7 +31,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     permissions:
-      contents: read # Reads packages.sh; the schemas are read from a public repository.
+      contents: read # Reads packages.sh and the pin; winget-cli is read from a public repository.
 
     steps:
       - name: Checkout
@@ -56,6 +57,34 @@ jobs:
             exit 1
           fi
           echo "The winget manifests are written in ${newest}, winget-cli's newest schema."
+
+      # The jobs that run winget install the client winget-pkgs validates with, so its pin is
+      # held to winget-cli's newest release. The error gives the five lines to paste.
+      - name: Compare the pinned winget with winget-cli's newest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          action=.github/actions/winget/action.yml
+          ours="$(sed -n 's/^ *WINGET_TAG: //p' "${action}")"
+          release="$(gh api repos/microsoft/winget-cli/releases/latest)"
+          newest="$(jq -r .tag_name <<< "${release}")"
+          if [[ -z "${ours}" || -z "${newest}" ]]; then
+            echo "::error::Could not read the pinned winget (${ours:-none}) or winget-cli's newest release (${newest:-none})."
+            exit 1
+          fi
+          if [[ "${ours}" != "${newest}" ]]; then
+            digest() { jq -r --arg name "$1" '.assets[] | select(.name == $name) | .digest | ltrimstr("sha256:")' <<< "${release}"; }
+            license="$(jq -r '[.assets[].name | select(endswith("_License1.xml"))] | first // empty' <<< "${release}")"
+            echo "::error file=${action}::winget ${ours} is pinned, and winget-cli's newest release is ${newest}. Set these in ${action}:"
+            echo "WINGET_TAG: ${newest}"
+            echo "WINGET_BUNDLE_SHA256: $(digest Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle)"
+            echo "WINGET_DEPENDENCIES_SHA256: $(digest DesktopAppInstaller_Dependencies.zip)"
+            echo "WINGET_LICENSE: ${license}"
+            echo "WINGET_LICENSE_SHA256: $(digest "${license}")"
+            exit 1
+          fi
+          echo "winget ${newest} is pinned, winget-cli's newest release."
 
   # The release's winget manifests, written as release.yml writes them, from its published and
   # attested checksums.
@@ -118,15 +147,6 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    env:
-      # winget itself, installed over the older one the runner image carries so that validation
-      # runs the client winget-pkgs validates with. Kept equal to packages.yml's pin.
-      # renovate: datasource=github-releases depName=microsoft/winget-cli
-      WINGET_TAG: v1.29.380
-      WINGET_BUNDLE_SHA256: 65dea9c01ce08ee7b763366b27c0e651f97db857c11ca9b9c301826c10092f2e
-      WINGET_DEPENDENCIES_SHA256: ba875afe9d190f61218985ac0292a99d1db710bf93e13c68944ca9d89f0d82d1
-      WINGET_LICENSE: e53e159d00e04f729cc2180cffd1c02e_License1.xml
-      WINGET_LICENSE_SHA256: bcb15118ec47df24e3e6013a7006147c3a15b3a8104ed660fe87c8b4ed01f485
 
     steps:
       - name: Refuse to go on without the token
@@ -143,30 +163,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download winget at its pinned release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
-            Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle "${WINGET_BUNDLE_SHA256}" "${RUNNER_TEMP}"
-          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
-            DesktopAppInstaller_Dependencies.zip "${WINGET_DEPENDENCIES_SHA256}" "${RUNNER_TEMP}"
-          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
-            "${WINGET_LICENSE}" "${WINGET_LICENSE_SHA256}" "${RUNNER_TEMP}"
-
       - name: Install winget at its pinned release
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Expand-Archive "$env:RUNNER_TEMP\DesktopAppInstaller_Dependencies.zip" "$env:RUNNER_TEMP\dependencies"
-          $dependencies = Get-ChildItem "$env:RUNNER_TEMP\dependencies\x64" -Filter *.appx | ForEach-Object FullName
-          Add-AppxProvisionedPackage -Online -PackagePath "$env:RUNNER_TEMP\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" `
-            -DependencyPackagePath $dependencies -LicensePath "$env:RUNNER_TEMP\$env:WINGET_LICENSE" | Out-Null
-          Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
-          "$env:LOCALAPPDATA\Microsoft\WindowsApps" >> $env:GITHUB_PATH
-          $running = & "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe" --version
-          if ($running -ne $env:WINGET_TAG) { throw "winget is $running after installing the pinned $env:WINGET_TAG." }
+        id: winget
+        uses: ./.github/actions/winget # zizmor: ignore[self-repository]
 
       - name: Download the manifests
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -212,10 +211,12 @@ jobs:
 
       # The submission ticks winget-pkgs' validation box on the strength of this step.
       - name: Validate the manifests
+        env:
+          WINGET: ${{ steps.winget.outputs.winget }}
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          winget validate --manifest packages/winget
+          & $env:WINGET validate --manifest packages/winget
 
       - name: Submit them
         shell: bash

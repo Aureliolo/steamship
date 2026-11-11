@@ -75,7 +75,8 @@ moderation, game server tokens, cheat reports).
 ## Supply chain
 
 Every action is pinned by commit SHA with its version beside it. Every tool a workflow downloads
-is pinned by version and SHA-256. Renovate raises them. Nothing is fetched at "latest".
+is pinned by version and SHA-256. Renovate raises them, apart from winget, whose newer release
+fails `winget.yml`'s weekly run. Nothing is fetched at "latest".
 
 ## Before a pull request
 
