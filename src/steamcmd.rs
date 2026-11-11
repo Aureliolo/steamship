@@ -759,9 +759,12 @@ mod tests {
     }
 
     #[test]
-    fn a_connection_log_that_is_not_there_yet_is_free() {
+    fn a_connection_log_that_is_not_there_yet_is_free_and_left_unmade() {
         let home = tempfile::tempdir().unwrap();
+        let log = connection_log(home.path(), Platform::THIS);
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
         log_is_free(home.path(), Platform::THIS).unwrap();
+        assert!(!log.exists(), "{} was made", log.display());
     }
 
     /// A home whose connection log holds one line.
