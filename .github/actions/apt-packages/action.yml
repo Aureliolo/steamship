@@ -65,7 +65,8 @@ runs:
         find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp -t "${FOLDER}" {} +
 
     # apt installs the files themselves, so each package's own install scripts run, and it needs
-    # no package lists to do it.
+    # no package lists to do it. It reads them as its own user, `_apt`, which cannot enter the
+    # runner's temporary folder, so they are copied to a folder of their own first.
     - name: Install the packages from their files
       shell: bash
       env:
@@ -77,7 +78,10 @@ runs:
         shopt -s nullglob
         files=("${FOLDER}"/*.deb)
         if ((${#files[@]})); then
-          sudo apt-get install --yes --no-install-recommends "${files[@]}"
+          staged=/var/cache/steamship-apt-packages
+          sudo install -d -m 0755 "${staged}"
+          sudo install -m 0644 "${files[@]}" "${staged}"
+          sudo apt-get install --yes --no-install-recommends "${staged}"/*.deb
         fi
         dpkg-query --show "${names[@]}" > /dev/null
 
