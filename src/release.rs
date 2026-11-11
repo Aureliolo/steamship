@@ -50,11 +50,12 @@ const UNRELEASED: [&str; 2] = ["unavailable", "prerelease"];
 ///
 /// When steamcmd printed none, what it printed cannot be read, as when its closing brace is
 /// missing, or Steam showed the build account nothing, as for an app it cannot see. Each says
-/// what happened, and the command that asked adds what to do next.
-pub fn info_from_console(console: &str, app: u32) -> Result<Block, Unread> {
+/// what happened in the words of what the command `asked` for, such as app info or settings,
+/// and the command adds what to do next.
+pub fn info_from_console(console: &str, app: u32, asked: &str) -> Result<Block, Unread> {
     let Some(cut) = info_at(console, app).and_then(|at| console.get(at)) else {
         return Err(Unread::Printed(format!(
-            "steamcmd printed no app info for app {app}"
+            "steamcmd printed no {asked} for app {app}"
         )));
     };
     // A carriage return before a line's end goes, so a value over several lines reads alike on
@@ -62,13 +63,13 @@ pub fn info_from_console(console: &str, app: u32) -> Result<Block, Unread> {
     let printed: String = cut.lines().flat_map(|line| [line, "\n"]).collect();
     let document = vdf::parse(&printed).map_err(|error| {
         Unread::Printed(format!(
-            "steamcmd printed app info for app {app} that cannot be read: {error}"
+            "steamcmd printed {asked} for app {app} that cannot be read ({error})"
         ))
     })?;
     let shown = document.block(&app.to_string()).unwrap_or(&document);
     if shown.pairs.is_empty() {
         return Err(Unread::Hidden(format!(
-            "Steam shows the build account no app info for app {app}: it cannot see the app, or \
+            "Steam shows the build account no {asked} for app {app}: it cannot see the app, or \
              there is no such app. Check the app ID, and that the account is in a permission \
              group that holds the app"
         )));
@@ -151,9 +152,9 @@ mod tests {
 
     #[test]
     fn the_release_state_is_read_for_the_app_asked_about() {
-        let inn = info_from_console(CONSOLE, 1_000_050).unwrap();
+        let inn = info_from_console(CONSOLE, 1_000_050, "app info").unwrap();
         assert_eq!(state(&inn), Some("unavailable"));
-        let stardew = info_from_console(CONSOLE, 413_150).unwrap();
+        let stardew = info_from_console(CONSOLE, 413_150, "app info").unwrap();
         assert_eq!(state(&stardew), Some("released"));
     }
 
@@ -171,7 +172,7 @@ mod tests {
              \t\t\"ReleaseState\"\t\t\"unavailable\"\n\t}\n}\n"
         );
         assert_eq!(
-            state(&info_from_console(&info, 1_000_050).unwrap()),
+            state(&info_from_console(&info, 1_000_050, "app info").unwrap()),
             Some("unavailable")
         );
         assert_eq!(info_at(built, 1_000_050), None);
@@ -188,9 +189,11 @@ mod tests {
             )
         );
         assert_eq!(
-            info_from_console(&lost, 413_150).unwrap_err().and_again(),
-            "steamcmd printed app info for app 413150 that cannot be read: line 9, column 1: a \
-             block is missing its closing }. Run the command again"
+            info_from_console(&lost, 413_150, "app info")
+                .unwrap_err()
+                .and_again(),
+            "steamcmd printed app info for app 413150 that cannot be read (line 9, column 1: a \
+             block is missing its closing }). Run the command again"
         );
     }
 

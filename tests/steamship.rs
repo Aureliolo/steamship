@@ -962,8 +962,8 @@ const CUT_OFF: &str = "#!/bin/sh\n\
     printf '\"1000\"\\n{\\n\\t\"common\"\\n\\t{\\n\\t\\t\"name\"\\t\\t\"Spacewar\"\\n'\n";
 
 /// What steamship says of the info [`CUT_OFF`] prints.
-const CUT_OFF_SAID: &str = "steamcmd printed app info for app 1000 that cannot be read: line 6, \
-                            column 1: a block is missing its closing }";
+const CUT_OFF_SAID: &str = "steamcmd printed app info for app 1000 that cannot be read (line 6, \
+                            column 1: a block is missing its closing })";
 
 /// Uploads for default too with a key and the steamcmd `steamcmd`, which builds and shows no
 /// release state. The build must go up to its branch alone, with `why` and how to set it live on
@@ -1012,16 +1012,23 @@ fn app_info_cut_off_before_its_closing_brace_fails_settings_and_promote_saying_i
     let (_project, script) = project(false);
     let script = script.to_str().unwrap();
     let (silent, _unasked) = web_api::<&str>(vec![]);
-    for args in [
-        ["settings", "1000"].as_slice(),
-        ["promote", script, "--build", "1234", "--branch", "public"].as_slice(),
+    // Each names what its command asked for.
+    for (args, asked) in [
+        (["settings", "1000"].as_slice(), "settings"),
+        (
+            ["promote", script, "--build", "1234", "--branch", "public"].as_slice(),
+            "app info",
+        ),
     ] {
         let (code, stdout, stderr) =
             steamship(args, Some(home.path()), &web_api_variables(&silent));
         assert_eq!(code, Some(1_i32), "{args:?}: {stdout}{stderr}");
         assert_eq!(
             failure(&stderr),
-            format!("{CUT_OFF_SAID}. Run the command again"),
+            format!(
+                "{}. Run the command again",
+                CUT_OFF_SAID.replace("app info", asked)
+            ),
             "{args:?}: {stdout}"
         );
     }
@@ -4747,8 +4754,8 @@ fn an_upload_asking_which_redistributables_the_app_ticks_fails_on_app_info_cut_o
     assert_eq!(code, Some(1_i32), "{said}{why}");
     let told = failure(&why);
     assert!(
-        told.starts_with("steamcmd printed app info for app 1000 that cannot be read: ")
-            && told.ends_with(": a block is missing its closing }. Run the command again"),
+        told.starts_with("steamcmd printed settings for app 1000 that cannot be read (line ")
+            && told.ends_with(": a block is missing its closing }). Run the command again"),
         "{why}"
     );
     assert!(!home.path().join("builds").exists(), "nothing went up");
@@ -7943,7 +7950,7 @@ fn a_snapshot_for_another_app_is_refused_before_steamcmd_and_an_app_steam_hides_
     assert_eq!(hidden, Some(1_i32), "{why}");
     // Running it again would show the same, so the step is the one the message gives.
     assert!(
-        why.contains("Steam shows the build account no app info for app 1000: ")
+        why.contains("Steam shows the build account no settings for app 1000: ")
             && why.contains("permission group that holds the app")
             && !why.contains("Run the command again"),
         "{why}"
@@ -10367,7 +10374,7 @@ fn a_games_builds_settings_and_promotion_are_asked_for_its_own_app() {
         assert_eq!(asked_for, Some(1_i32), "{args:?}: {shown}{reason}");
         assert!(
             format!("{shown}{reason}")
-                .contains("steamcmd printed no app info for app 1000050. Run the command again"),
+                .contains("steamcmd printed no settings for app 1000050. Run the command again"),
             "{args:?}: {shown}{reason}"
         );
         let given = fs::read_to_string(steamcmd.path().join("args")).unwrap();

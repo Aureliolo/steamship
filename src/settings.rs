@@ -49,9 +49,9 @@ const BOOKKEEPING: [&str; 4] = [
 ///
 /// # Errors
 ///
-/// As [`release::info_from_console`].
+/// As [`release::info_from_console`], in the words of settings.
 pub fn from_console(console: &str, app: u32) -> Result<Block, release::Unread> {
-    release::info_from_console(console, app).map(|shown| kept(&shown))
+    release::info_from_console(console, app, "settings").map(|shown| kept(&shown))
 }
 
 /// What of `shown` is kept: see the module's description.
@@ -1188,7 +1188,7 @@ mod tests {
             from_console("Logging in...FAILED\n", 1_000_010)
                 .unwrap_err()
                 .and_again(),
-            "steamcmd printed no app info for app 1000010. Run the command again"
+            "steamcmd printed no settings for app 1000010. Run the command again"
         );
         // As steamcmd printed an app ID the build account holds nothing for, which another run
         // would print again.
@@ -1200,7 +1200,7 @@ mod tests {
             )
             .unwrap_err()
             .and_again(),
-            "Steam shows the build account no app info for app 3999999: it cannot see the app, \
+            "Steam shows the build account no settings for app 3999999: it cannot see the app, \
              or there is no such app. Check the app ID, and that the account is in a permission \
              group that holds the app"
         );
@@ -1208,8 +1208,8 @@ mod tests {
             .unwrap_err()
             .and_again();
         assert!(
-            garbled.starts_with("steamcmd printed app info for app 1 that cannot be read: ")
-                && garbled.ends_with(". Run the command again"),
+            garbled.starts_with("steamcmd printed settings for app 1 that cannot be read (")
+                && garbled.ends_with("). Run the command again"),
             "{garbled}"
         );
     }
@@ -1219,8 +1219,8 @@ mod tests {
         let (cut, _) = CONSOLE.split_once("\t\t\"oslist\"").unwrap();
         assert_eq!(
             from_console(cut, 1_000_010).unwrap_err().and_again(),
-            "steamcmd printed app info for app 1000010 that cannot be read: line 9, column 1: a \
-             block is missing its closing }. Run the command again"
+            "steamcmd printed settings for app 1000010 that cannot be read (line 9, column 1: a \
+             block is missing its closing }). Run the command again"
         );
     }
 

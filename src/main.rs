@@ -2209,7 +2209,7 @@ fn shown_unreleased<Key>(
     else {
         return (None, spinner);
     };
-    let (judged, said) = match release::info_from_console(info, app) {
+    let (judged, said) = match release::info_from_console(info, app, "app info") {
         Ok(shown) => {
             let (judged, said) = release_judged(release::state(&shown), app, DEFAULT_RELEASED);
             (
@@ -5506,7 +5506,7 @@ fn release_shown(
         packed,
         "asking whether the app is released",
     )?;
-    match release::info_from_console(&console, app) {
+    match release::info_from_console(&console, app, "app info") {
         Ok(info) => Ok((release::state(&info).map(str::to_owned), spinner)),
         Err(why) => {
             spinner.failed("not shown");
