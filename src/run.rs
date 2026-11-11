@@ -53,10 +53,14 @@ where
 
 /// Starts `command`, made by [`command`].
 ///
+/// On Unix, SIGCHLD is put back to its default first, so that the program can be waited for.
+///
 /// # Errors
 ///
 /// When the program cannot be started.
 pub fn spawn(command: &mut Command) -> io::Result<Child> {
+    #[cfg(unix)]
+    native::default_sigchld();
     #[cfg(windows)]
     let _handing_down = native::handing_down();
     #[expect(

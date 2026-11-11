@@ -10,6 +10,7 @@ allow-renamed-params-for = ["..", "core::fmt::Display", "core::fmt::Debug"]
 # unless it is told not to, which steamship::run::command does.
 # A program the standard library starts on Windows is handed every handle marked to be handed
 # down at that moment, which steamship::run::spawn keeps clear of the ones steamship marks.
+# On Unix it puts SIGCHLD back to its default, without which no program could be waited for.
 disallowed-methods = [
   { path = "std::process::Command::new", reason = "start programs with steamship::run::command, which opens no console window" },
   { path = "std::process::Command::spawn", reason = "start programs with steamship::run::spawn, which hands down nothing of another program's" },
