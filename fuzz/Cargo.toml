@@ -98,3 +98,10 @@ path = "fuzz_targets/presets.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "editor"
+path = "fuzz_targets/editor.rs"
+test = false
+doc = false
+bench = false
