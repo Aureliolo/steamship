@@ -161,7 +161,7 @@ fn named(file: &Path) -> impl FnOnce(io::Error) -> io::Error {
     move |error| io::Error::new(error.kind(), format!("{}: {error}", file.display()))
 }
 
-/// What steamship says of a steamcmd it stopped before it had started.
+/// What steamship says of a steamcmd it stopped twice before it had started.
 const NOT_STARTED: &str = "did not finish starting up and was stopped. Run steamship again";
 
 /// Whether a run of steamcmd was stopped before it had started, with nothing telling steamship to
@@ -174,16 +174,25 @@ fn stalled(finished: &Finished, startup: run::Startup<'_>) -> bool {
         && !HOPELESS.iter().any(|words| said.contains(words))
 }
 
-/// What a run of steamcmd gave, unless it was stopped before steamcmd had started.
+/// What `run` gives, called once more when steamcmd was stopped before it had started: until then
+/// it has asked Steam nothing, so a second run repeats nothing.
 ///
 /// # Errors
 ///
-/// When the run was stopped before steamcmd had started.
-fn started(finished: Finished, startup: run::Startup<'_>) -> io::Result<Finished> {
-    if stalled(&finished, startup) {
+/// When `run` fails, or when both runs were stopped before steamcmd had started.
+fn started<Run>(startup: run::Startup<'_>, mut run: Run) -> io::Result<Finished>
+where
+    Run: FnMut() -> io::Result<Finished>,
+{
+    let first = run()?;
+    if !stalled(&first, startup) {
+        return Ok(first);
+    }
+    let second = run()?;
+    if stalled(&second, startup) {
         return Err(io::Error::new(io::ErrorKind::TimedOut, NOT_STARTED));
     }
-    Ok(finished)
+    Ok(second)
 }
 
 /// The commands of one run of steamcmd with nobody at it, the longest it may take over them, and
@@ -201,28 +210,29 @@ impl Commands {
     /// It starts in its own folder with [`environment`] around it. It is stopped at the commands'
     /// limit, or once it says that it will never reach Steam. It is not started while its
     /// [`connection_log`] cannot be added to. It is stopped as well when it has added nothing to
-    /// that log within the commands' time to start.
+    /// that log within the commands' time to start, and is then run once more.
     ///
     /// # Errors
     ///
     /// When steamcmd cannot be started, its output cannot be read, its log cannot be added to, or
-    /// it was stopped before it had started. The error names the file that starts steamcmd.
+    /// it was stopped twice before it had started. The error names the file that starts steamcmd.
     pub fn run(&self, home: &Path) -> io::Result<Finished> {
         let root = home.join(install::FOLDER);
         let file = program(&root, Platform::THIS);
-        log_is_free(home, Platform::THIS).map_err(named(&file))?;
         let log = connection_log(home, Platform::THIS);
         let startup = run::Startup::new(self.startup, &log);
-        run::run(
-            &file,
-            &self.args,
-            &environment(home, Platform::THIS),
-            &root,
-            self.limit,
-            HOPELESS,
-            Some(startup),
-        )
-        .and_then(|finished| started(finished, startup))
+        started(startup, || {
+            log_is_free(home, Platform::THIS)?;
+            run::run(
+                &file,
+                &self.args,
+                &environment(home, Platform::THIS),
+                &root,
+                self.limit,
+                HOPELESS,
+                Some(startup),
+            )
+        })
         .map_err(named(&file))
     }
 
@@ -235,22 +245,23 @@ impl Commands {
     /// # Errors
     ///
     /// When steamcmd cannot be started, its console cannot be read or typed into, or it cannot be
-    /// waited for, or when its log cannot be added to, or when it was stopped before it had
+    /// waited for, or when its log cannot be added to, or when it was stopped twice before it had
     /// started. The error names the file that starts steamcmd.
     pub fn typed(
         &self,
         home: &Path,
-        command: Zeroizing<String>,
-        secret: Zeroizing<String>,
+        command: &Zeroizing<String>,
+        secret: &Zeroizing<String>,
     ) -> io::Result<Finished> {
         let root = home.join(install::FOLDER);
         let file = program(&root, Platform::THIS);
-        log_is_free(home, Platform::THIS).map_err(named(&file))?;
         let log = connection_log(home, Platform::THIS);
         let startup = run::Startup::new(self.startup, &log);
-        self.typed_at(&file, home, startup, command, secret)
-            .and_then(|finished| started(finished, startup))
-            .map_err(named(&file))
+        started(startup, || {
+            log_is_free(home, Platform::THIS)?;
+            self.typed_at(&file, home, startup, command.clone(), secret.clone())
+        })
+        .map_err(named(&file))
     }
 
     /// Runs `file` in its folder under `home` with these commands at a console of its own and
@@ -915,7 +926,7 @@ mod tests {
             startup: Duration::from_mins(1),
         };
         let error = commands
-            .typed(home.path(), Zeroizing::default(), Zeroizing::default())
+            .typed(home.path(), &Zeroizing::default(), &Zeroizing::default())
             .unwrap_err();
         refused(home.path(), &error);
     }
@@ -972,6 +983,15 @@ mod tests {
         #[cfg(windows)]
         let args = {
             let _: u64 = fs::copy(r"C:\Windows\System32\cmd.exe", &stand_in).unwrap();
+            // cmd words its own messages, a prompt's among them, from the message file that
+            // carries its program's name.
+            let messages = root.join("en-US");
+            fs::create_dir_all(&messages).unwrap();
+            let _: u64 = fs::copy(
+                r"C:\Windows\System32\en-US\cmd.exe.mui",
+                messages.join("steamcmd.exe.mui"),
+            )
+            .unwrap();
             ["/d", "/s", "/c"]
                 .map(str::to_owned)
                 .into_iter()
@@ -1021,6 +1041,61 @@ mod tests {
         format!("{}: {NOT_STARTED}", file.display())
     }
 
+    /// The line that adds one line to the file `runs` in the folder steamcmd runs in, once for
+    /// each time steamcmd is run.
+    const COUNT: &str = "echo run >> runs";
+
+    /// How many times the stand-in in `home` was run.
+    fn runs(home: &Path) -> usize {
+        fs::read_to_string(home.join(install::FOLDER).join("runs"))
+            .unwrap()
+            .lines()
+            .count()
+    }
+
+    /// The line that makes steamcmd's connection log a file nobody may write to, from the folder
+    /// steamcmd runs in, as a steamcmd of another user would leave it as `starts` adds to it.
+    fn keeps() -> String {
+        if cfg!(windows) {
+            r"attrib +R logs\connection_log.txt".to_owned()
+        } else {
+            let log = connection_log(Path::new(".."), Platform::THIS);
+            format!("chmod 444 '{}'", log.display())
+        }
+    }
+
+    /// The line that waits at its first run, as a steamcmd that hangs as it loads does, and runs
+    /// `second` at its second.
+    fn starts_the_second_time(second: &str) -> String {
+        if cfg!(windows) {
+            format!("if exist again ({second}) else (type nul > again & {WAIT})")
+        } else {
+            format!("if [ -e again ]; then {second}; else touch again; {WAIT}; fi")
+        }
+    }
+
+    /// The second run of a steamcmd that starts and ends with code 3.
+    fn starts_and_ends() -> String {
+        then(&starts(), "exit 3")
+    }
+
+    /// The second run of a steamcmd that starts, shows its prompt, records the line typed at it in
+    /// the file `typed`, echoes that line as steamcmd's console does and ends with code 3.
+    fn starts_and_is_typed_at() -> String {
+        if cfg!(windows) {
+            format!(
+                "{} & set /p typed=Steam^> & call echo %typed%> typed& call echo %typed%& exit 3",
+                starts()
+            )
+        } else {
+            format!(
+                "{}; printf 'Steam>'; read -r typed; printf '%s' \"$typed\" > typed; \
+                 echo \"$typed\"; exit 3",
+                starts()
+            )
+        }
+    }
+
     /// Input for a run typed into.
     fn quit() -> (Zeroizing<String>, Zeroizing<String>) {
         (Zeroizing::new("quit".to_owned()), Zeroizing::default())
@@ -1045,8 +1120,95 @@ mod tests {
     }
 
     #[test]
+    fn a_run_that_does_not_start_is_stopped_and_run_once_more() {
+        let (home, args) = stand_in(&then(COUNT, &starts_the_second_time(&starts_and_ends())));
+        let commands = Commands {
+            args,
+            limit: Duration::from_mins(1),
+            startup: Duration::from_secs(1),
+        };
+        let started = Instant::now();
+        let finished = commands.run(home.path()).unwrap();
+        assert_eq!(finished.code, Some(3_i32));
+        assert_eq!(runs(home.path()), 2);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_run_whose_log_is_taken_as_it_starts_is_not_run_again() {
+        let (home, args) = stand_in(&then(COUNT, &then(&keeps(), WAIT)));
+        let commands = Commands {
+            args,
+            limit: Duration::from_mins(1),
+            startup: Duration::from_secs(1),
+        };
+        let started = Instant::now();
+        let error = commands.run(home.path()).unwrap_err();
+        refused(home.path(), &error);
+        assert_eq!(runs(home.path()), 1);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_run_typed_into_that_does_not_start_is_stopped_and_run_once_more() {
+        let second = starts_the_second_time(&starts_and_is_typed_at());
+        let (home, args) = stand_in(&then(COUNT, &second));
+        let commands = Commands {
+            args,
+            limit: Duration::from_mins(1),
+            startup: Duration::from_secs(1),
+        };
+        let started = Instant::now();
+        let command = Zeroizing::new("login hunter2".to_owned());
+        let secret = Zeroizing::new("hunter2".to_owned());
+        let finished = commands.typed(home.path(), &command, &secret).unwrap();
+        assert_eq!(finished.code, Some(3_i32));
+        assert_eq!(runs(home.path()), 2);
+        let typed = fs::read_to_string(home.path().join(install::FOLDER).join("typed")).unwrap();
+        assert_eq!(typed.trim_end(), "login hunter2");
+        let said = String::from_utf8_lossy(&finished.output);
+        assert!(
+            said.contains("<password>") && !said.contains("hunter2"),
+            "{said}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_run_typed_into_whose_log_is_taken_as_it_starts_is_not_run_again() {
+        let (home, args) = stand_in(&then(COUNT, &then(&keeps(), WAIT)));
+        let commands = Commands {
+            args,
+            limit: Duration::from_mins(1),
+            startup: Duration::from_secs(1),
+        };
+        let started = Instant::now();
+        let (command, secret) = quit();
+        let error = commands.typed(home.path(), &command, &secret).unwrap_err();
+        refused(home.path(), &error);
+        assert_eq!(runs(home.path()), 1);
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
     fn a_run_that_does_not_start_in_time_is_stopped_and_is_an_error_that_names_the_file() {
-        let (home, args) = stand_in(WAIT);
+        let (home, args) = stand_in(&then(COUNT, WAIT));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
@@ -1056,6 +1218,7 @@ mod tests {
         let error = commands.run(home.path()).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert_eq!(error.to_string(), not_started(home.path()));
+        assert_eq!(runs(home.path()), 2);
         assert!(
             started.elapsed() < Duration::from_secs(20),
             "took {:?}",
@@ -1065,7 +1228,7 @@ mod tests {
 
     #[test]
     fn a_run_typed_into_that_does_not_start_in_time_is_an_error_that_names_the_file() {
-        let (home, args) = stand_in(WAIT);
+        let (home, args) = stand_in(&then(COUNT, WAIT));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
@@ -1073,9 +1236,10 @@ mod tests {
         };
         let started = Instant::now();
         let (command, secret) = quit();
-        let error = commands.typed(home.path(), command, secret).unwrap_err();
+        let error = commands.typed(home.path(), &command, &secret).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert_eq!(error.to_string(), not_started(home.path()));
+        assert_eq!(runs(home.path()), 2);
         assert!(
             started.elapsed() < Duration::from_secs(20),
             "took {:?}",
@@ -1085,7 +1249,7 @@ mod tests {
 
     #[test]
     fn a_run_stopped_at_its_limit_after_it_started_is_no_error() {
-        let (home, args) = stand_in(&then(&starts(), WAIT));
+        let (home, args) = stand_in(&then(COUNT, &then(&starts(), WAIT)));
         let commands = Commands {
             args,
             limit: Duration::from_secs(2),
@@ -1093,12 +1257,13 @@ mod tests {
         };
         let finished = commands.run(home.path()).unwrap();
         assert_eq!(finished.code, None);
+        assert_eq!(runs(home.path()), 1);
     }
 
     #[test]
     fn a_run_that_says_it_never_will_finish_before_it_starts_is_no_error() {
         let said = format!("echo {}", conversation::NO_CERTIFICATES);
-        let (home, args) = stand_in(&then(&said, WAIT));
+        let (home, args) = stand_in(&then(COUNT, &then(&said, WAIT)));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
@@ -1107,6 +1272,7 @@ mod tests {
         let started = Instant::now();
         let finished = commands.run(home.path()).unwrap();
         assert_eq!(finished.code, None);
+        assert_eq!(runs(home.path()), 1);
         assert!(
             String::from_utf8_lossy(&finished.output).contains(conversation::NO_CERTIFICATES),
             "{:?}",
@@ -1133,7 +1299,7 @@ mod tests {
             startup: Duration::from_secs(1),
         };
         let (command, secret) = quit();
-        let finished = commands.typed(home.path(), command, secret).unwrap();
+        let finished = commands.typed(home.path(), &command, &secret).unwrap();
         assert_eq!(finished.code, Some(3_i32));
     }
 
@@ -1151,7 +1317,7 @@ mod tests {
             startup: Duration::from_secs(3),
         };
         let (command, secret) = quit();
-        let finished = commands.typed(home.path(), command, secret).unwrap();
+        let finished = commands.typed(home.path(), &command, &secret).unwrap();
         assert_eq!(finished.code, None);
     }
 
@@ -1167,8 +1333,8 @@ mod tests {
         let finished = commands
             .typed(
                 home.path(),
-                Zeroizing::new("quit".to_owned()),
-                Zeroizing::default(),
+                &Zeroizing::new("quit".to_owned()),
+                &Zeroizing::default(),
             )
             .unwrap();
         assert_eq!(finished.code, None);
@@ -1191,8 +1357,8 @@ mod tests {
         let finished = commands
             .typed(
                 home.path(),
-                Zeroizing::new("quit".to_owned()),
-                Zeroizing::default(),
+                &Zeroizing::new("quit".to_owned()),
+                &Zeroizing::default(),
             )
             .unwrap();
         assert_eq!(finished.code, None);
