@@ -544,8 +544,13 @@ mod tests {
         let limit = Duration::from_millis(120);
         let seen = AtomicBool::new(false);
         let mut pauses = Vec::new();
+        // Three looks reach the limit. A tenth fails the run, so that a wait which never stops
+        // fails here rather than outlasting the test's own time limit.
         let result = waited::<i32, _>(limit, &seen, |pause| {
             pauses.push(pause);
+            if pauses.len() >= 10 {
+                return Err(io::Error::other("looked past the limit"));
+            }
             thread::sleep(pause);
             Ok(None)
         });
