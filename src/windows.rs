@@ -22,7 +22,7 @@ use std::slice;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 use windows_sys::Win32::Foundation::{
     ERROR_NOT_FOUND, ERROR_SUCCESS, GENERIC_ALL, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT,
@@ -107,9 +107,6 @@ pub fn handing_down() -> MutexGuard<'static, ()> {
     HANDING_DOWN.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// How often a wait looks up from the program to see whether it has said it will never finish.
-const POLL: Duration = Duration::from_millis(50);
-
 /// [`crate::run::run`], for Windows: on a desktop of its own, inside a job that ends every process
 /// in it, with only its input and output handed down to it.
 ///
@@ -144,7 +141,11 @@ pub fn run(
     let seen = Arc::new(AtomicBool::new(false));
     let watching = Arc::clone(&seen);
     let reading = thread::spawn(move || run::watch(reader, hopeless, &watching));
-    let code = process.wait(limit, &job, &seen)?;
+    let code = run::waited(limit, &seen, |pause| process.ended_within(pause))?;
+    if code.is_none() {
+        job.stop_all();
+        process.ended();
+    }
     // Whatever the program started and left running ends with the job, which is also what lets
     // the reading finish: a straggler would hold the output open.
     drop(job);
@@ -363,31 +364,16 @@ impl Process {
         let _: u32 = unsafe { WaitForSingleObject(self.0.as_raw_handle(), INFINITE) };
     }
 
-    /// The process's exit code once it ends. None when `limit` passes or `hopeless` is set first,
-    /// and the job is stopped.
-    fn wait(&self, limit: Duration, job: &Job, hopeless: &AtomicBool) -> io::Result<Option<i32>> {
+    /// The process's exit code, if it ends within `pause`.
+    fn ended_within(&self, pause: Duration) -> io::Result<Option<i32>> {
         let handle = self.0.as_raw_handle();
-        let deadline = Instant::now().checked_add(limit);
-        loop {
-            let left = deadline.map_or(POLL, |deadline| {
-                deadline.saturating_duration_since(Instant::now()).min(POLL)
-            });
-            // Whole milliseconds of at most POLL, which fits.
-            let milliseconds = u32::try_from(left.as_millis()).unwrap_or(0);
-            // SAFETY: the process handle is open for as long as `self`.
-            match unsafe { WaitForSingleObject(handle, milliseconds) } {
-                WAIT_OBJECT_0 => break,
-                WAIT_TIMEOUT => {}
-                _ => return Err(io::Error::last_os_error()),
-            }
-            if hopeless.load(Ordering::Relaxed)
-                || deadline.is_some_and(|deadline| Instant::now() >= deadline)
-            {
-                job.stop_all();
-                // SAFETY: as above. The job has ended the process, so this returns at once.
-                let _: u32 = unsafe { WaitForSingleObject(handle, INFINITE) };
-                return Ok(None);
-            }
+        // A pause too long to count in milliseconds becomes no wait, which is still at most the pause.
+        let milliseconds = u32::try_from(pause.as_millis()).unwrap_or(0);
+        // SAFETY: the process handle is open for as long as `self`.
+        match unsafe { WaitForSingleObject(handle, milliseconds) } {
+            WAIT_OBJECT_0 => {}
+            WAIT_TIMEOUT => return Ok(None),
+            _ => return Err(io::Error::last_os_error()),
         }
         let mut code = 0_u32;
         // SAFETY: the process has ended and `code` is a valid place for its exit code.
@@ -477,8 +463,7 @@ impl Terminal {
                 .join()
                 .unwrap_or_else(|panic| panic::resume_unwind(panic));
         }
-        self.process
-            .wait(Duration::MAX, &self.job, &AtomicBool::new(false))
+        self.process.ended_within(Duration::ZERO)
     }
 }
 
@@ -1514,6 +1499,7 @@ mod tests {
     use std::os::windows::ffi::OsStringExt as _;
     use std::path::PathBuf;
     use std::slice;
+    use std::time::Instant;
     use windows_sys::Win32::Foundation::E_INVALIDARG;
     use windows_sys::Win32::Foundation::{GetHandleInformation, HWND, LPARAM};
     use windows_sys::Win32::Globalization::lstrlenW;
@@ -1702,6 +1688,69 @@ mod tests {
         });
         assert!(shown, "winver never showed its window");
         assert_eq!(visible_windows(ptr::null_mut(), id), 0);
+    }
+
+    /// A process that runs for a minute on a desktop of its own, inside a job.
+    fn minute_long() -> (Desktop, Job, Process) {
+        let desktop = Desktop::create().unwrap();
+        let job = Job::create().unwrap();
+        let input = File::open("NUL").unwrap();
+        let output = File::options().write(true).open("NUL").unwrap();
+        let cmd = Path::new(&env::var_os("SystemRoot").unwrap()).join(r"System32\cmd.exe");
+        let args: Vec<OsString> = ["/d", "/s", "/c", "ping -n 60 127.0.0.1 > nul"]
+            .into_iter()
+            .map(OsString::from)
+            .collect();
+        let process = spawn(
+            &cmd,
+            &args,
+            None,
+            &env::temp_dir(),
+            &desktop,
+            &job,
+            Streams::Handles([input.as_raw_handle(), output.as_raw_handle()]),
+        )
+        .unwrap();
+        (desktop, job, process)
+    }
+
+    #[test]
+    fn a_look_at_a_running_program_takes_its_whole_pause() {
+        let (_desktop, job, process) = minute_long();
+        let started = Instant::now();
+        for _ in 0..10_u32 {
+            assert_eq!(
+                process.ended_within(Duration::from_millis(50)).unwrap(),
+                None
+            );
+        }
+        let took = started.elapsed();
+        job.stop_all();
+        process.ended();
+        assert!(
+            took >= Duration::from_millis(300),
+            "10 looks of 50 ms took {took:?}"
+        );
+        assert_eq!(process.ended_within(Duration::ZERO).unwrap(), Some(1_i32));
+    }
+
+    #[test]
+    fn a_look_at_a_running_program_takes_no_longer_than_its_pause() {
+        let (_desktop, job, process) = minute_long();
+        let started = Instant::now();
+        for _ in 0..10_u32 {
+            assert_eq!(
+                process.ended_within(Duration::from_millis(1)).unwrap(),
+                None
+            );
+        }
+        let took = started.elapsed();
+        job.stop_all();
+        process.ended();
+        assert!(
+            took < Duration::from_millis(300),
+            "10 looks of 1 ms took {took:?}"
+        );
     }
 
     /// Whether a desktop called `name` exists.
