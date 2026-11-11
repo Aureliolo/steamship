@@ -20,9 +20,9 @@ use crate::install;
 use crate::platform::Platform;
 use crate::run::{self, Finished};
 #[cfg(unix)]
-use crate::unix::Terminal;
+use crate::unix::{Terminal, held_elsewhere};
 #[cfg(windows)]
-use crate::windows::Terminal;
+use crate::windows::{Terminal, held_elsewhere};
 
 /// The file that starts steamcmd in the install at `root`. On Linux and macOS that is Valve's
 /// script, which sets up the library path steamcmd needs.
@@ -80,6 +80,43 @@ pub fn connection_log(home: &Path, platform: Platform) -> PathBuf {
         .join("connection_log.txt")
 }
 
+/// Whether steamcmd in `home` can add to its connection log now. A steamcmd still running from
+/// that home keeps the log to itself on Windows, and a second one then works on without a line
+/// in it.
+///
+/// # Errors
+///
+/// When the log is there and cannot be opened to add to. The error names the log and says what
+/// to do: to end the program that holds it, or to let this user write to it.
+pub fn log_is_free(home: &Path, platform: Platform) -> io::Result<()> {
+    let log = connection_log(home, platform);
+    match fs::File::options().append(true).open(&log) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            let step = if held_elsewhere(&error) {
+                HELD
+            } else {
+                UNWRITABLE
+            };
+            Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "cannot add to its log {}: {error}. {step}, then run steamship again",
+                    log.display()
+                ),
+            ))
+        }
+    }
+}
+
+/// What to do about a connection log another program holds open.
+const HELD: &str =
+    "End any steamcmd left running from the same folder, or whatever else holds that file";
+
+/// What to do about a connection log that cannot be written for any other reason.
+const UNWRITABLE: &str = "Let this user write to that file";
+
 /// Every place steamcmd could have kept its state under `home`, whichever system wrote it, so that
 /// nothing it saved is overlooked.
 fn state_folders(home: &Path) -> [PathBuf; 3] {
@@ -135,15 +172,17 @@ impl Commands {
     /// Runs the steamcmd in `home` with these commands, as [`run::run`] runs a program.
     ///
     /// It starts in its own folder with [`environment`] around it. It is stopped at the commands'
-    /// limit, or once it says that it will never reach Steam.
+    /// limit, or once it says that it will never reach Steam. It is not started while its
+    /// [`connection_log`] cannot be added to.
     ///
     /// # Errors
     ///
-    /// When steamcmd cannot be started or its output cannot be read. The error names the file
-    /// that starts steamcmd.
+    /// When steamcmd cannot be started, its output cannot be read, or its log cannot be added to.
+    /// The error names the file that starts steamcmd.
     pub fn run(&self, home: &Path) -> io::Result<Finished> {
         let root = home.join(install::FOLDER);
         let file = program(&root, Platform::THIS);
+        log_is_free(home, Platform::THIS).map_err(named(&file))?;
         run::run(
             &file,
             &self.args,
@@ -165,7 +204,8 @@ impl Commands {
     /// # Errors
     ///
     /// When steamcmd cannot be started, its console cannot be read or typed into, or it cannot be
-    /// waited for. The error names the file that starts steamcmd.
+    /// waited for, or when its log cannot be added to. The error names the file that starts
+    /// steamcmd.
     pub fn typed(
         &self,
         home: &Path,
@@ -174,6 +214,7 @@ impl Commands {
     ) -> io::Result<Finished> {
         let root = home.join(install::FOLDER);
         let file = program(&root, Platform::THIS);
+        log_is_free(home, Platform::THIS).map_err(named(&file))?;
         typed_at(
             &file,
             &self.args,
@@ -715,6 +756,131 @@ mod tests {
                 home.join("Library/Application Support/Steam/logs/connection_log.txt")
             ]
         );
+    }
+
+    #[test]
+    fn a_connection_log_that_is_not_there_yet_is_free_and_left_unmade() {
+        let home = tempfile::tempdir().unwrap();
+        let log = connection_log(home.path(), Platform::THIS);
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        log_is_free(home.path(), Platform::THIS).unwrap();
+        assert!(!log.exists(), "{} was made", log.display());
+    }
+
+    /// A home whose connection log holds one line.
+    fn logged() -> (tempfile::TempDir, PathBuf) {
+        let home = tempfile::tempdir().unwrap();
+        let log = connection_log(home.path(), Platform::THIS);
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        fs::write(&log, "an earlier run\n").unwrap();
+        (home, log)
+    }
+
+    /// Makes `log` a file nobody may write to, as a home another user owns leaves it.
+    fn read_only(log: &Path) {
+        let mut permissions = fs::metadata(log).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(log, permissions).unwrap();
+    }
+
+    /// The end of a refusal for a log that cannot be written.
+    const WRITE: &str = ". Let this user write to that file, then run steamship again";
+
+    #[test]
+    fn a_connection_log_nobody_may_write_to_is_not_free_and_the_error_says_to_let_this_user_write()
+    {
+        let (home, log) = logged();
+        log_is_free(home.path(), Platform::THIS).unwrap();
+        read_only(&log);
+        let error = log_is_free(home.path(), Platform::THIS)
+            .unwrap_err()
+            .to_string();
+        let start = format!("cannot add to its log {}: ", log.display());
+        assert!(
+            error.starts_with(&start) && error.ends_with(WRITE),
+            "{error}"
+        );
+        assert_eq!(fs::read_to_string(&log).unwrap(), "an earlier run\n");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_connection_log_another_program_holds_is_not_free_and_the_error_says_to_end_it() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let (home, log) = logged();
+        let holding = fs::File::options()
+            .read(true)
+            .share_mode(0)
+            .open(&log)
+            .unwrap();
+        let error = log_is_free(home.path(), Platform::THIS)
+            .unwrap_err()
+            .to_string();
+        drop(holding);
+        let start = format!("cannot add to its log {}: ", log.display());
+        let end = ". End any steamcmd left running from the same folder, or whatever else holds \
+                   that file, then run steamship again";
+        assert!(error.starts_with(&start) && error.ends_with(end), "{error}");
+        log_is_free(home.path(), Platform::THIS).unwrap();
+    }
+
+    /// The arguments that have the stand-in of `waiting` leave the file `ran` in its folder.
+    fn leaving_ran() -> Vec<OsString> {
+        let args: &[&str] = if cfg!(windows) {
+            &["/d", "/s", "/c", "echo ran > ran"]
+        } else {
+            &["-c", "echo ran > ran"]
+        };
+        args.iter().map(OsString::from).collect()
+    }
+
+    /// What a refused run's error must read for the stand-in in `home`, and that nothing ran.
+    fn refused(home: &Path, error: &io::Error) {
+        let root = home.join(install::FOLDER);
+        let start = format!(
+            "{}: cannot add to its log {}: ",
+            program(&root, Platform::THIS).display(),
+            connection_log(home, Platform::THIS).display()
+        );
+        let error = error.to_string();
+        assert!(
+            error.starts_with(&start) && error.ends_with(WRITE),
+            "{error}"
+        );
+        assert!(!root.join("ran").exists());
+    }
+
+    #[test]
+    fn a_run_whose_connection_log_cannot_be_added_to_is_refused_and_steamcmd_never_starts() {
+        let (home, _) = waiting(None);
+        let log = connection_log(home.path(), Platform::THIS);
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        fs::write(&log, "an earlier run\n").unwrap();
+        read_only(&log);
+        let commands = Commands {
+            args: leaving_ran(),
+            limit: Duration::from_mins(1),
+        };
+        let error = commands.run(home.path()).unwrap_err();
+        refused(home.path(), &error);
+    }
+
+    #[test]
+    fn a_run_typed_into_whose_connection_log_cannot_be_added_to_is_refused_and_steamcmd_never_starts()
+     {
+        let (home, _) = waiting(None);
+        let log = connection_log(home.path(), Platform::THIS);
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        fs::write(&log, "an earlier run\n").unwrap();
+        read_only(&log);
+        let commands = Commands {
+            args: leaving_ran(),
+            limit: Duration::from_mins(1),
+        };
+        let error = commands
+            .typed(home.path(), Zeroizing::default(), Zeroizing::default())
+            .unwrap_err();
+        refused(home.path(), &error);
     }
 
     #[test]

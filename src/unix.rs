@@ -554,6 +554,13 @@ pub fn hold_to(cores: usize) -> io::Result<(usize, usize)> {
     Ok((held.len(), processors.len()))
 }
 
+/// Whether the system refused to open a file because another program holds it open, which no
+/// Unix system does.
+#[must_use]
+pub const fn held_elsewhere(_error: &io::Error) -> bool {
+    false
+}
+
 /// When the file or folder at `path`, or its inode, last changed: set again by every write, copy
 /// and rename, which a build can leave its modification time set back past.
 ///

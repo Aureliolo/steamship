@@ -25,9 +25,9 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
 use windows_sys::Win32::Foundation::{
-    ERROR_NOT_FOUND, ERROR_SUCCESS, GENERIC_ALL, GENERIC_WRITE, HANDLE, HANDLE_FLAG_INHERIT,
-    HLOCAL, INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
-    WIN32_ERROR,
+    ERROR_NOT_FOUND, ERROR_SHARING_VIOLATION, ERROR_SUCCESS, GENERIC_ALL, GENERIC_WRITE, HANDLE,
+    HANDLE_FLAG_INHERIT, HLOCAL, INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation,
+    WAIT_OBJECT_0, WAIT_TIMEOUT, WIN32_ERROR,
 };
 use windows_sys::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW, SetSecurityInfo,
@@ -916,6 +916,12 @@ fn wide(text: &OsStr) -> Vec<u16> {
 /// Whether Windows answered that there is no such credential.
 fn not_found(error: &io::Error) -> bool {
     error.raw_os_error() == i32::try_from(ERROR_NOT_FOUND).ok()
+}
+
+/// Whether Windows refused to open a file because another program holds it open.
+#[must_use]
+pub fn held_elsewhere(error: &io::Error) -> bool {
+    error.raw_os_error() == i32::try_from(ERROR_SHARING_VIOLATION).ok()
 }
 
 /// The name of the generic credential `item` is kept as, such as
