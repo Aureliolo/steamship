@@ -4,6 +4,9 @@ name: winget
 # that use them, with nothing here changing, so the version the winget manifests are written in is
 # held to the newest schema winget-cli publishes weekly; a pull request that changes the manifests
 # or this workflow runs it too.
+#
+# Dispatched on a release's tag, it also submits that release to winget. Each submission is a pull
+# request Microsoft's moderators review, so winget is offered the releases chosen, never each one.
 on:
   schedule:
     - cron: '41 4 * * 3'
@@ -11,13 +14,15 @@ on:
   pull_request:
     paths:
       - .github/packages.sh
+      - .github/release-packages.sh
       - .github/workflows/winget.yml
 
 permissions: {}
 
+# A submission is never cancelled halfway, though a re-run of one would open nothing twice.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
   schema:
@@ -51,3 +56,171 @@ jobs:
             exit 1
           fi
           echo "The winget manifests are written in ${newest}, winget-cli's newest schema."
+
+  # The release's winget manifests, written as release.yml writes them, from its published and
+  # attested checksums.
+  write:
+    name: winget (write)
+    if: >-
+      github.repository == 'Aureliolo/steamship' && github.event_name == 'workflow_dispatch'
+      && startsWith(github.ref, 'refs/tags/v')
+    needs: schema
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # Reads the tagged scripts and the published release.
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read the version the tag names
+        id: version
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::${GITHUB_REF_NAME} is not a release tag. Run this workflow on one, such as v1.0.0."
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Write them from the release's signed checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash .github/release-packages.sh "${VERSION}" packages
+
+      - name: Upload them
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: winget
+          path: packages/winget/*.yaml
+          if-no-files-found: error
+          retention-days: 1
+
+  # winget takes packages only through a pull request to microsoft/winget-pkgs, which
+  # winget-submit.sh opens from the token's fork with a classic token; GitHub lets no fine-grained
+  # token open one. wingetcreate is not used, since its newest release cannot read the schema
+  # packages.sh writes.
+  submit:
+    name: winget (submit)
+    needs: write
+    runs-on: windows-2025
+    timeout-minutes: 20
+    # The token is a secret of this environment, which only release tags can deploy to.
+    environment: winget
+    permissions:
+      contents: read # Reads the published release.
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # winget itself, installed over the older one the runner image carries so that validation
+      # runs the client winget-pkgs validates with. Kept equal to packages.yml's pin.
+      # renovate: datasource=github-releases depName=microsoft/winget-cli
+      WINGET_TAG: v1.29.380
+      WINGET_BUNDLE_SHA256: 65dea9c01ce08ee7b763366b27c0e651f97db857c11ca9b9c301826c10092f2e
+      WINGET_DEPENDENCIES_SHA256: ba875afe9d190f61218985ac0292a99d1db710bf93e13c68944ca9d89f0d82d1
+      WINGET_LICENSE: e53e159d00e04f729cc2180cffd1c02e_License1.xml
+      WINGET_LICENSE_SHA256: bcb15118ec47df24e3e6013a7006147c3a15b3a8104ed660fe87c8b4ed01f485
+
+    steps:
+      - name: Refuse to go on without the token
+        env:
+          TOKEN_SET: ${{ secrets.WINGET_TOKEN != '' }}
+        run: |
+          if ($env:TOKEN_SET -ne 'true') {
+            Write-Output '::error::The winget environment has no secret WINGET_TOKEN. See .github/release-process.md.'
+            exit 1
+          }
+
+      - name: Checkout tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download winget at its pinned release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
+            Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle "${WINGET_BUNDLE_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
+            DesktopAppInstaller_Dependencies.zip "${WINGET_DEPENDENCIES_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
+            "${WINGET_LICENSE}" "${WINGET_LICENSE_SHA256}" "${RUNNER_TEMP}"
+
+      - name: Install winget at its pinned release
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Expand-Archive "$env:RUNNER_TEMP\DesktopAppInstaller_Dependencies.zip" "$env:RUNNER_TEMP\dependencies"
+          $dependencies = Get-ChildItem "$env:RUNNER_TEMP\dependencies\x64" -Filter *.appx | ForEach-Object FullName
+          Add-AppxProvisionedPackage -Online -PackagePath "$env:RUNNER_TEMP\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" `
+            -DependencyPackagePath $dependencies -LicensePath "$env:RUNNER_TEMP\$env:WINGET_LICENSE" | Out-Null
+          Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+          "$env:LOCALAPPDATA\Microsoft\WindowsApps" >> $env:GITHUB_PATH
+          $running = & "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe" --version
+          if ($running -ne $env:WINGET_TAG) { throw "winget is $running after installing the pinned $env:WINGET_TAG." }
+
+      - name: Download the manifests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: winget
+          path: packages/winget
+
+      # The hashes come from the signed checksums already; each installer's archive is fetched
+      # too, and checked to be signed, to hash to what its installer says and to hold the program
+      # where its installer says.
+      - name: Check each installer against the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.write.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $bundle = "steamship-$env:VERSION.intoto.jsonl"
+          $manifest = Get-Content packages/winget/Aureliolo.steamship.installer.yaml -Raw
+          $installers = [regex]::Matches($manifest,
+            'InstallerUrl: (?<url>\S+)\s+InstallerSha256: (?<hash>\S+)\s+NestedInstallerFiles:\s+- RelativeFilePath: (?<path>\S+)')
+          if ($installers.Count -ne 2) { throw "The installer manifest has $($installers.Count) installers, not 2." }
+          gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --dir release --pattern $bundle
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          foreach ($installer in $installers) {
+            $url = $installer.Groups['url'].Value
+            $archive = Split-Path -Leaf $url
+            $release = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$archive"
+            if ($url -cne $release) { throw "$url is not this release's $archive." }
+            gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --dir release --pattern $archive
+            gh attestation verify "release/$archive" --bundle "release/$bundle" `
+              --repo $env:GITHUB_REPOSITORY `
+              --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release-build.yml" `
+              --source-ref $env:GITHUB_REF --deny-self-hosted-runners
+            $hash = (Get-FileHash -Algorithm SHA256 "release/$archive").Hash
+            if ($installer.Groups['hash'].Value -cne $hash) { throw "$archive hashes to $hash, not what its installer says." }
+            $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "release/$archive").Path)
+            $entries = $zip.Entries.FullName
+            $zip.Dispose()
+            $path = $installer.Groups['path'].Value
+            if ($entries -cnotcontains ($path -replace '\\', '/')) { throw "$archive holds no $path." }
+          }
+
+      # The submission ticks winget-pkgs' validation box on the strength of this step.
+      - name: Validate the manifests
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          winget validate --manifest packages/winget
+
+      - name: Submit them
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ needs.write.outputs.version }}
+        run: bash .github/winget-submit.sh "${VERSION}" packages/winget

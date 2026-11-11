@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Opens the pull request that submits a release's winget manifests to microsoft/winget-pkgs, for
-# release.yml's winget job.
+# winget.yml's submit job.
 #
 #   GH_TOKEN=<classic token, public_repo> .github/winget-submit.sh <version> <manifest folder>
 #
@@ -113,7 +113,7 @@ else
   gh api "repos/${fork}/git/refs" -f "ref=refs/heads/${branch}" -f "sha=${commit}" > /dev/null
 fi
 
-# The boxes ticked are the two this job proves: release.yml ran winget validate on these files,
+# The boxes ticked are the two this job proves: winget.yml ran winget validate on these files,
 # and the pull request holds one manifest. The rest stay the author's to tick.
 template="$(gh api -H 'Accept: application/vnd.github.raw+json' "repos/${upstream}/contents/.github/PULL_REQUEST_TEMPLATE.md")"
 body="$(sed -E \

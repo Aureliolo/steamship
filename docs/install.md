@@ -36,6 +36,9 @@ On Windows:
 winget install Aureliolo.steamship
 ```
 
+winget carries some releases, not every one, since Microsoft reviews each version it takes. Scoop
+and the release archives carry every one.
+
 Homebrew, Scoop and winget install the release's archive only if it matches the SHA-256 the
 release is signed over.
 

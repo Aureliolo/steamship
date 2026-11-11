@@ -284,9 +284,8 @@ jobs:
           test "$("${program}" --version)" = "steamship ${version}"
           test "${OUTCOME}" = failure
 
-  # The formula, the Scoop manifest and the winget manifests for this release, from the checksums
-  # as published, each verified against the release's attestation the way a
-  # user's download would be.
+  # The formula, the Scoop manifest and the winget manifests for this release. winget gets them
+  # only from winget.yml, dispatched on the tag, so that it is offered the releases chosen.
   packages-write:
     name: packages (write)
     if: github.repository == 'Aureliolo/steamship'
@@ -306,20 +305,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          set -euo pipefail
-          bundle="steamship-${VERSION}.intoto.jsonl"
-          bash .github/release-download.sh "${GITHUB_REF_NAME}" release '*.sha256' steamship.json \
-            "${bundle}"
-          for subject in release/*.sha256 release/steamship.json; do
-            gh attestation verify "${subject}" --bundle "release/${bundle}" \
-              --repo "${GITHUB_REPOSITORY}" \
-              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release-build.yml" \
-              --source-ref "${GITHUB_REF}" --deny-self-hosted-runners
-          done
-          .github/packages.sh "${VERSION}" release packages
-          # The bucket and the release's own attachment are one manifest.
-          cmp packages/bucket/steamship.json release/steamship.json
+        run: bash .github/release-packages.sh "${VERSION}" packages
 
       - name: Upload them
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -476,131 +462,6 @@ jobs:
             echo "::error::Pull request #${PR} is ${state}, not merged: main moved twice while its checks ran. Re-run this job." >&2
             exit 1
           fi
-
-  # winget takes packages only through a pull request to microsoft/winget-pkgs, which
-  # winget-submit.sh opens from the token's fork with a classic token; GitHub lets no fine-grained
-  # token open one. wingetcreate is not used, since its newest release cannot read the schema
-  # packages.sh writes. A new package waits on a moderator, so the first version is submitted by
-  # hand; this job runs once the repository variable WINGET is set to `submit`, after that one is
-  # accepted.
-  winget:
-    name: winget
-    if: github.repository == 'Aureliolo/steamship' && vars.WINGET == 'submit'
-    needs: [build, packages-write]
-    runs-on: windows-2025
-    timeout-minutes: 20
-    # The token is a secret of this environment, which only release tags can deploy to.
-    environment: winget
-    permissions:
-      contents: read # Reads the published release.
-    defaults:
-      run:
-        shell: pwsh
-    env:
-      # winget itself, installed over the older one the runner image carries so that validation
-      # runs the client winget-pkgs validates with. Kept equal to packages.yml's pin.
-      # renovate: datasource=github-releases depName=microsoft/winget-cli
-      WINGET_TAG: v1.29.380
-      WINGET_BUNDLE_SHA256: 65dea9c01ce08ee7b763366b27c0e651f97db857c11ca9b9c301826c10092f2e
-      WINGET_DEPENDENCIES_SHA256: ba875afe9d190f61218985ac0292a99d1db710bf93e13c68944ca9d89f0d82d1
-      WINGET_LICENSE: e53e159d00e04f729cc2180cffd1c02e_License1.xml
-      WINGET_LICENSE_SHA256: bcb15118ec47df24e3e6013a7006147c3a15b3a8104ed660fe87c8b4ed01f485
-
-    steps:
-      - name: Refuse to go on without the token
-        env:
-          TOKEN_SET: ${{ secrets.WINGET_TOKEN != '' }}
-        run: |
-          if ($env:TOKEN_SET -ne 'true') {
-            Write-Output '::error::WINGET is set to submit, but the secret WINGET_TOKEN is missing. See .github/release-process.md.'
-            exit 1
-          }
-
-      - name: Checkout tag
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Download winget at its pinned release
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
-            Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle "${WINGET_BUNDLE_SHA256}" "${RUNNER_TEMP}"
-          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
-            DesktopAppInstaller_Dependencies.zip "${WINGET_DEPENDENCIES_SHA256}" "${RUNNER_TEMP}"
-          bash .github/tool-download.sh microsoft/winget-cli "${WINGET_TAG}" \
-            "${WINGET_LICENSE}" "${WINGET_LICENSE_SHA256}" "${RUNNER_TEMP}"
-
-      - name: Install winget at its pinned release
-        run: |
-          $ErrorActionPreference = 'Stop'
-          Expand-Archive "$env:RUNNER_TEMP\DesktopAppInstaller_Dependencies.zip" "$env:RUNNER_TEMP\dependencies"
-          $dependencies = Get-ChildItem "$env:RUNNER_TEMP\dependencies\x64" -Filter *.appx | ForEach-Object FullName
-          Add-AppxProvisionedPackage -Online -PackagePath "$env:RUNNER_TEMP\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" `
-            -DependencyPackagePath $dependencies -LicensePath "$env:RUNNER_TEMP\$env:WINGET_LICENSE" | Out-Null
-          Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
-          "$env:LOCALAPPDATA\Microsoft\WindowsApps" >> $env:GITHUB_PATH
-          $running = & "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe" --version
-          if ($running -ne $env:WINGET_TAG) { throw "winget is $running after installing the pinned $env:WINGET_TAG." }
-
-      - name: Download the manifests
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: packages
-          path: packages
-
-      # The hashes come from the signed checksums already; each installer's archive is fetched
-      # too, and checked to be signed, to hash to what its installer says and to hold the program
-      # where its installer says.
-      - name: Check each installer against the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.build.outputs.version }}
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          $bundle = "steamship-$env:VERSION.intoto.jsonl"
-          $manifest = Get-Content packages/winget/Aureliolo.steamship.installer.yaml -Raw
-          $installers = [regex]::Matches($manifest,
-            'InstallerUrl: (?<url>\S+)\s+InstallerSha256: (?<hash>\S+)\s+NestedInstallerFiles:\s+- RelativeFilePath: (?<path>\S+)')
-          if ($installers.Count -ne 2) { throw "The installer manifest has $($installers.Count) installers, not 2." }
-          gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --dir release --pattern $bundle
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          foreach ($installer in $installers) {
-            $url = $installer.Groups['url'].Value
-            $archive = Split-Path -Leaf $url
-            $release = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$archive"
-            if ($url -cne $release) { throw "$url is not this release's $archive." }
-            gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --dir release --pattern $archive
-            gh attestation verify "release/$archive" --bundle "release/$bundle" `
-              --repo $env:GITHUB_REPOSITORY `
-              --signer-workflow "$env:GITHUB_REPOSITORY/.github/workflows/release-build.yml" `
-              --source-ref $env:GITHUB_REF --deny-self-hosted-runners
-            $hash = (Get-FileHash -Algorithm SHA256 "release/$archive").Hash
-            if ($installer.Groups['hash'].Value -cne $hash) { throw "$archive hashes to $hash, not what its installer says." }
-            $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path "release/$archive").Path)
-            $entries = $zip.Entries.FullName
-            $zip.Dispose()
-            $path = $installer.Groups['path'].Value
-            if ($entries -cnotcontains ($path -replace '\\', '/')) { throw "$archive holds no $path." }
-          }
-
-      # The submission ticks winget-pkgs' validation box on the strength of this step.
-      - name: Validate the manifests
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          winget validate --manifest packages/winget
-
-      - name: Submit them
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
-          VERSION: ${{ needs.build.outputs.version }}
-        run: bash .github/winget-submit.sh "${VERSION}" packages/winget
 
   # crates.io, through trusted publishing: the OIDC token below is the whole credential, and no
   # crates.io token exists anywhere. A crate nobody has published cannot have a trusted publisher

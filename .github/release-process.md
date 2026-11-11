@@ -66,10 +66,8 @@ build, check and sign. Then it publishes and packages.
      packaging app. It merges the pull request once every required check has passed.
    - A check that fails, or anything else that keeps the pull request from merging, fails the job
      with the reason.
-2. **winget** checks each installer in the winget manifests against its signed archive, its hash
-   and the path of the program inside it. It validates them with `winget validate`, then submits
-   them with `.github/winget-submit.sh` to `microsoft/winget-pkgs`, where Microsoft's checks and
-   moderators merge them.
+
+winget gets a release only when `winget.yml` is run on its tag, as [winget](#winget) says.
 
 ## What a release carries
 
@@ -148,31 +146,36 @@ is.
 
 ## winget
 
-winget takes packages only through a pull request to `microsoft/winget-pkgs`. The release opens
-it from a fork with a **classic** token. GitHub lets no fine-grained token open a pull request on
-a repository its owner is not a member of. `wingetcreate` is not used, because its newest release
-cannot read the manifest schema `.github/packages.sh` writes.
+winget takes packages only through a pull request to `microsoft/winget-pkgs`, which its
+moderators review. So a release reaches winget only when it is chosen to:
+
+```sh
+gh workflow run winget.yml --ref v1.0.0
+```
+
+Run on a release's tag, `winget.yml` checks the manifest schema, then writes the winget manifests
+from the release's signed checksums. It checks each installer against its signed archive, its
+hash and the path of the program inside it. It validates them with `winget validate`, then
+submits them with `.github/winget-submit.sh`. Run on a branch, it checks the schema alone.
+
+The pull request is opened from a fork with a **classic** token. GitHub lets no fine-grained token
+open a pull request on a repository its owner is not a member of. `wingetcreate` is not used,
+because its newest release cannot read the manifest schema `.github/packages.sh` writes.
 
 `.github/packages.sh` writes the manifests whole, one installer for each Windows archive. They are
 not raised with `wingetcreate update`, which keeps only the installers the last version had. The
 first version is submitted by hand, once, for a moderator to review.
 
-### Submitting from releases
-
-After the first version is accepted:
+### Setting up the token
 
 1. Fork `microsoft/winget-pkgs` to the account that will own the token. No separate account is
    needed, and it needs no access to this repository. The fork is never synced: each submission
    builds on its newest commit, so the token needs no `workflow` scope.
-2. On that account, create a classic token with only the `public_repo` scope and an expiry.
+2. On that account, create a classic token with only the `public_repo` scope.
 3. Create an environment named `winget`, limited to tags matching `v*`. Put the token in its
    secret `WINGET_TOKEN`.
-4. Set the repository variable `WINGET` to `submit`.
 
-The job runs only with `WINGET` set, as **crates** does with `CRATES_IO`. Before the first version
-is in winget-pkgs, each release would otherwise open a second request for a new package. With it
-set, a missing token fails the release. When the token expires, the job fails. Make a new one the
-same way.
+A missing or expired token fails the submit job.
 
 The job pushes branch `Aureliolo.steamship-<version>` to the fork and opens one pull request from
 it. A re-run opens nothing new when `microsoft/winget-pkgs` already holds the version or a pull
