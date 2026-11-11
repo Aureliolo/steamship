@@ -621,9 +621,7 @@ mod tests {
     #[test]
     #[ignore = "a part of the test above, which runs it in a process of its own"]
     fn a_run_from_a_process_that_ignores_sigchld() {
-        // SAFETY: sets the disposition of a signal this process catches nowhere, and starts no
-        // handler.
-        let _: libc::sighandler_t = unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
+        ignore_sigchld();
         let started = Instant::now();
         let finished = run::run(
             Path::new("/bin/sh"),
@@ -643,6 +641,30 @@ mod tests {
             "took {:?}",
             started.elapsed()
         );
+
+        ignore_sigchld();
+        let ended = run::output(run::command("/bin/sh").args(["-c", "exit 5"])).unwrap();
+        assert_eq!(ended.status.code(), Some(5_i32));
+
+        ignore_sigchld();
+        let (terminal, mut output, input) = Terminal::start(
+            Path::new("/bin/sh"),
+            &[OsString::from("-c"), OsString::from("exit 6")],
+            &[],
+            &env::temp_dir(),
+        )
+        .unwrap();
+        let mut written = Vec::new();
+        drop(output.read_to_end(&mut written));
+        drop(input);
+        assert_eq!(terminal.wait().unwrap(), Some(6_i32));
+    }
+
+    /// Each start puts SIGCHLD back, so each test of the next start ignores it again first.
+    fn ignore_sigchld() {
+        // SAFETY: sets the disposition of a signal this process catches nowhere, and starts no
+        // handler.
+        let _: libc::sighandler_t = unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
     }
 
     fn child_of(line: &str) -> Child {
