@@ -80,10 +80,7 @@ jobs:
       - name: Install Rust
         env:
           TARGET: ${{ matrix.target }}
-        run: |
-          set -euo pipefail
-          rustup toolchain install
-          rustup target add "${TARGET}"
+        run: bash .github/rust-install.sh "${TARGET}"
 
       - name: Install musl-gcc
         if: matrix.platform == 'linux'

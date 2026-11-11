@@ -484,7 +484,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust
-        run: rustup toolchain install
+        run: bash .github/rust-install.sh
 
       # Before the token exists: packaging builds what would be uploaded, build scripts and all,
       # while there is no token in reach for any of them.

@@ -112,7 +112,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust
-        run: rustup toolchain install
+        run: bash .github/rust-install.sh
 
       - name: Install cargo-mutants
         if: runner.os == 'Linux'
