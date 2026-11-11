@@ -60,12 +60,6 @@ pub struct Asset {
 }
 
 impl Asset {
-    /// What Steamworks calls it.
-    #[must_use]
-    pub const fn name(&self) -> &'static str {
-        self.name
-    }
-
     /// The same asset, of which Steamworks takes one for every language.
     const fn for_every_language(self) -> Self {
         Self {

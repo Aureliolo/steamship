@@ -6642,8 +6642,9 @@ fn fits_a_secret(packed: &str) -> Result<(), ExitCode> {
     show::failure(
         "the packed login is too large for a GitHub secret",
         &format!(
-            "{} KB, where a secret holds 48 KB",
-            packed.len().div_ceil(1024)
+            "{} KB, where a secret holds {} KB",
+            packed.len().div_ceil(1024),
+            ci::SECRET_LIMIT.div_ceil(1024)
         ),
         Some(output),
     );
