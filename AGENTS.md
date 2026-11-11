@@ -42,6 +42,8 @@ messages.
 ## Layout
 
 - `src/` is one crate, library and binary.
+- `src/main.rs` is the dispatch. `src/commands/` holds the binary's own modules, one per command
+  and one for each part several commands share.
 - The command line is the supported interface. The library's modules are public only for the
   tests and fuzz targets.
 - `docs/` is the site's source. `docs-site/` renders it, with every command's help, into

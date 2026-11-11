@@ -34,6 +34,16 @@ use steamship::{
 };
 use zeroize::Zeroizing;
 
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "rustc's unreachable_pub refuses `pub` on an item of a private module, and these are the binary's alone"
+)]
+mod commands {
+    pub(crate) mod exit;
+}
+
+use commands::exit::{either, fail, first_failure, refusals};
+
 fn main() -> ExitCode {
     let mut cli = Cli::command();
     if io::stdout().is_terminal() {
@@ -526,14 +536,6 @@ fn exports_apart(game: &Project, script: &scripts::AppScript) -> Result<(), Exit
     } else {
         Err(refusals(&wrong))
     }
-}
-
-/// The first code of `codes` that is not success, or success.
-fn first_failure(codes: impl IntoIterator<Item = ExitCode>) -> ExitCode {
-    codes
-        .into_iter()
-        .find(|code| *code != ExitCode::SUCCESS)
-        .unwrap_or(ExitCode::SUCCESS)
 }
 
 /// Compares the game's achievements, leaderboards and rich presence with Steam's, each that the
@@ -1106,13 +1108,6 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// The code a command exits with, whether it finished or stopped early.
-const fn either(result: Result<ExitCode, ExitCode>) -> ExitCode {
-    match result {
-        Ok(code) | Err(code) => code,
-    }
-}
-
 /// How this steamship was installed, which is how it is upgraded.
 fn installed() -> Installed {
     // Homebrew and winget run steamship through a link to where they keep it.
@@ -1293,11 +1288,6 @@ fn run_install() -> ExitCode {
         }
         Err(code) => code,
     }
-}
-
-fn fail(error: &dyn Display, code: u8) -> ExitCode {
-    show::failure(&error.to_string(), "", None);
-    ExitCode::from(code)
 }
 
 fn steamcmd_failed(error: &install::Error) -> ExitCode {
@@ -4848,14 +4838,6 @@ fn requirements_shown(
         }
     }
     (compared, missing)
-}
-
-/// Each of `wrong` shown as refused, and the exit code for it.
-fn refusals(wrong: &[String]) -> ExitCode {
-    for why in wrong {
-        show::failure("refused", why, None);
-    }
-    ExitCode::from(REFUSED)
 }
 
 /// Every catalogue in the game's locale folder, read.
