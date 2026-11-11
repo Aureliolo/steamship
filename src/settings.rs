@@ -7,9 +7,9 @@
 //! the app there, and not after every upload.
 
 use std::fmt;
-use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use crate::release;
 use crate::vdf::{self, Block, Pair, Value};
 
 /// The snapshot's name, beside the build scripts.
@@ -49,63 +49,9 @@ const BOOKKEEPING: [&str; 4] = [
 ///
 /// # Errors
 ///
-/// As [`info_from_console`].
+/// As [`release::info_from_console`].
 pub fn from_console(console: &str, app: u32) -> Result<Block, String> {
-    info_from_console(console, app).map(|shown| kept(&shown))
-}
-
-/// All of `app`'s info in steamcmd's `console`, where `app_info_print` printed it, Steam's own
-/// bookkeeping and release state among it.
-///
-/// # Errors
-///
-/// When steamcmd printed none, what it printed cannot be read, or Steam showed the build account
-/// nothing, as for an app it cannot see.
-pub fn info_from_console(console: &str, app: u32) -> Result<Block, String> {
-    let named = format!("\"{app}\"");
-    let mut printed = String::new();
-    // Its closing brace is the only one at the start of a line: those within are indented.
-    for line in console.lines().skip_while(|line| line.trim_end() != named) {
-        printed.push_str(line);
-        printed.push('\n');
-        if line.trim_end() == "}" {
-            break;
-        }
-    }
-    if printed.is_empty() {
-        return Err(format!("steamcmd printed no settings for app {app}"));
-    }
-    let document = vdf::parse(&printed).map_err(|error| {
-        format!("steamcmd printed settings for app {app} that cannot be read: {error}")
-    })?;
-    let shown = document.block(&app.to_string()).unwrap_or(&document);
-    if shown.pairs.is_empty() {
-        return Err(format!(
-            "Steam shows the build account no settings for app {app}: it cannot see the app, or \
-             there is no such app"
-        ));
-    }
-    Ok(shown.clone())
-}
-
-/// Where in steamcmd's `console` the info `app_info_print` printed for `app` lies, so what the
-/// other commands of the same run printed is read apart from it. None when steamcmd printed none.
-#[must_use]
-pub fn info_at(console: &str, app: u32) -> Option<Range<usize>> {
-    let named = format!("\"{app}\"");
-    let mut at = 0_usize;
-    let mut start = None;
-    for line in console.split_inclusive('\n') {
-        let end = at.saturating_add(line.len());
-        let trimmed = line.trim_end();
-        match start {
-            Some(start) if trimmed == "}" => return Some(start..end),
-            None if trimmed == named => start = Some(at),
-            _ => {}
-        }
-        at = end;
-    }
-    None
+    release::info_from_console(console, app).map(|shown| kept(&shown))
 }
 
 /// What of `shown` is kept: see the module's description.
@@ -717,7 +663,6 @@ fn shown(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::release;
 
     /// steamcmd's console as it printed Falcon Ridge Overseer's app info, trimmed.
     const CONSOLE: &str = "Logging in user 'ACCOUNT' [U:1:1] to Steam Public...OK\n\
@@ -1241,49 +1186,35 @@ mod tests {
     fn nothing_printed_or_shown_is_said_so() {
         assert_eq!(
             from_console("Logging in...FAILED\n", 1_000_010).unwrap_err(),
-            "steamcmd printed no settings for app 1000010"
+            "steamcmd printed no app info for app 1000010"
         );
         // As steamcmd printed an app ID the build account holds nothing for.
-        assert!(
+        assert_eq!(
             from_console(
                 "AppID : 3999999, change number : 1/1, last change : Thu Jan  1 01:00:00 1970 \n\
                  \"3999999\"\n{\n}\nUnloading Steam API...OK\n",
                 3_999_999
             )
-            .unwrap_err()
-            .starts_with("Steam shows the build account no settings for app 3999999: ")
+            .unwrap_err(),
+            "Steam shows the build account no app info for app 3999999: it cannot see the app, \
+             or there is no such app. Check the app ID, and that the account is in a permission \
+             group that holds the app"
         );
         assert!(
             from_console("\"1\"\n{\n\t\"a\"\n}\n", 1)
                 .unwrap_err()
-                .starts_with("steamcmd printed settings for app 1 that cannot be read: ")
+                .starts_with("steamcmd printed app info for app 1 that cannot be read: ")
         );
     }
 
     #[test]
-    fn a_run_that_printed_the_info_then_built_is_cut_after_the_info() {
-        let built = "Building depot 1000011...\nSuccessfully finished AppID 1000010 build \
-                     (BuildID 4242).\n";
-        let console = format!("{CONSOLE}{built}");
-        let mut rest = console.clone();
-        let info: String = rest.drain(info_at(&console, 1_000_010).unwrap()).collect();
-        assert!(
-            info.starts_with("\"1000010\"\n{\n") && info.ends_with("\t}\n}\n"),
-            "{info}"
-        );
+    fn info_cut_off_before_its_closing_brace_gives_no_settings_and_says_it_cannot_be_read() {
+        let (cut, _) = CONSOLE.split_once("\t\t\"oslist\"").unwrap();
         assert_eq!(
-            rest,
-            format!(
-                "Logging in user 'ACCOUNT' [U:1:1] to Steam Public...OK\n\
-                 AppID : 1000010, change number : 39317222/39317222, last change : Tue Sep 29 \
-                 2026 \nUnloading Steam API...OK\n{built}"
-            )
+            from_console(cut, 1_000_010).unwrap_err(),
+            "steamcmd printed app info for app 1000010 that cannot be read: line 9, column 1: a \
+             block is missing its closing }"
         );
-        assert_eq!(
-            release::state(&info_from_console(&info, 1_000_010).unwrap()),
-            Some("unavailable")
-        );
-        assert_eq!(info_at(built, 1_000_010), None);
     }
 
     #[test]

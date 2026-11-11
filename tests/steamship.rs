@@ -949,6 +949,84 @@ fn an_upload_asked_for_default_too_is_set_live_there_while_steam_shows_the_app_u
     );
 }
 
+/// A steamcmd that prints app 1000's info as [`released_as`] does, cut off after the app's name,
+/// and asked to build has Valve build the upload as `BuildID` 4242.
+const CUT_OFF: &str = "#!/bin/sh\n\
+    case \" $* \" in *' +run_app_build '*)\n\
+    output=\"$HOME/apps/1000/output\"\n\
+    mkdir -p \"$output\"\n\
+    echo 'Successfully finished AppID 1000 build (BuildID 4242).' > \"$output/app_build_1000.log\";;\n\
+    esac\n\
+    echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+    echo 'AppID : 1000, change number : 5/5, last change : Tue Sep 29 20:07:48 2026 '\n\
+    printf '\"1000\"\\n{\\n\\t\"common\"\\n\\t{\\n\\t\\t\"name\"\\t\\t\"Spacewar\"\\n'\n";
+
+/// What steamship says of the info [`CUT_OFF`] prints.
+const CUT_OFF_SAID: &str = "steamcmd printed app info for app 1000 that cannot be read: line 6, \
+                            column 1: a block is missing its closing }";
+
+/// Uploads for default too with a key and the steamcmd `steamcmd`, which builds and shows no
+/// release state. The build must go up to its branch alone, with `why` and how to set it live on
+/// default said.
+fn assert_default_left(steamcmd: &str, why: &str) {
+    let home = faked_with(steamcmd);
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    // Only what the upload asks of Steam either way: a third request would fail the run.
+    let (host, _requests) = web_api(vec![("200 OK", BETAS), ("200 OK", testing_live(4242))]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("\"default\":false") && stdout.contains("\"outcome\":\"uploaded\""),
+        "{stdout}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "{why}. The build goes up with its default branch left as it is. Set it live there \
+             as steamship promote --build 4242 --branch default does while the app is unreleased\n"
+        )) && stderr.contains("app 1000: BuildID 4242, set live on testing")
+            && !stderr.contains("and default"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_upload_asked_for_default_too_whose_app_info_is_cut_off_says_why_default_is_left() {
+    assert_default_left(CUT_OFF, CUT_OFF_SAID);
+}
+
+#[test]
+fn an_upload_asked_for_default_too_whose_steamcmd_printed_no_app_info_says_why_default_is_left() {
+    assert_default_left(BUILT, "steamcmd printed no app info for app 1000");
+}
+
+#[test]
+fn app_info_cut_off_before_its_closing_brace_fails_settings_and_promote_saying_it_cannot_be_read() {
+    let home = faked_with(CUT_OFF);
+    saved_login(home.path());
+    let (_project, script) = project(false);
+    let script = script.to_str().unwrap();
+    let (silent, _unasked) = web_api::<&str>(vec![]);
+    for args in [
+        ["settings", "1000"].as_slice(),
+        ["promote", script, "--build", "1234", "--branch", "public"].as_slice(),
+    ] {
+        let (code, stdout, stderr) =
+            steamship(args, Some(home.path()), &web_api_variables(&silent));
+        assert_eq!(code, Some(1_i32), "{args:?}: {stdout}{stderr}");
+        assert_eq!(
+            failure(&stderr),
+            format!("{CUT_OFF_SAID}. Run the command again"),
+            "{args:?}: {stdout}"
+        );
+    }
+}
+
 #[test]
 fn an_upload_asked_for_default_too_once_steam_shows_the_app_released_goes_to_its_branch_alone() {
     let home = faked_with(&released_as("released"));
@@ -1196,13 +1274,13 @@ fn unserved_then_built(cdn: &str, failing: u32) -> String {
 /// A steamcmd whose first `failing` runs fail as steamcmd 1788292693 did once in CI, having
 /// reached Steam but not its build server.
 fn unconnected_then_built(failing: u32) -> String {
-    failing_then_built(
-        "echo '[2026-10-12 15:35:56]: Building depot 1001...'\n\
-         echo '[2026-10-12 15:35:56]: ERROR! Failed to initialize build on server (No Connection) '\n\
-         echo '[2026-10-12 15:35:56]: ERROR! Build for depot 1001 failed : Failure' > \"$output/app_build_1000.log\"\n",
-        failing,
-    )
+    failing_then_built(UNCONNECTED, failing)
 }
+
+/// What the failing runs of [`unconnected_then_built`] do.
+const UNCONNECTED: &str = "echo '[2026-10-12 15:35:56]: Building depot 1001...'\n\
+    echo '[2026-10-12 15:35:56]: ERROR! Failed to initialize build on server (No Connection) '\n\
+    echo '[2026-10-12 15:35:56]: ERROR! Build for depot 1001 failed : Failure' > \"$output/app_build_1000.log\"\n";
 
 /// A steamcmd whose first `failing` runs fail as steamcmd 1791918946 did once in CI, Steam
 /// dropping it before it logged in.
@@ -1297,6 +1375,30 @@ fn an_upload_runs_steamcmd_once_more_when_it_did_not_reach_steams_build_server()
     assert!(
         why.contains("Failed to initialize build on server (No Connection)"),
         "{why}"
+    );
+}
+
+#[test]
+fn an_upload_whose_app_info_lost_its_closing_brace_still_reads_why_the_build_failed() {
+    // App 1000's info as `released_as` prints it, less its last line.
+    let lost = "echo 'AppID : 1000, change number : 5/5, last change : Tue Sep 29 20:07:48 2026 '\n\
+                printf '\"1000\"\\n{\\n\\t\"common\"\\n\\t{\\n\\t\\t\"name\"\\t\\t\"Spacewar\"\\n'\n\
+                printf '\\t\\t\"ReleaseState\"\\t\\t\"unavailable\"\\n\\t}\\n'\n";
+    let home = faked_with(&failing_then_built(&format!("{lost}{UNCONNECTED}"), 99));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let (host, _requests) = web_api(vec![("200 OK", BETAS)]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(runs(home.path()), 2, "run once more for no connection");
+    assert!(
+        stderr.contains("Failed to initialize build on server (No Connection)"),
+        "{stderr}"
     );
 }
 
@@ -4627,6 +4729,30 @@ fn upload_asks_steam_which_redistributables_the_app_ticks_when_the_build_needs_o
 }
 
 #[test]
+fn an_upload_asking_which_redistributables_the_app_ticks_fails_on_app_info_cut_off() {
+    let home = faked_with(TICKING_ON_STEAM);
+    let whole = settings_ticking(&["228988"]);
+    let (cut, _) = whole.rsplit_once("}\n").unwrap();
+    fs::write(home.path().join("app_info"), cut).unwrap();
+    let (_project, script) = shipping_dll(&["kernel32.dll", "vcruntime140.dll"], None);
+    let (host, _requests) = web_api(vec![("200 OK", BETAS)]);
+    let (code, said, why) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(1_i32), "{said}{why}");
+    let told = failure(&why);
+    assert!(
+        told.starts_with("steamcmd printed app info for app 1000 that cannot be read: ")
+            && told.ends_with(": a block is missing its closing }. Run the command again"),
+        "{why}"
+    );
+    assert!(!home.path().join("builds").exists(), "nothing went up");
+}
+
+#[test]
 fn builds_and_promote_that_steam_answers_with_an_error_say_its_status_and_exit_1() {
     let home = tempfile::tempdir().unwrap();
     // The second answer is for what `builds` asks after a 500: which apps the key holds.
@@ -7814,7 +7940,7 @@ fn a_snapshot_for_another_app_is_refused_before_steamcmd_and_an_app_steam_hides_
     let (hidden, _, why) = steamship(&["settings", "1000"], Some(home.path()), &quiet);
     assert_eq!(hidden, Some(1_i32), "{why}");
     assert!(
-        why.contains("Steam shows the build account no settings for app 1000"),
+        why.contains("Steam shows the build account no app info for app 1000: "),
         "{why}"
     );
 }
@@ -10235,7 +10361,8 @@ fn a_games_builds_settings_and_promotion_are_asked_for_its_own_app() {
         );
         assert_eq!(asked_for, Some(1_i32), "{args:?}: {shown}{reason}");
         assert!(
-            format!("{shown}{reason}").contains("steamcmd printed no settings for app 1000050"),
+            format!("{shown}{reason}")
+                .contains("steamcmd printed no app info for app 1000050. Run the command again"),
             "{args:?}: {shown}{reason}"
         );
         let given = fs::read_to_string(steamcmd.path().join("args")).unwrap();
