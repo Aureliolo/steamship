@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::account::Account;
+use crate::conversation;
 use crate::drm;
 use crate::install;
 use crate::platform::Platform;
@@ -275,10 +276,7 @@ pub const UPLOAD_LIMIT: Duration = Duration::from_hours(6);
 /// It is stopped then rather than at its limit. With no certificates to check Steam's servers
 /// against (on Linux, with the system's certificate store missing), it says this at once and then
 /// waits to connect for good.
-pub const HOPELESS: &[&str] = &[NO_CERTIFICATES];
-
-/// See [`HOPELESS`].
-pub const NO_CERTIFICATES: &str = "unable to load trusted SSL root certificates";
+pub const HOPELESS: &[&str] = &[conversation::NO_CERTIFICATES];
 
 /// The commands that log `account` in with the login steamcmd saved, print the info of the app
 /// `info_of` names, as [`app_info`] does, build `script` and quit.

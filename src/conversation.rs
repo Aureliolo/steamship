@@ -1,6 +1,10 @@
-//! What steamcmd says while it logs in, read into what steamship shows or asks. steamcmd's own
-//! wording is kept to the lines matched here. Anything else it says is passed on as it is.
+//! What steamcmd says while it logs in and when a run fails, read into what steamship shows or
+//! asks.
+//!
+//! steamcmd's own wording is kept to the lines matched here. While it logs in, anything else it
+//! says is passed on as it is. A failed run's other lines are left out.
 
+use crate::run;
 use crate::terminal::Event;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -178,6 +182,109 @@ pub fn explain(reason: &str) -> String {
             || format!("steamcmd says: {reason}"),
             |(_, plain)| (*plain).to_owned(),
         )
+}
+
+/// What checking the saved login with Steam came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Login {
+    /// Steam took it: an upload now would be logged in.
+    Taken,
+    /// Steam refused it, for this reason.
+    Refused(String),
+    /// The check itself failed, for every reason steamcmd gave.
+    Failed(Vec<String>),
+}
+
+/// Reads steamcmd's exit `code` and `console` from a run that only logged in and quit.
+#[must_use]
+pub fn judge_login(code: Option<i32>, console: &str) -> Login {
+    refused_login(console).map_or_else(
+        || {
+            if code == Some(0_i32) {
+                Login::Taken
+            } else {
+                Login::Failed(reasons(code, console, None))
+            }
+        },
+        Login::Refused,
+    )
+}
+
+/// Every error steamcmd reported, from the log and the console, once each, and what its exit
+/// said when nothing else did. First of all comes what told steamship to stop it, if anything did.
+#[must_use]
+pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<String> {
+    reasons_with(
+        code,
+        console,
+        log,
+        "steamcmd exited 0, but its build log does not say the build finished",
+    )
+}
+
+/// As [`reasons`], with `exited_0` as the sentence for an exit 0 that printed no error. Each
+/// command words it by what it checked.
+#[must_use]
+pub fn reasons_with(
+    code: Option<i32>,
+    console: &str,
+    log: Option<&str>,
+    exited_0: &str,
+) -> Vec<String> {
+    let mut found = errors(console, log);
+    if found.is_empty() {
+        found.push(match code {
+            Some(0_i32) => exited_0.to_owned(),
+            Some(exit) => format!("steamcmd exited {exit} without saying why"),
+            None => "steamcmd did not finish in time and was stopped".to_owned(),
+        });
+    }
+    found
+}
+
+/// What steamcmd says when it finds no certificates to check Steam's servers against.
+pub const NO_CERTIFICATES: &str = "unable to load trusted SSL root certificates";
+
+/// Every error steamcmd reported, from the log and the console, once each, after what told
+/// steamship to stop it, if anything did. Empty when the run printed none.
+fn errors(console: &str, log: Option<&str>) -> Vec<String> {
+    let mut found: Vec<String> = run::told()
+        .map(|signal| format!("steamship was told to stop by {signal}, and stopped steamcmd"))
+        .into_iter()
+        .collect();
+    for line in log.into_iter().flat_map(str::lines).chain(console.lines()) {
+        let error = if let Some((_, error)) = line.split_once("ERROR!") {
+            error.trim().to_owned()
+        } else if line.contains(NO_CERTIFICATES) {
+            "steamcmd found no certificates to check Steam's servers against, and would have \
+             waited forever. Install the system's certificate store (ca-certificates)"
+                .to_owned()
+        } else if let Some((_, socket)) = line.split_once("CreateBoundSocket: ") {
+            no_socket(socket.trim())
+        } else if refusal(line) == Some(NO_CONNECTION) {
+            format!("steamcmd could not connect to Steam ({NO_CONNECTION})")
+        } else {
+            continue;
+        };
+        if !found.contains(&error) {
+            found.push(error);
+        }
+    }
+    found
+}
+
+/// Why steamcmd could not open a network socket, from what it `said`. Error 38 is ENOSYS, which
+/// Docker's default seccomp filter answers the socket call 32-bit steamcmd makes with: seen in a
+/// container, and gone when the same container runs without the filter.
+fn no_socket(said: &str) -> String {
+    if said.ends_with("(38)") {
+        "steamcmd could not open a network socket. In a Docker container, the default seccomp \
+         filter refuses the socket call 32-bit steamcmd makes. Run the container with \
+         --security-opt seccomp=unconfined"
+            .to_owned()
+    } else {
+        format!("steamcmd could not open a network socket: {said}")
+    }
 }
 
 #[cfg(test)]

@@ -10,7 +10,6 @@ use zeroize::Zeroizing;
 use crate::conversation;
 use crate::platform::Platform;
 use crate::terminal::{Event, Reader};
-use crate::upload;
 use crate::vdf;
 use crate::webapi::{self, Branch};
 
@@ -298,7 +297,7 @@ pub fn judge(code: Option<i32>, console: &str, log: &str, app: u32) -> Outcome {
             "steamcmd exited 0 without saying app {app} is installed"
         )]);
     }
-    let mut reasons = upload::reasons(code, console, None);
+    let mut reasons = conversation::reasons(code, console, None);
     let checked = format!("Password check for AppId {app} returned error");
     if console.lines().any(|line| line.contains(&checked)) {
         reasons.push("Steam refused the branch's password".to_owned());
