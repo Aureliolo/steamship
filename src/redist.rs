@@ -10,12 +10,9 @@ use std::path::Path;
 
 use crate::check::Report;
 use crate::scripts::Problem;
-use crate::settings;
+use crate::settings::{self, REDISTRIBUTABLES};
 use crate::show;
 use crate::vdf::{Block, Value};
-
-/// The app Steamworks' Common Redistributables are depots of.
-pub const REDISTRIBUTABLES: &str = "228980";
 
 /// The DLLs every edition of Windows 10 and later has, so that a game needs no installer for them,
 /// and `vulkan-1.dll` and `opencl.dll`, which every graphics driver installs. Media Foundation is
