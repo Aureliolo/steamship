@@ -716,10 +716,11 @@ mod tests {
         );
     }
 
-    /// A home whose steamcmd is the system's shell, and the arguments that have it wait half a
-    /// minute: longer than the limit a test gives it, and over by itself when nothing stops it.
-    /// Nothing is written into the stand-in, which a program started meanwhile could hold open.
-    fn waiting() -> (tempfile::TempDir, Vec<OsString>) {
+    /// A home whose steamcmd is the system's shell, and the arguments that have it say `saying`,
+    /// when given, then wait half a minute: longer than the limit a test gives it, and over by
+    /// itself when nothing stops it. Nothing is written into the stand-in, which a program
+    /// started meanwhile could hold open.
+    fn waiting(saying: Option<&str>) -> (tempfile::TempDir, Vec<OsString>) {
         let home = tempfile::tempdir().unwrap();
         let root = home.path().join(install::FOLDER);
         fs::create_dir_all(&root).unwrap();
@@ -727,19 +728,25 @@ mod tests {
         #[cfg(unix)]
         let args = {
             unix::make_link("/bin/sh", &stand_in).unwrap();
-            vec!["-c", "sleep 30"]
+            let said = saying.map_or_else(String::new, |words| format!("echo {words}; "));
+            vec!["-c".to_owned(), format!("{said}sleep 30")]
         };
         #[cfg(windows)]
         let args = {
             let _: u64 = fs::copy(r"C:\Windows\System32\cmd.exe", &stand_in).unwrap();
-            vec!["/d", "/s", "/c", "ping -n 30 127.0.0.1 > nul"]
+            let said = saying.map_or_else(String::new, |words| format!("echo {words}& "));
+            ["/d", "/s", "/c"]
+                .map(str::to_owned)
+                .into_iter()
+                .chain([format!("{said}ping -n 30 127.0.0.1 > nul")])
+                .collect::<Vec<String>>()
         };
         (home, args.into_iter().map(OsString::from).collect())
     }
 
     #[test]
     fn a_run_is_stopped_at_the_limit_of_its_commands() {
-        let (home, args) = waiting();
+        let (home, args) = waiting(None);
         let commands = Commands {
             args,
             limit: Duration::from_secs(1),
@@ -756,7 +763,7 @@ mod tests {
 
     #[test]
     fn a_run_typed_into_is_stopped_at_the_limit_of_its_commands() {
-        let (home, args) = waiting();
+        let (home, args) = waiting(None);
         let commands = Commands {
             args,
             limit: Duration::from_secs(1),
@@ -770,6 +777,34 @@ mod tests {
             )
             .unwrap();
         assert_eq!(finished.code, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_run_typed_into_that_says_it_never_will_finish_is_stopped_well_inside_its_limit() {
+        let (home, args) = waiting(Some(conversation::NO_CERTIFICATES));
+        let commands = Commands {
+            args,
+            limit: Duration::from_mins(1),
+        };
+        let started = Instant::now();
+        let finished = commands
+            .typed(
+                home.path(),
+                Zeroizing::new("quit".to_owned()),
+                Zeroizing::default(),
+            )
+            .unwrap();
+        assert_eq!(finished.code, None);
+        assert!(
+            String::from_utf8_lossy(&finished.output).contains(conversation::NO_CERTIFICATES),
+            "{:?}",
+            String::from_utf8_lossy(&finished.output)
+        );
         assert!(
             started.elapsed() < Duration::from_secs(20),
             "took {:?}",
