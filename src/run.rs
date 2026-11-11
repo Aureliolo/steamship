@@ -16,7 +16,7 @@ use std::os::windows::process::CommandExt as _;
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::CREATE_NO_WINDOW;
@@ -166,6 +166,42 @@ pub fn end_as_told() {
     }
 }
 
+/// The longest one look at a running program lasts.
+const POLL: Duration = Duration::from_millis(50);
+
+/// Looks at a running program until a look sees it ended, and gives what that look gave. None once
+/// `limit` has passed or `seen` is set while it still runs.
+///
+/// A look is given how long it may take: `POLL`, or the time left to the limit if that is less.
+///
+/// # Errors
+///
+/// When a look fails.
+pub(crate) fn waited<Ended, Look>(
+    limit: Duration,
+    seen: &AtomicBool,
+    mut look: Look,
+) -> io::Result<Option<Ended>>
+where
+    Look: FnMut(Duration) -> io::Result<Option<Ended>>,
+{
+    // A limit the clock cannot add never passes.
+    let deadline = Instant::now().checked_add(limit);
+    loop {
+        let pause = deadline.map_or(POLL, |deadline| {
+            deadline.saturating_duration_since(Instant::now()).min(POLL)
+        });
+        if let Some(ended) = look(pause)? {
+            return Ok(Some(ended));
+        }
+        if seen.load(Ordering::Relaxed)
+            || deadline.is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Ok(None);
+        }
+    }
+}
+
 /// Reads `output` to its end, and sets `seen` once it has held one of `hopeless`.
 ///
 /// # Errors
@@ -197,7 +233,6 @@ mod tests {
     use std::fs;
     use std::sync::mpsc;
     use std::thread;
-    use std::time::Instant;
     #[cfg(windows)]
     use windows_sys::Win32::System::Threading::DETACHED_PROCESS;
 
@@ -421,6 +456,177 @@ mod tests {
                 "{sooner} of 40 runs took under {bound:?} at {limit:?}"
             );
         }
+    }
+
+    /// What `waited` gave over a look that answered by `answer`, given its number from 1 and the
+    /// pause it was told to take, and every pause the looks were told to take.
+    fn looked<Answer>(
+        limit: Duration,
+        seen: &AtomicBool,
+        mut answer: Answer,
+    ) -> (io::Result<Option<i32>>, Vec<Duration>)
+    where
+        Answer: FnMut(usize) -> io::Result<Option<i32>>,
+    {
+        let mut pauses = Vec::new();
+        let result = waited(limit, seen, |pause| {
+            pauses.push(pause);
+            answer(pauses.len())
+        });
+        (result, pauses)
+    }
+
+    #[test]
+    fn a_program_that_has_ended_was_not_stopped_whatever_it_said_or_its_limit() {
+        let seen = AtomicBool::new(true);
+        let (result, pauses) = looked(Duration::ZERO, &seen, |_| Ok(Some(3_i32)));
+        assert_eq!(result.unwrap(), Some(3_i32));
+        assert_eq!(pauses.len(), 1);
+    }
+
+    #[test]
+    fn a_program_past_its_limit_is_looked_at_once_and_not_waited_for() {
+        let seen = AtomicBool::new(false);
+        let (result, pauses) = looked(Duration::ZERO, &seen, |looks| {
+            if looks == 1 {
+                Ok(None)
+            } else {
+                Err(io::Error::other("looked again"))
+            }
+        });
+        assert_eq!(result.unwrap(), None);
+        assert_eq!(pauses, [Duration::ZERO]);
+    }
+
+    #[test]
+    fn a_program_that_says_it_never_will_finish_is_looked_at_no_more() {
+        let seen = AtomicBool::new(false);
+        let (result, pauses) = looked(Duration::MAX, &seen, |looks| {
+            if looks == 2 {
+                seen.store(true, Ordering::Relaxed);
+            }
+            if looks >= 4 {
+                Err(io::Error::other("looked again"))
+            } else {
+                Ok(None)
+            }
+        });
+        assert_eq!(result.unwrap(), None);
+        assert_eq!(pauses.len(), 2);
+    }
+
+    #[test]
+    fn a_limit_too_long_for_the_clock_never_passes() {
+        let seen = AtomicBool::new(false);
+        let (result, pauses) = looked(Duration::MAX, &seen, |looks| match looks {
+            1..=3 => Ok(None),
+            4 => Ok(Some(3_i32)),
+            _ => Err(io::Error::other("looked again")),
+        });
+        assert_eq!(result.unwrap(), Some(3_i32));
+        assert_eq!(pauses, [POLL; 4]);
+    }
+
+    #[test]
+    fn a_look_the_system_refuses_is_the_error_of_the_run() {
+        let seen = AtomicBool::new(false);
+        let (result, pauses) = looked(Duration::MAX, &seen, |looks| {
+            if looks == 1 {
+                Err(io::Error::other("refused"))
+            } else {
+                Ok(Some(3_i32))
+            }
+        });
+        assert_eq!(result.unwrap_err().to_string(), "refused");
+        assert_eq!(pauses.len(), 1);
+    }
+
+    #[test]
+    fn a_limit_between_whole_pauses_is_not_run_past() {
+        let limit = Duration::from_millis(120);
+        let seen = AtomicBool::new(false);
+        let mut pauses = Vec::new();
+        let result = waited::<i32, _>(limit, &seen, |pause| {
+            pauses.push(pause);
+            thread::sleep(pause);
+            Ok(None)
+        });
+        assert_eq!(result.unwrap(), None);
+        assert!(pauses.iter().all(|pause| *pause <= POLL), "{pauses:?}");
+        assert!(pauses.iter().sum::<Duration>() <= limit, "{pauses:?}");
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    enum Look {
+        Running,
+        Ended,
+        Refused,
+    }
+
+    #[test]
+    fn every_order_of_looks_words_and_limit_gives_what_the_rule_says() {
+        let steps = [Look::Running, Look::Ended, Look::Refused];
+        let mut cases = 0_usize;
+        let mut by_length: Vec<Vec<Vec<Look>>> = Vec::new();
+        let mut scripts: Vec<Vec<Look>> = vec![Vec::new()];
+        for _ in 0..4_u32 {
+            scripts = scripts
+                .iter()
+                .flat_map(|script| {
+                    steps.iter().map(|step| {
+                        let mut longer = script.clone();
+                        longer.push(*step);
+                        longer
+                    })
+                })
+                .collect();
+            by_length.push(scripts.clone());
+        }
+        for same_length in &by_length {
+            for script in same_length {
+                for words in (0..=script.len()).map(|at| (at < script.len()).then_some(at)) {
+                    for limit in [Duration::ZERO, Duration::MAX] {
+                        cases += 1;
+                        let seen = AtomicBool::new(false);
+                        let (result, pauses) = looked(limit, &seen, |looks| {
+                            let at = looks - 1;
+                            if words == Some(at) {
+                                seen.store(true, Ordering::Relaxed);
+                            }
+                            match script.get(at) {
+                                Some(Look::Running) => Ok(None),
+                                Some(Look::Ended) => Ok(Some(7_i32)),
+                                Some(Look::Refused) => Err(io::Error::other("refused")),
+                                None => Err(io::Error::other("past the script")),
+                            }
+                        });
+                        let mut expected = Err("past the script".to_owned());
+                        let mut looks = script.len() + 1;
+                        for (at, step) in script.iter().enumerate() {
+                            let stopped = limit.is_zero() || words.is_some_and(|set| set <= at);
+                            match step {
+                                Look::Running if !stopped => continue,
+                                Look::Running => expected = Ok(None),
+                                Look::Ended => expected = Ok(Some(7_i32)),
+                                Look::Refused => expected = Err("refused".to_owned()),
+                            }
+                            looks = at + 1;
+                            break;
+                        }
+                        let given = result.map_err(|error| error.to_string());
+                        assert_eq!(given, expected, "{script:?} {words:?} {limit:?}");
+                        assert_eq!(pauses.len(), looks, "{script:?} {words:?} {limit:?}");
+                        let pause = if limit.is_zero() {
+                            Duration::ZERO
+                        } else {
+                            POLL
+                        };
+                        assert!(pauses.iter().all(|each| *each == pause), "{pauses:?}");
+                    }
+                }
+            }
+        }
+        assert_eq!(cases, 1092);
     }
 
     /// A line that reads its input to the end and exits 0 only when that input was empty.

@@ -16,18 +16,15 @@ use std::os::unix::fs::{
 use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::panic;
 use std::path::Path;
-use std::process::{ExitStatus, Stdio};
+use std::process::{Child, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Once};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 use std::{ptr, slice, str};
 
 use crate::run::{self, Finished};
 use crate::{elf, macho, magic};
-
-/// How often a running program is looked at to see whether it has ended.
-const POLL: Duration = Duration::from_millis(50);
 
 /// The process group of the program steamship is running, or 0 while none is. A program in a
 /// group of its own is out of reach of the terminal's Ctrl+C, so a signal that ends steamship
@@ -160,22 +157,7 @@ pub fn run(
     let seen = Arc::new(AtomicBool::new(false));
     let watching = Arc::clone(&seen);
     let reading = thread::spawn(move || run::watch(reader, hopeless, &watching));
-    let deadline = Instant::now().checked_add(limit);
-    let status = loop {
-        // The pause comes first and is cut short at the limit, so that a look is never later than
-        // the limit by a whole pause.
-        thread::sleep(deadline.map_or(POLL, |deadline| {
-            deadline.saturating_duration_since(Instant::now()).min(POLL)
-        }));
-        if let Some(status) = child.try_wait()? {
-            break Some(status);
-        }
-        if seen.load(Ordering::Relaxed)
-            || deadline.is_some_and(|deadline| Instant::now() >= deadline)
-        {
-            break None;
-        }
-    };
+    let status = run::waited(limit, &seen, |pause| ended_within(&mut child, pause))?;
     // Whatever the program left running goes too, which is also what lets the reading end: a
     // straggler would hold the output open.
     stop_group(group);
@@ -187,6 +169,13 @@ pub fn run(
         .unwrap_or_else(|panic| panic::resume_unwind(panic))?;
     let code = status.filter(|_| told().is_none()).and_then(exit_code);
     Ok(Finished { code, output })
+}
+
+/// How `child` ended, asked once after `pause`. The standard library has no wait on a child that
+/// takes a limit.
+fn ended_within(child: &mut Child, pause: Duration) -> io::Result<Option<ExitStatus>> {
+    thread::sleep(pause);
+    child.try_wait()
 }
 
 /// A program ended by a signal has no exit code. The shell's convention stands in for one.
@@ -587,8 +576,49 @@ pub fn changed(path: &Path) -> io::Result<SystemTime> {
 #[cfg(test)]
 mod tests {
     use std::mem;
+    use std::time::Instant;
 
     use super::*;
+
+    fn child_of(line: &str) -> Child {
+        run::spawn(
+            run::command("/bin/sh")
+                .args(["-c", line])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_look_at_a_running_program_takes_its_whole_pause() {
+        let mut child = child_of("exec sleep 60");
+        let started = Instant::now();
+        for _ in 0..10_u32 {
+            assert!(
+                ended_within(&mut child, Duration::from_millis(50))
+                    .unwrap()
+                    .is_none()
+            );
+        }
+        let took = started.elapsed();
+        child.kill().unwrap();
+        let status = (0..200_u32)
+            .find_map(|_| ended_within(&mut child, Duration::from_millis(50)).unwrap())
+            .unwrap();
+        assert!(
+            took >= Duration::from_millis(300),
+            "10 looks of 50 ms took {took:?}"
+        );
+        assert_eq!(exit_code(status), Some(137_i32));
+    }
+
+    #[test]
+    fn a_look_sees_an_end_that_comes_during_its_pause() {
+        let mut child = child_of("sleep 1");
+        let status = ended_within(&mut child, Duration::from_secs(4)).unwrap();
+        assert_eq!(status.and_then(exit_code), Some(0_i32));
+    }
 
     #[test]
     fn a_restricted_folder_is_its_users_alone() {
