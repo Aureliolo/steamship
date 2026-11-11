@@ -1874,7 +1874,7 @@ fn ticked_on_steam(
         }
         Err(why) => {
             spinner.failed("none shown");
-            Err(fail(&why, FAILED))
+            Err(fail(&why.and_again(), FAILED))
         }
     }
 }
@@ -2181,7 +2181,9 @@ fn default_key(
     Ok(match shown? {
         Ok(()) => (Some(web_api(home)?), false),
         Err(why) => {
-            show::note(&format!("{why}. The build goes up without it"));
+            show::note(&format!(
+                "{why}. The build goes up without being set live on default"
+            ));
             (None, false)
         }
     })
@@ -2202,24 +2204,35 @@ fn shown_unreleased<Key>(
     let Some(key) = default else {
         return (None, spinner);
     };
-    if !matches!(
-        outcome,
-        upload::Outcome::Built { .. } | upload::Outcome::BuiltThenFailed { .. }
-    ) {
+    let (upload::Outcome::Built { build_id } | upload::Outcome::BuiltThenFailed { build_id, .. }) =
+        outcome
+    else {
         return (None, spinner);
-    }
-    let shown = settings::info_from_console(info, app).ok();
-    let (judged, said) = release_judged(
-        shown.as_ref().and_then(release::state),
-        app,
-        DEFAULT_RELEASED,
-    );
+    };
+    let (judged, said) = match release::info_from_console(info, app) {
+        Ok(shown) => {
+            let (judged, said) = release_judged(release::state(&shown), app, DEFAULT_RELEASED);
+            (
+                judged.map_err(|why| {
+                    format!("{why}. The build goes up without being set live on default")
+                }),
+                said,
+            )
+        }
+        Err(why) => (
+            Err(format!(
+                "{why}. The build goes up without being set live on default. While the app is \
+                 unreleased, steamship promote {app} --build {build_id} --branch default does that"
+            )),
+            "not shown".to_owned(),
+        ),
+    };
     let spinner = spinner.around(
         || match &judged {
             Ok(()) => show::done("steam", &said),
             Err(why) => {
                 show::failed("steam", &said);
-                show::note(&format!("{why}. The build goes up without it"));
+                show::note(why);
             }
         },
         doing,
@@ -2364,7 +2377,7 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
     // The info is read apart, as text anyone can write into an app's settings could pass for a
     // line of the build.
     let info = info_of.map(|app| {
-        settings::info_at(&console, app)
+        release::info_at(&console, app)
             .map(|at| console.drain(at).collect::<String>())
             .unwrap_or_default()
     });
@@ -5493,11 +5506,11 @@ fn release_shown(
         packed,
         "asking whether the app is released",
     )?;
-    match settings::info_from_console(&console, app) {
+    match release::info_from_console(&console, app) {
         Ok(info) => Ok((release::state(&info).map(str::to_owned), spinner)),
         Err(why) => {
             spinner.failed("not shown");
-            Err(fail(&why, FAILED))
+            Err(fail(&why.and_again(), FAILED))
         }
     }
 }
@@ -5586,7 +5599,7 @@ fn asked_settings(
         }
         Err(why) => {
             spinner.failed("none shown");
-            Err(fail(&why, FAILED))
+            Err(fail(&why.and_again(), FAILED))
         }
     }
 }
