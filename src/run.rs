@@ -436,43 +436,24 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_program_is_stopped_at_its_limit_and_not_a_look_later() {
-        let runs = |limit: Duration| -> Vec<Duration> {
-            let mut took: Vec<Duration> = (0_i32..40_i32)
-                .map(|_| {
+        // A look a whole pause late takes 50 ms or more in every run, so that over half of the
+        // runs end sooner shows the pause is cut short at the limit. A limit past one pause is
+        // left to `a_limit_between_whole_pauses_is_not_run_past`, since a loaded macOS runner
+        // oversleeps a 50 ms pause by as much as a look a pause late would add.
+        for limit in [Duration::ZERO, Duration::from_millis(1)] {
+            let sooner = (0_i32..40_i32)
+                .filter(|_| {
                     let started = Instant::now();
                     let finished = shell("sleep 2", limit);
                     assert_eq!(finished.code, None);
-                    started.elapsed()
+                    started.elapsed() < Duration::from_millis(50)
                 })
-                .collect();
-            took.sort_unstable();
-            took
-        };
-        let under = |took: &[Duration], bound: Duration| -> usize {
-            took.iter().filter(|each| **each < bound).count()
-        };
-        // A look a whole pause late takes 50 ms or more in every run, so that over half of the
-        // runs end sooner shows the pause is cut short at the limit.
-        for limit in [Duration::ZERO, Duration::from_millis(1)] {
-            let sooner = under(&runs(limit), Duration::from_millis(50));
+                .count();
             assert!(
                 sooner > 20,
                 "{sooner} of 40 runs took under 50ms at {limit:?}"
             );
         }
-        // Starting and stopping a program costs a macOS runner some 50 ms of its own, so a limit
-        // past one pause is judged against the same runner's runs at 1 ms. Cut short, it adds 50
-        // ms to them. A whole pause late, it adds 99 ms.
-        let cost = runs(Duration::from_millis(1))
-            .get(20)
-            .copied()
-            .unwrap_or_default();
-        let bound = cost.saturating_add(Duration::from_millis(75));
-        let sooner = under(&runs(Duration::from_millis(51)), bound);
-        assert!(
-            sooner > 20,
-            "{sooner} of 40 runs took under {bound:?} at 51ms"
-        );
     }
 
     /// What `waited` gave over a look that answered by `answer`, given its number from 1 and the
