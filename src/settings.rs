@@ -10,7 +10,6 @@ use std::fmt;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
-use crate::redist::REDISTRIBUTABLES;
 use crate::vdf::{self, Block, Pair, Value};
 
 /// The snapshot's name, beside the build scripts.
@@ -528,6 +527,9 @@ pub fn launch_options(settings: &Block) -> Vec<Launch> {
         })
         .collect()
 }
+
+/// The app Steamworks' Common Redistributables are depots of.
+pub const REDISTRIBUTABLES: &str = "228980";
 
 /// Whether a player on `system`, or on any when none, installs content from a depot other than
 /// `uploaded`, as `settings` show the depots.
