@@ -3,6 +3,11 @@
 //! Kept in the library rather than beside `main` so that the documentation site is built from
 //! these same definitions, and what it says cannot drift from what `--help` prints.
 
+#![expect(
+    unused_results,
+    reason = "clap's derive checks that the optional group in `Workshop` has an ID, then drops it"
+)]
+
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
@@ -803,10 +808,22 @@ pub struct Rollback {
 #[derive(Debug, Args)]
 pub struct Workshop {
     /// The item script, such as `workshop/item.vdf`.
-    #[arg(conflicts_with_all = ["app", "name", "visibility"])]
+    #[arg(conflicts_with_all = [
+        "app", "items", "content", "preview", "title", "description", "change_note", "name",
+        "visibility",
+    ])]
     pub script: Option<PathBuf>,
     #[command(flatten)]
-    pub item: WorkshopItem,
+    pub item: Option<WorkshopItem>,
+    /// The item's name in the `--items` file, such as `example`. In a game's folder, the one
+    /// example mod to upload.
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Who may see the item: `public`, `friends-only`, `private` or `unlisted`. Needed to make a
+    /// new item, since steamship never chooses. Left out, an existing item keeps its visibility.
+    /// In a game's folder, it applies only to the items being made.
+    #[arg(long, value_parser = workshop::visibility)]
+    pub visibility: Option<workshop::Visibility>,
     /// The build account, if not the one the last login remembered.
     #[arg(long, env = ACCOUNT)]
     pub account: Option<String>,
@@ -823,43 +840,42 @@ pub struct Workshop {
     pub json: bool,
 }
 
-/// A Workshop item given by its fields, from which steamship writes its `workshopitem` script.
+/// The fields `--app` gives a Workshop item by, from which steamship writes its `workshopitem`
+/// script.
+///
+/// One clap group, so a command line holds none of them or `--app`, `--items`, `--content` and
+/// `--title` at the least. `--app` asks for `--name` too.
 #[derive(Debug, Args)]
 pub struct WorkshopItem {
     /// The app the item is for, by its ID or its app build script.
-    #[arg(long, requires_all = ["items", "name", "content", "title"])]
-    pub app: Option<String>,
+    #[arg(long, required = false, requires_all = ["items", "name", "content", "title"])]
+    pub app: String,
     /// The file that keeps the ID of each item made, by the item's name, such as
     /// `steam/workshop_items.json`. Kept with the game, it lets a run on any machine update the
     /// item an earlier run made. steamship writes it, and makes it if missing.
-    #[arg(long, value_name = "FILE", requires = "app")]
-    pub items: Option<PathBuf>,
-    /// The item's name in the `--items` file, such as `example`. In a game's folder, the one
-    /// example mod to upload.
-    #[arg(long)]
-    pub name: Option<String>,
+    #[arg(long, value_name = "FILE", required = false, requires = "app")]
+    pub items: PathBuf,
     /// The folder uploaded as the item's content.
-    #[arg(long, value_name = "FOLDER", requires = "app")]
-    pub content: Option<PathBuf>,
+    #[arg(long, value_name = "FOLDER", required = false, requires = "app")]
+    pub content: PathBuf,
     /// The item's preview image, 1 MB at most.
     #[arg(long, value_name = "IMAGE", requires = "app")]
     pub preview: Option<PathBuf>,
     /// The item's title, 128 bytes at most.
-    #[arg(long, requires = "app")]
-    pub title: Option<String>,
+    #[arg(long, required = false, requires = "app")]
+    pub title: String,
     /// The item's description, 8000 bytes at most.
     #[arg(long, value_name = "TEXT", requires = "app")]
     pub description: Option<String>,
     /// What changed in this upload, 8000 bytes at most, shown in the item's change notes.
     #[arg(long, value_name = "TEXT", requires = "app")]
     pub change_note: Option<String>,
-    /// Who may see the item: `public`, `friends-only`, `private` or `unlisted`. Needed to make a
-    /// new item, since steamship never chooses. Left out, an existing item keeps its visibility.
-    /// In a game's folder, it applies only to the items being made.
-    #[arg(long, value_parser = workshop::visibility)]
-    pub visibility: Option<workshop::Visibility>,
 }
 
+#[warn(
+    unused_results,
+    reason = "the file expects them of clap's derive, which writes none here"
+)]
 #[cfg(test)]
 mod tests {
     use std::collections::{BTreeMap, BTreeSet};

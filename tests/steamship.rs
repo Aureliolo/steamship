@@ -3486,6 +3486,13 @@ fn a_new_workshop_item_is_uploaded_and_its_id_given_to_add_to_the_script() {
     );
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
     assert!(
+        stdout.starts_with(&format!(
+            "steamship workshop\n  script    {}\n",
+            script.display()
+        )),
+        "{stdout}"
+    );
+    assert!(
         stdout.contains("  item      \u{2713} app 480, a new item, 1 file, checked\n"),
         "{stdout}"
     );
@@ -3869,21 +3876,79 @@ fn an_item_given_by_its_fields_is_refused_before_steam_when_it_cannot_be_kept_or
         failure(&unreadable_stderr).starts_with(&format!("{}: ", temp.path().display())),
         "{unreadable_stderr}"
     );
+}
 
-    for (args, why) in [
-        (
-            vec!["workshop", script.to_str().unwrap(), "--app", "480"],
-            "cannot be used with",
+#[test]
+fn workshop_names_each_flag_a_script_cannot_go_with_and_each_one_an_items_fields_lack() {
+    let home = tempfile::tempdir().unwrap();
+    let said = |args: &[&str]| {
+        let (code, stdout, stderr) = steamship(
+            &[["workshop"].as_slice(), args].concat(),
+            Some(home.path()),
+            &[],
+        );
+        assert_eq!(
+            (code, stdout.as_str()),
+            (Some(2_i32), ""),
+            "{args:?}: {stderr}"
+        );
+        stderr
+    };
+    let fields = [
+        ["--app", "480"],
+        ["--items", "items.json"],
+        ["--content", "hat"],
+        ["--preview", "hat.png"],
+        ["--title", "A green hat"],
+        ["--description", "Green."],
+        ["--change-note", "1.0.0"],
+    ];
+    let also = [["--name", "example"], ["--visibility", "private"]];
+
+    let every = said(&[["item.vdf"].as_slice(), &fields.concat(), &also.concat()].concat());
+    assert!(
+        every.starts_with(
+            "error: the argument '[SCRIPT]' cannot be used with:\n  --app <APP>\n  --items \
+             <FILE>\n  --content <FOLDER>\n  --preview <IMAGE>\n  --title <TITLE>\n  \
+             --description <TEXT>\n  --change-note <TEXT>\n  --name <NAME>\n  --visibility \
+             <VISIBILITY>\n\n"
         ),
-        (
-            vec!["workshop", "--app", "480", "--name", "example"],
-            "the following required arguments were not provided",
-        ),
-        (vec!["workshop"], "there is no game in "),
-    ] {
-        let (code, _, stderr) = steamship(&args, Some(home.path()), &[]);
-        assert_eq!(code, Some(2_i32), "{args:?}: {stderr}");
-        assert!(stderr.contains(why), "{args:?}: {stderr}");
+        "{every}"
+    );
+    let one = said(&["item.vdf", "--app", "480"]);
+    assert!(
+        one.starts_with("error: the argument '[SCRIPT]' cannot be used with '--app <APP>'\n\n"),
+        "{one}"
+    );
+
+    let lacking = "error: the following required arguments were not provided:\n";
+    let few = said(&["--app", "480", "--name", "example"]);
+    assert!(
+        few.starts_with(&format!(
+            "{lacking}  --items <FILE>\n  --content <FOLDER>\n  --title <TITLE>\n\n"
+        )),
+        "{few}"
+    );
+    let unnamed = said(&[
+        "--app",
+        "480",
+        "--items",
+        "items.json",
+        "--content",
+        "hat",
+        "--title",
+        "A green hat",
+    ]);
+    assert!(
+        unnamed.starts_with(&format!("{lacking}  --name <NAME>\n\n")),
+        "{unnamed}"
+    );
+    for field in &fields[1..] {
+        let alone = said(field);
+        assert!(
+            alone.starts_with(lacking) && alone.contains("\n  --app <APP>\n\n"),
+            "{field:?}: {alone}"
+        );
     }
 }
 

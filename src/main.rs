@@ -172,13 +172,7 @@ fn run(command: Command) -> ExitCode {
             branch,
             description,
         } => either(try_branch(&app, &branch, &description)),
-        Command::Workshop(request) => {
-            either(if request.script.is_none() && request.item.app.is_none() {
-                try_game_workshop(&request)
-            } else {
-                try_workshop(&request)
-            })
-        }
+        Command::Workshop(request) => either(workshop_in(&request)),
         Command::Login {
             web_api_key: true, ..
         } => either(try_key_login()),
@@ -1037,17 +1031,34 @@ fn rich_presence_in(
     try_rich_presence(&app_given_or(app, game.as_ref()), &files, preview)
 }
 
+/// `workshop` of the script given, or of the item its fields give, or of the game's example mods
+/// when there is neither.
+fn workshop_in(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
+    match (&request.script, &request.item) {
+        (Some(script), _) => try_workshop(request, || {
+            show::field("script", &script.display().to_string());
+            Ok(Given::Script(script))
+        }),
+        // clap takes `--app` only with `--name`. No name reads as the empty one, which is refused.
+        (None, Some(item)) => try_workshop(request, || {
+            let name = request.name.as_deref().unwrap_or_default();
+            given_fields(item, name, request.visibility)
+        }),
+        (None, None) => try_game_workshop(request),
+    }
+}
+
 /// `workshop` in a game: each example mod, or the one `--name` names, from a pushed tree.
 fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     let game = game()?;
     let mods = game.mods().map_err(|why| fail(&why, REFUSED))?;
-    let chosen: Vec<project::Mod> = match &request.item.name {
+    let chosen: Vec<project::Mod> = match &request.name {
         Some(name) => mods.into_iter().filter(|each| each.name == *name).collect(),
         None => mods,
     };
     if chosen.is_empty() {
         return Err(fail(
-            &request.item.name.as_ref().map_or_else(
+            &request.name.as_ref().map_or_else(
                 || {
                     format!(
                         "the game has no example mod: no folder in {} holds a manifest.json",
@@ -1074,28 +1085,20 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
         // Visibility is chosen once, for an item being made: a published item keeps whatever it
         // was given on Steam since.
         let visibility = request
-            .item
             .visibility
             .filter(|_| !made.contains_key(&each.name));
-        let item = cli::Workshop {
-            script: None,
-            item: cli::WorkshopItem {
-                app: Some(app.clone()),
-                items: Some(game.items.clone()),
-                name: Some(each.name),
-                content: Some(each.folder),
-                preview: Some(each.preview),
-                title: Some(each.title),
-                description: Some(each.description),
-                change_note: Some(format!("Version {}", each.version)),
-                visibility,
-            },
-            account: request.account.clone(),
-            new: request.new,
-            for_launch: request.for_launch,
-            json: request.json,
+        let item = cli::WorkshopItem {
+            app: app.clone(),
+            items: game.items.clone(),
+            content: each.folder,
+            preview: Some(each.preview),
+            title: each.title,
+            description: Some(each.description),
+            change_note: Some(format!("Version {}", each.version)),
         };
-        let uploaded = either(try_workshop(&item));
+        let uploaded = either(try_workshop(request, || {
+            given_fields(&item, &each.name, visibility)
+        }));
         if uploaded != ExitCode::SUCCESS {
             return Ok(uploaded);
         }
@@ -6014,18 +6017,17 @@ enum Given<'command> {
     Fields(Box<workshop::Fields>, Kept<'command>),
 }
 
-fn try_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
+/// `workshop` for one item, the one `given` reads once the title is shown. `request` gives the
+/// account and whether the item may be new, goes up before launch and is summed up as JSON.
+fn try_workshop<'command>(
+    request: &cli::Workshop,
+    given: impl FnOnce() -> Result<Given<'command>, ExitCode>,
+) -> Result<ExitCode, ExitCode> {
     if request.json {
         show::divert();
     }
     show::title("workshop");
-    let given = match request.script.as_deref() {
-        Some(script) => {
-            show::field("script", &script.display().to_string());
-            Given::Script(script)
-        }
-        None => given_fields(&request.item)?,
-    };
+    let given = given()?;
     let packed = packed_login()?;
     let named = named(request.account.as_deref());
     let account = match (&packed, named) {
@@ -6154,21 +6156,16 @@ fn item_published(given: &Given<'_>, item: &workshop::Item, published: u64, log:
     ExitCode::SUCCESS
 }
 
-/// The item `item` gives by its fields, with the `--items` file it is kept in, as read.
-fn given_fields(item: &cli::WorkshopItem) -> Result<Given<'_>, ExitCode> {
+/// The item `item` gives by its fields, kept as `name` and seen as `visibility` says, with the
+/// `--items` file it is kept in, as read.
+fn given_fields<'command>(
+    item: &'command cli::WorkshopItem,
+    name: &'command str,
+    visibility: Option<workshop::Visibility>,
+) -> Result<Given<'command>, ExitCode> {
     let refused = |why: &dyn Display| fail(why, REFUSED);
-    let (Some(app), Some(path), Some(name), Some(content), Some(title)) = (
-        item.app.as_deref(),
-        item.items.as_deref(),
-        item.name.as_deref(),
-        item.content.as_deref(),
-        item.title.as_deref(),
-    ) else {
-        return Err(refused(
-            &"give the item's script, or --app, --items, --name, --content and --title",
-        ));
-    };
-    let app_id = app_named(app)?;
+    let path = item.items.as_path();
+    let app_id = app_named(&item.app)?;
     workshop::named(name).map_err(|why| refused(&why))?;
     show::field("items", &path.display().to_string());
     let record = match fs::read_to_string(path) {
@@ -6190,12 +6187,12 @@ fn given_fields(item: &cli::WorkshopItem) -> Result<Given<'_>, ExitCode> {
     let fields = workshop::Fields {
         app_id,
         published: record.items.get(name).copied(),
-        content: content.to_path_buf(),
+        content: item.content.clone(),
         preview: item.preview.clone(),
-        title: title.to_owned(),
+        title: item.title.clone(),
         description: item.description.clone(),
         change_note: item.change_note.clone(),
-        visibility: item.visibility,
+        visibility,
     };
     Ok(Given::Fields(Box::new(fields), Kept { path, name, record }))
 }
