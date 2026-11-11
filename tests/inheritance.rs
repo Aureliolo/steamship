@@ -43,6 +43,7 @@ fn a_program_inherits_only_the_handles_it_is_given() {
             &directory,
             Duration::from_secs(60),
             &[],
+            None,
         )
     });
     while !marker.exists() {

@@ -10,6 +10,7 @@
 //! [`output`].
 
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::io::{self, BufReader, Read, Write as _};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt as _;
@@ -90,10 +91,44 @@ pub struct Finished {
     pub output: Vec<u8>,
 }
 
+/// A file a program adds to once it has started, and the longest it may take to.
+#[derive(Debug, Clone, Copy)]
+pub struct Startup<'file> {
+    limit: Duration,
+    shown_in: &'file Path,
+    from: u64,
+}
+
+impl<'file> Startup<'file> {
+    /// Takes the length of `shown_in` as it is now. Call it before the run: the program has
+    /// started once the file's length differs.
+    #[must_use]
+    pub fn new(limit: Duration, shown_in: &'file Path) -> Self {
+        Self {
+            limit,
+            shown_in,
+            from: length(shown_in),
+        }
+    }
+
+    /// Whether the program has started.
+    #[must_use]
+    pub fn begun(&self) -> bool {
+        length(self.shown_in) != self.from
+    }
+}
+
+/// How long `file` is now, 0 when there is none. Asked of the file itself, since a folder's
+/// listing may hold the length an open file had when it was last closed.
+fn length(file: &Path) -> u64 {
+    fs::metadata(file).map_or(0, |found| found.len())
+}
+
 /// Runs `program` with `args` and `environment` added to steamship's, in `directory`.
 ///
 /// It is waited for at most `limit`, or until it writes one of `hopeless`: words after which it
-/// never succeeds, only waits. Stopped either way, it has no exit code.
+/// never succeeds, only waits. With a `startup`, it is stopped as well when it has not started
+/// within that limit. Stopped in any of these ways, it has no exit code.
 ///
 /// # Errors
 ///
@@ -105,8 +140,17 @@ pub fn run(
     directory: &Path,
     limit: Duration,
     hopeless: &'static [&'static str],
+    startup: Option<Startup<'_>>,
 ) -> io::Result<Finished> {
-    native::run(program, args, environment, directory, limit, hopeless)
+    native::run(
+        program,
+        args,
+        environment,
+        directory,
+        limit,
+        hopeless,
+        startup,
+    )
 }
 
 /// What told steamship to stop while [`run`] ran a program, which was stopped then: on Unix, the
@@ -170,9 +214,11 @@ pub fn end_as_told() {
 const POLL: Duration = Duration::from_millis(50);
 
 /// Looks at a running program until a look sees it ended, and gives what that look gave. None once
-/// `limit` has passed or `seen` is set while it still runs.
+/// `limit` has passed or `seen` is set while it still runs, or once it has not started within
+/// `startup`'s limit.
 ///
-/// A look is given how long it may take: `POLL`, or the time left to the limit if that is less.
+/// A look is given how long it may take: `POLL`, or the time left to the nearest of those limits
+/// if that is less.
 ///
 /// # Errors
 ///
@@ -180,16 +226,23 @@ const POLL: Duration = Duration::from_millis(50);
 pub(crate) fn waited<Ended, Look>(
     limit: Duration,
     seen: &AtomicBool,
+    startup: Option<Startup<'_>>,
     mut look: Look,
 ) -> io::Result<Option<Ended>>
 where
     Look: FnMut(Duration) -> io::Result<Option<Ended>>,
 {
     // A limit the clock cannot add never passes.
-    let deadline = Instant::now().checked_add(limit);
+    let began = Instant::now();
+    let deadline = began.checked_add(limit);
+    let mut starting = startup.map(|awaited| (awaited, began.checked_add(awaited.limit)));
     loop {
-        let pause = deadline.map_or(POLL, |deadline| {
-            deadline.saturating_duration_since(Instant::now()).min(POLL)
+        let start_by = starting.and_then(|(_, by)| by);
+        let nearest = deadline.map_or(start_by, |deadline| {
+            Some(start_by.map_or(deadline, |by| by.min(deadline)))
+        });
+        let pause = nearest.map_or(POLL, |nearest| {
+            nearest.saturating_duration_since(Instant::now()).min(POLL)
         });
         if let Some(ended) = look(pause)? {
             return Ok(Some(ended));
@@ -197,6 +250,12 @@ where
         if seen.load(Ordering::Relaxed)
             || deadline.is_some_and(|deadline| Instant::now() >= deadline)
         {
+            return Ok(None);
+        }
+        if starting.is_some_and(|(awaited, _)| awaited.begun()) {
+            starting = None;
+        }
+        if starting.is_some_and(|(_, by)| by.is_some_and(|by| Instant::now() >= by)) {
             return Ok(None);
         }
     }
@@ -230,7 +289,7 @@ where
 mod tests {
     use super::*;
     use std::env;
-    use std::fs;
+    use std::path::PathBuf;
     use std::sync::mpsc;
     use std::thread;
     #[cfg(windows)]
@@ -295,6 +354,7 @@ mod tests {
             &env::temp_dir(),
             limit,
             &[],
+            None,
         )
         .unwrap()
     }
@@ -317,6 +377,7 @@ mod tests {
             // never hears it fails here soon.
             Duration::from_secs(15),
             &["no way through"],
+            None,
         )
         .unwrap();
         assert_eq!(finished.code, None);
@@ -467,7 +528,7 @@ mod tests {
         Answer: FnMut(usize) -> io::Result<Option<i32>>,
     {
         let mut pauses = Vec::new();
-        let result = waited(limit, seen, |pause| {
+        let result = waited(limit, seen, None, |pause| {
             pauses.push(pause);
             answer(pauses.len())
         });
@@ -546,7 +607,7 @@ mod tests {
         let mut pauses = Vec::new();
         // Three looks reach the limit. A tenth fails the run, so that a wait which never stops
         // fails here rather than outlasting the test's own time limit.
-        let result = waited::<i32, _>(limit, &seen, |pause| {
+        let result = waited::<i32, _>(limit, &seen, None, |pause| {
             pauses.push(pause);
             if pauses.len() >= 10 {
                 return Err(io::Error::other("looked past the limit"));
@@ -557,6 +618,171 @@ mod tests {
         assert_eq!(result.unwrap(), None);
         assert!(pauses.iter().all(|pause| *pause <= POLL), "{pauses:?}");
         assert!(pauses.iter().sum::<Duration>() <= limit, "{pauses:?}");
+    }
+
+    /// A folder with the file `started` in it, which holds a line of an earlier run.
+    fn start_file() -> (tempfile::TempDir, PathBuf) {
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("started");
+        fs::write(&file, "an earlier run\n").unwrap();
+        (folder, file)
+    }
+
+    #[test]
+    fn a_program_that_has_not_started_is_stopped_at_the_start_up_limit_whatever_its_own() {
+        let (_folder, file) = start_file();
+        for limit in [Duration::from_hours(6), Duration::MAX] {
+            let seen = AtomicBool::new(false);
+            let startup = Startup::new(Duration::ZERO, &file);
+            let mut pauses = Vec::new();
+            let result = waited::<i32, _>(limit, &seen, Some(startup), |pause| {
+                pauses.push(pause);
+                if pauses.len() == 1 {
+                    Ok(None)
+                } else {
+                    Err(io::Error::other("looked again"))
+                }
+            });
+            assert_eq!(result.unwrap(), None, "{limit:?}");
+            assert_eq!(pauses, [Duration::ZERO], "{limit:?}");
+        }
+    }
+
+    #[test]
+    fn a_program_that_has_started_is_held_to_its_own_limit_alone() {
+        let (_folder, file) = start_file();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::ZERO, &file);
+        fs::write(&file, "an earlier run\nthis run\n").unwrap();
+        let mut pauses = Vec::new();
+        let result = waited(Duration::MAX, &seen, Some(startup), |pause| {
+            pauses.push(pause);
+            match pauses.len() {
+                1..=3 => Ok(None),
+                4 => Ok(Some(3_i32)),
+                _ => Err(io::Error::other("looked again")),
+            }
+        });
+        assert_eq!(result.unwrap(), Some(3_i32));
+        assert_eq!(pauses, [Duration::ZERO, POLL, POLL, POLL]);
+    }
+
+    #[test]
+    fn a_file_started_afresh_and_shorter_shows_the_start() {
+        let (_folder, file) = start_file();
+        let startup = Startup::new(Duration::ZERO, &file);
+        assert!(!startup.begun());
+        fs::write(&file, "new\n").unwrap();
+        assert!(startup.begun());
+        let missing = file.with_file_name("missing");
+        let of_none = Startup::new(Duration::ZERO, &missing);
+        assert!(!of_none.begun());
+        fs::write(&missing, "new\n").unwrap();
+        assert!(of_none.begun());
+    }
+
+    #[test]
+    fn a_start_up_limit_too_long_for_the_clock_never_passes() {
+        let (_folder, file) = start_file();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::MAX, &file);
+        let mut pauses = Vec::new();
+        let result = waited(Duration::MAX, &seen, Some(startup), |pause| {
+            pauses.push(pause);
+            match pauses.len() {
+                1..=3 => Ok(None),
+                4 => Ok(Some(3_i32)),
+                _ => Err(io::Error::other("looked again")),
+            }
+        });
+        assert_eq!(result.unwrap(), Some(3_i32));
+        assert_eq!(pauses, [POLL; 4]);
+    }
+
+    #[test]
+    fn a_limit_nearer_than_the_start_up_limit_is_not_run_past() {
+        let (_folder, file) = start_file();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::from_hours(1), &file);
+        let mut pauses = Vec::new();
+        let result = waited::<i32, _>(Duration::ZERO, &seen, Some(startup), |pause| {
+            pauses.push(pause);
+            if pauses.len() == 1 {
+                Ok(None)
+            } else {
+                Err(io::Error::other("looked again"))
+            }
+        });
+        assert_eq!(result.unwrap(), None);
+        assert_eq!(pauses, [Duration::ZERO]);
+    }
+
+    #[test]
+    fn a_program_that_starts_during_the_last_look_before_the_start_up_limit_runs_on() {
+        let (_folder, file) = start_file();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::ZERO, &file);
+        let mut looks = 0_u32;
+        let result = waited(Duration::MAX, &seen, Some(startup), |_| {
+            looks += 1;
+            match looks {
+                1 => fs::write(&file, "this run\n").map(|()| None),
+                2 => Ok(Some(3_i32)),
+                _ => Err(io::Error::other("looked again")),
+            }
+        });
+        assert_eq!(result.unwrap(), Some(3_i32));
+    }
+
+    /// The line that adds to the file `started` in the folder it runs in, then `rest`.
+    fn starting(rest: &str) -> String {
+        if cfg!(windows) {
+            format!("echo this run>> started& {rest}")
+        } else {
+            format!("echo this run >> started; {rest}")
+        }
+    }
+
+    /// What a run of `line` gave in a folder of its own, held to two seconds to add to the file
+    /// `started` there and to half a minute in all, and how long it took.
+    fn started_shell(line: &str) -> (Finished, Duration) {
+        let (folder, file) = start_file();
+        let began = Instant::now();
+        let finished = run(
+            Path::new(SHELL.0),
+            &shell_args(line),
+            &[],
+            folder.path(),
+            Duration::from_secs(30),
+            &[],
+            Some(Startup::new(Duration::from_secs(2), &file)),
+        )
+        .unwrap();
+        (finished, began.elapsed())
+    }
+
+    #[test]
+    fn a_program_that_does_not_start_in_time_is_stopped() {
+        let wait = if cfg!(windows) {
+            "ping -n 60 127.0.0.1 > nul"
+        } else {
+            "sleep 60"
+        };
+        let (finished, took) = started_shell(wait);
+        assert_eq!(finished.code, None);
+        assert!(took < Duration::from_secs(20), "took {took:?}");
+    }
+
+    #[test]
+    fn a_program_that_has_started_runs_on_past_the_start_up_limit() {
+        let wait = if cfg!(windows) {
+            "ping -n 5 127.0.0.1 > nul& exit 3"
+        } else {
+            "sleep 4; exit 3"
+        };
+        let (finished, took) = started_shell(&starting(wait));
+        assert_eq!(finished.code, Some(3_i32), "after {took:?}");
+        assert!(took > Duration::from_secs(3), "took {took:?}");
     }
 
     #[derive(Clone, Copy, Debug)]
@@ -725,6 +951,7 @@ mod tests {
             directory,
             limit,
             &[],
+            None,
         )
         .unwrap()
         .code
@@ -815,7 +1042,7 @@ mod tests {
     fn a_program_that_is_not_there_is_an_error() {
         let missing = env::temp_dir().join("steamship-no-such-program");
         let limit = Duration::from_secs(5);
-        let error = run(&missing, &[], &[], &env::temp_dir(), limit, &[]).unwrap_err();
+        let error = run(&missing, &[], &[], &env::temp_dir(), limit, &[], None).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 }

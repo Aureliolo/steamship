@@ -142,6 +142,7 @@ impl Commands {
             &root,
             self.limit,
             HOPELESS,
+            None,
         )
         .map_err(named(&file))
     }

@@ -23,7 +23,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 use std::{ptr, slice, str};
 
-use crate::run::{self, Finished};
+use crate::run::{self, Finished, Startup};
 use crate::{elf, macho, magic};
 
 /// The process group of the program steamship is running, or 0 while none is. A program in a
@@ -140,6 +140,7 @@ pub fn run(
     directory: &Path,
     limit: Duration,
     hopeless: &'static [&'static str],
+    startup: Option<Startup<'_>>,
 ) -> io::Result<Finished> {
     let (reader, writer) = io::pipe()?;
     let mut child = run::spawn(
@@ -157,7 +158,9 @@ pub fn run(
     let seen = Arc::new(AtomicBool::new(false));
     let watching = Arc::clone(&seen);
     let reading = thread::spawn(move || run::watch(reader, hopeless, &watching));
-    let status = run::waited(limit, &seen, |pause| ended_within(&mut child, pause))?;
+    let status = run::waited(limit, &seen, startup, |pause| {
+        ended_within(&mut child, pause)
+    })?;
     // Whatever the program left running goes too, which is also what lets the reading end: a
     // straggler would hold the output open.
     stop_group(group);
