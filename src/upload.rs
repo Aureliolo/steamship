@@ -20,7 +20,6 @@ use std::time::Duration;
 use crate::conversation;
 use crate::run;
 use crate::scripts;
-use crate::steamcmd;
 use crate::vdf::{self, Block, Pair, Value};
 use crate::webapi;
 
@@ -381,10 +380,10 @@ pub fn judge(
         (_, Some(Finished::Build(build_id))) if build_id > 0 && !preview => {
             Outcome::BuiltThenFailed {
                 build_id,
-                reasons: reasons(code, console, log),
+                reasons: conversation::reasons(code, console, log),
             }
         }
-        _ => Outcome::Failed(reasons(code, console, log)),
+        _ => Outcome::Failed(conversation::reasons(code, console, log)),
     }
 }
 
@@ -619,112 +618,10 @@ pub fn still_unserved(outcome: &mut Outcome, depot: u32) {
     }
 }
 
-/// What checking the saved login with Steam came to.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Login {
-    /// Steam took it: an upload now would be logged in.
-    Taken,
-    /// Steam refused it, for this reason.
-    Refused(String),
-    /// The check itself failed, for every reason steamcmd gave.
-    Failed(Vec<String>),
-}
-
-/// Reads steamcmd's exit `code` and `console` from a run that only logged in and quit.
-#[must_use]
-pub fn judge_login(code: Option<i32>, console: &str) -> Login {
-    conversation::refused_login(console).map_or_else(
-        || {
-            if code == Some(0_i32) {
-                Login::Taken
-            } else {
-                Login::Failed(reasons(code, console, None))
-            }
-        },
-        Login::Refused,
-    )
-}
-
-/// Every error steamcmd reported, from the log and the console, once each, and what its exit
-/// said when nothing else did. First of all comes what told steamship to stop it, if anything did.
-#[must_use]
-pub fn reasons(code: Option<i32>, console: &str, log: Option<&str>) -> Vec<String> {
-    reasons_with(
-        code,
-        console,
-        log,
-        "steamcmd exited 0, but its build log does not say the build finished",
-    )
-}
-
-/// As [`reasons`], with `exited_0` as the sentence for an exit 0 that printed no error. Each
-/// command words it by what it checked.
-#[must_use]
-pub fn reasons_with(
-    code: Option<i32>,
-    console: &str,
-    log: Option<&str>,
-    exited_0: &str,
-) -> Vec<String> {
-    let mut found = errors(console, log);
-    if found.is_empty() {
-        found.push(match code {
-            Some(0_i32) => exited_0.to_owned(),
-            Some(exit) => format!("steamcmd exited {exit} without saying why"),
-            None => "steamcmd did not finish in time and was stopped".to_owned(),
-        });
-    }
-    found
-}
-
-/// Every error steamcmd reported, from the log and the console, once each, after what told
-/// steamship to stop it, if anything did. Empty when the run printed none.
-fn errors(console: &str, log: Option<&str>) -> Vec<String> {
-    let mut found: Vec<String> = run::told()
-        .map(|signal| format!("steamship was told to stop by {signal}, and stopped steamcmd"))
-        .into_iter()
-        .collect();
-    for line in log.into_iter().flat_map(str::lines).chain(console.lines()) {
-        let error = if let Some((_, error)) = line.split_once("ERROR!") {
-            error.trim().to_owned()
-        } else if line.contains(steamcmd::NO_CERTIFICATES) {
-            "steamcmd found no certificates to check Steam's servers against, and would have \
-             waited forever. Install the system's certificate store (ca-certificates)"
-                .to_owned()
-        } else if let Some((_, socket)) = line.split_once("CreateBoundSocket: ") {
-            no_socket(socket.trim())
-        } else if conversation::refusal(line) == Some(conversation::NO_CONNECTION) {
-            format!(
-                "steamcmd could not connect to Steam ({})",
-                conversation::NO_CONNECTION
-            )
-        } else {
-            continue;
-        };
-        if !found.contains(&error) {
-            found.push(error);
-        }
-    }
-    found
-}
-
-/// Why steamcmd could not open a network socket, from what it `said`. Error 38 is ENOSYS, which
-/// Docker's default seccomp filter answers the socket call 32-bit steamcmd makes with: seen in a
-/// container, and gone when the same container runs without the filter.
-fn no_socket(said: &str) -> String {
-    if said.ends_with("(38)") {
-        "steamcmd could not open a network socket. In a Docker container, the default seccomp \
-         filter refuses the socket call 32-bit steamcmd makes. Run the container with \
-         --security-opt seccomp=unconfined"
-            .to_owned()
-    } else {
-        format!("steamcmd could not open a network socket: {said}")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::conversation::{Login, judge_login, reasons};
 
     #[test]
     fn describes_the_build_as_its_version_and_commit() {

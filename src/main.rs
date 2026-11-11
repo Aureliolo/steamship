@@ -1553,7 +1553,7 @@ fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
         return Ok(ExitCode::from(LOGIN));
     };
     let judged = check_saved_login(&account, packed.as_ref())?;
-    if judged == upload::Login::Taken {
+    if judged == conversation::Login::Taken {
         show::success("ready to upload", "");
     }
     Ok(verdict(judged, packed.as_ref()))
@@ -1605,7 +1605,7 @@ fn status_account(named: Option<&str>, home: &Path) -> Result<Option<Account>, E
 fn check_saved_login(
     account: &Account,
     packed: Option<&ci::Login>,
-) -> Result<upload::Login, ExitCode> {
+) -> Result<conversation::Login, ExitCode> {
     let (held, home, manifest) = ready()?;
     restore(packed, &home)?;
     match packed.and_then(ci::Login::packed_on) {
@@ -1635,12 +1635,12 @@ fn check_saved_login(
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
     let console = redactor.redact(&finished.output);
-    let judged = upload::judge_login(finished.code, &String::from_utf8_lossy(&console));
+    let judged = conversation::judge_login(finished.code, &String::from_utf8_lossy(&console));
     let took = show::took(spinner.elapsed());
     match &judged {
-        upload::Login::Taken => spinner.done("Steam takes the saved login"),
-        upload::Login::Refused(_) => spinner.failed(&format!("refused after {took}")),
-        upload::Login::Failed(_) => {
+        conversation::Login::Taken => spinner.done("Steam takes the saved login"),
+        conversation::Login::Refused(_) => spinner.failed(&format!("refused after {took}")),
+        conversation::Login::Failed(_) => {
             spinner.failed("could not check");
             dump_in_actions(
                 &[],
@@ -1686,11 +1686,11 @@ fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCode {
 
 /// The exit code for what Steam made of the saved login, or of the one handed over in `packed`.
 /// It says why when Steam did not take the login.
-fn verdict(judged: upload::Login, packed: Option<&ci::Login>) -> ExitCode {
+fn verdict(judged: conversation::Login, packed: Option<&ci::Login>) -> ExitCode {
     match judged {
-        upload::Login::Taken => ExitCode::SUCCESS,
-        upload::Login::Refused(reason) => login_refused(&reason, packed),
-        upload::Login::Failed(reasons) => {
+        conversation::Login::Taken => ExitCode::SUCCESS,
+        conversation::Login::Refused(reason) => login_refused(&reason, packed),
+        conversation::Login::Failed(reasons) => {
             for reason in &reasons {
                 show::failure(reason, "", None);
             }
@@ -5481,9 +5481,9 @@ fn app_info(
     };
     let redactor = before.and(Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?);
     let console = String::from_utf8_lossy(&redactor.redact(&finished.output)).into_owned();
-    match upload::judge_login(finished.code, &console) {
-        upload::Login::Taken => Ok((console, spinner)),
-        judged @ (upload::Login::Refused(_) | upload::Login::Failed(_)) => {
+    match conversation::judge_login(finished.code, &console) {
+        conversation::Login::Taken => Ok((console, spinner)),
+        judged @ (conversation::Login::Refused(_) | conversation::Login::Failed(_)) => {
             spinner.failed("not logged in");
             Err(verdict(judged, packed))
         }
@@ -6465,7 +6465,7 @@ fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
         }
     })?;
     let judged = check_saved_login(&account, None)?;
-    if judged != upload::Login::Taken {
+    if judged != conversation::Login::Taken {
         return Ok(verdict(judged, None));
     }
     let today = SystemTime::now()

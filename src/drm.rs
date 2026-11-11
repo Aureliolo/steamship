@@ -1,7 +1,6 @@
 //! Steam DRM, which Valve's servers add to a Windows executable through steamcmd's `drm_wrap`.
 
 use crate::conversation;
-use crate::upload;
 
 /// How the wrap is asked for: Valve's flags for the tool, `drmtoolp`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,7 +62,8 @@ pub fn judge(code: Option<i32>, console: &str, written: bool) -> Outcome {
         "steamcmd exited 0 without saying the wrap completed"
     };
     Outcome::Failed(
-        refusal(console).unwrap_or_else(|| upload::reasons_with(code, console, None, exited_0)),
+        refusal(console)
+            .unwrap_or_else(|| conversation::reasons_with(code, console, None, exited_0)),
     )
 }
 
