@@ -1,0 +1,43 @@
+name: Re-run
+
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers] It runs the default branch's script on the event's run id alone.
+    workflows: [Binaries, CI, CodeQL, Packages]
+    types: [completed]
+
+permissions: {}
+
+# A newer run's completion cancels an older one's wait.
+concurrency:
+  group: re-run-${{ github.event.workflow_run.workflow_id }}-${{ github.event.workflow_run.event }}-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: true
+
+jobs:
+  re-run:
+    name: re-run
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'failure'
+      && github.event.workflow_run.run_attempt == 1
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && (github.event.workflow_run.event == 'pull_request'
+      || (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main')) }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 70
+    permissions:
+      actions: write # Re-runs the failed jobs of the run the event names, after reading it.
+      contents: read # Checks out rerun.sh.
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/rerun.sh
+          persist-credentials: false
+
+      # Waits an hour first: github.com's 504s on 2026-11-08 lasted up to 64 minutes, and a re-run
+      # inside one fails the same way.
+      - name: Re-run the run if a 504 alone failed it
+        env:
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/rerun.sh "${RUN_ID}" 3600

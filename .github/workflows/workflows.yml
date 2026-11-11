@@ -55,6 +55,10 @@ jobs:
       - name: Test the winget submission script
         run: bash .github/winget-submit-test.sh
 
+      # Against a fake gh: the script would otherwise re-run real workflow runs.
+      - name: Test the re-run selector
+        run: bash .github/rerun-test.sh
+
   zizmor:
     name: zizmor
     runs-on: ubuntu-26.04
