@@ -15,9 +15,10 @@ name: Mutants
 # rather than timed out. Two mutants are built and tested at a time, one for each pair of the
 # runner's four cores.
 #
-# The whole crate is too much for one job: Linux's share is some 1,600 mutants at about 6 s each,
-# three hours against a job's one. So the weekly run splits each system's share into eight shards,
-# dealt out in turn so that the slow mutants spread across them.
+# The whole crate is too much for one job: Linux's share is some 2,300 mutants at about 25 s each,
+# eight hours with two at a time. So the weekly run splits each system's share into eight shards,
+# dealt out in turn so that the slow mutants spread across them, and gives each two hours, where a
+# Linux shard takes about one.
 on:
   # Every pull request, whatever it targets, so that one stacked on another is checked too.
   pull_request:
@@ -96,7 +97,7 @@ jobs:
         system: ${{ fromJSON(needs.plan.outputs.systems) }}
         shard: ${{ fromJSON(github.event_name == 'pull_request' && '[0]' || '[0, 1, 2, 3, 4, 5, 6, 7]') }}
     runs-on: ${{ matrix.system.runner }}
-    timeout-minutes: 60
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 60 || 120 }}
     permissions:
       contents: read # Reads the source it mutates, and the base branch to diff against.
     defaults:

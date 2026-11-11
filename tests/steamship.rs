@@ -993,6 +993,40 @@ fn an_upload_asked_for_default_too_once_steam_shows_the_app_released_goes_to_its
 }
 
 #[test]
+fn an_upload_asked_for_default_too_with_no_key_once_steam_shows_the_app_released_asks_for_none() {
+    let home = faked_with(&released_as("released"));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default"],
+        &[("STEAMSHIP_WEB_API_KEY", "")],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let runs = fs::read_to_string(home.path().join("runs")).unwrap();
+    assert_eq!(runs.lines().count(), 2, "{runs}");
+    assert!(
+        runs.lines()
+            .next()
+            .unwrap()
+            .contains("+app_info_print 1000")
+            && !runs.lines().next().unwrap().contains("+run_app_build"),
+        "Steam is asked before anything goes up: {runs}"
+    );
+    let said = format!("{stdout}{stderr}");
+    assert!(
+        said.contains("  steam     \u{2717} released, as Steam shows it (released)\n")
+            && said.contains(
+                "app 1000 is released, so its default branch is set live in Steamworks, where \
+                 Valve asks for a Steam Mobile confirmation. The build goes up without it"
+            ),
+        "{said}"
+    );
+    assert!(home.path().join("builds").exists(), "the build went up");
+}
+
+#[test]
 fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_1() {
     let home = faked_with(&released_as("prerelease"));
     saved_login(home.path());
@@ -1931,6 +1965,30 @@ fn ci_refuses_a_login_too_large_for_a_github_secret_before_asking_gh() {
         "{stderr}"
     );
     assert!(!gh.path().join("args").exists(), "gh is never asked");
+}
+
+#[cfg(unix)]
+#[test]
+fn ci_sets_a_login_just_inside_what_a_github_secret_holds() {
+    let home = answering(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...OK",
+        0,
+    );
+    let config = steamcmd::saved_login(home.path(), Platform::THIS);
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, format!("\"token\" \"{}\"", "t".repeat(24_000))).unwrap();
+    fs::write(home.path().join("account"), "build_bot\n").unwrap();
+    let (_project, root) = github_project();
+    let (gh, path) = fake_gh();
+    let (code, stdout, stderr) =
+        steamship_in(&root, &["ci"], Some(home.path()), &[("PATH", &path)]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let secret = fs::read_to_string(gh.path().join("secret")).unwrap();
+    assert!(
+        (47_104..=ci::SECRET_LIMIT).contains(&secret.len()),
+        "{} bytes set",
+        secret.len()
+    );
 }
 
 #[cfg(unix)]

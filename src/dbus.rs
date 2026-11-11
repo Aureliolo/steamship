@@ -1059,6 +1059,9 @@ pub mod session {
                 wanted in prop::collection::vec(0_u8..3, 1..6),
             ) {
                 let (ours, mut bus) = UnixStream::pair().unwrap();
+                // A call written wrongly can leave both ends waiting on each other for good. The
+                // stand-in bus gives up instead, which closes its end and fails the call.
+                bus.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
                 let sent = before.clone();
                 let peer = thread::spawn(move || {
                     let mut head = [0_u8; 16];
