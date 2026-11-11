@@ -2217,9 +2217,9 @@ fn shown_unreleased<Key>(
         }
         Err(why) => (
             Err(format!(
-                "{why}. The build goes up with its default branch left as it is. Set it live \
-                 there as steamship promote --build {build_id} --branch default does while the \
-                 app is unreleased"
+                "{why}. The build goes up with its default branch left as it is. While the app \
+                 is unreleased, steamship promote {app} --build {build_id} --branch default sets \
+                 it live there"
             )),
             "not shown".to_owned(),
         ),

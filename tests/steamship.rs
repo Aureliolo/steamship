@@ -987,8 +987,8 @@ fn assert_default_left(steamcmd: &str, why: &str) {
     );
     assert!(
         stderr.contains(&format!(
-            "{why}. The build goes up with its default branch left as it is. Set it live there \
-             as steamship promote --build 4242 --branch default does while the app is unreleased\n"
+            "{why}. The build goes up with its default branch left as it is. While the app is \
+             unreleased, steamship promote 1000 --build 4242 --branch default sets it live there\n"
         )) && stderr.contains("app 1000: BuildID 4242, set live on testing")
             && !stderr.contains("and default"),
         "{stderr}"
