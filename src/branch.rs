@@ -27,6 +27,17 @@ pub fn shown_name(branch: &str) -> &str {
     }
 }
 
+/// The name the Web API and steamcmd take for `branch`: `public` for the default branch, in either
+/// of its names, and any other as given.
+#[must_use]
+pub fn key(branch: &str) -> &str {
+    if is_default(branch) {
+        DEFAULT_KEY
+    } else {
+        branch
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -37,5 +48,12 @@ mod tests {
             assert!(is_default(default), "{default}");
         }
         assert!(!is_default("testing"));
+    }
+
+    #[test]
+    fn steam_takes_the_default_branch_as_public_and_any_other_as_named() {
+        assert_eq!(key("default"), "public");
+        assert_eq!(key("Public"), "public");
+        assert_eq!(key("testing"), "testing");
     }
 }

@@ -3608,11 +3608,7 @@ fn run_fetch(
     home: &Path,
     secret: &Zeroizing<String>,
 ) -> io::Result<run::Finished> {
-    let branch = if branch::is_default(&fetching.branch.name) {
-        branch::DEFAULT_KEY
-    } else {
-        &fetching.branch.name
-    };
+    let branch = branch::key(&fetching.branch.name);
     let system = fetch::system_name(fetching.system);
     if fetching.password.is_some() && !fetching.on_command_line {
         return steamcmd::fetch_console(account, system, fetching.folder).typed(
@@ -5910,7 +5906,7 @@ fn try_promote(request: &cli::Promote) -> Result<ExitCode, ExitCode> {
     let build = request.build;
     let default = branch::is_default(&request.branch);
     let branch = branch::shown_name(&request.branch);
-    let key = if default { branch::DEFAULT_KEY } else { branch };
+    let key = branch::key(&request.branch);
     show::field("build", &build.to_string());
     show::field("branch", branch);
     let home = home()?;
@@ -5972,7 +5968,7 @@ fn try_rollback(request: &cli::Rollback) -> Result<ExitCode, ExitCode> {
             DEFAULT_RELEASED,
         )?;
     }
-    let key = if default { branch::DEFAULT_KEY } else { name };
+    let key = branch::key(&request.branch);
     let spinner = Spinner::start("steam", "setting it live", false);
     if let Err(error) = api.set_live(app_id, before.build_id, key) {
         return Err(web_api_failed(spinner, &error));
