@@ -17,6 +17,7 @@ use std::io;
 use std::path::{self, Path, PathBuf};
 use std::time::Duration;
 
+use crate::branch;
 use crate::conversation;
 use crate::run;
 use crate::scripts;
@@ -74,6 +75,18 @@ fn at(path: &Path) -> impl FnOnce(io::Error) -> Error {
 pub fn description(version: &str, commit: &str) -> Result<String, Error> {
     shippable(version)?;
     Ok(format!("{version} {commit}"))
+}
+
+/// The version and commit in a description [`description`] wrote, which is the version, a space
+/// and the commit Git abbreviated: 7 to 40 lowercase hexadecimal digits.
+#[must_use]
+pub fn version_and_commit(description: &str) -> Option<(&str, &str)> {
+    let (version, commit) = description.rsplit_once(' ')?;
+    let hexadecimal = (7..=40).contains(&commit.len())
+        && commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+    (hexadecimal && !version.trim().is_empty()).then_some((version, commit))
 }
 
 /// Refuses a `version` a build cannot go up as.
@@ -445,7 +458,7 @@ pub fn no_branch(app: u32, branch: &str, branches: &[webapi::Branch]) -> String 
 pub fn create_first(branches: &[webapi::Branch]) -> &'static str {
     let fresh = branches
         .iter()
-        .any(|found| webapi::is_default(&found.name) && found.build_id == 0);
+        .any(|found| branch::is_default(&found.name) && found.build_id == 0);
     if fresh {
         "Set a build live on its default branch, as steamship promote --branch default does while \
          the app is unreleased. Then create the branch in Steamworks under SteamPipe, Builds"
@@ -1209,5 +1222,26 @@ mod tests {
             failed(Some(0_i32)),
             reason("steamcmd exited 0, but its build log does not say the build finished")
         );
+    }
+
+    #[test]
+    fn only_a_description_upload_wrote_gives_a_version_and_commit() {
+        for (description, expected) in [
+            ("0.1.0 a1b2c3d4e5f6", Some(("0.1.0", "a1b2c3d4e5f6"))),
+            ("1.4.0 beta 2 abc1234", Some(("1.4.0 beta 2", "abc1234"))),
+            (
+                "v2 0123456789abcdef0123456789abcdef01234567",
+                Some(("v2", "0123456789abcdef0123456789abcdef01234567")),
+            ),
+            ("0.1.0", None),
+            ("0.1.0 abc123", None),
+            ("0.1.0 0123456789abcdef0123456789abcdef012345678", None),
+            ("0.1.0 A1B2C3D4E5F6", None),
+            ("0.1.0 a1b2c3d4g5f6", None),
+            (" a1b2c3d4e5f6", None),
+            ("Public default branch", None),
+        ] {
+            assert_eq!(version_and_commit(description), expected, "{description:?}");
+        }
     }
 }

@@ -9504,22 +9504,43 @@ fn rollback_refuses_a_branch_with_no_earlier_recorded_build_and_asks_steam_nothi
 
 #[test]
 fn rollback_sets_the_default_branch_back_only_while_steam_shows_the_app_unreleased() {
-    let home = faked_with(&released_as("released"));
-    saved_login(home.path());
-    for build_id in [5_u64, 7] {
-        ledger::record(
-            home.path(),
-            ledger::Entry {
-                app: 1000,
-                branch: "default".to_owned(),
-                build_id,
-                commit: format!("{build_id:040x}"),
-                green: true,
-                rollback: false,
-            },
-        )
-        .unwrap();
-    }
+    let recorded = |released: &str| {
+        let home = faked_with(&released_as(released));
+        saved_login(home.path());
+        for build_id in [5_u64, 7] {
+            ledger::record(
+                home.path(),
+                ledger::Entry {
+                    app: 1000,
+                    branch: "default".to_owned(),
+                    build_id,
+                    commit: format!("{build_id:040x}"),
+                    green: true,
+                    rollback: false,
+                },
+            )
+            .unwrap();
+        }
+        home
+    };
+    let unreleased = recorded("prerelease");
+    let (host, requests) = web_api(vec![("200 OK", SET_LIVE)]);
+    let (set, said, why) = steamship(
+        &["rollback", "1000", "public"],
+        Some(unreleased.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!((set, why.as_str()), (Some(0_i32), ""), "{said}");
+    assert!(said.contains("default is back on BuildID 5"), "{said}");
+    let setting = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(setting.ends_with("buildid=5&betakey=public"), "{setting}");
+    let kept = ledger::load(unreleased.path(), 1000).unwrap();
+    assert_eq!(
+        kept.last().map(|each| each.branch.as_str()),
+        Some("default")
+    );
+
+    let home = recorded("released");
     let (silent, _unasked) = web_api::<&str>(vec![]);
     let (code, stdout, stderr) = steamship(
         &["rollback", "1000", "public"],

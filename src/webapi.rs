@@ -15,7 +15,7 @@ use std::io;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use serde_json::{Value, json};
+use serde_json::Value;
 use ureq::Body;
 use ureq::http::Response;
 use zeroize::Zeroizing;
@@ -24,13 +24,6 @@ use zeroize::Zeroizing;
 pub const KEY: &str = "STEAMSHIP_WEB_API_KEY";
 
 const HOST: &str = "https://partner.steam-api.com";
-
-/// The names the default branch goes by: `default` on the Steamworks site, `public` in the Web
-/// API.
-pub const DEFAULT: [&str; 2] = ["default", "public"];
-
-/// The default branch's name in the Web API, which `SetAppBuildLive` takes for it.
-pub const DEFAULT_KEY: &str = "public";
 
 /// A publisher Web API key.
 pub struct Key(Zeroizing<String>);
@@ -206,17 +199,6 @@ fn failed(error: &io::Error) -> String {
         Some(said) if !said.eq_ignore_ascii_case(&kind) => format!("{kind}: {said}"),
         _ => kind,
     }
-}
-
-/// What `--json` prints when Steam did not answer about `app`: the code from [`Error::code`],
-/// or `no-build-live` when `why` says that is the reason, and the message a person would read.
-#[must_use]
-pub fn error_json(app: u32, error: &Error, why: Option<&str>) -> Value {
-    let (code, message) = why.map_or_else(
-        || (error.code(), error.to_string()),
-        |why| ("no-build-live", format!("{error}: {why}")),
-    );
-    json!({ "app": app, "error": { "code": code, "message": message } })
 }
 
 /// A branch of an app, and the build live on it.
@@ -686,208 +668,11 @@ pub fn no_build_yet(error: &Error, app: u32, apps: &[App]) -> Option<String> {
     })
 }
 
-/// Whether `branch` names the default branch.
-#[must_use]
-pub fn is_default(branch: &str) -> bool {
-    DEFAULT
-        .iter()
-        .any(|default| branch.eq_ignore_ascii_case(default))
-}
-
-/// The name Steamworks shows for `branch`: the Web API calls the default branch `public`, which
-/// the site, and every message of steamship's, calls `default`.
-#[must_use]
-pub fn shown_name(branch: &str) -> &str {
-    if is_default(branch) {
-        "default"
-    } else {
-        branch
-    }
-}
-
-/// `branch` as a line: its name, the build live on it and its description, and whether it takes
-/// a password.
-#[must_use]
-pub fn branch_line(branch: &Branch) -> String {
-    let mut parts = vec![format!(
-        "{}: BuildID {}",
-        shown_name(&branch.name),
-        branch.build_id
-    )];
-    if !branch.description.is_empty() {
-        parts.push(branch.description.clone());
-    }
-    if branch.locked {
-        parts.push("password".to_owned());
-    }
-    parts.join(", ")
-}
-
-/// `build` as a line: the day it was uploaded, its description, and the `branches` it is live on.
-#[must_use]
-pub fn build_line(build: &Build, branches: &[Branch]) -> String {
-    let (year, month, day) = date(build.created);
-    let mut parts = vec![format!("{year}-{month:02}-{day:02}")];
-    if !build.description.is_empty() {
-        parts.push(build.description.clone());
-    }
-    let names: Vec<&str> = branches
-        .iter()
-        .filter(|branch| branch.build_id == build.build_id)
-        .map(|branch| shown_name(&branch.name))
-        .collect();
-    if !names.is_empty() {
-        parts.push(format!("live on {}", names.join(" and ")));
-    }
-    parts.join(", ")
-}
-
 /// An app's branches and last builds, as `steamship builds` shows them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Overview {
     pub branches: Vec<Branch>,
     pub builds: Vec<Build>,
-}
-
-impl Overview {
-    /// How many branches and builds there are, in words.
-    #[must_use]
-    pub fn summary(&self) -> String {
-        let branches = match self.branches.len() {
-            1 => "1 branch".to_owned(),
-            count => format!("{count} branches"),
-        };
-        let builds = match self.builds.len() {
-            1 => "1 build".to_owned(),
-            count => format!("{count} builds"),
-        };
-        format!("{branches} and {builds}")
-    }
-
-    /// Every line shown: each branch, then each build by its ID, as a label and what follows it.
-    #[must_use]
-    pub fn lines(&self) -> Vec<(String, String)> {
-        let branches = self
-            .branches
-            .iter()
-            .map(|branch| ("branch".to_owned(), branch_line(branch)));
-        let builds = self.builds.iter().map(|build| {
-            (
-                build.build_id.to_string(),
-                build_line(build, &self.branches),
-            )
-        });
-        branches.chain(builds).collect()
-    }
-
-    /// The branches and builds of `app` as `builds --json` prints them. A build's `version` and
-    /// `commit` are read back from the description `upload` wrote, and are null for a build
-    /// described otherwise. `created` is null when Steam gave no time.
-    #[must_use]
-    pub fn json(&self, app: u32) -> Value {
-        let branches: Vec<Value> = self
-            .branches
-            .iter()
-            .map(|branch| {
-                json!({
-                    "name": shown_name(&branch.name),
-                    "build_id": branch.build_id,
-                    "description": branch.description,
-                    "password": branch.locked,
-                })
-            })
-            .collect();
-        let builds: Vec<Value> = self
-            .builds
-            .iter()
-            .map(|build| {
-                let (version, commit) = version_and_commit(&build.description).unzip();
-                let live_on: Vec<&str> = self
-                    .branches
-                    .iter()
-                    .filter(|branch| branch.build_id == build.build_id)
-                    .map(|branch| shown_name(&branch.name))
-                    .collect();
-                json!({
-                    "build_id": build.build_id,
-                    "created": (build.created > 0).then(|| timestamp(build.created)),
-                    "description": build.description,
-                    "version": version,
-                    "commit": commit,
-                    "live_on": live_on,
-                })
-            })
-            .collect();
-        json!({ "app": app, "branches": branches, "builds": builds })
-    }
-}
-
-impl Schema {
-    /// The achievements and stats of `app` as `achievements --json` prints them, each with how
-    /// far players have got with it from `global`. An icon Steam gave none of, and a share or
-    /// total it gave none of, is null.
-    #[must_use]
-    pub fn json(&self, app: u32, global: &Global) -> Value {
-        let icon = |address: &str| (!address.is_empty()).then(|| address.to_owned());
-        let achievements: Vec<Value> = self
-            .achievements
-            .iter()
-            .map(|achievement| {
-                json!({
-                    "api_name": achievement.api_name,
-                    "name": achievement.name,
-                    "description": achievement.description,
-                    "hidden": achievement.hidden,
-                    "icon": icon(&achievement.icon),
-                    "icon_locked": icon(&achievement.icon_locked),
-                    "percent": global.shares.get(&achievement.api_name),
-                })
-            })
-            .collect();
-        let stats: Vec<Value> = self
-            .stats
-            .iter()
-            .map(|stat| {
-                let total = global
-                    .totals
-                    .get(&stat.api_name)
-                    .and_then(Option::as_deref)
-                    .and_then(|total| serde_json::from_str::<serde_json::Number>(total).ok());
-                json!({
-                    "api_name": stat.api_name,
-                    "name": stat.name,
-                    "default": stat.default,
-                    "total": total,
-                })
-            })
-            .collect();
-        json!({ "app": app, "achievements": achievements, "stats": stats })
-    }
-}
-
-/// The version and commit in a description `upload` wrote, which is the version, a space and
-/// the commit Git abbreviated: 7 to 40 lowercase hexadecimal digits.
-#[must_use]
-pub fn version_and_commit(description: &str) -> Option<(&str, &str)> {
-    let (version, commit) = description.rsplit_once(' ')?;
-    let hexadecimal = (7..=40).contains(&commit.len())
-        && commit
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
-    (hexadecimal && !version.trim().is_empty()).then_some((version, commit))
-}
-
-/// `seconds` since 1970 as an ISO 8601 time in UTC, such as `2026-10-13T14:02:11Z`.
-#[must_use]
-pub fn timestamp(seconds: u64) -> String {
-    let (year, month, day) = date(seconds);
-    let of_day = seconds.rem_euclid(86_400);
-    format!(
-        "{year}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        of_day.div_euclid(3_600),
-        of_day.rem_euclid(3_600).div_euclid(60),
-        of_day.rem_euclid(60)
-    )
 }
 
 /// Where a debug build, as the tests run, may be sent instead of Steam.
@@ -1340,54 +1125,14 @@ fn said(answer: &Value) -> String {
         .unwrap_or_default()
 }
 
-/// The day `seconds` since 1970 fall on, in UTC, as a year, month and day.
-#[must_use]
-pub fn date(seconds: u64) -> (u64, u64, u64) {
-    // Howard Hinnant's civil-from-days: eras of 400 years, each starting on 1 March, so that the
-    // leap day falls at the end of a year.
-    let days = seconds.div_euclid(86_400).saturating_add(719_468);
-    let era = days.div_euclid(146_097);
-    let of_era = days.saturating_sub(era.saturating_mul(146_097));
-    let year_of_era = of_era
-        .saturating_sub(of_era.div_euclid(1_460))
-        .saturating_add(of_era.div_euclid(36_524))
-        .saturating_sub(of_era.div_euclid(146_096))
-        .div_euclid(365);
-    let day_of_year = of_era.saturating_sub(
-        year_of_era
-            .saturating_mul(365)
-            .saturating_add(year_of_era.div_euclid(4))
-            .saturating_sub(year_of_era.div_euclid(100)),
-    );
-    let shifted_month = day_of_year
-        .saturating_mul(5)
-        .saturating_add(2)
-        .div_euclid(153);
-    let day = day_of_year
-        .saturating_sub(
-            shifted_month
-                .saturating_mul(153)
-                .saturating_add(2)
-                .div_euclid(5),
-        )
-        .saturating_add(1);
-    let month = if shifted_month < 10 {
-        shifted_month.saturating_add(3)
-    } else {
-        shifted_month.saturating_sub(9)
-    };
-    let year = year_of_era
-        .saturating_add(era.saturating_mul(400))
-        .saturating_add(u64::from(month <= 2));
-    (year, month, day)
-}
-
 #[cfg(test)]
 mod tests {
     use std::io::{ErrorKind, Read as _, Write as _};
     use std::net::TcpListener;
     use std::sync::mpsc;
     use std::thread;
+
+    use serde_json::json;
 
     use super::*;
 
@@ -1536,56 +1281,6 @@ mod tests {
         ] {
             assert_eq!(error.to_string(), said);
         }
-    }
-
-    #[test]
-    fn the_default_branch_is_known_by_both_its_names() {
-        for default in ["default", "public", "Public"] {
-            assert!(is_default(default), "{default}");
-        }
-        assert!(!is_default("testing"));
-    }
-
-    fn branch(name: &str, build_id: u64, locked: bool) -> Branch {
-        Branch {
-            name: name.to_owned(),
-            build_id,
-            description: format!("{build_id} description"),
-            locked,
-        }
-    }
-
-    #[test]
-    fn a_branch_and_a_build_read_as_one_line_each() {
-        let branches = [
-            branch("default", 1200, false),
-            branch("testing", 1234, true),
-            branch("staging", 1234, false),
-        ];
-        assert_eq!(
-            branch_line(&branches[1]),
-            "testing: BuildID 1234, 1234 description, password"
-        );
-        let bare = Branch {
-            description: String::new(),
-            ..branch("default", 1200, false)
-        };
-        assert_eq!(branch_line(&bare), "default: BuildID 1200");
-        let build = Build {
-            build_id: 1234,
-            description: "0.1.0 7a6b5c4".to_owned(),
-            created: 1_790_553_599,
-        };
-        assert_eq!(
-            build_line(&build, &branches),
-            "2026-09-27, 0.1.0 7a6b5c4, live on testing and staging"
-        );
-        let older = Build {
-            build_id: 1100,
-            description: String::new(),
-            created: 0,
-        };
-        assert_eq!(build_line(&older, &branches), "1970-01-01");
     }
 
     #[test]
@@ -1761,30 +1456,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_default_branch_is_shown_by_the_name_steamworks_gives_it() {
-        // As Steam's Web API answered for Falcon Ridge Overseer.
-        let public = Branch {
-            description: "Public default branch".to_owned(),
-            ..branch("public", 20_000_001, false)
-        };
-        assert_eq!(
-            branch_line(&public),
-            "default: BuildID 20000001, Public default branch"
-        );
-        let build = Build {
-            build_id: 20_000_001,
-            description: "0.1.0-test 0a1b2c3d4e5f".to_owned(),
-            created: 0,
-        };
-        assert_eq!(
-            build_line(&build, &[public]),
-            "1970-01-01, 0.1.0-test 0a1b2c3d4e5f, live on default"
-        );
-        assert_eq!(shown_name("Public"), "default");
-        assert_eq!(shown_name("testing"), "testing");
-    }
-
     /// A server on this machine that answers the next request with `status` and `body`, and
     /// hands over the request it read.
     fn answering(status: &'static str, body: &'static str) -> (String, mpsc::Receiver<String>) {
@@ -1940,48 +1611,6 @@ mod tests {
     }
 
     #[test]
-    fn an_overview_says_how_many_and_shows_each_branch_then_each_build() {
-        let branches = vec![branch("testing", 1234, true)];
-        let builds = vec![
-            Build {
-                build_id: 1234,
-                description: "0.1.0".to_owned(),
-                created: 1_790_553_599,
-            },
-            Build {
-                build_id: 1200,
-                description: String::new(),
-                created: 0,
-            },
-        ];
-        let overview = Overview { branches, builds };
-        assert_eq!(overview.summary(), "1 branch and 2 builds");
-        assert_eq!(
-            overview.lines(),
-            [
-                (
-                    "branch".to_owned(),
-                    "testing: BuildID 1234, 1234 description, password".to_owned()
-                ),
-                (
-                    "1234".to_owned(),
-                    "2026-09-27, 0.1.0, live on testing".to_owned()
-                ),
-                ("1200".to_owned(), "1970-01-01".to_owned()),
-            ]
-        );
-        let none = Overview {
-            branches: Vec::new(),
-            builds: vec![Build {
-                build_id: 1,
-                description: String::new(),
-                created: 0,
-            }],
-        };
-        assert_eq!(none.summary(), "0 branches and 1 build");
-    }
-
-    #[test]
     fn an_overview_asks_for_the_branches_then_the_builds() {
         let (host, requests) = serving(vec![
             (
@@ -1991,7 +1620,7 @@ mod tests {
             ("200 OK", r#"{"response": {"builds": {"7": {}}}}"#),
         ]);
         let overview = api(&host).overview(1, 5).unwrap();
-        assert_eq!(overview.summary(), "1 branch and 1 build");
+        assert_eq!((overview.branches.len(), overview.builds.len()), (1, 1));
         assert!(received(&requests).contains("GetAppBetas"));
         assert!(received(&requests).contains("GetAppBuilds"));
         let (stopped, _requests) = answering(
@@ -2273,92 +1902,6 @@ mod tests {
     }
 
     #[test]
-    fn a_day_is_read_off_seconds_since_1970() {
-        assert_eq!(date(0), (1970, 1, 1));
-        assert_eq!(date(951_782_400), (2000, 2, 29));
-        assert_eq!(date(1_790_553_599), (2026, 9, 27));
-        assert_eq!(date(4_107_542_400), (2100, 3, 1));
-    }
-
-    #[test]
-    fn a_time_is_written_in_iso_8601_to_the_second_in_utc() {
-        assert_eq!(timestamp(0), "1970-01-01T00:00:00Z");
-        assert_eq!(timestamp(1_790_553_599), "2026-09-27T23:59:59Z");
-        assert_eq!(timestamp(1_791_910_891), "2026-10-13T17:01:31Z");
-    }
-
-    #[test]
-    fn only_a_description_upload_wrote_gives_a_version_and_commit() {
-        for (description, expected) in [
-            ("0.1.0 a1b2c3d4e5f6", Some(("0.1.0", "a1b2c3d4e5f6"))),
-            ("1.4.0 beta 2 abc1234", Some(("1.4.0 beta 2", "abc1234"))),
-            (
-                "v2 0123456789abcdef0123456789abcdef01234567",
-                Some(("v2", "0123456789abcdef0123456789abcdef01234567")),
-            ),
-            ("0.1.0", None),
-            ("0.1.0 abc123", None),
-            ("0.1.0 0123456789abcdef0123456789abcdef012345678", None),
-            ("0.1.0 A1B2C3D4E5F6", None),
-            ("0.1.0 a1b2c3d4g5f6", None),
-            (" a1b2c3d4e5f6", None),
-            ("Public default branch", None),
-        ] {
-            assert_eq!(version_and_commit(description), expected, "{description:?}");
-        }
-    }
-
-    #[test]
-    fn an_icon_share_or_total_steam_gave_none_of_is_null() {
-        let schema = Schema {
-            achievements: vec![Achievement {
-                api_name: "early_win".to_owned(),
-                name: "Opening day".to_owned(),
-                description: String::new(),
-                hidden: false,
-                icon: "https://cdn/w.jpg".to_owned(),
-                icon_locked: String::new(),
-            }],
-            stats: ["NumGames", "FeetTraveled", "NumWins"]
-                .map(|api_name| Stat {
-                    api_name: api_name.to_owned(),
-                    name: String::new(),
-                    default: 0.0_f64,
-                })
-                .to_vec(),
-        };
-        assert_eq!(
-            schema.json(1_000_010, &Global::default()),
-            json!({"app": 1_000_010_u32, "achievements": [{
-                "api_name": "early_win", "name": "Opening day", "description": "",
-                "hidden": false, "icon": "https://cdn/w.jpg", "icon_locked": null, "percent": null,
-            }], "stats": [
-                {"api_name": "NumGames", "name": "", "default": 0.0_f64, "total": null},
-                {"api_name": "FeetTraveled", "name": "", "default": 0.0_f64, "total": null},
-                {"api_name": "NumWins", "name": "", "default": 0.0_f64, "total": null},
-            ]})
-        );
-        let global = Global {
-            shares: BTreeMap::from([("early_win".to_owned(), 49.6_f64)]),
-            totals: BTreeMap::from([
-                ("NumGames".to_owned(), Some("211140488449".to_owned())),
-                ("FeetTraveled".to_owned(), None),
-            ]),
-        };
-        let printed = schema.json(1_000_010, &global);
-        assert_eq!(
-            printed.pointer("/achievements/0/percent"),
-            Some(&json!(49.6_f64))
-        );
-        assert_eq!(
-            printed.pointer("/stats/0/total"),
-            Some(&json!(211_140_488_449_u64))
-        );
-        assert_eq!(printed.pointer("/stats/1/total"), Some(&Value::Null));
-        assert_eq!(printed.pointer("/stats/2/total"), Some(&Value::Null));
-    }
-
-    #[test]
     fn the_share_of_players_with_each_achievement_is_read_as_steam_gives_it() {
         // As Steam answered for Team Fortress 2, cut to two.
         let answer = json!({"achievementpercentages": {"achievements": [
@@ -2427,38 +1970,6 @@ mod tests {
     }
 
     #[test]
-    fn a_build_with_no_time_is_created_null_and_one_live_on_both_names_both() {
-        let overview = Overview {
-            branches: vec![
-                Branch {
-                    name: "public".to_owned(),
-                    build_id: 7,
-                    description: String::new(),
-                    locked: false,
-                },
-                Branch {
-                    name: "testing".to_owned(),
-                    build_id: 7,
-                    description: String::new(),
-                    locked: false,
-                },
-            ],
-            builds: vec![Build {
-                build_id: 7,
-                description: "0.1.0".to_owned(),
-                created: 0,
-            }],
-        };
-        assert_eq!(
-            overview.json(480).pointer("/builds/0"),
-            Some(&json!({
-                "build_id": 7_u64, "created": null, "description": "0.1.0", "version": null,
-                "commit": null, "live_on": ["default", "testing"],
-            }))
-        );
-    }
-
-    #[test]
     fn every_failure_has_a_code_of_its_own() {
         let codes: Vec<&str> = [
             Error::NotAKey,
@@ -2481,18 +1992,6 @@ mod tests {
                 "unreadable",
                 "steam-failed"
             ]
-        );
-        let held = error_json(
-            1_000_030,
-            &Error::Status(500, String::new()),
-            Some("none live"),
-        );
-        assert_eq!(
-            held,
-            json!({"app": 1_000_030_u32, "error": {
-                "code": "no-build-live",
-                "message": "Steam answered HTTP 500: none live",
-            }})
         );
     }
 }

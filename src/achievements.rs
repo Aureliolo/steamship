@@ -8,14 +8,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::PathBuf;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::editor::RECEIPT;
 use crate::po::Catalogue;
 use crate::presence;
 use crate::saved::List;
 use crate::show::counted;
-use crate::webapi::{Achievement, Stat, Totalled};
+use crate::webapi::{Achievement, Global, Schema, Stat, Totalled};
 
 /// The most achievements Steam takes for an app, archived ones included.
 pub const MOST_ACHIEVEMENTS: usize = 5_000;
@@ -1237,6 +1237,48 @@ pub fn stat_line(stat: &Stat, total: Option<&str>) -> String {
         line.push_str(" over all players");
     }
     line
+}
+
+/// The achievements and stats `held` of `app` as `achievements --json` prints them.
+///
+/// Each has how far players have got with it from `global`. An icon Steam gave none of, and a
+/// share or total it gave none of, is null.
+#[must_use]
+pub fn json(app: u32, held: &Schema, global: &Global) -> Value {
+    let icon = |address: &str| (!address.is_empty()).then(|| address.to_owned());
+    let achievements: Vec<Value> = held
+        .achievements
+        .iter()
+        .map(|achievement| {
+            json!({
+                "api_name": achievement.api_name,
+                "name": achievement.name,
+                "description": achievement.description,
+                "hidden": achievement.hidden,
+                "icon": icon(&achievement.icon),
+                "icon_locked": icon(&achievement.icon_locked),
+                "percent": global.shares.get(&achievement.api_name),
+            })
+        })
+        .collect();
+    let stats: Vec<Value> = held
+        .stats
+        .iter()
+        .map(|stat| {
+            let total = global
+                .totals
+                .get(&stat.api_name)
+                .and_then(Option::as_deref)
+                .and_then(|total| serde_json::from_str::<serde_json::Number>(total).ok());
+            json!({
+                "api_name": stat.api_name,
+                "name": stat.name,
+                "default": stat.default,
+                "total": total,
+            })
+        })
+        .collect();
+    json!({ "app": app, "achievements": achievements, "stats": stats })
 }
 
 /// Every way `held`, Steam's stats, differ from those the file `wants`, each named as a stat:
@@ -3088,5 +3130,55 @@ mod tests {
             tally(&drift, 4, "achievements"),
             "1 of 4 achievements match: 3 differ"
         );
+    }
+
+    #[test]
+    fn an_icon_share_or_total_steam_gave_none_of_is_null() {
+        let schema = Schema {
+            achievements: vec![Achievement {
+                api_name: "early_win".to_owned(),
+                name: "Opening day".to_owned(),
+                description: String::new(),
+                hidden: false,
+                icon: "https://cdn/w.jpg".to_owned(),
+                icon_locked: String::new(),
+            }],
+            stats: ["NumGames", "FeetTraveled", "NumWins"]
+                .map(|api_name| Stat {
+                    api_name: api_name.to_owned(),
+                    name: String::new(),
+                    default: 0.0_f64,
+                })
+                .to_vec(),
+        };
+        assert_eq!(
+            json(1_000_010, &schema, &Global::default()),
+            json!({"app": 1_000_010_u32, "achievements": [{
+                "api_name": "early_win", "name": "Opening day", "description": "",
+                "hidden": false, "icon": "https://cdn/w.jpg", "icon_locked": null, "percent": null,
+            }], "stats": [
+                {"api_name": "NumGames", "name": "", "default": 0.0_f64, "total": null},
+                {"api_name": "FeetTraveled", "name": "", "default": 0.0_f64, "total": null},
+                {"api_name": "NumWins", "name": "", "default": 0.0_f64, "total": null},
+            ]})
+        );
+        let global = Global {
+            shares: BTreeMap::from([("early_win".to_owned(), 49.6_f64)]),
+            totals: BTreeMap::from([
+                ("NumGames".to_owned(), Some("211140488449".to_owned())),
+                ("FeetTraveled".to_owned(), None),
+            ]),
+        };
+        let printed = json(1_000_010, &schema, &global);
+        assert_eq!(
+            printed.pointer("/achievements/0/percent"),
+            Some(&json!(49.6_f64))
+        );
+        assert_eq!(
+            printed.pointer("/stats/0/total"),
+            Some(&json!(211_140_488_449_u64))
+        );
+        assert_eq!(printed.pointer("/stats/1/total"), Some(&Value::Null));
+        assert_eq!(printed.pointer("/stats/2/total"), Some(&Value::Null));
     }
 }
