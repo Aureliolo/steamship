@@ -917,15 +917,24 @@ mod tests {
     ];
 
     /// Each source file's name without its extension and its code up to the test module, without
-    /// comment lines.
+    /// comment lines. The binary's modules under `src/commands/` read variables too.
     fn sources() -> Vec<(String, String)> {
-        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let mut found = Vec::new();
-        for entry in fs::read_dir(folder).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().is_none_or(|extension| extension != "rs") {
-                continue;
+        let mut folders = vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("src")];
+        let mut paths = Vec::new();
+        while let Some(folder) = folders.pop() {
+            for entry in fs::read_dir(folder).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    folders.push(path);
+                } else if path.extension().is_some_and(|extension| extension == "rs") {
+                    paths.push(path);
+                } else {
+                    // Anything else in `src/` is no source file.
+                }
             }
+        }
+        let mut found = Vec::new();
+        for path in paths {
             let text = fs::read_to_string(&path).unwrap();
             let mut code = String::new();
             let mut lines = text.lines();
