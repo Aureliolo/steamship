@@ -43,6 +43,7 @@ mod commands {
     pub(crate) mod game;
     pub(crate) mod key;
     pub(crate) mod ready;
+    pub(crate) mod released;
 }
 
 use commands::exit::{either, fail, first_failure, refusals};
@@ -57,6 +58,10 @@ use commands::key::{
 use commands::ready::{
     Source, account, dump_in_actions, hold, home, installed, login_refused, named, packed_login,
     ready, restore, steamcmd_failed, verdict,
+};
+use commands::released::{
+    DEFAULT_RELEASED, app_info, default_unreleased, refused_once_released, refused_unless,
+    release_judged, release_shown,
 };
 
 fn main() -> ExitCode {
@@ -4812,92 +4817,6 @@ fn settings_file(path: &Path, app: u32) -> Result<vdf::Block, ExitCode> {
     Ok(wanted)
 }
 
-/// What steamcmd, run from `home` and logged in as `account`, printed of `app`'s info, redacted,
-/// with the spinner that said it was `doing` so still turning. Refused when Steam did not take
-/// the login.
-fn app_info(
-    home: &Path,
-    account: &Account,
-    app: u32,
-    packed: Option<&ci::Login>,
-    doing: &str,
-) -> Result<(String, Spinner), ExitCode> {
-    let before = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
-    let spinner = Spinner::start("steam", doing, true);
-    let finished = match steamcmd::app_info(account, app).run(home) {
-        Ok(finished) => finished,
-        Err(error) => {
-            spinner.failed("could not start");
-            return Err(fail(&error, FAILED));
-        }
-    };
-    let redactor = before.and(Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?);
-    let console = String::from_utf8_lossy(&redactor.redact(&finished.output)).into_owned();
-    match conversation::judge_login(finished.code, &console) {
-        conversation::Login::Taken => Ok((console, spinner)),
-        judged @ (conversation::Login::Refused(_) | conversation::Login::Failed(_)) => {
-            spinner.failed("not logged in");
-            Err(verdict(judged, packed))
-        }
-    }
-}
-
-/// The default branch, as [`unreleased`] leaves it: a build live on a released app's default
-/// branch is the one its players get, and Valve then asks for a Steam Mobile confirmation, given in
-/// Steamworks.
-const DEFAULT_RELEASED: (&str, &str) = (
-    "its default branch is set live in Steamworks, where Valve asks for a Steam Mobile \
-     confirmation",
-    "its default branch",
-);
-
-/// Whether steamship may do what is only safe before players have the app: only while Steam
-/// shows `account` that nobody can buy it yet, asked through steamcmd run from `home`. `left`
-/// says what happens instead once the app is released, and what steamship leaves to Steamworks
-/// when Steam shows no release state. Answers why not when it may not, and fails when Steam could
-/// not be asked.
-fn unreleased(
-    home: &Path,
-    account: &Account,
-    app: u32,
-    packed: Option<&ci::Login>,
-    (released, left): (&str, &str),
-) -> Result<Result<(), String>, ExitCode> {
-    let (state, spinner) = release_shown(home, account, app, packed)?;
-    let (judged, said) = release_judged(state.as_deref(), app, (released, left));
-    if judged.is_ok() {
-        spinner.done(&said);
-    } else {
-        spinner.failed(&said);
-    }
-    Ok(judged)
-}
-
-/// Whether Steam's release `state` for `app` shows it unreleased, as [`unreleased`] answers, with
-/// what the step that asked says.
-fn release_judged(
-    state: Option<&str>,
-    app: u32,
-    (released, left): (&str, &str),
-) -> (Result<(), String>, String) {
-    match state {
-        Some(state) if release::unreleased(state) => {
-            (Ok(()), format!("unreleased, as Steam shows it ({state})"))
-        }
-        Some(state) => (
-            Err(format!("app {app} is released, so {released}")),
-            format!("released, as Steam shows it ({state})"),
-        ),
-        None => (
-            Err(format!(
-                "Steam shows no release state for app {app}, so steamship leaves {left} to \
-                 Steamworks"
-            )),
-            "not shown".to_owned(),
-        ),
-    }
-}
-
 /// Whether a Workshop item for `app`, whose game's settings `file` holds its items until launch,
 /// may go up: only once Steam shows `account` the app released. Answers why not when it may not,
 /// and fails when Steam could not be asked.
@@ -4930,72 +4849,6 @@ fn launched(
             ))
         }
     })
-}
-
-/// The release state Steam shows `account` for `app`, asked through steamcmd run from `home`, with
-/// the spinner that asked, for the caller to finish as the state is good or bad for it.
-fn release_shown(
-    home: &Path,
-    account: &Account,
-    app: u32,
-    packed: Option<&ci::Login>,
-) -> Result<(Option<String>, Spinner), ExitCode> {
-    let (console, spinner) = app_info(
-        home,
-        account,
-        app,
-        packed,
-        "asking whether the app is released",
-    )?;
-    match release::info_from_console(&console, app, "app info") {
-        Ok(info) => Ok((release::state(&info).map(str::to_owned), spinner)),
-        Err(why) => {
-            spinner.failed("not shown");
-            Err(fail(&why.and_again(), FAILED))
-        }
-    }
-}
-
-/// Whether steamship may set `app`'s default branch live, as [`unreleased`] answers.
-fn default_unreleased(
-    home: &Path,
-    account: &Account,
-    app: u32,
-    packed: Option<&ci::Login>,
-) -> Result<Result<(), String>, ExitCode> {
-    unreleased(home, account, app, packed, DEFAULT_RELEASED)
-}
-
-/// Refuses, as [`unreleased`] says why, unless Steam shows the build account named `asked_as`,
-/// or the CI login's, that `app` is unreleased.
-fn refused_once_released(
-    home: &Path,
-    app: u32,
-    asked_as: Option<&str>,
-    left: (&str, &str),
-) -> Result<(), ExitCode> {
-    let packed = packed_login()?;
-    let account = match (&packed, asked_as) {
-        (Some(packed), None) => packed.account().clone(),
-        _ => account(asked_as, false)?.0,
-    };
-    refused_unless(home, packed.as_ref(), || {
-        unreleased(home, &account, app, packed.as_ref(), left)
-    })
-}
-
-/// Refuses as `ask` says why, asked of Steam with the pinned steamcmd, held, restored to `packed`'s
-/// login in `home`, and verified once it has run.
-fn refused_unless(
-    home: &Path,
-    packed: Option<&ci::Login>,
-    ask: impl FnOnce() -> Result<Result<(), String>, ExitCode>,
-) -> Result<(), ExitCode> {
-    let (held, _, manifest) = ready()?;
-    restore(packed, home)?;
-    let asked = ask();
-    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
-    asked?.map_err(|why| fail(&why, REFUSED))
 }
 
 /// Refuses an item for `app` while Steam shows it unreleased, when the game the current folder is
