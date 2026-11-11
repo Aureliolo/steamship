@@ -101,7 +101,7 @@ static DESKTOPS: AtomicU64 = AtomicU64::new(0);
 /// standard library started then would hold that output open for as long as it ran.
 static HANDING_DOWN: Mutex<()> = Mutex::new(());
 
-/// [`HANDING_DOWN`], held until dropped.
+/// `HANDING_DOWN`, held until dropped.
 pub fn handing_down() -> MutexGuard<'static, ()> {
     // The lock guards no data, so one a panic left is as good as any.
     HANDING_DOWN.lock().unwrap_or_else(PoisonError::into_inner)
@@ -1406,7 +1406,7 @@ const fn quietly_to_the_root(data: &mut WINTRUST_DATA) {
     data.dwProvFlags = WTD_REVOCATION_CHECK_CHAIN_EXCLUDE_ROOT;
 }
 
-/// What Windows makes of `path`'s Authenticode signature, checked as [`quietly_to_the_root`]
+/// What Windows makes of `path`'s Authenticode signature, checked as `quietly_to_the_root`
 /// sets out.
 #[must_use]
 pub fn signature(path: &Path) -> Signature {

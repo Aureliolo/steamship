@@ -174,7 +174,7 @@ impl Check {
         }
     }
 
-    /// A version newer than this one, if there is one. GitHub gets at most [`LIMIT`] to answer.
+    /// A version newer than this one, if there is one. GitHub gets at most `LIMIT` to answer.
     #[must_use]
     pub fn newer(self) -> Option<Version> {
         self.newer_than(Version::this()?, LIMIT)

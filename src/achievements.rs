@@ -719,7 +719,7 @@ fn named_apart(
 ///   error names both
 /// - an achievement and a stat share an API name, in any case
 /// - there are translations, but not of every achievement, or of one no file lists
-/// - [`resolve`] refuses them.
+/// - `resolve` refuses them.
 pub fn together(files: Vec<(String, Listed)>) -> Result<Listed, String> {
     let mut whole = Listed::default();
     let mut achievements_from: BTreeMap<String, String> = BTreeMap::new();

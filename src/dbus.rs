@@ -3,7 +3,7 @@
 //!
 //! steamship writes little-endian messages and reads either byte order, since the bus passes each
 //! message on in its sender's. What is read is bounded, a message by [`LARGEST`] and nesting by
-//! [`DEEPEST`], so that nothing a peer sends can exhaust memory or the stack.
+//! `DEEPEST`, so that nothing a peer sends can exhaust memory or the stack.
 
 use std::error;
 use std::fmt;
