@@ -1,0 +1,49 @@
+name: winget
+description: >-
+  Installs winget at its pinned release over the older one the runner image carries, so that a
+  job runs the client winget-pkgs validates with. On x86-64 and Arm Windows, after a checkout.
+
+outputs:
+  winget:
+    description: The path of the winget installed, to run it by
+    value: ${{ steps.install.outputs.winget }}
+
+runs:
+  using: composite
+  steps:
+    # winget.yml's weekly run fails once winget-cli publishes a newer release, and prints these
+    # five lines for it. Renovate cannot raise three files' hashes and a licence named anew by
+    # each release.
+    - name: Install winget at its pinned release
+      id: install
+      shell: pwsh
+      env:
+        GH_TOKEN: ${{ github.token }}
+        WINGET_TAG: v1.29.380
+        WINGET_BUNDLE_SHA256: 65dea9c01ce08ee7b763366b27c0e651f97db857c11ca9b9c301826c10092f2e
+        WINGET_DEPENDENCIES_SHA256: ba875afe9d190f61218985ac0292a99d1db710bf93e13c68944ca9d89f0d82d1
+        WINGET_LICENSE: e53e159d00e04f729cc2180cffd1c02e_License1.xml
+        WINGET_LICENSE_SHA256: bcb15118ec47df24e3e6013a7006147c3a15b3a8104ed660fe87c8b4ed01f485
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $PSNativeCommandUseErrorActionPreference = $true
+        $files = @{
+          'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle' = $env:WINGET_BUNDLE_SHA256
+          'DesktopAppInstaller_Dependencies.zip' = $env:WINGET_DEPENDENCIES_SHA256
+          $env:WINGET_LICENSE = $env:WINGET_LICENSE_SHA256
+        }
+        # Git's bash, the one `shell: bash` runs, rather than whichever bash PATH finds first.
+        $bash = "$env:ProgramFiles\Git\bin\bash.exe"
+        foreach ($file in $files.GetEnumerator()) {
+          & $bash .github/tool-download.sh microsoft/winget-cli $env:WINGET_TAG $file.Key $file.Value $env:RUNNER_TEMP
+        }
+        Expand-Archive "$env:RUNNER_TEMP\DesktopAppInstaller_Dependencies.zip" "$env:RUNNER_TEMP\dependencies"
+        $machine = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+        $dependencies = Get-ChildItem "$env:RUNNER_TEMP\dependencies\$machine" -Filter *.appx | ForEach-Object FullName
+        Add-AppxProvisionedPackage -Online -PackagePath "$env:RUNNER_TEMP\Microsoft.DesktopAppInstaller_8wekyb3d8bbwe.msixbundle" `
+          -DependencyPackagePath $dependencies -LicensePath "$env:RUNNER_TEMP\$env:WINGET_LICENSE" | Out-Null
+        Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
+        $winget = "$env:LOCALAPPDATA\Microsoft\WindowsApps\winget.exe"
+        $running = & $winget --version
+        if ($running -ne $env:WINGET_TAG) { throw "winget is $running after installing the pinned $env:WINGET_TAG." }
+        "winget=$winget" >> $env:GITHUB_OUTPUT
