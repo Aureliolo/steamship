@@ -983,6 +983,15 @@ mod tests {
         #[cfg(windows)]
         let args = {
             let _: u64 = fs::copy(r"C:\Windows\System32\cmd.exe", &stand_in).unwrap();
+            // cmd words its own messages, a prompt's among them, from the message file that
+            // carries its program's name.
+            let messages = root.join("en-US");
+            fs::create_dir_all(&messages).unwrap();
+            let _: u64 = fs::copy(
+                r"C:\Windows\System32\en-US\cmd.exe.mui",
+                messages.join("steamcmd.exe.mui"),
+            )
+            .unwrap();
             ["/d", "/s", "/c"]
                 .map(str::to_owned)
                 .into_iter()
@@ -1055,17 +1064,33 @@ mod tests {
         }
     }
 
-    /// The line that waits at its first run, as a steamcmd that hangs as it loads does, and starts
-    /// at its second and ends with code 3.
-    fn starts_the_second_time() -> String {
+    /// The line that waits at its first run, as a steamcmd that hangs as it loads does, and runs
+    /// `second` at its second.
+    fn starts_the_second_time(second: &str) -> String {
+        if cfg!(windows) {
+            format!("if exist again ({second}) else (type nul > again & {WAIT})")
+        } else {
+            format!("if [ -e again ]; then {second}; else touch again; {WAIT}; fi")
+        }
+    }
+
+    /// The second run of a steamcmd that starts and ends with code 3.
+    fn starts_and_ends() -> String {
+        then(&starts(), "exit 3")
+    }
+
+    /// The second run of a steamcmd that starts, shows its prompt, records the line typed at it in
+    /// the file `typed`, echoes that line as steamcmd's console does and ends with code 3.
+    fn starts_and_is_typed_at() -> String {
         if cfg!(windows) {
             format!(
-                "if exist again ({} & exit 3) else (type nul > again & {WAIT})",
+                "{} & set /p typed=Steam^> & call echo %typed%> typed& call echo %typed%& exit 3",
                 starts()
             )
         } else {
             format!(
-                "if [ -e again ]; then {}; exit 3; else touch again; {WAIT}; fi",
+                "{}; printf 'Steam>'; read -r typed; printf '%s' \"$typed\" > typed; \
+                 echo \"$typed\"; exit 3",
                 starts()
             )
         }
@@ -1096,7 +1121,7 @@ mod tests {
 
     #[test]
     fn a_run_that_does_not_start_is_stopped_and_run_once_more() {
-        let (home, args) = stand_in(&then(COUNT, &starts_the_second_time()));
+        let (home, args) = stand_in(&then(COUNT, &starts_the_second_time(&starts_and_ends())));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
@@ -1107,7 +1132,7 @@ mod tests {
         assert_eq!(finished.code, Some(3_i32));
         assert_eq!(runs(home.path()), 2);
         assert!(
-            started.elapsed() < Duration::from_secs(20),
+            started.elapsed() < Duration::from_secs(5),
             "took {:?}",
             started.elapsed()
         );
@@ -1126,7 +1151,7 @@ mod tests {
         refused(home.path(), &error);
         assert_eq!(runs(home.path()), 1);
         assert!(
-            started.elapsed() < Duration::from_secs(20),
+            started.elapsed() < Duration::from_secs(5),
             "took {:?}",
             started.elapsed()
         );
@@ -1134,17 +1159,26 @@ mod tests {
 
     #[test]
     fn a_run_typed_into_that_does_not_start_is_stopped_and_run_once_more() {
-        let (home, args) = stand_in(&then(COUNT, &starts_the_second_time()));
+        let second = starts_the_second_time(&starts_and_is_typed_at());
+        let (home, args) = stand_in(&then(COUNT, &second));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
             startup: Duration::from_secs(1),
         };
         let started = Instant::now();
-        let (command, secret) = quit();
+        let command = Zeroizing::new("login hunter2".to_owned());
+        let secret = Zeroizing::new("hunter2".to_owned());
         let finished = commands.typed(home.path(), &command, &secret).unwrap();
         assert_eq!(finished.code, Some(3_i32));
         assert_eq!(runs(home.path()), 2);
+        let typed = fs::read_to_string(home.path().join(install::FOLDER).join("typed")).unwrap();
+        assert_eq!(typed.trim_end(), "login hunter2");
+        let said = String::from_utf8_lossy(&finished.output);
+        assert!(
+            said.contains("<password>") && !said.contains("hunter2"),
+            "{said}"
+        );
         assert!(
             started.elapsed() < Duration::from_secs(20),
             "took {:?}",

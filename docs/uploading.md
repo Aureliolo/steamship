@@ -215,7 +215,8 @@ steamship also runs steamcmd once more when it fails in one of these ways:
 - Steam sends it no client config as it connects, `Failed to load platform info`.
 
 steamship also stops a steamcmd that has not started within a minute, and runs it once more. A
-steamcmd that has not started has asked Steam nothing, so this holds for every command.
+steamcmd that has not started has asked Steam nothing, so this holds for every command steamship
+runs it for unattended.
 
 ### Rehearsals and timings
 
