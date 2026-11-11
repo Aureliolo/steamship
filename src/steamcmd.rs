@@ -1,16 +1,28 @@
-//! How steamcmd is started: which file, with what around it, and with which commands.
+//! How steamcmd is started: which file, with what around it, with which commands and for how
+//! long.
 
 use std::ffi::OsString;
 use std::fs;
 use std::io;
+use std::panic;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
+
+use zeroize::Zeroizing;
 
 use crate::account::Account;
 use crate::conversation;
 use crate::drm;
+use crate::fetch;
 use crate::install;
 use crate::platform::Platform;
+use crate::run::{self, Finished};
+#[cfg(unix)]
+use crate::unix::Terminal;
+#[cfg(windows)]
+use crate::windows::Terminal;
 
 /// The file that starts steamcmd in the install at `root`. On Linux and macOS that is Valve's
 /// script, which sets up the library path steamcmd needs.
@@ -98,6 +110,111 @@ pub fn login_files(home: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// An error that names `file`, which starts steamcmd, since the system's reason alone does not.
+fn named(file: &Path) -> impl FnOnce(io::Error) -> io::Error {
+    move |error| io::Error::new(error.kind(), format!("{}: {error}", file.display()))
+}
+
+/// The commands of one run of steamcmd with nobody at it, and the longest it may take over them.
+#[derive(Debug)]
+pub struct Commands {
+    args: Vec<OsString>,
+    limit: Duration,
+}
+
+impl Commands {
+    /// Runs the steamcmd in `home` with these commands, as [`run::run`] runs a program.
+    ///
+    /// It starts in its own folder with [`environment`] around it. It is stopped at the commands'
+    /// limit, or once it says that it will never reach Steam.
+    ///
+    /// # Errors
+    ///
+    /// When steamcmd cannot be started or its output cannot be read. The error names the file
+    /// that starts steamcmd.
+    pub fn run(&self, home: &Path) -> io::Result<Finished> {
+        let root = home.join(install::FOLDER);
+        let file = program(&root, Platform::THIS);
+        run::run(
+            &file,
+            &self.args,
+            &environment(home, Platform::THIS),
+            &root,
+            self.limit,
+            HOPELESS,
+        )
+        .map_err(named(&file))
+    }
+
+    /// Runs the steamcmd in `home` with these commands at a console of its own and types
+    /// `command` at its prompt, as [`fetch::typed`] does with `secret` hidden.
+    ///
+    /// A password typed there is seen by no other program, as one on the command line is. The
+    /// run starts and is stopped as [`Commands::run`] has it.
+    ///
+    /// # Errors
+    ///
+    /// When steamcmd cannot be started, its console cannot be read or typed into, or it cannot be
+    /// waited for. The error names the file that starts steamcmd.
+    pub fn typed(
+        &self,
+        home: &Path,
+        command: Zeroizing<String>,
+        secret: Zeroizing<String>,
+    ) -> io::Result<Finished> {
+        let root = home.join(install::FOLDER);
+        let file = program(&root, Platform::THIS);
+        typed_at(
+            &file,
+            &self.args,
+            &environment(home, Platform::THIS),
+            &root,
+            self.limit,
+            command,
+            secret,
+        )
+        .map_err(named(&file))
+    }
+}
+
+/// Runs `program` with `args` at a console of its own and types `command` at its prompt, as
+/// [`fetch::typed`] does with `secret` hidden, within `limit` or it is stopped.
+fn typed_at(
+    program: &Path,
+    args: &[OsString],
+    environment: &[(OsString, OsString)],
+    directory: &Path,
+    limit: Duration,
+    command: Zeroizing<String>,
+    secret: Zeroizing<String>,
+) -> io::Result<Finished> {
+    let (terminal, mut output, mut input) = Terminal::start(program, args, environment, directory)?;
+    let (ended, ending) = mpsc::channel();
+    let reading = thread::spawn(move || {
+        let read = fetch::typed(&mut output, &mut input, &command, &secret, HOPELESS);
+        // The receiver has gone only once the limit passed, and then nothing waits to hear.
+        let _told = ended.send(());
+        read
+    });
+    let in_time = ending.recv_timeout(limit).is_ok();
+    // Dropping the terminal unwaited ends steamcmd, and with it the output being read.
+    let terminal = in_time.then_some(terminal);
+    let lines = reading
+        .join()
+        .unwrap_or_else(|panic| panic::resume_unwind(panic))?;
+    let given_up = lines
+        .last()
+        .is_some_and(|line| HOPELESS.iter().any(|words| line.contains(words)));
+    let code = match terminal {
+        Some(terminal) if !given_up => terminal.wait()?,
+        _ => None,
+    };
+    Ok(Finished {
+        code,
+        output: lines.join("\n").into_bytes(),
+    })
+}
+
 /// The commands that log `account` in and quit: steamcmd asks for the password and a Steam
 /// Guard code itself, and a failure ends the run rather than leaving it at its prompt.
 #[must_use]
@@ -116,18 +233,21 @@ pub fn login(account: &Account) -> Vec<OsString> {
 /// The commands that log `account` in with the login steamcmd saved and quit, which is how the
 /// saved login is checked with Steam. Like [`upload`], it never waits at a prompt.
 #[must_use]
-pub fn check_login(account: &Account) -> Vec<OsString> {
-    [
-        "+@ShutdownOnFailedCommand",
-        "1",
-        "+@NoPromptForPassword",
-        "1",
-        "+login",
-        account.name(),
-        "+quit",
-    ]
-    .map(OsString::from)
-    .into()
+pub fn check_login(account: &Account) -> Commands {
+    Commands {
+        args: [
+            "+@ShutdownOnFailedCommand",
+            "1",
+            "+@NoPromptForPassword",
+            "1",
+            "+login",
+            account.name(),
+            "+quit",
+        ]
+        .map(OsString::from)
+        .into(),
+        limit: CHECK_LIMIT,
+    }
 }
 
 /// The commands that log `account` in with the login steamcmd saved, print `app`'s settings as
@@ -136,23 +256,26 @@ pub fn check_login(account: &Account) -> Vec<OsString> {
 /// The settings are asked for afresh rather than read from steamcmd's cache. Like [`upload`], it
 /// never waits at a prompt.
 #[must_use]
-pub fn app_info(account: &Account, app: u32) -> Vec<OsString> {
+pub fn app_info(account: &Account, app: u32) -> Commands {
     let app = app.to_string();
-    [
-        "+@ShutdownOnFailedCommand",
-        "1",
-        "+@NoPromptForPassword",
-        "1",
-        "+login",
-        account.name(),
-        "+app_info_update",
-        "1",
-        "+app_info_print",
-        &app,
-        "+quit",
-    ]
-    .map(OsString::from)
-    .into()
+    Commands {
+        args: [
+            "+@ShutdownOnFailedCommand",
+            "1",
+            "+@NoPromptForPassword",
+            "1",
+            "+login",
+            account.name(),
+            "+app_info_update",
+            "1",
+            "+app_info_print",
+            &app,
+            "+quit",
+        ]
+        .map(OsString::from)
+        .into(),
+        limit: CHECK_LIMIT,
+    }
 }
 
 /// The commands that log `account` in with the login steamcmd saved, wrap `input` in Steam DRM
@@ -167,7 +290,7 @@ pub fn drm_wrap(
     input: &Path,
     output: &Path,
     mode: drm::Mode,
-) -> Vec<OsString> {
+) -> Commands {
     let mut args: Vec<OsString> = [
         "+@ShutdownOnFailedCommand",
         "1",
@@ -183,13 +306,16 @@ pub fn drm_wrap(
     args.push(input.as_os_str().to_owned());
     args.push(output.as_os_str().to_owned());
     args.extend(["drmtoolp", mode.flags(), "+quit"].map(OsString::from));
-    args
+    Commands {
+        args,
+        limit: WRAP_LIMIT,
+    }
 }
 
 /// The commands that log `account` in with the login steamcmd saved, upload the Workshop item
 /// `script` describes and quit. Like [`upload`], it never waits at a prompt.
 #[must_use]
-pub fn workshop(account: &Account, script: &Path) -> Vec<OsString> {
+pub fn workshop(account: &Account, script: &Path) -> Commands {
     let mut args: Vec<OsString> = [
         "+@ShutdownOnFailedCommand",
         "1",
@@ -203,7 +329,10 @@ pub fn workshop(account: &Account, script: &Path) -> Vec<OsString> {
     .into();
     args.push(script.as_os_str().to_owned());
     args.push(OsString::from("+quit"));
-    args
+    Commands {
+        args,
+        limit: UPLOAD_LIMIT,
+    }
 }
 
 /// The commands that log `account` in with the login steamcmd saved, fetch `app` into `folder`,
@@ -222,8 +351,8 @@ pub fn fetch(
     password: Option<&str>,
     system: &str,
     folder: &Path,
-) -> Vec<OsString> {
-    let mut args = fetch_console(account, system, folder);
+) -> Commands {
+    let mut args = fetch_console(account, system, folder).args;
     args.push("+app_update".into());
     args.push(app.to_string().into());
     args.extend(["-beta", branch].map(OsString::from));
@@ -231,16 +360,19 @@ pub fn fetch(
         args.extend(["-betapassword", password].map(OsString::from));
     }
     args.extend(["validate", "+quit"].map(OsString::from));
-    args
+    Commands {
+        args,
+        limit: FETCH_LIMIT,
+    }
 }
 
-/// The commands that log `account` in as [`fetch`] does and leave steamcmd at its console, for
+/// The commands that log `account` in as [`fetch()`] does and leave steamcmd at its console, for
 /// the fetch to be typed there.
 ///
 /// The `system` and the `folder` are set before logging in, which Valve's documentation asks of
 /// the folder.
 #[must_use]
-pub fn fetch_console(account: &Account, system: &str, folder: &Path) -> Vec<OsString> {
+pub fn fetch_console(account: &Account, system: &str, folder: &Path) -> Commands {
     let mut args: Vec<OsString> = [
         "+@ShutdownOnFailedCommand",
         "1",
@@ -254,29 +386,32 @@ pub fn fetch_console(account: &Account, system: &str, folder: &Path) -> Vec<OsSt
     .into();
     args.push(folder.as_os_str().to_owned());
     args.extend(["+login", account.name()].map(OsString::from));
-    args
+    Commands {
+        args,
+        limit: FETCH_LIMIT,
+    }
 }
 
 /// The longest a fetch may run: a large build over a slow line takes hours.
-pub const FETCH_LIMIT: Duration = Duration::from_hours(6);
+const FETCH_LIMIT: Duration = Duration::from_hours(6);
 
 /// The longest a check of the saved login may run: logging in takes seconds.
-pub const CHECK_LIMIT: Duration = Duration::from_mins(2);
+const CHECK_LIMIT: Duration = Duration::from_mins(2);
 
 /// The longest a DRM wrap may run: the executable goes to Valve's servers and back, which for a
 /// large one over a slow line takes many minutes.
-pub const WRAP_LIMIT: Duration = Duration::from_hours(1);
+const WRAP_LIMIT: Duration = Duration::from_hours(1);
 
 /// The longest an upload may run before it is taken to have hung and is stopped. A large first
 /// upload over a slow line takes hours. steamcmd waiting at a prompt would wait forever.
-pub const UPLOAD_LIMIT: Duration = Duration::from_hours(6);
+const UPLOAD_LIMIT: Duration = Duration::from_hours(6);
 
 /// What steamcmd says when it will never reach Steam, only wait.
 ///
 /// It is stopped then rather than at its limit. With no certificates to check Steam's servers
 /// against (on Linux, with the system's certificate store missing), it says this at once and then
 /// waits to connect for good.
-pub const HOPELESS: &[&str] = &[conversation::NO_CERTIFICATES];
+const HOPELESS: &[&str] = &[conversation::NO_CERTIFICATES];
 
 /// The commands that log `account` in with the login steamcmd saved, print the info of the app
 /// `info_of` names, as [`app_info`] does, build `script` and quit.
@@ -285,7 +420,7 @@ pub const HOPELESS: &[&str] = &[conversation::NO_CERTIFICATES];
 /// login, or an expired one, steamcmd fails rather than asking for a password nobody is there to
 /// type.
 #[must_use]
-pub fn upload(account: &Account, script: &Path, info_of: Option<u32>) -> Vec<OsString> {
+pub fn upload(account: &Account, script: &Path, info_of: Option<u32>) -> Commands {
     let mut args: Vec<OsString> = [
         "+@ShutdownOnFailedCommand",
         "1",
@@ -303,12 +438,18 @@ pub fn upload(account: &Account, script: &Path, info_of: Option<u32>) -> Vec<OsS
     args.push(OsString::from("+run_app_build"));
     args.push(script.as_os_str().to_owned());
     args.push(OsString::from("+quit"));
-    args
+    Commands {
+        args,
+        limit: UPLOAD_LIMIT,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    use crate::unix;
+    use std::time::Instant;
 
     #[test]
     fn starts_valves_program_on_windows_and_valves_script_elsewhere() {
@@ -344,7 +485,7 @@ mod tests {
         let account = Account::parse("build_bot").unwrap();
         let script = Path::new("home (x86)/apps/1/app_build.vdf");
         assert_eq!(
-            upload(&account, script, None),
+            upload(&account, script, None).args,
             [
                 "+@ShutdownOnFailedCommand",
                 "1",
@@ -358,7 +499,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            upload(&account, script, Some(1)),
+            upload(&account, script, Some(1)).args,
             [
                 "+@ShutdownOnFailedCommand",
                 "1",
@@ -388,7 +529,8 @@ mod tests {
                     Path::new("my game/game.exe"),
                     Path::new("my game/.game.exe.steamship-drm"),
                     mode
-                ),
+                )
+                .args,
                 [
                     "+@ShutdownOnFailedCommand",
                     "1",
@@ -413,7 +555,7 @@ mod tests {
         let account = Account::parse("build_bot").unwrap();
         let script = Path::new("home (x86)/workshop/480/workshop_item.vdf");
         assert_eq!(
-            workshop(&account, script),
+            workshop(&account, script).args,
             [
                 "+@ShutdownOnFailedCommand",
                 "1",
@@ -433,7 +575,7 @@ mod tests {
         let account = Account::parse("build_bot").unwrap();
         let folder = Path::new("home (x86)/fetched/480/testing-linux");
         assert_eq!(
-            fetch(&account, 480, "testing", None, "linux", folder),
+            fetch(&account, 480, "testing", None, "linux", folder).args,
             [
                 "+@ShutdownOnFailedCommand",
                 "1",
@@ -453,7 +595,7 @@ mod tests {
                 "+quit"
             ]
         );
-        let default = fetch(&account, 480, "public", None, "windows", folder);
+        let default = fetch(&account, 480, "public", None, "windows", folder).args;
         assert!(
             default.ends_with(
                 &["+app_update", "480", "-beta", "public", "validate", "+quit"].map(OsString::from)
@@ -472,7 +614,8 @@ mod tests {
             Some("open sesame"),
             "linux",
             Path::new("f"),
-        );
+        )
+        .args;
         assert!(
             args.ends_with(
                 &[
@@ -495,7 +638,7 @@ mod tests {
     fn a_fetch_typed_at_the_console_logs_in_where_the_fetch_would_and_waits_there() {
         let account = Account::parse("build_bot").unwrap();
         let folder = Path::new("home (x86)/fetched/480/friends-linux");
-        let console = fetch_console(&account, "linux", folder);
+        let console = fetch_console(&account, "linux", folder).args;
         assert_eq!(
             console,
             [
@@ -511,14 +654,18 @@ mod tests {
                 "build_bot"
             ]
         );
-        assert!(fetch(&account, 480, "friends", None, "linux", folder).starts_with(&console));
+        assert!(
+            fetch(&account, 480, "friends", None, "linux", folder)
+                .args
+                .starts_with(&console)
+        );
     }
 
     #[test]
     fn checks_the_saved_login_and_never_waits_at_a_prompt() {
         let account = Account::parse("build_bot").unwrap();
         assert_eq!(
-            check_login(&account),
+            check_login(&account).args,
             [
                 "+@ShutdownOnFailedCommand",
                 "1",
@@ -543,6 +690,126 @@ mod tests {
                 "build_bot",
                 "+quit"
             ]
+        );
+    }
+
+    #[test]
+    fn every_command_may_run_as_long_as_its_work_takes_and_no_longer() {
+        let account = Account::parse("build_bot").unwrap();
+        let file = Path::new("f");
+        assert_eq!(
+            [check_login(&account).limit, app_info(&account, 480).limit],
+            [Duration::from_mins(2); 2]
+        );
+        assert_eq!(
+            drm_wrap(&account, 480, file, file, drm::Mode::Default).limit,
+            Duration::from_hours(1)
+        );
+        assert_eq!(
+            [
+                upload(&account, file, None).limit,
+                workshop(&account, file).limit,
+                fetch(&account, 480, "public", None, "linux", file).limit,
+                fetch_console(&account, "linux", file).limit
+            ],
+            [Duration::from_hours(6); 4]
+        );
+    }
+
+    /// A home whose steamcmd is the system's shell, and the arguments that have it say `saying`,
+    /// when given, then wait half a minute: longer than the limit a test gives it, and over by
+    /// itself when nothing stops it. On Unix the stand-in is a link, since a file this process
+    /// writes can be held open by a program another test starts meanwhile, and then refuses to
+    /// run. Windows hands no file on to a program unasked, so a copy is safe there.
+    fn waiting(saying: Option<&str>) -> (tempfile::TempDir, Vec<OsString>) {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join(install::FOLDER);
+        fs::create_dir_all(&root).unwrap();
+        let stand_in = program(&root, Platform::THIS);
+        #[cfg(unix)]
+        let args = {
+            unix::make_link("/bin/sh", &stand_in).unwrap();
+            let said = saying.map_or_else(String::new, |words| format!("echo {words}; "));
+            vec!["-c".to_owned(), format!("{said}sleep 30")]
+        };
+        #[cfg(windows)]
+        let args = {
+            let _: u64 = fs::copy(r"C:\Windows\System32\cmd.exe", &stand_in).unwrap();
+            let said = saying.map_or_else(String::new, |words| format!("echo {words}& "));
+            ["/d", "/s", "/c"]
+                .map(str::to_owned)
+                .into_iter()
+                .chain([format!("{said}ping -n 30 127.0.0.1 > nul")])
+                .collect::<Vec<String>>()
+        };
+        (home, args.into_iter().map(OsString::from).collect())
+    }
+
+    #[test]
+    fn a_run_is_stopped_at_the_limit_of_its_commands() {
+        let (home, args) = waiting(None);
+        let commands = Commands {
+            args,
+            limit: Duration::from_secs(1),
+        };
+        let started = Instant::now();
+        let finished = commands.run(home.path()).unwrap();
+        assert_eq!(finished.code, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_run_typed_into_is_stopped_at_the_limit_of_its_commands() {
+        let (home, args) = waiting(None);
+        let commands = Commands {
+            args,
+            limit: Duration::from_secs(1),
+        };
+        let started = Instant::now();
+        let finished = commands
+            .typed(
+                home.path(),
+                Zeroizing::new("quit".to_owned()),
+                Zeroizing::default(),
+            )
+            .unwrap();
+        assert_eq!(finished.code, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_run_typed_into_that_says_it_never_will_finish_is_stopped_well_inside_its_limit() {
+        let (home, args) = waiting(Some(conversation::NO_CERTIFICATES));
+        let commands = Commands {
+            args,
+            limit: Duration::from_mins(1),
+        };
+        let started = Instant::now();
+        let finished = commands
+            .typed(
+                home.path(),
+                Zeroizing::new("quit".to_owned()),
+                Zeroizing::default(),
+            )
+            .unwrap();
+        assert_eq!(finished.code, None);
+        assert!(
+            String::from_utf8_lossy(&finished.output).contains(conversation::NO_CERTIFICATES),
+            "{:?}",
+            String::from_utf8_lossy(&finished.output)
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "took {:?}",
+            started.elapsed()
         );
     }
 }

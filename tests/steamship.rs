@@ -11601,12 +11601,14 @@ fn a_release_without_an_sbom_fails_the_self_check_saying_so() {
     assert!(refusal.contains(".spdx.json lists no files"), "{refusal}");
 }
 
-/// The six commands that start steamcmd, each with what it needs around it to get that far.
+/// The commands that start steamcmd, each with what it needs around it to get that far.
 #[derive(Clone, Copy, Debug)]
 enum Starter {
     Status,
     Upload,
     Fetch,
+    /// A fetch that types the password of its branch at steamcmd's console.
+    FetchTyped,
     Wrap,
     Settings,
     Workshop,
@@ -11629,6 +11631,10 @@ impl Starter {
                 upload(&script, home, &["--version", "1.4.0"], &all)
             }
             Self::Fetch => fetching(home, &["1000"], &all),
+            Self::FetchTyped => {
+                all.push(("STEAMSHIP_BRANCH_PASSWORD", "open-sesame"));
+                fetching(home, &["1000", "--branch", "friends"], &all)
+            }
             Self::Wrap => {
                 let files = tempfile::tempdir().unwrap();
                 let game = files.path().join("game.exe");
@@ -11741,6 +11747,52 @@ fn an_upload_that_cannot_start_steamcmd_names_the_program_and_why_and_exits_1() 
 #[test]
 fn a_fetch_that_cannot_start_steamcmd_names_the_program_and_why_and_exits_1() {
     assert_cannot_start(Starter::Fetch);
+}
+
+#[test]
+fn a_typed_fetch_that_cannot_start_steamcmd_names_the_program_and_why_and_exits_1() {
+    assert_cannot_start(Starter::FetchTyped);
+}
+
+#[test]
+fn status_whose_steamcmd_will_never_reach_steam_is_stopped_at_once() {
+    let home = stubbed(
+        "#!/bin/sh\n\
+         echo 'unable to load trusted SSL root certificates'\n\
+         sleep 30\n",
+    );
+    let started = Instant::now();
+    let (code, stdout, stderr) = Starter::Status.run(home.path(), &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "steamcmd found no certificates to check Steam's servers against, and would have waited \
+         forever. Install the system's certificate store (ca-certificates)",
+        "{stderr}"
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "not waited for: {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn an_upload_starts_steamcmd_in_steamcmds_own_folder() {
+    let home = faked();
+    saved_login(home.path());
+    let (code, stdout, stderr) = Starter::Upload.run(home.path(), &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let console = fs::read_to_string(home.path().join("apps/1000/output/steamcmd.log")).unwrap();
+    // macOS's temporary folder is reached through a link, which steamcmd's folder is not.
+    #[cfg(unix)]
+    let root = fs::canonicalize(home.path().join(install::FOLDER)).unwrap();
+    #[cfg(windows)]
+    let root = home.path().join(install::FOLDER);
+    assert!(
+        console.contains(&format!("folder: {}\n", root.display())),
+        "{console}"
+    );
 }
 
 #[test]
