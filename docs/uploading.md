@@ -214,6 +214,9 @@ steamship also runs steamcmd once more when it fails in one of these ways:
 - Steam drops it once it has connected, `disconnected from steam with result 3 (No Connection)`.
 - Steam sends it no client config as it connects, `Failed to load platform info`.
 
+steamship also stops a steamcmd that has not started within a minute, and runs it once more. A
+steamcmd that has not started has asked Steam nothing, so this holds for every command.
+
 ### Rehearsals and timings
 
 `--preview` is Valve's dry run. The whole build is computed and logged. Nothing is uploaded and

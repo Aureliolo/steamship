@@ -3244,8 +3244,8 @@ fn run_fetch(
     if fetching.password.is_some() && !fetching.on_command_line {
         return steamcmd::fetch_console(account, system, fetching.folder).typed(
             home,
-            fetch::typed_command(fetching.app, branch, secret),
-            secret.clone(),
+            &fetch::typed_command(fetching.app, branch, secret),
+            secret,
         );
     }
     steamcmd::fetch(
