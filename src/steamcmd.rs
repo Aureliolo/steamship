@@ -718,8 +718,9 @@ mod tests {
 
     /// A home whose steamcmd is the system's shell, and the arguments that have it say `saying`,
     /// when given, then wait half a minute: longer than the limit a test gives it, and over by
-    /// itself when nothing stops it. Nothing is written into the stand-in, which a program
-    /// started meanwhile could hold open.
+    /// itself when nothing stops it. On Unix the stand-in is a link, since a file this process
+    /// writes can be held open by a program another test starts meanwhile, and then refuses to
+    /// run. Windows hands no file on to a program unasked, so a copy is safe there.
     fn waiting(saying: Option<&str>) -> (tempfile::TempDir, Vec<OsString>) {
         let home = tempfile::tempdir().unwrap();
         let root = home.path().join(install::FOLDER);
