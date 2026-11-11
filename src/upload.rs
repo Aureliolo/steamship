@@ -592,14 +592,11 @@ fn manifest_at(printed: &str) -> Option<Unserved> {
     if numbers.len() != 3 || !numbers.iter().all(numeric) {
         return None;
     }
-    let loopback = host
-        .strip_prefix("127.0.0.1:")
-        .is_some_and(|port| numeric(&port));
     let named = host.contains('.')
         && host
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-');
-    let scheme = if cfg!(debug_assertions) && loopback {
+    let scheme = if webapi::is_stand_in(host) {
         "http"
     } else if named {
         "https"

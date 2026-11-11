@@ -6,7 +6,7 @@
 
 use serde_json::Value as Json;
 
-use crate::{digest, download};
+use crate::{digest, download, webapi};
 
 const RELEASES: &str = "https://github.com/Aureliolo/steamship/releases/download";
 const REPOSITORY: &str = "/repos/Aureliolo/steamship";
@@ -63,12 +63,10 @@ pub fn sbom<Lookup>(version: &str, lookup: Lookup) -> Sbom
 where
     Lookup: Fn(&str) -> Option<String>,
 {
-    // A port and nothing after it: `http://127.0.0.1:80@example.com` names example.com.
-    let loopback = |host: &String| {
-        host.strip_prefix("http://127.0.0.1:")
-            .is_some_and(|port| !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()))
-    };
-    let stand_in = lookup(STAND_IN).filter(|host| cfg!(debug_assertions) && loopback(host));
+    let stand_in = lookup(STAND_IN).filter(|host| {
+        host.strip_prefix("http://")
+            .is_some_and(webapi::is_stand_in)
+    });
     let (releases, api) = stand_in.map_or_else(
         || (RELEASES.to_owned(), API.to_owned()),
         |host| (host.clone(), format!("{host}{REPOSITORY}")),

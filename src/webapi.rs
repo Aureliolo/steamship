@@ -901,17 +901,19 @@ fn host<Lookup>(lookup: Lookup) -> String
 where
     Lookup: Fn(&str) -> Option<String>,
 {
-    // A port and nothing after it: `http://127.0.0.1:80@example.com` names example.com.
-    let loopback = |host: &String| {
-        host.strip_prefix("http://127.0.0.1:")
+    lookup(STAND_IN)
+        .filter(|host| host.strip_prefix("http://").is_some_and(is_stand_in))
+        .unwrap_or_else(|| HOST.to_owned())
+}
+
+/// Whether `host`, as `127.0.0.1:<port>`, is a place a debug build may stand in for a real host.
+///
+/// A port and nothing after it: `127.0.0.1:80@example.com` names example.com.
+pub(crate) fn is_stand_in(host: &str) -> bool {
+    cfg!(debug_assertions)
+        && host
+            .strip_prefix("127.0.0.1:")
             .is_some_and(|port| !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit()))
-    };
-    if cfg!(debug_assertions)
-        && let Some(stand_in) = lookup(STAND_IN).filter(loopback)
-    {
-        return stand_in;
-    }
-    HOST.to_owned()
 }
 
 /// `real`, another of Steam's hosts, or the stand-in on this machine a debug build is sent to in
