@@ -2,7 +2,7 @@
 //! and mutation-tested on the systems where it runs.
 #![expect(
     unsafe_code,
-    reason = "libc calls: stopping a process group, catching the signals that end steamship, opening a pseudo terminal, changing terminal modes and asking which user steamship runs as"
+    reason = "libc calls: stopping a process group, catching the signals that end steamship, putting SIGCHLD back to its default, opening a pseudo terminal, changing terminal modes and asking which user steamship runs as"
 )]
 
 use std::ffi::OsString;
@@ -125,6 +125,16 @@ pub fn end_as_told() {
     if signal != 0_i32 {
         end_by(signal);
     }
+}
+
+/// Puts SIGCHLD back to its default, so that each program steamship starts can be waited for.
+///
+/// With SIGCHLD ignored, as Linux keeps it from the program that started steamship, the system
+/// reaps each program as it ends. Every wait for it then fails with ECHILD, and whatever it left
+/// running in its group is never stopped.
+pub fn default_sigchld() {
+    // SAFETY: sets the disposition of a signal steamship catches nowhere, and starts no handler.
+    let _: libc::sighandler_t = unsafe { libc::signal(libc::SIGCHLD, libc::SIG_DFL) };
 }
 
 /// [`crate::run::run`], for Unix: the program leads a process group of its own, so that stopping
@@ -585,10 +595,55 @@ pub fn changed(path: &Path) -> io::Result<SystemTime> {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
     use std::mem;
     use std::time::Instant;
 
     use super::*;
+
+    #[test]
+    fn a_steamship_that_ignores_sigchld_waits_for_its_program_and_stops_its_group() {
+        let output = run::output(run::command(env::current_exe().unwrap()).args([
+            "--exact",
+            "unix::tests::a_run_from_a_process_that_ignores_sigchld",
+            "--ignored",
+        ]))
+        .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("test result: ok. 1 passed"),
+            "{:?}\nstdout:\n{stdout}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "a part of the test above, which runs it in a process of its own"]
+    fn a_run_from_a_process_that_ignores_sigchld() {
+        // SAFETY: sets the disposition of a signal this process catches nowhere, and starts no
+        // handler.
+        let _: libc::sighandler_t = unsafe { libc::signal(libc::SIGCHLD, libc::SIG_IGN) };
+        let started = Instant::now();
+        let finished = run::run(
+            Path::new("/bin/sh"),
+            &[OsString::from("-c"), OsString::from("sleep 60 & exit 3")],
+            &[],
+            &env::temp_dir(),
+            Duration::from_secs(50),
+            &[],
+            None,
+        )
+        .unwrap();
+        // The sleep holds the output open, so the run ends before its minute is up only if the
+        // group was stopped when the shell ended.
+        assert_eq!(finished.code, Some(3_i32));
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "took {:?}",
+            started.elapsed()
+        );
+    }
 
     fn child_of(line: &str) -> Child {
         run::spawn(
