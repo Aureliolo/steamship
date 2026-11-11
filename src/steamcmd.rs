@@ -1138,6 +1138,24 @@ mod tests {
     }
 
     #[test]
+    fn a_run_typed_into_that_started_is_stopped_at_its_limit_counted_from_its_start() {
+        let ends = if cfg!(windows) {
+            "ping -n 7 127.0.0.1 > nul& exit 3"
+        } else {
+            "sleep 6; exit 3"
+        };
+        let (home, args) = stand_in(&then(&starts(), ends));
+        let commands = Commands {
+            args,
+            limit: Duration::from_secs(4),
+            startup: Duration::from_secs(3),
+        };
+        let (command, secret) = quit();
+        let finished = commands.typed(home.path(), command, secret).unwrap();
+        assert_eq!(finished.code, None);
+    }
+
+    #[test]
     fn a_run_typed_into_is_stopped_at_the_limit_of_its_commands() {
         let (home, args) = waiting(None);
         let commands = Commands {
