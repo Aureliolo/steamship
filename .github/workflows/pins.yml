@@ -1,7 +1,7 @@
 name: Pins
 
 # Renovate raises only the version inside a steamcmd pin; the packages the pin holds come from
-# the manifest Valve serves for that version. This finishes the raise on Renovate's own branch,
+# what Valve and nuget.org serve for that version. This finishes the raise on Renovate's own branch,
 # so its one pull request is complete: each manifest is fetched, kept only when it is the one for
 # that system and names exactly the version Renovate wrote, and committed through GitHub's API,
 # which signs the commit. Nothing from the branch runs here, so no raised dependency's build
@@ -10,12 +10,14 @@ name: Pins
 # It does not ask who pushed: all it can ever commit is the manifest Valve serves now, and only
 # when that names the version already on the branch, so whoever pushes can only have a pin made
 # whole. Its own commit, if it runs again for it, finds nothing left to change.
+# The console package's SHA-256 is finished the same way.
 on:
   push:
     branches:
       - renovate/**
     paths:
       - pins/**
+      - .github/conpty.sh
 
 permissions: {}
 
@@ -66,15 +68,43 @@ jobs:
           done
           echo "files=${changed[*]}" >> "${GITHUB_OUTPUT}"
 
+      # Reads two lines of the script and runs nothing from the branch. The version and the
+      # digest are checked before the version reaches an address or the digest a file.
+      - name: Hash the console package the raised pin names
+        id: console
+        if: '!cancelled()'
+        run: |
+          set -euo pipefail
+          script=.github/conpty.sh
+          version="$(sed -n 's/^version=//p' "${script}")"
+          pinned="$(sed -n 's/^sha256=//p' "${script}")"
+          if [[ ! "${version}" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+            echo "::error file=${script}::The version= line of ${script} is not a version of digits and dots. Set it to one nuget.org lists."
+            exit 1
+          fi
+          if [[ ! "${pinned}" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error file=${script}::The sha256= line of ${script} is not a SHA-256 of 64 hexadecimal digits. Put back the one main has."
+            exit 1
+          fi
+          curl -fsS --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${RUNNER_TEMP}/conpty.nupkg" \
+            "https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/${version}/microsoft.windows.console.conpty.${version}.nupkg"
+          live="$(sha256sum "${RUNNER_TEMP}/conpty.nupkg" | cut -d' ' -f1)"
+          if [[ "${live}" == "${pinned}" ]]; then
+            echo "files=" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          sed -i "s/^sha256=.*/sha256=${live}/" "${script}"
+          echo "files=${script}" >> "${GITHUB_OUTPUT}"
+
       # Committed through the API rather than pushed, as release-prepare.yml does: GitHub signs
       # what it commits itself. The commit is made only on the head this run checked, so a newer
       # push from Renovate is never overwritten; that push runs this again.
       - name: Commit the finished pins
-        if: steps.fetch.outputs.files != ''
+        if: ${{ !cancelled() && (steps.fetch.outputs.files != '' || steps.console.outputs.files != '') }}
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
-          FILES: ${{ steps.fetch.outputs.files }}
+          FILES: ${{ steps.fetch.outputs.files }} ${{ steps.console.outputs.files }}
         run: |
           set -euo pipefail
           additions='[]'
@@ -92,7 +122,7 @@ jobs:
               variables: {input: {
                 branch: {repositoryNameWithOwner: $repository, branchName: $branch},
                 expectedHeadOid: $head,
-                message: {headline: "Finish the steamcmd pin raise"},
+                message: {headline: "Finish the pin raise"},
                 fileChanges: {additions: $additions}
               }}
             }' > commit.json

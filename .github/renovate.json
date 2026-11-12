@@ -5,7 +5,7 @@
   "schedule": ["before 6am on monday"],
   "description": [
     "The dependency dashboard is on: it is the only place that shows what Renovate tried and could not land, which the weekly pull request never mentions.",
-    "The commit pins.yml adds to finish a steamcmd raise is not taken as someone else's edit, so Renovate still rebases and updates its branch."
+    "The commit pins.yml adds to finish a raise is not taken as someone else's edit, so Renovate still rebases and updates its branch."
   ],
   "dependencyDashboard": true,
   "dependencyDashboardLabels": ["renovate"],
@@ -85,6 +85,13 @@
       "packageNameTemplate": "steam_cmd_{{{system}}}",
       "datasourceTemplate": "custom.steamcmd",
       "versioningTemplate": "regex:^(?<major>\\d+)$"
+    },
+    {
+      "description": "Microsoft's ConPTY package, pinned in .github/conpty.sh. Only the version can be raised here, and nuget.org gives no digest, so .github/workflows/pins.yml writes the SHA-256 on the branch. Preview versions are left out.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/conpty\\.sh$/"],
+      "matchStrings": ["# renovate: datasource=(?<datasource>nuget) depName=(?<depName>\\S+)\\nversion=(?<currentValue>\\S+)"],
+      "versioningTemplate": "semver-coerced"
     },
     {
       "description": "A release tag with the SHA-256 of the asset downloaded on the next line: actionlint, cargo-deny and the like. The tag and the digest move together.",

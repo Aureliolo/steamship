@@ -78,7 +78,9 @@ moderation, game server tokens, cheat reports).
 
 Every action is pinned by commit SHA with its version beside it. Every tool a workflow downloads
 is pinned by version and SHA-256. Renovate raises them, apart from winget, whose newer release
-fails `winget.yml`'s weekly run. Nothing is fetched at "latest".
+fails `winget.yml`'s weekly run. The Windows archives carry Microsoft's ConPTY, pinned the same
+way in `.github/conpty.sh`. Renovate raises its version and `pins.yml` writes its SHA-256.
+Nothing is fetched at "latest".
 
 ## Before a pull request
 
