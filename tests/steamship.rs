@@ -262,6 +262,38 @@ fn install_waits_for_another_steamship_using_the_home_then_goes_on() {
 }
 
 #[test]
+fn logout_waits_for_another_steamship_using_the_home_and_keeps_the_login_until_then() {
+    let home = tempfile::tempdir().unwrap();
+    let saved = home.path().join("steamcmd/config/config.vdf");
+    fs::create_dir_all(saved.parent().unwrap()).unwrap();
+    fs::write(&saved, "\"token\" \"a_saved_login_token_0123456789\"").unwrap();
+    let account = home.path().join("account");
+    fs::write(&account, "build_bot\n").unwrap();
+    let held = File::create(home.path().join("steamship.lock")).unwrap();
+    held.try_lock().unwrap();
+    let path = home.path().to_path_buf();
+    let second = thread::spawn(move || steamship(&["logout"], Some(&path), &[]));
+    thread::sleep(Duration::from_secs(2));
+    assert!(!second.is_finished(), "it waits while the home is held");
+    assert!(
+        saved.exists() && account.exists(),
+        "the login is kept while another steamship holds the home"
+    );
+    held.unlock().unwrap();
+    let (code, stdout, stderr) = second.join().unwrap();
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "  steamcmd  waiting for another steamship using {} to finish...\n",
+            home.path().display()
+        )) && stdout.contains("\u{2713} free after ")
+            && stdout.contains("  login     \u{2713} forgotten\n"),
+        "{stdout}"
+    );
+    assert!(!saved.exists() && !account.exists());
+}
+
+#[test]
 fn install_says_where_it_could_not_find_a_home_and_exits_1() {
     let (code, _, stderr) = run(None);
     assert_eq!(code, Some(1_i32));
