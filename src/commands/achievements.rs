@@ -662,9 +662,10 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
     let app_id = app_named(app)?;
     let sources = writing.write.as_deref().unwrap_or_default();
     let listed = achievements_files(sources, app_id, false)?.unwrap_or_default();
-    let mut package: Vec<(String, Vec<u8>)> = editor::tables(app_id, &listed)
-        .into_iter()
-        .map(|table| (table.name, table.text.into_bytes()))
+    let tables = editor::tables(app_id, &listed);
+    let mut package: Vec<(String, Vec<u8>)> = tables
+        .files()
+        .map(|table| (table.name.clone(), table.text.clone().into_bytes()))
         .collect();
     let icons = achievement_icons(&listed)?;
     package.extend(
@@ -706,13 +707,8 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
         }
         return try_achievements_imported(app_id, &listed.achievements, &icons, out);
     }
-    let tables = [
-        format!("{app_id}-achievements-definitions.csv"),
-        format!("{app_id}-achievements-localization.csv"),
-    ];
-    let tables_before = tables
-        .each_ref()
-        .map(|name| fs::read_to_string(out.join(name)));
+    let tables_before = [&tables.definitions, &tables.localisation]
+        .map(|table| fs::read_to_string(out.join(&table.name)));
     let failed = |error: &io::Error| fail(&format!("{folder}: {error}"), FAILED);
     fs::create_dir_all(out).map_err(|error| failed(&error))?;
     for (name, bytes) in &stale {
@@ -735,8 +731,9 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
         &format!(
             "in Steamworks, under app {app_id}'s Stats & Achievements, Bulk Import/Export: drop \
              every CSV and PNG file in {folder} and {SAVED}. Then drop \
-             {app_id}-achievements-localization.csv again on its own the same way, since the \
-             first import applies it only in part. Publish, and run this again with --imported"
+             {} again on its own the same way, since the first import applies it only in \
+             part. Publish, and run this again with --imported",
+            tables.localisation.name
         ),
     );
     import_notes(&listed);
@@ -751,7 +748,7 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
 /// nothing can be compared with them.
 fn changed_notes(
     package: &[(String, Vec<u8>)],
-    tables: &[String; 2],
+    tables: &editor::Tables,
     before: &[io::Result<String>; 2],
     stale: &[&String],
 ) {
@@ -763,16 +760,16 @@ fn changed_notes(
             "{} was not UTF-8 text before this write, so its progress bars and wording cannot be \
              compared. Look at each achievement's bar and icons in the editor once imported, \
              before publishing",
-            tables[0]
+            tables.definitions.name
         ));
     }
     let [defined_before, localised_before] = before
         .each_ref()
         .map(|table| table.as_ref().map_or("", String::as_str));
-    let [defined, localised] = tables.each_ref().map(|table| {
+    let [defined, localised] = [&tables.definitions, &tables.localisation].map(|table| {
         package
             .iter()
-            .find(|(name, _)| name == table)
+            .find(|(name, _)| *name == table.name)
             .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
             .unwrap_or_default()
     });

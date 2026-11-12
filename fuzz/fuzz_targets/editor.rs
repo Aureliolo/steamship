@@ -27,10 +27,8 @@ fn written(api_name: &str, stat: &str, at: f64, texts: [&str; 2]) -> [String; 2]
         }],
         ..Listed::default()
     };
-    let mut tables = editor::tables(480, &listed)
-        .into_iter()
-        .map(|table| table.text);
-    [(); 2].map(|()| tables.next().unwrap_or_default())
+    let tables = editor::tables(480, &listed);
+    [tables.definitions.text, tables.localisation.text]
 }
 
 fuzz_target!(|text: &str| {

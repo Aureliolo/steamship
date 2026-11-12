@@ -44,13 +44,47 @@ pub struct Table {
     pub text: String,
 }
 
+/// The end of the definitions' file name, after the app's ID and a hyphen.
+const DEFINITIONS: &str = "achievements-definitions.csv";
+
+/// The end of the achievements' names and descriptions file name.
+const LOCALISATION: &str = "achievements-localization.csv";
+
+/// The end of the sets' names file name.
+const SET_NAMES: &str = "achievement-sets-localization.csv";
+
+/// The ending of the icon shown once an achievement is unlocked.
+const ACHIEVED: &str = "_ACHIEVED.png";
+
+/// The ending of the icon shown while an achievement is locked.
+const UNACHIEVED: &str = "_UNACHIEVED.png";
+
+/// The editor's tables for one app, a field for each.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tables {
+    pub definitions: Table,
+    pub localisation: Table,
+    /// None for an app with no sets.
+    pub sets: Option<Table>,
+}
+
+impl Tables {
+    /// The tables in the order they are written and listed: the definitions, the localisation,
+    /// then the sets' names when there are sets.
+    pub fn files(&self) -> impl Iterator<Item = &Table> {
+        [&self.definitions, &self.localisation]
+            .into_iter()
+            .chain(self.sets.as_ref())
+    }
+}
+
 /// The editor's three tables for `app`, from `listed`: the definitions, the achievements' names
 /// and descriptions in each language, and the sets' names when there are sets.
 ///
 /// Without translations the texts are the English ones alone. A set's name is English alone
 /// unless its translations were read.
 #[must_use]
-pub fn tables(app: u32, listed: &Listed) -> Vec<Table> {
+pub fn tables(app: u32, listed: &Listed) -> Tables {
     let mut definitions = row(DEFINED);
     for wanted in &listed.achievements {
         definitions.push_str(&definition(wanted));
@@ -86,17 +120,9 @@ pub fn tables(app: u32, listed: &Listed) -> Vec<Table> {
                 .chain(texts)));
         }
     }
-    let mut written = vec![
-        Table {
-            name: format!("{app}-achievements-definitions.csv"),
-            text: definitions,
-        },
-        Table {
-            name: format!("{app}-achievements-localization.csv"),
-            text: localisation,
-        },
-    ];
-    if !listed.sets.is_empty() {
+    let sets = if listed.sets.is_empty() {
+        None
+    } else {
         let set_languages: Vec<&str> = listed.set_names.first().map_or_else(
             || vec!["english"],
             |first| {
@@ -122,12 +148,22 @@ pub fn tables(app: u32, listed: &Listed) -> Vec<Table> {
             });
             names.push_str(&row(iter::once(set.setid.as_str()).chain(texts)));
         }
-        written.push(Table {
-            name: format!("{app}-achievement-sets-localization.csv"),
+        Some(Table {
+            name: format!("{app}-{SET_NAMES}"),
             text: names,
-        });
+        })
+    };
+    Tables {
+        definitions: Table {
+            name: format!("{app}-{DEFINITIONS}"),
+            text: definitions,
+        },
+        localisation: Table {
+            name: format!("{app}-{LOCALISATION}"),
+            text: localisation,
+        },
+        sets,
     }
-    written
 }
 
 /// `wanted`'s row of the definitions.
@@ -293,8 +329,8 @@ fn progress_bars(definitions: &str) -> Vec<(String, String)> {
 /// it is unlocked, or while it is `locked`.
 #[must_use]
 pub fn icon_name(api_name: &str, locked: bool) -> String {
-    let state = if locked { "UNACHIEVED" } else { "ACHIEVED" };
-    format!("{api_name}_{state}.png")
+    let ending = if locked { UNACHIEVED } else { ACHIEVED };
+    format!("{api_name}{ending}")
 }
 
 /// An achievement's icon as the files give it, named as the editor imports it.
@@ -478,15 +514,11 @@ impl Receipt {
 /// an achievement since removed is found.
 #[must_use]
 pub fn written_for(app: u32, name: &str) -> bool {
-    [
-        "achievements-definitions.csv",
-        "achievements-localization.csv",
-        "achievement-sets-localization.csv",
-    ]
-    .iter()
-    .any(|table| name == format!("{app}-{table}"))
-        || name.ends_with("_ACHIEVED.png")
-        || name.ends_with("_UNACHIEVED.png")
+    [DEFINITIONS, LOCALISATION, SET_NAMES]
+        .iter()
+        .any(|table| name == format!("{app}-{table}"))
+        || name.ends_with(ACHIEVED)
+        || name.ends_with(UNACHIEVED)
 }
 
 /// The `fields` as a line of CSV, each quoted only when it holds a comma, a quote or a line
@@ -527,9 +559,9 @@ mod tests {
     ]"#;
 
     /// What the table of `written` named `kind` after the app holds.
-    fn table<'written>(written: &'written [Table], kind: &str) -> &'written str {
+    fn table<'written>(written: &'written Tables, kind: &str) -> &'written str {
         &written
-            .iter()
+            .files()
             .find(|table| table.name == format!("1000050{kind}"))
             .unwrap()
             .text
@@ -906,7 +938,7 @@ mod tests {
     fn no_sets_write_no_file_of_their_names() {
         let mut listed = inn();
         listed.sets.clear();
-        assert_eq!(tables(480, &listed).len(), 2);
+        assert_eq!(tables(480, &listed).sets, None);
     }
 
     #[test]
