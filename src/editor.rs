@@ -7,7 +7,7 @@ use std::mem;
 
 use serde_json::{Map, Value, json};
 
-use crate::achievements::{Drift, Listed, Wanted};
+use crate::achievements::{Drift, Listed, Wanted, icon_word};
 use crate::digest;
 use crate::webapi::Achievement;
 
@@ -344,12 +344,6 @@ pub struct Icon {
 }
 
 impl Icon {
-    /// Which of its achievement's two icons it is, as a person reads it.
-    #[must_use]
-    pub const fn which(&self) -> &'static str {
-        if self.locked { "locked icon" } else { "icon" }
-    }
-
     /// The SHA-256 of the file, in hexadecimal.
     #[must_use]
     pub fn sha256(&self) -> String {
@@ -485,7 +479,7 @@ impl Receipt {
                 if address.is_empty() {
                     return None;
                 }
-                let which = icon.which();
+                let which = icon_word(icon.locked);
                 let how = match self.icons.get(&icon.name) {
                     None => format!(
                         "the {which} has no import in {RECEIPT}. Import it, publish, then run \

@@ -569,7 +569,7 @@ fn achievement_icons(listed: &achievements::Listed) -> Result<Vec<editor::Icon>,
                     "{}'s {} is {} of {} by {} pixels, where the achievement editor takes a \
                      square PNG of 64 pixels or more, 256 at best",
                     wanted.api_name,
-                    if locked { "locked icon" } else { "icon" },
+                    achievements::icon_word(locked),
                     read.format.with_article(),
                     read.width,
                     read.height
@@ -914,14 +914,18 @@ fn untaken_icons(
             // Said once for the achievement, not again for each of its icons.
             format!("{}: not on Steam", icon.api_name)
         } else if address.is_empty() {
-            format!("{}: Steam has no {}", icon.api_name, icon.which())
+            achievements::Drift::NoIcon {
+                api_name: icon.api_name.clone(),
+                which: achievements::icon_word(icon.locked),
+            }
+            .to_string()
         } else if recorded.is_some_and(|imported| {
             imported.sha256 != icon.sha256() && imported.steam == editor::steam_image(address)
         }) {
             format!(
                 "{}: Steam still has the {} the last import made, where the file changed since",
                 icon.api_name,
-                icon.which()
+                achievements::icon_word(icon.locked)
             )
         } else {
             continue;
@@ -984,12 +988,12 @@ fn unlike_icons(
             Ok(likeness) => unlike.push(format!(
                 "{}: Steam's {} is not the file's: {likeness}",
                 icon.api_name,
-                icon.which()
+                achievements::icon_word(icon.locked)
             )),
             Err(why) => unlike.push(format!(
                 "{}: Steam's {} could not be compared with the file: {why}",
                 icon.api_name,
-                icon.which()
+                achievements::icon_word(icon.locked)
             )),
         }
     }

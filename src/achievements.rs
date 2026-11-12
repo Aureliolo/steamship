@@ -1345,7 +1345,10 @@ pub fn compare(wants: &[Wanted], held: &[Achievement]) -> Vec<Drift> {
                 });
             }
         }
-        for (which, icon) in [("icon", &steam.icon), ("locked icon", &steam.icon_locked)] {
+        for (which, icon) in [
+            (icon_word(false), &steam.icon),
+            (icon_word(true), &steam.icon_locked),
+        ] {
             if icon.is_empty() {
                 drift.push(Drift::NoIcon {
                     api_name: wanted.api_name.clone(),
@@ -1515,6 +1518,12 @@ pub fn tally(drift: &[Drift], wanted: usize, kind: &str) -> String {
     } else {
         format!("{line}: {}", counts.join(", "))
     }
+}
+
+/// Which of an achievement's two icons one is, as a person reads it.
+#[must_use]
+pub const fn icon_word(locked: bool) -> &'static str {
+    if locked { "locked icon" } else { "icon" }
 }
 
 #[cfg(test)]
