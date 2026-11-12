@@ -38,9 +38,13 @@ pub struct Wanted {
     pub name: String,
     pub description: String,
     pub hidden: bool,
-    /// The record's `id`, which its translations are kept under. Without one they are kept under
-    /// its English, in [`CONTEXT`].
+    /// The record's `id`, which its translations are kept under where it names no context.
+    /// Without either they are kept under its English, in [`CONTEXT`].
     pub id: Option<String>,
+    /// The context its name's translations are kept under by its English, where a file of
+    /// steamship's own kind names one, and the same of its description.
+    pub name_context: Option<String>,
+    pub description_context: Option<String>,
     pub defined: Definition,
 }
 
@@ -90,9 +94,13 @@ pub struct WantedSet {
     pub setid: String,
     /// Its name in English.
     pub name: String,
-    /// The record's `id`, which achievements may name it by and its translations are kept under.
-    /// Without one its name is kept under its English, in [`CONTEXT`].
+    /// The record's `id`, which achievements may name it by, and which its translations are kept
+    /// under where it names no context. Without either its name is kept under its English, in
+    /// [`CONTEXT`].
     pub id: Option<String>,
+    /// The context its name's translations are kept under by its English, where a file of
+    /// steamship's own kind names one.
+    pub name_context: Option<String>,
 }
 
 /// A set's name in each language, in the order of its localisation's columns.
@@ -168,7 +176,9 @@ impl Listed {
 /// and 0 when left out. Each set has its `setid` and its `name` in English. An achievement may
 /// also give its `set`, whether it is `archived`, who has `permission` to unlock it, the `stat`
 /// its progress bar counts with the value it unlocks `at`, and its `icon` and `icon_locked`.
-/// Other keys, such as what a game's own tools keep beside them, are left alone.
+/// An achievement may name the `name_context` and `description_context` its catalogues keep those
+/// texts under, and a set its `name_context`. Other keys, such as what a game's own tools keep
+/// beside them, are left alone.
 ///
 /// In the list, the records typed `achievement`, `stat` and `achievement_set` are read the same
 /// way with the API name or set ID in `steam`, and those of other types are left alone. The list
@@ -197,11 +207,12 @@ pub fn read(text: &str) -> Result<Listed, String> {
     let mut unchecked = Vec::new();
     for (index, entry) in entries.iter().enumerate() {
         let place = index.saturating_add(1);
-        achievements.push(achievement(
-            entry,
-            &format!("achievement {place}"),
-            "api_name",
-        )?);
+        let wanted = achievement(entry, &format!("achievement {place}"), "api_name")?;
+        achievements.push(Wanted {
+            name_context: given_text(entry, "name_context", &wanted.api_name)?,
+            description_context: given_text(entry, "description_context", &wanted.api_name)?,
+            ..wanted
+        });
         note_unchecked(entry, &ACHIEVEMENTS_UNCHECKED, &mut unchecked);
     }
     once(achievements.iter().map(|wanted| &wanted.api_name), "")?;
@@ -211,7 +222,12 @@ pub fn read(text: &str) -> Result<Listed, String> {
             let mut sets = Vec::with_capacity(listed.len());
             for (index, entry) in listed.iter().enumerate() {
                 let place = index.saturating_add(1);
-                sets.push(set(entry, &format!("set {place}"), "setid")?);
+                let wanted = set(entry, &format!("set {place}"), "setid")?;
+                let of = format!("set {}", wanted.setid);
+                sets.push(WantedSet {
+                    name_context: given_text(entry, "name_context", &of)?,
+                    ..wanted
+                });
             }
             sets
         }
@@ -491,6 +507,19 @@ fn read_records(records: &[Value]) -> Result<Listed, String> {
     })
 }
 
+/// The text `entry` gives under `key`, none when it has no such key.
+///
+/// # Errors
+///
+/// When the key holds anything but text that is not empty. The error names the entry as `of`.
+fn given_text(entry: &Value, key: &str, of: &str) -> Result<Option<String>, String> {
+    match entry.get(key) {
+        None => Ok(None),
+        Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
+        Some(_) => Err(format!("{of}: \"{key}\" is not text")),
+    }
+}
+
 /// The achievement `entry`, its API name under `named_by`, called `label` in what is wrong with
 /// it until that name is known.
 fn achievement(entry: &Value, label: &str, named_by: &str) -> Result<Wanted, String> {
@@ -507,11 +536,7 @@ fn achievement(entry: &Value, label: &str, named_by: &str) -> Result<Wanted, Str
         Some(Value::Bool(set)) => Ok(*set),
         Some(_) => Err(format!("{api_name}: \"{key}\" is not true or false")),
     };
-    let text = |key: &str| match entry.get(key) {
-        None => Ok(None),
-        Some(Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
-        Some(_) => Err(format!("{api_name}: \"{key}\" is not text")),
-    };
+    let text = |key: &str| given_text(entry, key, &api_name);
     // A record is games-kit's, which words the permission its own way. A file's matches the CSV.
     let worded = |(editor, kit): &(&'static str, &'static str)| {
         if named_by == "steam" { *kit } else { *editor }
@@ -576,6 +601,8 @@ fn achievement(entry: &Value, label: &str, named_by: &str) -> Result<Wanted, Str
         description: words("description", false)?,
         hidden: flag("hidden")?,
         id: text("id")?,
+        name_context: None,
+        description_context: None,
         defined,
         api_name,
     })
@@ -608,6 +635,7 @@ fn set(entry: &Value, label: &str, named_by: &str) -> Result<WantedSet, String> 
             Some(Value::String(id)) if !id.is_empty() => Some(id.clone()),
             _ => None,
         },
+        name_context: None,
         setid,
         name,
     })
@@ -884,7 +912,8 @@ fn resolve(whole: &mut Listed) -> Result<(), String> {
 /// each of the `catalogues` into `listed`, the languages in alphabetical order. Does nothing with
 /// no catalogues.
 ///
-/// An achievement's translations are kept under the contexts `achievement.name` and
+/// A text whose file names its context is kept under that context by its English. Otherwise an
+/// achievement's translations are kept under the contexts `achievement.name` and
 /// `achievement.description`, and a set's under `achievement_set.name`, each by its `id`, as
 /// games-kit reads a record's. Without an `id`, each text is kept under its English in
 /// [`CONTEXT`], as `text --template` gives it.
@@ -917,6 +946,7 @@ pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), V
     };
     let mut translations = Vec::with_capacity(listed.achievements.len());
     for wanted in &listed.achievements {
+        let id = wanted.id.as_ref();
         let mut texts = Vec::with_capacity(columns.len());
         for column in &columns {
             texts.push(column.map_or_else(
@@ -931,7 +961,7 @@ pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), V
                         from,
                         "name",
                         "achievement",
-                        key(wanted.id.as_ref(), &wanted.name),
+                        key(wanted.name_context.as_ref(), id, &wanted.name),
                         &wanted.api_name,
                     ),
                     description: if wanted.description.is_empty() {
@@ -941,7 +971,7 @@ pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), V
                             from,
                             "description",
                             "achievement",
-                            key(wanted.id.as_ref(), &wanted.description),
+                            key(wanted.description_context.as_ref(), id, &wanted.description),
                             &wanted.api_name,
                         )
                     },
@@ -955,6 +985,7 @@ pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), V
     }
     let mut set_names = Vec::with_capacity(listed.sets.len());
     for wanted in &listed.sets {
+        let id = wanted.id.as_ref();
         let mut names = Vec::with_capacity(columns.len());
         for column in &columns {
             names.push(column.map_or_else(
@@ -966,7 +997,7 @@ pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), V
                             from,
                             "name",
                             "achievement_set",
-                            key(wanted.id.as_ref(), &wanted.name),
+                            key(wanted.name_context.as_ref(), id, &wanted.name),
                             &format!("set {}", wanted.setid),
                         ),
                     )
@@ -987,14 +1018,17 @@ pub fn translate(listed: &mut Listed, catalogues: &[Catalogued]) -> Result<(), V
 }
 
 /// The context a catalogue translates an achievement's or a set's text under, by its English,
-/// when its file gives it no record `id`.
+/// when its file gives it neither a context nor a record `id`.
 pub const CONTEXT: &str = "steam achievements";
 
-/// What a catalogue finds a text by: the record's `id` or its English.
+/// What a catalogue finds a text by: the record's `id`, or its English under a context.
 #[derive(Clone, Copy)]
 enum Key<'text> {
     Id(&'text str),
-    English(&'text str),
+    English {
+        context: &'text str,
+        english: &'text str,
+    },
 }
 
 /// The `field` of a `kind` of record, called `of`, as the catalogue `from` translates it by `key`.
@@ -1012,7 +1046,7 @@ fn found(
 ) -> Result<String, String> {
     let (context, id) = match key {
         Key::Id(id) => (format!("{kind}.{field}"), id),
-        Key::English(english) => (CONTEXT.to_owned(), english),
+        Key::English { context, english } => (context.to_owned(), english),
     };
     match from.catalogue.find(&context, id) {
         Some(entry) if entry.fuzzy => Err(format!(
@@ -1028,9 +1062,21 @@ fn found(
     }
 }
 
-/// The record's `id` when there is one, or else the `english`.
-fn key<'text>(id: Option<&'text String>, english: &'text str) -> Key<'text> {
-    id.map_or(Key::English(english), |id| Key::Id(id))
+/// The `english` under the context the file `named`, or else the record's `id` when there is one,
+/// or else the `english` under [`CONTEXT`].
+fn key<'text>(
+    named: Option<&'text String>,
+    id: Option<&'text String>,
+    english: &'text str,
+) -> Key<'text> {
+    match (named, id) {
+        (Some(context), _) => Key::English { context, english },
+        (None, Some(id)) => Key::Id(id),
+        (None, None) => Key::English {
+            context: CONTEXT,
+            english,
+        },
+    }
 }
 
 /// Refuses the first of `api_names` that is there twice, said with `kind` before it.
@@ -1538,6 +1584,8 @@ mod tests {
             description: format!("{name}, described"),
             hidden: false,
             id: None,
+            name_context: None,
+            description_context: None,
             defined: Definition::default(),
         }
     }
@@ -2011,6 +2059,7 @@ mod tests {
                 setid: "1".to_owned(),
                 name: "The Cellar".to_owned(),
                 id: Some("base:cellar".to_owned()),
+                name_context: None,
             }]
         );
         let cellar = whole.achievements.last().unwrap();
@@ -2270,6 +2319,7 @@ mod tests {
                         setid: each.to_string(),
                         name: each.to_string(),
                         id: None,
+                        name_context: None,
                     })
                     .collect(),
                 ..Listed::default()
@@ -2497,6 +2547,170 @@ mod tests {
                 name: "Pst".to_owned(),
                 description: String::new(),
             }
+        );
+    }
+
+    const NAMED_KIND: &str = r#"{"sets": [{"setid": "1", "name": "Firsts",
+             "name_context": "deed.sets"}],
+        "achievements": [
+            {"api_name": "FIRST_GRIST", "set": "1", "name": "First grist",
+             "name_context": "deed.first_grist",
+             "description": "Grind your first sack of grain.",
+             "description_context": "deed.first_grist.about"},
+            {"api_name": "HUSH", "name": "Hush"}]}"#;
+
+    #[test]
+    fn a_text_whose_file_names_its_context_is_found_there_by_its_english() {
+        let mut whole = together(vec![("a.json".to_owned(), read(NAMED_KIND).unwrap())]).unwrap();
+        let german = "msgctxt \"deed.first_grist\"\nmsgid \"First grist\"\nmsgstr \"Erstes Mahlgut\"\n\
+            msgctxt \"deed.first_grist.about\"\nmsgid \"Grind your first sack of grain.\"\n\
+            msgstr \"Mahle deinen ersten Sack Korn.\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"First grist\"\nmsgstr \"Falsch\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"Hush\"\nmsgstr \"Pst\"\n\
+            msgctxt \"deed.sets\"\nmsgid \"Firsts\"\nmsgstr \"Erste Male\"\n";
+        translate(&mut whole, &[catalogued("de.po", "german", german)]).unwrap();
+        let german_texts: Vec<(&str, &str)> = whole
+            .translations
+            .iter()
+            .filter_map(|translated| translated.texts.last())
+            .map(|text| (text.name.as_str(), text.description.as_str()))
+            .collect();
+        assert_eq!(
+            german_texts,
+            [
+                ("Erstes Mahlgut", "Mahle deinen ersten Sack Korn."),
+                ("Pst", "")
+            ]
+        );
+        assert_eq!(
+            whole.set_names.first().unwrap().names.last().unwrap(),
+            &("german".to_owned(), "Erste Male".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_named_context_wins_over_an_id_one_text_at_a_time() {
+        let sheet = r#"{"achievements": [{"api_name": "HUSH", "id": "base:hush", "name": "Hush",
+            "name_context": "deed.hush", "description": "Say nothing."}]}"#;
+        let mut whole = together(vec![("a.json".to_owned(), read(sheet).unwrap())]).unwrap();
+        let german = "msgctxt \"deed.hush\"\nmsgid \"Hush\"\nmsgstr \"Pst\"\n\
+            msgctxt \"achievement.description\"\nmsgid \"base:hush\"\nmsgstr \"Sag nichts.\"\n\
+            msgctxt \"achievement.name\"\nmsgid \"base:hush\"\nmsgstr \"Falsch\"\n";
+        translate(&mut whole, &[catalogued("de.po", "german", german)]).unwrap();
+        let text = whole.translations.first().unwrap().texts.last().unwrap();
+        assert_eq!(
+            (text.name.as_str(), text.description.as_str()),
+            ("Pst", "Sag nichts.")
+        );
+    }
+
+    #[test]
+    fn a_record_that_names_a_context_is_still_found_by_its_id() {
+        let record = r#"[{"type": "achievement", "id": "base:hush", "steam": "HUSH",
+            "name": "Hush", "name_context": "deed.hush"}]"#;
+        let mut whole = together(vec![("a.json".to_owned(), read(record).unwrap())]).unwrap();
+        let german = "msgctxt \"achievement.name\"\nmsgid \"base:hush\"\nmsgstr \"Pst\"\n\
+            msgctxt \"deed.hush\"\nmsgid \"Hush\"\nmsgstr \"Falsch\"\n";
+        translate(&mut whole, &[catalogued("de.po", "german", german)]).unwrap();
+        assert_eq!(
+            whole
+                .translations
+                .first()
+                .unwrap()
+                .texts
+                .last()
+                .unwrap()
+                .name,
+            "Pst"
+        );
+    }
+
+    #[test]
+    fn a_text_missing_under_its_named_context_is_named_with_that_context() {
+        let whole = together(vec![("a.json".to_owned(), read(NAMED_KIND).unwrap())]).unwrap();
+        let german = "msgctxt \"steam achievements\"\nmsgid \"First grist\"\nmsgstr \"Erstes Mahlgut\"\n\
+            #, fuzzy\nmsgctxt \"deed.first_grist.about\"\nmsgid \"Grind your first sack of grain.\"\n\
+            msgstr \"Mahle deinen ersten Sack Korn.\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"Hush\"\nmsgstr \"Pst\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"Firsts\"\nmsgstr \"Erste Male\"\n";
+        let mut listed = whole.clone();
+        assert_eq!(
+            translate(&mut listed, &[catalogued("de.po", "german", german)]).unwrap_err(),
+            [
+                "de.po has no name of FIRST_GRIST, under msgctxt \"deed.first_grist\" and msgid \
+                 \"First grist\"",
+                "de.po: the description of FIRST_GRIST is marked fuzzy, under msgctxt \
+                 \"deed.first_grist.about\" and msgid \"Grind your first sack of grain.\"",
+                "de.po has no name of set 1, under msgctxt \"deed.sets\" and msgid \"Firsts\"",
+            ]
+        );
+        assert_eq!(listed, whole);
+
+        let named = "msgctxt \"deed.first_grist\"\nmsgid \"First grist\"\nmsgstr \"Erstes Mahlgut\"\n\
+            msgctxt \"deed.first_grist.about\"\nmsgid \"Grind your first sack of grain.\"\n\
+            msgstr \"Mahle deinen ersten Sack Korn.\"\n\
+            msgctxt \"deed.sets\"\nmsgid \"Firsts\"\nmsgstr \"Erste Male\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"Hush\"\nmsgstr \"Pst\"\n";
+        let french = "msgctxt \"steam achievements\"\nmsgid \"First grist\"\nmsgstr \"Premier\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"Grind your first sack of grain.\"\n\
+            msgstr \"Moulez\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"Hush\"\nmsgstr \"Chut\"\n\
+            msgctxt \"steam achievements\"\nmsgid \"Firsts\"\nmsgstr \"Premiers\"\n";
+        let mut both = whole;
+        assert_eq!(
+            translate(
+                &mut both,
+                &[
+                    catalogued("de.po", "german", named),
+                    catalogued("fr.po", "french", french)
+                ]
+            )
+            .unwrap_err(),
+            [
+                "fr.po has no name of FIRST_GRIST, under msgctxt \"deed.first_grist\" and msgid \
+                 \"First grist\"",
+                "fr.po has no description of FIRST_GRIST, under msgctxt \"deed.first_grist.about\" \
+                 and msgid \"Grind your first sack of grain.\"",
+                "fr.po has no name of set 1, under msgctxt \"deed.sets\" and msgid \"Firsts\"",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_context_that_is_not_text_is_refused_and_one_for_no_description_is_never_asked_for() {
+        for (sheet, why) in [
+            (
+                r#"{"achievements": [{"api_name": "A", "name": "A", "name_context": 3}]}"#,
+                "A: \"name_context\" is not text",
+            ),
+            (
+                r#"{"achievements": [{"api_name": "A", "name": "A", "description_context": ""}]}"#,
+                "A: \"description_context\" is not text",
+            ),
+            (
+                r#"{"sets": [{"setid": "1", "name": "S", "name_context": []}],
+                    "achievements": [{"api_name": "A", "name": "A"}]}"#,
+                "set 1: \"name_context\" is not text",
+            ),
+        ] {
+            assert_eq!(read(sheet).unwrap_err(), why);
+        }
+
+        let sheet = r#"{"achievements": [{"api_name": "HUSH", "name": "Hush",
+            "name_context": "deed.hush", "description_context": "deed.hush.about"}]}"#;
+        let mut whole = together(vec![("a.json".to_owned(), read(sheet).unwrap())]).unwrap();
+        let german = "msgctxt \"deed.hush\"\nmsgid \"Hush\"\nmsgstr \"Pst\"\n";
+        translate(&mut whole, &[catalogued("de.po", "german", german)]).unwrap();
+        assert_eq!(
+            whole
+                .translations
+                .first()
+                .unwrap()
+                .texts
+                .last()
+                .unwrap()
+                .name,
+            "Pst"
         );
     }
 

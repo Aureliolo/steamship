@@ -612,7 +612,8 @@ pub struct Text {
     /// template, for a game's own template to take in. Each text is under the context the
     /// catalogues translate it by. Each has a note for its translator, and `max-length:N` where Steam's room
     /// for it is short. A record's name that rich presence shows is left to the records. So are
-    /// achievements a record `id` keys, and the rest are given under `steam achievements`.
+    /// achievements a record `id` keys. A text whose context its file names is left to the game's
+    /// own template. The rest are given under `steam achievements`.
     #[arg(long, conflicts_with_all = ["unchanged", "steam"])]
     pub template: bool,
     /// Write nothing. Exit 2 and name each minimum or recommended system requirement that the
@@ -654,6 +655,8 @@ pub struct Writing {
     /// its file name, such as `de.po`. Its texts are under the contexts `achievement.name`,
     /// `achievement.description` and `achievement_set.name`, by the record's `id`. Without an
     /// `id`, they are under `steam achievements` by their English, as `text --template` gives them.
+    /// In a file of achievements, an achievement's `name_context` and `description_context` and a
+    /// set's `name_context` name the context that text's English is under instead.
     #[arg(
         long,
         value_name = "FILE",

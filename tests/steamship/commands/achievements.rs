@@ -1313,6 +1313,102 @@ fn achievements_are_checked_in_each_language_a_catalogue_is_in() {
     assert!(second.contains("l=german"), "{second}");
 }
 
+/// A sheet of steamship's own kind whose texts sit under contexts the game chose, and the German
+/// catalogue that holds them.
+fn named_contexts(files: &Path, description_context: &str) -> (PathBuf, PathBuf) {
+    let sheet = files.join("achievements.json");
+    fs::write(
+        &sheet,
+        r#"{"stats": [], "achievements": [{"api_name": "FIRST_ANCHOR",
+            "name": "Down by the Wheel", "name_context": "deed.first_anchor",
+            "description": "Drain a mill's first sluice.",
+            "description_context": "deed.first_anchor.about"}]}"#,
+    )
+    .unwrap();
+    let german = files.join("de.po");
+    fs::write(
+        &german,
+        format!(
+            "msgctxt \"deed.first_anchor\"\nmsgid \"Down by the Wheel\"\nmsgstr \"Hinab zum Rad\"\n\
+             msgctxt \"{description_context}\"\nmsgid \"Drain a mill's first sluice.\"\n\
+             msgstr \"Gib die erste Schleuse eines Mahlwerks frei.\"\n"
+        ),
+    )
+    .unwrap();
+    (sheet, german)
+}
+
+#[test]
+fn achievements_are_checked_and_written_under_the_contexts_their_file_names() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("200 OK", CELLAR), ("200 OK", KELLER)]);
+    let set = web_api_variables(&host);
+    let files = tempfile::tempdir().unwrap();
+    let (sheet, german) = named_contexts(files.path(), "deed.first_anchor.about");
+    let (sheet, german) = (sheet.to_string_lossy(), german.to_string_lossy());
+
+    let (code, said, _) = steamship(
+        &["achievements", "1000050", "--check", &sheet, &german],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(code, Some(0_i32), "{said}");
+    assert!(
+        said.contains("Steam's achievements and stats match the files\n"),
+        "{said}"
+    );
+
+    let out = files.path().join("out");
+    let (written, printed, why) = steamship(
+        &[
+            "achievements",
+            "1000050",
+            "--write",
+            &sheet,
+            &german,
+            "--out",
+            &out.to_string_lossy(),
+        ],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(written, Some(0_i32), "{printed}{why}");
+    let csv = fs::read_to_string(out.join("1000050-achievements-localization.csv")).unwrap();
+    assert!(
+        csv.contains("FIRST_ANCHOR,name,Down by the Wheel,Hinab zum Rad"),
+        "{csv}"
+    );
+}
+
+#[test]
+fn a_text_missing_under_a_named_context_is_refused_before_steam_is_asked() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![("200 OK", CELLAR), ("200 OK", KELLER)]);
+    let set = web_api_variables(&host);
+    let files = tempfile::tempdir().unwrap();
+    let (sheet, german) = named_contexts(files.path(), "deed.first_anchor.elsewhere");
+    let (code, _, why) = steamship(
+        &[
+            "achievements",
+            "1000050",
+            "--check",
+            &sheet.to_string_lossy(),
+            &german.to_string_lossy(),
+        ],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(code, Some(2_i32), "{why}");
+    assert!(
+        why.contains(
+            "de.po has no description of FIRST_ANCHOR, under msgctxt \
+             \"deed.first_anchor.about\" and msgid \"Drain a mill's first sluice.\""
+        ),
+        "{why}"
+    );
+    assert!(requests.try_recv().is_err(), "Steam was asked: {why}");
+}
+
 #[test]
 fn achievements_json_prints_them_alone_on_standard_output_and_not_with_check() {
     let home = tempfile::tempdir().unwrap();

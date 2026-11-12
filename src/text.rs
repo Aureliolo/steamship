@@ -71,7 +71,8 @@ pub struct English {
     pub store: Option<Store>,
     pub workshop: Option<Workshop>,
     pub presence: Option<Presence>,
-    /// The template's entries for the achievements and sets that no record `id` keys.
+    /// The template's entries for the achievements' and sets' texts that neither a record `id` nor
+    /// a context their file names keys.
     pub achievements: Vec<Entry>,
 }
 
@@ -596,10 +597,11 @@ pub fn entries(english: &English) -> Result<Vec<Entry>, Vec<String>> {
     Ok(said)
 }
 
-/// The template's entries for each achievement and set of `listed` that no record `id` keys.
+/// The template's entries for each text of `listed`'s achievements and sets that neither a record
+/// `id` nor a context its file names keys.
 ///
 /// Each is its English under [`achievements::CONTEXT`], with a note naming it. games-kit's own
-/// template gives those a record keys.
+/// template gives those a record keys, and the game's own those whose context its file names.
 #[must_use]
 pub fn achievement_entries(listed: &Listed) -> Vec<Entry> {
     let entry = |english: &str, note: String| Entry {
@@ -615,11 +617,13 @@ pub fn achievement_entries(listed: &Listed) -> Vec<Entry> {
         .filter(|wanted| wanted.id.is_none())
     {
         let api_name = &wanted.api_name;
-        entries.push(entry(
-            &wanted.name,
-            format!("The name of the game's Steam achievement {api_name}. Plain text."),
-        ));
-        if !wanted.description.is_empty() {
+        if wanted.name_context.is_none() {
+            entries.push(entry(
+                &wanted.name,
+                format!("The name of the game's Steam achievement {api_name}. Plain text."),
+            ));
+        }
+        if !wanted.description.is_empty() && wanted.description_context.is_none() {
             entries.push(entry(
                 &wanted.description,
                 format!(
@@ -629,7 +633,11 @@ pub fn achievement_entries(listed: &Listed) -> Vec<Entry> {
             ));
         }
     }
-    for set in listed.sets.iter().filter(|set| set.id.is_none()) {
+    for set in listed
+        .sets
+        .iter()
+        .filter(|set| set.id.is_none() && set.name_context.is_none())
+    {
         entries.push(entry(
             &set.name,
             format!(
@@ -1836,6 +1844,37 @@ msgstr "Die Erlenhexe"
                 note: STORE_NOTE.to_owned(),
                 most: Some(SHORT_MOST),
             }])
+        );
+    }
+
+    #[test]
+    fn the_template_leaves_out_each_text_whose_context_its_file_names() {
+        let listed = achievements::together(vec![(
+            "a.json".to_owned(),
+            achievements::read(
+                r#"{"sets": [{"setid": "1", "name": "Firsts", "name_context": "deed.sets"},
+                             {"setid": "2", "name": "Lasts"}],
+                "achievements": [
+                    {"api_name": "FIRST_GRIST", "set": "1", "name": "First grist",
+                     "name_context": "deed.first_grist",
+                     "description": "Grind your first sack of grain.",
+                     "description_context": "deed.first_grist.about"},
+                    {"api_name": "QUIET", "name": "Quiet", "name_context": "deed.quiet",
+                     "description": "Say nothing."},
+                    {"api_name": "HUSH", "name": "Hush"}]}"#,
+            )
+            .unwrap(),
+        )])
+        .unwrap();
+        let mut given: Vec<(String, String)> = achievement_entries(&listed)
+            .into_iter()
+            .map(|entry| (entry.context, entry.english))
+            .collect();
+        given.sort();
+        let under = |english: &str| (achievements::CONTEXT.to_owned(), english.to_owned());
+        assert_eq!(
+            given,
+            [under("Hush"), under("Lasts"), under("Say nothing.")]
         );
     }
 

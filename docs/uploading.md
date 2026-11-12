@@ -880,6 +880,23 @@ record's `id`, as games-kit keeps a record's translations.
 In a file of the kind above, with no `id`, each text is under the context `steam achievements`, with
 its English as the msgid. `steamship text --template` gives these entries for the game's template.
 
+A game's catalogues may keep each text under a context of its own. The file then names it: an
+achievement gives its `name_context` and `description_context`, and a set its `name_context`.
+steamship looks the text up under that context, with its English as the msgid:
+
+```json
+{
+  "api_name": "FIRST_ANCHOR",
+  "name": "Down by the Wheel",
+  "name_context": "deed.first_anchor",
+  "description": "Drain a mill's first sluice.",
+  "description_context": "deed.first_anchor.about"
+}
+```
+
+`steamship text --template` leaves such a text out, since the game's own template holds it. A
+games-kit record takes no such key.
+
 Every text a catalogue lacks, leaves empty or marks fuzzy is refused. Each message names the
 catalogue, the context and the msgid.
 

@@ -310,8 +310,9 @@ fn text_english(game: &Project, folder: &Path) -> Result<text::English, ExitCode
     Ok(english)
 }
 
-/// The template's entries for the game's achievements and sets that no record `id` keys, which
-/// the game's own template does not give. None when it keeps no achievements.
+/// The template's entries for the texts of the game's achievements and sets that neither a record
+/// id nor a named context keys, which the game's own template does not give. None when it keeps no
+/// achievements.
 fn text_achievements(game: &Project) -> Result<Vec<text::Entry>, ExitCode> {
     let paths = game
         .records(project::ACHIEVEMENTS)
