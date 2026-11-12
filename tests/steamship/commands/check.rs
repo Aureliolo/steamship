@@ -4,7 +4,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::common;
 use crate::common::pe::settings_ticking;
+use crate::common::project::Project;
+use steamship::run;
 use steamship::scripts::Problem;
 use steamship::webapi::STAND_IN;
 
@@ -894,4 +897,110 @@ fn a_games_script_may_set_only_the_games_branch_live() {
     assert_eq!(code, Some(2_i32), "no build account here: {stdout}{stderr}");
     assert!(!stderr.contains("sets beta live"), "{stderr}");
     assert!(stdout.contains("  build     "), "past the script: {stdout}");
+}
+
+/// `steamship check` on `script`, in a home of its own and with no key set: a key kept for the
+/// home of whoever runs the tests would otherwise have `check` ask Steam about the test's app.
+fn run(script: &Path) -> (Option<i32>, String, String) {
+    run_with(script, &[])
+}
+
+/// [`run`], with `extra` arguments after the script.
+fn run_with(script: &Path, extra: &[&str]) -> (Option<i32>, String, String) {
+    let home = tempfile::tempdir().unwrap();
+    let output = run::output(
+        run::command(env!("CARGO_BIN_EXE_steamship"))
+            .arg("check")
+            .arg(script)
+            .args(extra)
+            .env("STEAMSHIP_HOME", home.path())
+            .env_remove("STEAMSHIP_WEB_API_KEY")
+            .envs(common::store::environment()),
+    )
+    .unwrap();
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn the_command_says_what_it_mapped_and_exits_0() {
+    let (_project, app) = Project::shipping("");
+    let (code, stdout, stderr) = run(&app);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
+    assert_eq!(
+        stdout,
+        format!(
+            "steamship check\n  \
+             script    {}\n  \
+             app       \u{2713} 1000, 2 depots, 4 files, checked\n  \
+             branch    testing, not checked: no Web API key at hand\n    \
+             a branch the app does not have leaves the build uploaded but not live. steamship \
+             login --web-api-key keeps a key to check it with\n  \
+             depot     1001, 2 files\n  \
+             depot     1002, 2 files\n  \
+             \u{2713} nothing refused\n",
+            app.display()
+        )
+    );
+}
+
+#[test]
+fn the_command_checks_the_scripts_alone_before_the_build_and_says_the_content_was_not() {
+    let (project, app) = Project::shipping("");
+    fs::remove_dir_all(project.root.join("export")).unwrap();
+    let (code, stdout, stderr) = run_with(&app, &["--scripts-only"]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
+    assert_eq!(
+        stdout,
+        format!(
+            "steamship check\n  \
+             script    {}\n  \
+             app       \u{2713} 1000, 2 depots, scripts checked\n  \
+             branch    testing, not checked: no Web API key at hand\n    \
+             a branch the app does not have leaves the build uploaded but not live. steamship \
+             login --web-api-key keeps a key to check it with\n  \
+             content   not checked (--scripts-only)\n  \
+             \u{2713} nothing refused\n",
+            app.display()
+        )
+    );
+    let (full, _, _) = run(&app);
+    assert_eq!(
+        full,
+        Some(2_i32),
+        "without the flag, the missing build is refused"
+    );
+}
+
+#[test]
+fn the_command_says_a_script_that_is_not_there_does_not_exist_and_exits_2() {
+    let project = Project::new();
+    for missing in ["app_build.vdf", "steam/app_build.vdf"] {
+        let script = project.root.join(missing);
+        let (code, _, stderr) = run(&script);
+        assert_eq!(code, Some(2_i32), "{missing}");
+        assert_eq!(
+            stderr,
+            format!("  \u{2717} refused: {}: does not exist\n", script.display()),
+            "{missing}"
+        );
+    }
+}
+
+#[test]
+fn the_command_lists_every_refusal_and_exits_2() {
+    let (_project, app) = Project::shipping(r#""Preview" "1""#);
+    let (code, stdout, stderr) = run(&app);
+    assert_eq!(code, Some(2_i32));
+    assert!(!stdout.contains('\u{2713}'), "{stdout}");
+    assert!(
+        stderr
+            .lines()
+            .all(|line| line.starts_with("  \u{2717} refused: ")),
+        "{stderr}"
+    );
+    assert!(stderr.contains("\"Preview\" is set in the script. Pass --preview"));
 }
