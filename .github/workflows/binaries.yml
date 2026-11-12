@@ -16,12 +16,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  # The NuGet package, which Microsoft signs, refused unless it matches the digest written here.
-  # renovate: datasource=nuget depName=Microsoft.CodeAnalysis.BinSkim
-  BINSKIM_VERSION: 4.4.9.11
-  BINSKIM_SHA256: 69678989cbc273b5b50fcf98fb0fd978e1e35a3f844acb24254b31f0ce90c447
-
 jobs:
   binskim:
     name: binskim (${{ matrix.platform }})
@@ -95,21 +89,10 @@ jobs:
           VSCMD_ARG_VCVARS_SPECTRE: ${{ matrix.spectre }}
         run: cargo build --locked --release --target "${TARGET}"
 
+      # Beside the checkout by a relative path, since the runner's own folders there start with a
+      # drive letter, which bash cannot glob.
       - name: Install BinSkim
-        run: |
-          set -euo pipefail
-          package="${RUNNER_TEMP}/binskim.nupkg"
-          curl -fsSL --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${package}" \
-            "https://api.nuget.org/v3-flatcontainer/microsoft.codeanalysis.binskim/${BINSKIM_VERSION}/microsoft.codeanalysis.binskim.${BINSKIM_VERSION}.nupkg"
-          echo "${BINSKIM_SHA256}  ${package}" | sha256sum --check --strict
-          # Unpacked whole, since Git for Windows' unzip will not let a wildcard cross a folder,
-          # and beside the checkout by a relative path, since the runner's own folders there start
-          # with a drive letter, which bash cannot glob.
-          unzip -q "${package}" -d .binskim
-          # A zip carries no executable bit, which only Linux asks for.
-          if [[ "${RUNNER_OS}" == Linux ]]; then
-            chmod +x .binskim/tools/*/linux-x64/BinSkim
-          fi
+        run: bash .github/binskim.sh .binskim
 
       # Findings are judged from the results below rather than BinSkim's exit code, which does
       # not tell a finding from the tool failing. Messages are written out in full, which code
