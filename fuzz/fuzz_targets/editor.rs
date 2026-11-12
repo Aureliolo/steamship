@@ -17,6 +17,8 @@ fn written(api_name: &str, stat: &str, at: f64, texts: [&str; 2]) -> [String; 2]
             description,
             hidden: false,
             id: None,
+            name_context: None,
+            description_context: None,
             defined: Definition {
                 progress: Some(Progress {
                     stat: stat.to_owned(),

@@ -579,6 +579,33 @@ fn achievements_kept_in_steamships_own_file_are_in_the_template_by_their_english
 }
 
 #[test]
+fn achievements_that_name_their_contexts_are_left_out_of_the_template() {
+    let (_temp, root) = pushed_game(Some("records = [\"steam/achievements.json\"]\n"));
+    fs::write(
+        root.join("steam/achievements.json"),
+        r#"{"app": 1000050, "achievements": [
+            {"api_name": "FIRST_GRIST", "name": "First grist",
+             "name_context": "deed.first_grist",
+             "description": "Grind your first sack of grain.",
+             "description_context": "deed.first_grist.about"},
+            {"api_name": "HUSH", "name": "Hush"}]}"#,
+    )
+    .unwrap();
+
+    let (code, template, told) = in_game(&root, &["text", "--template"]);
+    assert_eq!(code, Some(0_i32), "{told}");
+    assert!(
+        template.contains("msgctxt \"steam achievements\"\nmsgid \"Hush\"\nmsgstr \"\"\n"),
+        "{template}"
+    );
+    assert!(!template.contains("First grist"), "{template}");
+    assert!(
+        !template.contains("Grind your first sack of grain."),
+        "{template}"
+    );
+}
+
+#[test]
 fn a_short_description_steam_would_cut_is_refused_before_any_template() {
     let (_temp, root) = pushed_game(None);
     let long = "A mill. ".repeat(40);
