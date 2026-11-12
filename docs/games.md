@@ -14,7 +14,7 @@ steamship workshop              # each example mod, as its Workshop item
 ## Where steamship looks
 
 Without a `steamship.toml`, steamship expects the layout of a game that keeps its content as
-[games-kit records](uploading.md#games-kit-records), a layout of JSON records:
+[games-kit records](uploading.md#games-kit-records) in JSON files:
 
 | What | Where |
 | --- | --- |

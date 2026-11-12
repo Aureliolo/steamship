@@ -50,7 +50,7 @@ fn artwork_is_checked_against_valves_sizes_with_nothing_sent() {
     let (none, _, said) = steamship(&["assets", &empty.path().to_string_lossy()], None, &quiet);
     assert_eq!(none, Some(2_i32), "{said}");
     assert!(
-        said.contains("holds no PNG, JPEG, icon, zip or language folder with one"),
+        said.contains("holds no PNG, JPEG, icon or zip, directly or in a language folder"),
         "{said}"
     );
 }

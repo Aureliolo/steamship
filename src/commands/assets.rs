@@ -36,7 +36,7 @@ pub(crate) fn run_assets(folder: &Path) -> ExitCode {
     if checked.is_empty() {
         return fail(
             &format!(
-                "{}: holds no PNG, JPEG, icon, zip or language folder with one",
+                "{}: holds no PNG, JPEG, icon or zip, directly or in a language folder",
                 folder.display()
             ),
             REFUSED,
