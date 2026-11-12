@@ -7,8 +7,7 @@
     "The dependency dashboard is on: it is the only place that shows what Renovate tried and could not land, which the weekly pull request never mentions.",
     "The commit pins.yml adds to finish a raise is not taken as someone else's edit, so Renovate still rebases and updates its branch."
   ],
-  "dependencyDashboard": true,
-  "dependencyDashboardLabels": ["renovate"],
+  "dependencyDashboard": { "enabled": true, "labels": ["renovate"] },
   "separateMajorMinor": false,
   "gitIgnoredAuthors": ["41898282+github-actions[bot]@users.noreply.github.com"],
   "commitMessageAction": "Raise",
@@ -49,6 +48,12 @@
       "description": "The Homebrew formula and the Scoop manifest are written by each release from its own signed checksums; Renovate's homebrew manager would raise one of the formula's archives and leave the others.",
       "matchFileNames": ["Formula/**", "bucket/**"],
       "enabled": false
+    },
+    {
+      "description": "An image's tag is a bare number, which its digest can hold too. Renovate changes the first copy alone, the tag, and the digest keeps its own replacement.",
+      "matchManagers": ["custom.regex"],
+      "matchDatasources": ["docker", "custom.fedora"],
+      "autoReplaceGlobalMatch": false
     }
   ],
   "customDatasources": {
@@ -58,6 +63,13 @@
       "format": "plain",
       "transformTemplates": [
         "{\"releases\": [{\"version\": $match($filter(releases, function($release) { $contains($release.version, '\"version\"') })[0].version, /[0-9]+/)[0].match}]}"
+      ]
+    },
+    "fedora": {
+      "description": "Fedora's image tags from Docker Hub's tag list, not the registry: rawhide carries the next release's number there, and the list shows which number `latest` is. That number and those below it are the releases, each with its digest.",
+      "defaultRegistryUrlTemplate": "https://hub.docker.com/v2/repositories/library/fedora/tags?page_size=100",
+      "transformTemplates": [
+        "($latest := results[name = 'latest'].digest; $top := $number(results[digest = $latest and $match(name, /^[0-9]+$/)].name); {\"releases\": results[$type(digest) = 'string' and $match(name, /^[0-9]+$/) and $number(name) <= $top].{\"version\": name, \"digest\": digest}})"
       ]
     }
   },
@@ -87,16 +99,25 @@
       "versioningTemplate": "regex:^(?<major>\\d+)$"
     },
     {
-      "description": "Microsoft's ConPTY package, pinned in .github/conpty.sh. Only the version can be raised here, and nuget.org gives no digest, so .github/workflows/pins.yml writes the SHA-256 on the branch. Preview versions are left out.",
+      "description": "A NuGet package pinned in a .github script: ConPTY in conpty.sh, BinSkim in binskim.sh. Only the version can be raised here, and nuget.org gives no digest, so .github/workflows/pins.yml writes the SHA-256 on the branch. A version is three or four numbers, which leaves preview versions out.",
       "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/conpty\\.sh$/"],
+      "managerFilePatterns": ["/^\\.github/[^/]+\\.sh$/"],
       "matchStrings": ["# renovate: datasource=(?<datasource>nuget) depName=(?<depName>\\S+)\\nversion=(?<currentValue>\\S+)"],
-      "versioningTemplate": "semver-coerced"
+      "versioningTemplate": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)(?:\\.(?<build>\\d+))?$"
     },
     {
-      "description": "A release tag with the SHA-256 of the asset downloaded on the next line: actionlint, cargo-deny and the like. The tag and the digest move together.",
+      "description": "A container image by tag and digest in an action of this repository: the bare Debian and Fedora the Linux packages are installed on. The tag and the digest move together.",
       "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/"],
+      "managerFilePatterns": ["/^\\.github/actions/.+/action\\.ya?ml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>docker|custom\\.fedora) depName=(?<depName>\\S+)\\n\\s*[A-Z0-9_]+: [^:\\s]+:(?<currentValue>\\d+)@(?<currentDigest>sha256:[0-9a-f]{64})"
+      ],
+      "versioningTemplate": "regex:^(?<major>\\d+)$"
+    },
+    {
+      "description": "A release tag with the SHA-256 of the asset downloaded on the next line, in a workflow or an action of this repository: actionlint, cargo-deny, nFPM and the like. The tag and the digest move together.",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/", "/^\\.github/actions/.+/action\\.ya?ml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>\\S+) versioning=(?<versioning>\\S+)\\n\\s*[A-Z0-9_]+_TAG: (?<currentValue>\\S+)\\n\\s*[A-Z0-9_]+_SHA256: (?<currentDigest>[0-9a-f]{64})"
       ]

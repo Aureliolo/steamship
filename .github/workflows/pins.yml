@@ -10,14 +10,14 @@ name: Pins
 # It does not ask who pushed: all it can ever commit is the manifest Valve serves now, and only
 # when that names the version already on the branch, so whoever pushes can only have a pin made
 # whole. Its own commit, if it runs again for it, finds nothing left to change.
-# The console package's SHA-256 is finished the same way.
+# A NuGet package's SHA-256 is finished the same way, in each .github script that pins one.
 on:
   push:
     branches:
       - renovate/**
     paths:
       - pins/**
-      - .github/conpty.sh
+      - .github/*.sh
 
 permissions: {}
 
@@ -68,43 +68,56 @@ jobs:
           done
           echo "files=${changed[*]}" >> "${GITHUB_OUTPUT}"
 
-      # Reads two lines of the script and runs nothing from the branch. The version and the
-      # digest are checked before the version reaches an address or the digest a file.
-      - name: Hash the console package the raised pin names
-        id: console
+      # Reads three lines of each script and runs nothing from the branch. The name, the version
+      # and the digest are checked before any reaches an address or a file. One script's failure
+      # leaves the others' finish alone.
+      - name: Hash the package each raised NuGet pin names
+        id: nuget
         if: '!cancelled()'
         run: |
           set -euo pipefail
-          script=.github/conpty.sh
-          version="$(sed -n 's/^version=//p' "${script}")"
-          pinned="$(sed -n 's/^sha256=//p' "${script}")"
-          if [[ ! "${version}" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
-            echo "::error file=${script}::The version= line of ${script} is not a version of digits and dots. Set it to one nuget.org lists."
-            exit 1
-          fi
-          if [[ ! "${pinned}" =~ ^[0-9a-f]{64}$ ]]; then
-            echo "::error file=${script}::The sha256= line of ${script} is not a SHA-256 of 64 hexadecimal digits. Put back the one main has."
-            exit 1
-          fi
-          curl -fsS --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${RUNNER_TEMP}/conpty.nupkg" \
-            "https://api.nuget.org/v3-flatcontainer/microsoft.windows.console.conpty/${version}/microsoft.windows.console.conpty.${version}.nupkg"
-          live="$(sha256sum "${RUNNER_TEMP}/conpty.nupkg" | cut -d' ' -f1)"
-          if [[ "${live}" == "${pinned}" ]]; then
-            echo "files=" >> "${GITHUB_OUTPUT}"
-            exit 0
-          fi
-          sed -i "s/^sha256=.*/sha256=${live}/" "${script}"
-          echo "files=${script}" >> "${GITHUB_OUTPUT}"
+          changed=()
+          failed=0
+          mapfile -t scripts < <(grep -lE '^# renovate: datasource=nuget depName=[A-Za-z0-9._-]+$' .github/*.sh || true)
+          for script in "${scripts[@]}"; do
+            package="$(sed -n 's/^# renovate: datasource=nuget depName=//p' "${script}")"
+            package="${package,,}"
+            version="$(sed -n 's/^version=//p' "${script}")"
+            pinned="$(sed -n 's/^sha256=//p' "${script}")"
+            if [[ ! "${version}" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+              echo "::error file=${script}::The version= line of ${script} is not a version of digits and dots. Set it to one nuget.org lists."
+              failed=1
+              continue
+            fi
+            if [[ ! "${pinned}" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "::error file=${script}::The sha256= line of ${script} is not a SHA-256 of 64 hexadecimal digits. Put back the one main has."
+              failed=1
+              continue
+            fi
+            if ! curl -fsS --proto '=https' --tlsv1.2 --retry 6 --retry-all-errors -o "${RUNNER_TEMP}/${package}.nupkg" \
+              "https://api.nuget.org/v3-flatcontainer/${package}/${version}/${package}.${version}.nupkg"; then
+              echo "::error file=${script}::nuget.org did not hand over ${package} ${version}, which ${script} pins. A push that changes the script runs this again."
+              failed=1
+              continue
+            fi
+            live="$(sha256sum "${RUNNER_TEMP}/${package}.nupkg" | cut -d' ' -f1)"
+            if [[ "${live}" != "${pinned}" ]]; then
+              sed -i "s/^sha256=.*/sha256=${live}/" "${script}"
+              changed+=("${script}")
+            fi
+          done
+          echo "files=${changed[*]}" >> "${GITHUB_OUTPUT}"
+          exit "${failed}"
 
       # Committed through the API rather than pushed, as release-prepare.yml does: GitHub signs
       # what it commits itself. The commit is made only on the head this run checked, so a newer
       # push from Renovate is never overwritten; that push runs this again.
       - name: Commit the finished pins
-        if: ${{ !cancelled() && (steps.fetch.outputs.files != '' || steps.console.outputs.files != '') }}
+        if: ${{ !cancelled() && (steps.fetch.outputs.files != '' || steps.nuget.outputs.files != '') }}
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
-          FILES: ${{ steps.fetch.outputs.files }} ${{ steps.console.outputs.files }}
+          FILES: ${{ steps.fetch.outputs.files }} ${{ steps.nuget.outputs.files }}
         run: |
           set -euo pipefail
           additions='[]'
