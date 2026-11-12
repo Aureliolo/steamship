@@ -15,6 +15,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{self, Path, PathBuf};
+use std::thread;
 use std::time::Duration;
 
 use crate::branch;
@@ -508,11 +509,11 @@ pub fn uploaded_as(builds: &[webapi::Build], description: &str) -> Option<u64> {
 ///
 /// The CDN was seen to answer 404 for a branch's last manifest 16 minutes after its build, and to
 /// serve it a minute later.
-pub const CDN_PATIENCE: Duration = Duration::from_mins(30);
+const CDN_PATIENCE: Duration = Duration::from_mins(30);
 
 /// The most times steamcmd runs for one upload. Each run logs in again, so a request code that
 /// keeps expiring does not have steamcmd log in without end.
-pub const RUNS: u32 = 4;
+const RUNS: u32 = 4;
 
 /// What steamcmd says when Steam's build server is not reached as a build begins, after a login
 /// that was. Seen once in CI, on a run between two that built minutes before and after.
@@ -534,11 +535,12 @@ const NO_CLIENT_CONFIG: &str = "ERROR! Failed to load platform info";
 pub enum Retry {
     /// For a manifest the CDN does not serve yet. It passes once the CDN does.
     Unserved(Unserved),
-    /// For no connection to Steam's build server. It is tried once more.
+    /// For no connection to Steam's build server. It shares one more run in all with the other
+    /// lost connections, which counts toward `RUNS`.
     NoConnection,
-    /// For Steam dropping steamcmd's connection. It is tried once more, as for no connection.
+    /// For Steam dropping steamcmd's connection. It shares that one more run with no connection.
     Disconnected,
-    /// For Steam not sending steamcmd its client config. It is tried once more, as for no
+    /// For Steam not sending steamcmd its client config. It shares that one more run with no
     /// connection.
     NoClientConfig,
 }
@@ -631,10 +633,96 @@ pub fn still_unserved(outcome: &mut Outcome, depot: u32) {
     }
 }
 
+/// What an upload does after a run that failed in a way that may pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Next {
+    /// Run steamcmd again at once.
+    Again,
+    /// Wait at most this long for the CDN to serve the manifest, then run steamcmd again.
+    Wait(Duration),
+    /// Run steamcmd no more.
+    GiveUp,
+}
+
+/// The runs of one upload so far, the CDN patience it has left, and whether it has reconnected.
+///
+/// It holds the upload's retry rule: at most `RUNS` runs, `CDN_PATIENCE` in all across its waits
+/// for the CDN, and one more run for a lost connection, whichever way it was lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Tries {
+    runs: u32,
+    patience: Duration,
+    reconnected: bool,
+}
+
+impl Default for Tries {
+    /// The tries of an upload that has run steamcmd once.
+    fn default() -> Self {
+        Self {
+            runs: 1,
+            patience: CDN_PATIENCE,
+            reconnected: false,
+        }
+    }
+}
+
+impl Tries {
+    /// What to do after a run that failed for `retry`. An answer other than `GiveUp` counts the
+    /// run it leads to.
+    pub const fn next(&mut self, retry: &Retry) -> Next {
+        if self.runs == RUNS {
+            return Next::GiveUp;
+        }
+        let next = match retry {
+            Retry::Unserved(_) => Next::Wait(self.patience),
+            Retry::NoConnection | Retry::Disconnected | Retry::NoClientConfig => {
+                if self.reconnected {
+                    return Next::GiveUp;
+                }
+                self.reconnected = true;
+                Next::Again
+            }
+        };
+        self.runs = self.runs.saturating_add(1);
+        next
+    }
+
+    /// Takes `waited` from the CDN patience left.
+    pub const fn spent(&mut self, waited: Duration) {
+        self.patience = self.patience.saturating_sub(waited);
+    }
+}
+
+/// The most times Steam is asked what is live on a branch an upload has just set live.
+const ASKS: u32 = 4;
+
+/// What `ask` gives, asked again `apart` later while Steam shows another build or no such branch,
+/// at most `ASKS` times: a build just set live may not show at once.
+///
+/// # Errors
+///
+/// The error of the last ask, when Steam could not be asked.
+pub fn live_asked<Ask>(apart: Duration, mut ask: Ask) -> Result<Live, webapi::Error>
+where
+    Ask: FnMut() -> Result<Live, webapi::Error>,
+{
+    let mut seen = ask();
+    for _ in 1..ASKS {
+        if !matches!(seen, Ok(Live::Other(_) | Live::Missing)) {
+            break;
+        }
+        thread::sleep(apart);
+        seen = ask();
+    }
+    seen
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::conversation::{Login, judge_login, reasons};
+    use proptest::prelude::*;
+    use std::time::Instant;
 
     #[test]
     fn describes_the_build_as_its_version_and_commit() {
@@ -1242,6 +1330,88 @@ mod tests {
             ("Public default branch", None),
         ] {
             assert_eq!(version_and_commit(description), expected, "{description:?}");
+        }
+    }
+
+    /// The `Retry` a failure of `kind` reads as: 0 for a manifest the CDN does not serve, then
+    /// each way a connection is lost.
+    fn retry_of(kind: u8) -> Retry {
+        let read = match kind {
+            0 => retry(UNSERVED, None),
+            1 => retry(NO_CONNECTION_AT_BUILD, None),
+            2 => retry(DISCONNECTED, None),
+            _ => retry(NO_CLIENT_CONFIG, None),
+        };
+        read.unwrap()
+    }
+
+    proptest! {
+        #[test]
+        fn an_upload_runs_steamcmd_four_times_at_most_waits_half_an_hour_in_all_and_reconnects_once(
+            failures in prop::collection::vec((0_u8..4, 0_u64..2400), 0..10),
+        ) {
+            let mut tries = Tries::default();
+            let mut runs = 1_u32;
+            let mut reconnected = false;
+            let mut patience = Duration::from_mins(30);
+            for (kind, waited) in failures {
+                let next = tries.next(&retry_of(kind));
+                let expected = if runs == 4 {
+                    Next::GiveUp
+                } else if kind == 0 {
+                    Next::Wait(patience)
+                } else if reconnected {
+                    Next::GiveUp
+                } else {
+                    reconnected = true;
+                    Next::Again
+                };
+                prop_assert_eq!(next, expected);
+                if next == Next::GiveUp {
+                    break;
+                }
+                runs = runs.saturating_add(1);
+                prop_assert!(runs <= 4);
+                if let Next::Wait(left) = next {
+                    let waited = Duration::from_secs(waited);
+                    tries.spent(waited);
+                    patience = patience.saturating_sub(waited);
+                    prop_assert!(left <= Duration::from_mins(30));
+                }
+            }
+        }
+
+        #[test]
+        fn steam_is_asked_what_is_live_four_times_at_most_and_until_it_shows_the_build_or_cannot_be_asked(
+            answers in prop::collection::vec(0_u8..4, 5),
+        ) {
+            let given = |kind: u8| match kind {
+                0 => Ok(Live::Confirmed),
+                1 => Ok(Live::Other(17)),
+                2 => Ok(Live::Missing),
+                _ => Err(webapi::Error::Refused),
+            };
+            let mut asked = 0_usize;
+            let started = Instant::now();
+            let seen = live_asked(Duration::from_millis(1), || {
+                let kind = answers.get(asked).copied().unwrap();
+                asked = asked.saturating_add(1);
+                given(kind)
+            });
+            let elapsed = started.elapsed();
+            let mut expected_asks = 0_usize;
+            let mut last = 0_u8;
+            for kind in answers.iter().copied().take(4) {
+                expected_asks = expected_asks.saturating_add(1);
+                last = kind;
+                if kind == 0 || kind == 3 {
+                    break;
+                }
+            }
+            prop_assert_eq!(asked, expected_asks);
+            prop_assert_eq!(seen.ok(), given(last).ok());
+            let pauses = u64::try_from(expected_asks.saturating_sub(1)).unwrap();
+            prop_assert!(elapsed >= Duration::from_millis(pauses));
         }
     }
 }
