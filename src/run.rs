@@ -859,6 +859,63 @@ mod tests {
     }
 
     #[test]
+    fn a_program_that_has_not_started_is_given_its_start_up_limit_and_no_more() {
+        let (_folder, file) = start_file();
+        let limit = Duration::from_millis(200);
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(limit, &file);
+        let mut pauses = Vec::new();
+        let began = Instant::now();
+        let result = waited::<i32, _>(Duration::MAX, &seen, Some(startup), |pause| {
+            pauses.push(pause);
+            thread::sleep(pause);
+            Ok(None)
+        });
+        assert_eq!(result.unwrap(), None);
+        assert!(began.elapsed() >= limit, "{:?}", began.elapsed());
+        assert!(pauses.iter().sum::<Duration>() <= limit, "{pauses:?}");
+    }
+
+    #[test]
+    fn a_look_that_fails_before_the_ready_file_is_written_to_is_the_error_of_the_run() {
+        let (_folder, file) = start_file();
+        fs::write(file.with_file_name(READY), "").unwrap();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::ZERO, &file);
+        let mut looks = 0_u32;
+        let result = waited(Duration::ZERO, &seen, Some(startup), |_| {
+            looks += 1;
+            if looks == 1 {
+                Err(io::Error::other("refused"))
+            } else {
+                Ok(Some(3_i32))
+            }
+        });
+        assert_eq!(result.unwrap_err().to_string(), "refused");
+        assert_eq!(looks, 1);
+    }
+
+    #[test]
+    fn a_ready_file_written_to_at_the_last_look_is_no_error() {
+        let (_folder, file) = start_file();
+        let ready = file.with_file_name(READY);
+        fs::write(&ready, "").unwrap();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::ZERO, &file);
+        let mut looks = 0_u32;
+        let result = waited(Duration::ZERO, &seen, Some(startup), |_| {
+            looks += 1;
+            match looks {
+                1_200 => fs::write(&ready, "ready\n").map(|()| None),
+                1_201 => Ok(Some(3_i32)),
+                _ => Ok(None),
+            }
+        });
+        assert_eq!(result.unwrap(), Some(3_i32));
+        assert_eq!(looks, 1_201);
+    }
+
+    #[test]
     fn a_ready_file_never_written_to_is_an_error_that_names_it() {
         let (_folder, file) = start_file();
         let ready = file.with_file_name(READY);
