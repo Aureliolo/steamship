@@ -207,7 +207,8 @@ steamship then asks the CDN for that manifest every 30 seconds. It runs steamcmd
 manifest is served, for up to half an hour and four runs in all. A second upload straight after
 the first one waits rather than fails.
 
-steamship also runs steamcmd once more when it fails in one of these ways:
+steamship also runs steamcmd once more, once in all and within the four runs, when it fails in
+one of these ways:
 
 - steamcmd reaches Steam but not its build server, `Failed to initialize build on server (No
   Connection)`.

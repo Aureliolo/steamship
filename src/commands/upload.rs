@@ -5,7 +5,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::thread;
 use std::time::Duration;
 
 use steamship::account::Account;
@@ -518,17 +517,16 @@ struct Ran {
 fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, ExitCode> {
     let mut ran = build(steam, doing, steam.info_of)?;
     let info = ran.info.take();
-    let mut runs = 1_u32;
-    let mut patience = upload::CDN_PATIENCE;
-    let mut reconnected = false;
+    let mut tries = upload::Tries::default();
     while let Some(retry) = ran.retry.take() {
+        let next = tries.next(&retry);
         match retry {
             upload::Retry::Unserved(unserved) => {
                 let depot = unserved.depot;
-                if runs == upload::RUNS {
+                let upload::Next::Wait(patience) = next else {
                     upload::still_unserved(&mut ran.outcome, depot);
                     break;
-                }
+                };
                 ran.spinner.failed(&format!(
                     "Steam's CDN does not serve depot {depot}'s last manifest yet"
                 ));
@@ -538,7 +536,7 @@ fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, Ex
                     true,
                 );
                 let served = download::served(&unserved.url, patience);
-                patience = patience.saturating_sub(waiting.elapsed());
+                tries.spent(waiting.elapsed());
                 let waited = show::took(waiting.elapsed());
                 match served {
                     download::Served::Yes => waiting.done(&format!("served after {waited}")),
@@ -560,10 +558,9 @@ fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, Ex
             lost @ (upload::Retry::NoConnection
             | upload::Retry::Disconnected
             | upload::Retry::NoClientConfig) => {
-                if reconnected || runs == upload::RUNS {
+                if next == upload::Next::GiveUp {
                     break;
                 }
-                reconnected = true;
                 let what = match lost {
                     upload::Retry::Disconnected => "Steam disconnected steamcmd",
                     upload::Retry::NoClientConfig => "Steam sent steamcmd no client config",
@@ -574,7 +571,6 @@ fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, Ex
                 ran.spinner.failed(&format!("{what} after {}", ran.took));
             }
         }
-        runs = runs.saturating_add(1);
         ran = build(steam, again, None)?;
     }
     ran.info = info;
@@ -639,24 +635,15 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
 /// only when Steam shows another build there, or no such branch. Asked a few times, since a
 /// build just set live may not show at once. A Steam that cannot be asked holds nothing up.
 fn confirmed_live(app: u32, branch: &str, build_id: u64) -> bool {
-    const ASKS: u32 = 4;
     const APART: Duration = Duration::from_secs(2);
     let Ok(Some(api)) = key_at_hand() else {
         return true;
     };
     let spinner = Spinner::start("branch", "asking Steam what is live", false);
-    let ask = || {
+    let seen = upload::live_asked(APART, || {
         api.branches(app)
             .map(|branches| upload::live_now(&branches, branch, build_id))
-    };
-    let mut seen = ask();
-    for _ in 1..ASKS {
-        if !matches!(seen, Ok(upload::Live::Other(_) | upload::Live::Missing)) {
-            break;
-        }
-        thread::sleep(APART);
-        seen = ask();
-    }
+    });
     match seen {
         Ok(upload::Live::Confirmed) => {
             spinner.done(&format!("{branch}: BuildID {build_id}, as Steam shows it"));
