@@ -5408,12 +5408,12 @@ fn definitions_saved_outside_utf8_are_said_and_nothing_is_compared_with_them() {
         .filter(|line| line.contains("was not UTF-8 text"))
         .collect();
     assert!(
-        matches!(
-            said_so.as_slice(),
-            [line] if line.starts_with(
-                "1000050-achievements-definitions.csv was not UTF-8 text before this write"
-            )
-        ),
+        said_so
+            == [
+                "1000050-achievements-definitions.csv was not UTF-8 text before this write, so \
+                 its progress bars and wording cannot be compared. Look at each achievement's \
+                 bar and icons in the editor once imported, before publishing"
+            ],
         "{noted}"
     );
     assert!(!noted.contains("progress bar goes from"), "{noted}");
@@ -5443,6 +5443,7 @@ fn each_achievement_is_compared_with_what_the_earlier_localisation_gives_of_it()
         .unwrap();
         let (code, _, noted) = write_inn(game.path(), false);
         assert_eq!(code, Some(0_i32), "{noted}");
+        assert!(!noted.contains("was not UTF-8 text"), "{noted}");
         noted
             .lines()
             .filter_map(|line| {
