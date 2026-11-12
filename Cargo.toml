@@ -67,6 +67,7 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_Storage_FileSystem",
   "Win32_System_Console",
   "Win32_System_JobObjects",
+  "Win32_System_LibraryLoader",
   "Win32_System_StationsAndDesktops",
   "Win32_System_SystemServices",
   "Win32_System_Threading",
@@ -75,7 +76,8 @@ windows-sys = { version = "0.61.2", features = [
 [features]
 # Lets the tests run a fake steamcmd script on Windows, which cannot start a script itself, in
 # place of steamcmd.exe. It also lets a test's stand-in say when it is ready, and the limits of its
-# run count from then. Only the tests turn it on, through the dev-dependency below: a release is
+# run count from then. On Windows it also lets them name the folder Microsoft's console is loaded
+# from. Only the tests turn it on, through the dev-dependency below: a release is
 # built without it, and its code is not compiled in.
 fake-steamcmd = []
 

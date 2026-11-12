@@ -7,10 +7,10 @@
 
 use std::env;
 use std::ffi::{OsStr, OsString, c_void};
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, PipeReader, PipeWriter};
 use std::iter;
-use std::mem::MaybeUninit;
+use std::mem::{self, MaybeUninit};
 use std::os::windows::ffi::OsStrExt as _;
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::{AsRawHandle as _, FromRawHandle as _, OwnedHandle, RawHandle};
@@ -20,7 +20,7 @@ use std::process;
 use std::ptr::{self, NonNull};
 use std::slice;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
@@ -60,6 +60,9 @@ use windows_sys::Win32::System::JobObjects::{
     JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject,
+};
+use windows_sys::Win32::System::LibraryLoader::{
+    GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
 use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, CreateDesktopW, HDESK};
 use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
@@ -439,7 +442,7 @@ impl Terminal {
             directory,
             &desktop,
             &job,
-            Streams::Console(console.0),
+            Streams::Console(console.console),
         )?;
         let watched = Process(process.0.try_clone()?);
         let leftovers = job.try_clone()?;
@@ -483,17 +486,125 @@ impl Drop for Terminal {
     }
 }
 
+type CreateConsole = unsafe extern "system" fn(COORD, HANDLE, HANDLE, u32, *mut HPCON) -> i32;
+type CloseConsole = unsafe extern "system" fn(HPCON);
+
+/// The two entry points of Microsoft's `conpty.dll`, which make a pseudo console the same way
+/// Windows' own do, but through the `OpenConsole.exe` beside the library.
+#[derive(Clone, Copy)]
+struct Conpty {
+    create: CreateConsole,
+    close: CloseConsole,
+}
+
+/// The maker of every pseudo console in this process, or why Windows' own is used. Filled at the
+/// first console, or at the first [`console`].
+static CONSOLE: OnceLock<Result<Conpty, String>> = OnceLock::new();
+
+/// Loads the `conpty.dll` in `folder` and makes sure the `OpenConsole.exe` beside it hosts a
+/// console, since the library falls back to Windows' own host without saying so when it finds
+/// none.
+fn shipped(folder: &Path) -> Result<Conpty, String> {
+    if !folder.join("conpty.dll").is_file() {
+        return Err("conpty.dll is not beside steamship.exe".to_owned());
+    }
+    if !folder.join("OpenConsole.exe").is_file() {
+        return Err("OpenConsole.exe is not beside steamship.exe".to_owned());
+    }
+    let path = wide(folder.join("conpty.dll").as_os_str());
+    // SAFETY: `path` is a NUL-terminated wide string that outlives the call, and the flags
+    // search only the library's own folder and System32, so no other library can stand in.
+    let library = unsafe {
+        LoadLibraryExW(
+            path.as_ptr(),
+            ptr::null_mut(),
+            LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+    };
+    if library.is_null() {
+        return Err(format!(
+            "conpty.dll beside steamship.exe did not load: {}",
+            io::Error::last_os_error()
+        ));
+    }
+    // SAFETY: `library` is a loaded module, and the name is NUL-terminated.
+    let create = unsafe { GetProcAddress(library, c"ConptyCreatePseudoConsole".as_ptr().cast()) };
+    // SAFETY: `library` is a loaded module, and the name is NUL-terminated.
+    let close = unsafe { GetProcAddress(library, c"ConptyClosePseudoConsole".as_ptr().cast()) };
+    let (Some(create), Some(close)) = (create, close) else {
+        return Err("conpty.dll beside steamship.exe is not Microsoft's ConPTY".to_owned());
+    };
+    // SAFETY: Microsoft's library exports this entry point with exactly this signature, and
+    // never unloads, so the pointer stays valid.
+    let create =
+        unsafe { mem::transmute::<unsafe extern "system" fn() -> isize, CreateConsole>(create) };
+    // SAFETY: Microsoft's library exports this entry point with exactly this signature, and
+    // never unloads, so the pointer stays valid.
+    let close =
+        unsafe { mem::transmute::<unsafe extern "system" fn() -> isize, CloseConsole>(close) };
+    let conpty = Conpty { create, close };
+    let (typed, _input) = io::pipe().map_err(|error| error.to_string())?;
+    let (_output, written) = io::pipe().map_err(|error| error.to_string())?;
+    PseudoConsole::create_with(Some(conpty), &typed, &written, COORD { X: 80, Y: 25 })
+        .map(drop)
+        .map_err(|error| format!("OpenConsole.exe beside steamship.exe did not start: {error}"))?;
+    Ok(conpty)
+}
+
+/// Where the shipped console is looked for: the folder of the program itself, links followed, as
+/// winget and Homebrew install it. A test build takes the folder `STEAMSHIP_TEST_CONPTY` names
+/// when it is set, since a copy of the tree has no files beside its programs.
+fn folder() -> Option<PathBuf> {
+    #[cfg(feature = "fake-steamcmd")]
+    if let Some(folder) = env::var_os("STEAMSHIP_TEST_CONPTY") {
+        return Some(PathBuf::from(folder));
+    }
+    let program = fs::canonicalize(env::current_exe().ok()?).ok()?;
+    program.parent().map(Path::to_path_buf)
+}
+
+fn maker() -> &'static Result<Conpty, String> {
+    CONSOLE.get_or_init(|| {
+        let folder =
+            folder().ok_or_else(|| "steamship cannot tell where its program is".to_owned())?;
+        shipped(&folder)
+    })
+}
+
+/// Whether steamcmd's console is the one shipped beside steamship, or else why it is Windows' own.
+///
+/// # Errors
+///
+/// The reason the shipped console is not used.
+pub fn console() -> Result<(), &'static str> {
+    maker().as_ref().map(drop).map_err(String::as_str)
+}
+
 #[derive(Debug)]
-struct PseudoConsole(HPCON);
+struct PseudoConsole {
+    console: HPCON,
+    close: Option<CloseConsole>,
+}
 
 impl PseudoConsole {
     fn create(input: &PipeReader, output: &PipeWriter, size: COORD) -> io::Result<Self> {
+        Self::create_with(maker().as_ref().ok().copied(), input, output, size)
+    }
+
+    fn create_with(
+        maker: Option<Conpty>,
+        input: &PipeReader,
+        output: &PipeWriter,
+        size: COORD,
+    ) -> io::Result<Self> {
         let _handing_down = handing_down();
         let mut console: HPCON = 0;
+        let windows: CreateConsole = CreatePseudoConsole;
+        let create = maker.map_or(windows, |maker| maker.create);
         // SAFETY: both pipe ends are open for the length of the call, and the console takes its
         // own copies of them.
         let result = unsafe {
-            CreatePseudoConsole(
+            create(
                 size,
                 input.as_raw_handle(),
                 output.as_raw_handle(),
@@ -504,16 +615,22 @@ impl PseudoConsole {
         if result < 0_i32 {
             Err(io::Error::from_raw_os_error(result))
         } else {
-            Ok(Self(console))
+            Ok(Self {
+                console,
+                close: maker.map(|maker| maker.close),
+            })
         }
     }
 }
 
 impl Drop for PseudoConsole {
     fn drop(&mut self) {
-        // SAFETY: the console came from CreatePseudoConsole and is closed once, here.
+        let windows: CloseConsole = ClosePseudoConsole;
+        let close = self.close.unwrap_or(windows);
+        // SAFETY: the console came from this maker's create call and is closed once, here, by the
+        // same maker.
         unsafe {
-            ClosePseudoConsole(self.0);
+            close(self.console);
         }
     }
 }
@@ -1513,6 +1630,7 @@ mod tests {
     use std::os::windows::ffi::OsStringExt as _;
     use std::path::PathBuf;
     use std::slice;
+    use std::sync::mpsc;
     use std::time::Instant;
     use windows_sys::Win32::Foundation::E_INVALIDARG;
     use windows_sys::Win32::Foundation::{GetHandleInformation, HWND, LPARAM};
@@ -1904,6 +2022,165 @@ mod tests {
         drop(PseudoConsole::create(&typed, &written, COORD { X: 80, Y: 25 }).unwrap());
     }
 
+    fn copy_file(from: &Path, to: &Path) {
+        let _: u64 = fs::copy(from, to).unwrap();
+    }
+
+    /// A new folder holding the package's two files, as installed beside steamship.
+    fn package() -> tempfile::TempDir {
+        let source = env::var_os("STEAMSHIP_TEST_CONPTY").expect(
+            "STEAMSHIP_TEST_CONPTY names no folder: run `bash .github/conpty.sh x64 <folder>` and set it to that folder",
+        );
+        let folder = tempfile::tempdir().unwrap();
+        for file in ["conpty.dll", "OpenConsole.exe"] {
+            copy_file(&Path::new(&source).join(file), &folder.path().join(file));
+        }
+        folder
+    }
+
+    /// The reason `shipped` gives for `folder`.
+    fn refused(folder: &Path) -> String {
+        match shipped(folder) {
+            Ok(_) => panic!("{} was taken as Microsoft's ConPTY", folder.display()),
+            Err(reason) => reason,
+        }
+    }
+
+    #[test]
+    fn a_console_made_from_the_shipped_files_is_run_by_the_openconsole_beside_them() {
+        let folder = package();
+        let conpty = shipped(folder.path()).unwrap();
+        let desktop = Desktop::create().unwrap();
+        let job = Job::create().unwrap();
+        let (typed, _input) = io::pipe().unwrap();
+        let (mut output, written) = io::pipe().unwrap();
+        let console =
+            PseudoConsole::create_with(Some(conpty), &typed, &written, COORD { X: 80, Y: 25 })
+                .unwrap();
+        drop(typed);
+        drop(written);
+        let cmd = Path::new(&env::var_os("SystemRoot").unwrap()).join(r"System32\cmd.exe");
+        let process = spawn(
+            &cmd,
+            &["/d", "/c", "exit 0"].map(OsString::from),
+            None,
+            &env::temp_dir(),
+            &desktop,
+            &job,
+            Streams::Console(console.console),
+        )
+        .unwrap();
+        assert_eq!(
+            process.ended_within(Duration::from_secs(30)).unwrap(),
+            Some(0_i32)
+        );
+        drop(console);
+        // Output that never ends fails the test rather than holding it up for good.
+        let (sender, receiver) = mpsc::channel();
+        let _reading = thread::spawn(move || {
+            let mut seen = Vec::new();
+            drop(sender.send(io::Read::read_to_end(&mut output, &mut seen).map(|_| seen)));
+        });
+        let seen = receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the output never ended")
+            .unwrap();
+        // Only Microsoft's host asks a terminal what it is, and Windows' own never does.
+        assert!(
+            seen.windows(3).any(|window| window == b"\x1b[c"),
+            "{:?}",
+            String::from_utf8_lossy(&seen)
+        );
+    }
+
+    #[test]
+    fn a_folder_without_either_file_leaves_the_console_to_windows_and_says_which() {
+        let package = package();
+        let empty = tempfile::tempdir().unwrap();
+        assert_eq!(
+            refused(empty.path()),
+            "conpty.dll is not beside steamship.exe"
+        );
+        let library_only = tempfile::tempdir().unwrap();
+        copy_file(
+            &package.path().join("conpty.dll"),
+            &library_only.path().join("conpty.dll"),
+        );
+        assert_eq!(
+            refused(library_only.path()),
+            "OpenConsole.exe is not beside steamship.exe"
+        );
+        let host_only = tempfile::tempdir().unwrap();
+        copy_file(
+            &package.path().join("OpenConsole.exe"),
+            &host_only.path().join("OpenConsole.exe"),
+        );
+        assert_eq!(
+            refused(host_only.path()),
+            "conpty.dll is not beside steamship.exe"
+        );
+    }
+
+    #[test]
+    fn a_library_of_another_architecture_leaves_the_console_to_windows() {
+        let package = package();
+        let folder = tempfile::tempdir().unwrap();
+        copy_file(
+            &package.path().join("OpenConsole.exe"),
+            &folder.path().join("OpenConsole.exe"),
+        );
+        let x86 = Path::new(&env::var_os("SystemRoot").unwrap()).join(r"SysWOW64\version.dll");
+        copy_file(&x86, &folder.path().join("conpty.dll"));
+        let reason = refused(folder.path());
+        assert!(
+            reason.starts_with("conpty.dll beside steamship.exe did not load: "),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn a_library_that_is_not_conpty_leaves_the_console_to_windows() {
+        let package = package();
+        let folder = tempfile::tempdir().unwrap();
+        copy_file(
+            &package.path().join("OpenConsole.exe"),
+            &folder.path().join("OpenConsole.exe"),
+        );
+        copy_file(&signed_by_microsoft(), &folder.path().join("conpty.dll"));
+        assert_eq!(
+            refused(folder.path()),
+            "conpty.dll beside steamship.exe is not Microsoft's ConPTY"
+        );
+    }
+
+    #[test]
+    fn an_openconsole_windows_cannot_start_leaves_the_console_to_windows() {
+        let package = package();
+        let folder = tempfile::tempdir().unwrap();
+        copy_file(
+            &package.path().join("conpty.dll"),
+            &folder.path().join("conpty.dll"),
+        );
+        fs::write(folder.path().join("OpenConsole.exe"), "not a program").unwrap();
+        let reason = refused(folder.path());
+        assert!(
+            reason.starts_with("OpenConsole.exe beside steamship.exe did not start: "),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn the_shipped_files_are_signed_by_microsoft() {
+        let package = package();
+        for file in ["conpty.dll", "OpenConsole.exe"] {
+            assert_eq!(
+                signature(&package.path().join(file)),
+                Signature::Signed("Microsoft Corporation".to_owned()),
+                "{file}"
+            );
+        }
+    }
+
     #[test]
     fn only_a_protected_single_entry_for_the_user_is_the_users_alone() {
         let alone = [(
@@ -2055,7 +2332,6 @@ mod tests {
         ) {
             use std::process::Stdio;
             use std::sync::Barrier;
-            use std::sync::mpsc;
             use windows_sys::Win32::Foundation::SetHandleInformation;
 
             let sort = Path::new(&env::var_os("SystemRoot").unwrap()).join(r"System32\sort.exe");

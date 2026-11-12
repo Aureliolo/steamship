@@ -1,15 +1,27 @@
 //! `steamship status`.
 
+#[cfg(windows)]
+use std::env;
 use std::fs;
 #[cfg(target_os = "linux")]
 use std::os::unix::net::UnixListener;
+#[cfg(windows)]
+use std::os::windows::fs::symlink_file;
+#[cfg(windows)]
+use std::path::Path;
+#[cfg(windows)]
+use std::process::Command;
 #[cfg(target_os = "linux")]
 use std::thread;
 
 use steamship::install;
 use steamship::platform::Platform;
+#[cfg(windows)]
+use steamship::run;
 use steamship::steamcmd;
 
+#[cfg(windows)]
+use crate::outcome;
 #[cfg(target_os = "linux")]
 use crate::{APPS, KEY, login_with_key, web_api};
 use crate::{
@@ -21,12 +33,21 @@ fn status_with_nothing_saved_says_to_log_in_changes_nothing_and_exits_3() {
     let home = tempfile::tempdir().unwrap();
     let (code, stdout, stderr) = steamship(&["status"], Some(home.path()), &[]);
     assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    #[cfg(windows)]
+    let console = if env::var_os("STEAMSHIP_TEST_CONPTY").is_some() {
+        "  console   Microsoft's ConPTY\n"
+    } else {
+        "  console   Windows' own (conpty.dll is not beside steamship.exe)\n"
+    };
+    #[cfg(not(windows))]
+    let console = "";
     assert_eq!(
         stdout,
         format!(
             "steamship status\n  \
              version   {}\n  \
-             home      {}\n  \
+             home      {}\n\
+             {console}  \
              api key   none kept\n  \
              account   none remembered\n  \
              steamcmd  not installed (steamship login installs it)\n  \
@@ -41,6 +62,68 @@ fn status_with_nothing_saved_says_to_log_in_changes_nothing_and_exits_3() {
         fs::read_dir(home.path()).unwrap().count(),
         0,
         "nothing written"
+    );
+}
+
+/// What `status` prints in a new home when run as `program`, with no `STEAMSHIP_TEST_CONPTY`.
+/// It exits 3, since nothing is saved there.
+#[cfg(windows)]
+fn status_of(program: &Path) -> String {
+    let home = tempfile::tempdir().unwrap();
+    let mut command = run::command(program);
+    let _: &mut Command = command
+        .arg("status")
+        .env("STEAMSHIP_HOME", home.path())
+        .env_remove("STEAMSHIP_TEST_CONPTY")
+        .env_remove("STEAMSHIP_ACCOUNT")
+        .env_remove("CI")
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("GITHUB_OUTPUT");
+    let (code, stdout, stderr) = outcome(&run::output(&mut command).unwrap());
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    stdout
+}
+
+/// A new folder holding steamship.exe, and the package's files when `with_console` is set.
+#[cfg(windows)]
+fn installed(with_console: bool) -> tempfile::TempDir {
+    let folder = tempfile::tempdir().unwrap();
+    let _: u64 = fs::copy(
+        env!("CARGO_BIN_EXE_steamship"),
+        folder.path().join("steamship.exe"),
+    )
+    .unwrap();
+    if with_console {
+        let package = env::var_os("STEAMSHIP_TEST_CONPTY")
+            .ok_or(
+                "STEAMSHIP_TEST_CONPTY names no folder: run `bash .github/conpty.sh x64 <folder>` and set it to that folder",
+            )
+            .unwrap();
+        for file in ["conpty.dll", "OpenConsole.exe"] {
+            let _: u64 =
+                fs::copy(Path::new(&package).join(file), folder.path().join(file)).unwrap();
+        }
+    }
+    folder
+}
+
+#[cfg(windows)]
+#[test]
+fn status_names_the_console_steamcmd_runs_on() {
+    let with_console = installed(true);
+    let links = tempfile::tempdir().unwrap();
+    let link = links.path().join("steamship.exe");
+    symlink_file(with_console.path().join("steamship.exe"), &link).unwrap();
+    assert!(
+        status_of(&link).contains("  console   Microsoft's ConPTY\n"),
+        "through a link"
+    );
+
+    let alone = installed(false);
+    assert!(
+        status_of(&alone.path().join("steamship.exe"))
+            .contains("  console   Windows' own (conpty.dll is not beside steamship.exe)\n"),
+        "steamship.exe alone"
     );
 }
 

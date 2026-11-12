@@ -3,6 +3,10 @@
 exclude_re = [
   # Every `|` in this crate joins flags that share no bit, where `^` gives the same value.
   'replace \| with \^',
+  # With no search flags Windows still loads conpty.dll by its full path, and every library it
+  # imports is an API set, which Windows maps without searching any folder. The flags guard
+  # against a later ConPTY that imports a library by name.
+  'src[/\\]windows\.rs.*replace \| with & in shipped',
   # DeleteProcThreadAttributeList releases what the list refers to, and a handle list refers to
   # nothing it owns; the list's own storage is freed either way.
   'replace <impl Drop for AttributeList>::drop with \(\)',

@@ -4,6 +4,11 @@ description: >-
   already. Every job that runs the tests uses this, so a prerequisite added here reaches all of
   them.
 
+outputs:
+  conpty:
+    description: The folder holding Microsoft's ConPTY on Windows, for STEAMSHIP_TEST_CONPTY, and empty elsewhere
+    value: ${{ steps.conpty.outputs.folder }}
+
 runs:
   using: composite
   steps:
@@ -17,3 +22,19 @@ runs:
       uses: ./.github/actions/apt-packages # zizmor: ignore[self-repository]
       with:
         packages: dbus-daemon gnome-keyring libsecret-tools
+
+    # Microsoft's console, which the tests make their pseudo consoles through, as an installed
+    # steamship does.
+    - name: Fetch Microsoft's ConPTY
+      id: conpty
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${RUNNER_ARCH}" in
+          X64) architecture=x64 ;;
+          ARM64) architecture=arm64 ;;
+          *) echo "No ConPTY package for ${RUNNER_ARCH}." >&2; exit 1 ;;
+        esac
+        bash .github/conpty.sh "${architecture}" "${RUNNER_TEMP}/conpty"
+        echo "folder=${RUNNER_TEMP}/conpty" >> "${GITHUB_OUTPUT}"
