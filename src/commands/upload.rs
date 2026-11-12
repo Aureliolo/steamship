@@ -20,6 +20,7 @@ use steamship::{
     steamcmd, upload, webapi,
 };
 
+use super::builds::try_builds;
 use super::check::{
     Branch, apart, built, checked, compared, exports_apart, redistributables_shown, snapshot_sound,
 };
@@ -31,7 +32,7 @@ use super::ready::{
 };
 use super::released::{DEFAULT_RELEASED, app_info, default_unreleased, release_judged};
 use super::settings::try_settings;
-use crate::{try_branch, try_builds};
+use crate::try_branch;
 
 /// `upload` of the script given, or of the game when there is none.
 pub(crate) fn upload_in(request: &cli::Upload) -> ExitCode {
