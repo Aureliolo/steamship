@@ -61,4 +61,4 @@ PNGs = "PNGs"
 ignore-hidden = false
 # Git's own folder; Valve's files, kept byte for byte as Valve serves them; and the licence
 # texts, which are legal wording that must not change by a letter.
-extend-exclude = [".git/", "fuzz/seeds/", "pins/", "LICENSE-APACHE", "LICENSE-MIT"]
+extend-exclude = [".git/", "fuzz/seeds/", "pins/", "LICENSE-APACHE", "LICENSE-MIT", ".github/LICENSE-CONPTY"]

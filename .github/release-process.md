@@ -72,7 +72,8 @@ winget gets a release only when `winget.yml` is run on its tag, as [winget](#win
 ## What a release carries
 
 - An archive per system, holding the binary, the README and both licences. The Linux binary,
-  linked statically against musl, runs on any x86-64 Linux whatever its glibc.
+  linked statically against musl, runs on any x86-64 Linux whatever its glibc. The Windows
+  archives also hold Microsoft's conpty.dll and OpenConsole.exe with their licence, LICENSE-CONPTY.
 - A `.deb` for Debian and Ubuntu and an `.rpm` for Fedora, holding the Linux binary, its man
   pages and completions. Both depend on the 32-bit C libraries Valve's steamcmd loads.
 - A SHA-256 checksum for each archive and package.
