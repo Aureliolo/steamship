@@ -82,6 +82,9 @@ separately, fetches the release's own archive instead, in seconds:
 cargo binstall steamship
 ```
 
+On Windows, Cargo and cargo-binstall install steamship.exe alone, and steamcmd then runs on
+Windows' own console. `steamship status` names the console.
+
 ## A release archive
 
 Each [release](https://github.com/Aureliolo/steamship/releases/latest) carries an archive for

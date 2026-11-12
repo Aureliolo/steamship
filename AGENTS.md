@@ -95,6 +95,9 @@ markdownlint-cli2
 typos
 ```
 
+On Windows the tests of the console also need Microsoft's ConPTY.
+`bash .github/conpty.sh x64 <folder>` fetches it, and `STEAMSHIP_TEST_CONPTY` names that folder.
+
 `typos` comes from the `typos-cli` crate and `markdownlint-cli2` from npm. On Linux the tests
 start their own D-Bus and GNOME Keyring. They need `dbus-daemon` and `gnome-keyring-daemon`
 installed. On Windows they run their fake steamcmd with Git's `sh`, through the `fake-steamcmd`

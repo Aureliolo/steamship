@@ -10,6 +10,8 @@ use steamship::manifest::Manifest;
 use steamship::platform::Platform;
 use steamship::redact::Redactor;
 use steamship::show::{self, Hint, Spinner};
+#[cfg(windows)]
+use steamship::windows;
 use steamship::{ci, conversation, dump, keychain, steamcmd, webapi};
 
 use super::exit::fail;
@@ -47,6 +49,14 @@ pub(crate) fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     show::field("version", env!("CARGO_PKG_VERSION"));
     let home = home()?;
     show::field("home", &home.display().to_string());
+    #[cfg(windows)]
+    show::field(
+        "console",
+        &match windows::console() {
+            Ok(()) => "Microsoft's ConPTY".to_owned(),
+            Err(reason) => format!("Windows' own ({reason})"),
+        },
+    );
     status_key(&home);
     let packed = packed_login()?;
     let account = match (&packed, named) {

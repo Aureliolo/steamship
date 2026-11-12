@@ -244,6 +244,15 @@ jobs:
               foreach ($file in 'conpty.dll', 'OpenConsole.exe', 'LICENSE-CONPTY') {
                 if (-not (Test-Path -PathType Leaf "$env:SCOOP\apps\steamship\current\$file")) { throw "Scoop installed no $file beside steamship.exe." }
               }
+              # Status in a new home exits 3, since nothing is saved there.
+              $env:STEAMSHIP_HOME = Join-Path $env:RUNNER_TEMP "console-$([guid]::NewGuid())"
+              $PSNativeCommandUseErrorActionPreference = $false
+              $status = (& "$env:SCOOP\shims\steamship.exe" status) -join "`n"
+              $code = $LASTEXITCODE
+              $PSNativeCommandUseErrorActionPreference = $true
+              Remove-Item Env:STEAMSHIP_HOME
+              if ($code -ne 3) { throw "steamship status exited $code, not 3." }
+              if (-not $status.Contains("console   Microsoft's ConPTY")) { throw "steamship status named another console: $status" }
             }
           }
 
@@ -354,6 +363,15 @@ jobs:
             foreach ($file in 'conpty.dll', 'OpenConsole.exe', 'LICENSE-CONPTY') {
               if (-not (Test-Path -PathType Leaf "$folder\$file")) { throw "winget installed no $file beside steamship.exe." }
             }
+            # Status in a new home exits 3, since nothing is saved there.
+            $env:STEAMSHIP_HOME = Join-Path $env:RUNNER_TEMP "console-$([guid]::NewGuid())"
+            $PSNativeCommandUseErrorActionPreference = $false
+            $status = (& $steamship status) -join "`n"
+            $code = $LASTEXITCODE
+            $PSNativeCommandUseErrorActionPreference = $true
+            Remove-Item Env:STEAMSHIP_HOME
+            if ($code -ne 3) { throw "steamship status exited $code, not 3." }
+            if (-not $status.Contains("console   Microsoft's ConPTY")) { throw "steamship status named another console: $status" }
           }
           $PSNativeCommandUseErrorActionPreference = $false
           foreach ($attempt in 1..5) {

@@ -88,6 +88,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install the test prerequisites
+        id: prerequisites
         uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
 
       # The pinned steamcmd, installed for real from Valve's CDN on each system, then installed
@@ -126,6 +127,8 @@ jobs:
       # a minute. So must a second one beside it, unless steamship turns that one away.
       - name: Hold steamcmd at its prompt, which must add to its connection log meanwhile
         timeout-minutes: 10
+        env:
+          STEAMSHIP_TEST_CONPTY: ${{ steps.prerequisites.outputs.conpty }}
         run: |
           set -euo pipefail
           export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
@@ -261,6 +264,8 @@ jobs:
       # run below tests the binary that ships.
       - name: Test
         if: '!matrix.musl && !cancelled()'
+        env:
+          STEAMSHIP_TEST_CONPTY: ${{ steps.prerequisites.outputs.conpty }}
         run: cargo test --locked
 
       # musl-gcc, for the C and assembly in ring.

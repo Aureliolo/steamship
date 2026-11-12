@@ -286,6 +286,11 @@ jobs:
             for file in conpty.dll OpenConsole.exe LICENSE-CONPTY; do
               test -f "$(dirname "${program}")/${file}"
             done
+            # Status in a new home exits 3, since nothing is saved there.
+            code=0
+            status="$(STEAMSHIP_HOME="${RUNNER_TEMP}/console-home" "${program}" status)" || code=$?
+            test "${code}" = 3
+            grep -qF "console   Microsoft's ConPTY" <<< "${status}"
           fi
           test "${OUTCOME}" = failure
 

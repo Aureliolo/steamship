@@ -156,6 +156,7 @@ jobs:
       # Each run of the tests starts a keyring of its own from these, so that one a mutant brings
       # down cannot take the runs after it down too.
       - name: Install the test prerequisites
+        id: prerequisites
         uses: ./.github/actions/test-prerequisites # zizmor: ignore[self-repository]
 
       - name: Mutate what the pull request changed
@@ -163,6 +164,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           MUTATE: ${{ matrix.system.mutate }}
+          STEAMSHIP_TEST_CONPTY: ${{ steps.prerequisites.outputs.conpty }}
         run: |
           set -euo pipefail
           read -ra mutate <<< "${MUTATE}"
@@ -175,6 +177,7 @@ jobs:
         env:
           MUTATE: ${{ matrix.system.mutate }}
           SHARD: ${{ matrix.shard }}
+          STEAMSHIP_TEST_CONPTY: ${{ steps.prerequisites.outputs.conpty }}
         run: |
           set -euo pipefail
           read -ra mutate <<< "${MUTATE}"
