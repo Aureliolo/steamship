@@ -9,7 +9,7 @@ use steamship::cli::{self, Cli, Command, FAILED};
 use steamship::platform::Platform;
 use steamship::show;
 use steamship::update;
-use steamship::{drm, po, run};
+use steamship::{drm, run};
 
 #[expect(
     clippy::redundant_pub_crate,
@@ -30,6 +30,7 @@ mod commands {
     pub(crate) mod install;
     pub(crate) mod itself;
     pub(crate) mod key;
+    pub(crate) mod languages;
     pub(crate) mod leaderboards;
     pub(crate) mod login;
     pub(crate) mod logout;
@@ -58,6 +59,7 @@ use commands::game::app_or_game;
 use commands::init::run_init;
 use commands::install::run_install;
 use commands::itself::try_self_check;
+use commands::languages::run_languages;
 use commands::leaderboards::leaderboards_in;
 use commands::login::{try_key_login, try_login};
 use commands::logout::run_logout;
@@ -228,24 +230,4 @@ fn update_check() -> Option<update::Check> {
     }
     let home = Platform::THIS.home(|name| env::var_os(name)).ok()?;
     Some(update::Check::start(home))
-}
-
-/// `languages`: every locale a catalogue may be named by, with Steam's name for its language.
-fn run_languages(json: bool) -> ExitCode {
-    let languages = po::languages();
-    if json {
-        let table: serde_json::Map<String, serde_json::Value> = languages
-            .iter()
-            .map(|(locale, language)| ((*locale).to_owned(), (*language).into()))
-            .collect();
-        show::plain(&format!("{}\n", serde_json::Value::Object(table)));
-    } else {
-        show::title("languages");
-        let rows: Vec<(String, String)> = languages
-            .iter()
-            .map(|(locale, language)| ((*locale).to_owned(), (*language).to_owned()))
-            .collect();
-        show::fields(&rows);
-    }
-    ExitCode::SUCCESS
 }
