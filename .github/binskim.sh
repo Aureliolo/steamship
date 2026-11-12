@@ -8,7 +8,7 @@
 set -euo pipefail
 
 # renovate: datasource=nuget depName=Microsoft.CodeAnalysis.BinSkim
-version=4.4.9.11
+version=4.4.9.14
 sha256=69678989cbc273b5b50fcf98fb0fd978e1e35a3f844acb24254b31f0ce90c447
 
 if [[ $# -ne 1 ]]; then

@@ -23,8 +23,8 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-release-attachments depName=goreleaser/nfpm versioning=semver
-        NFPM_TAG: v2.47.0
-        NFPM_SHA256: 0660ca602b2d2d2ae4781a06c692b3eeb9d437ffea05b831d76e41f4a3188783
+        NFPM_TAG: v2.49.0
+        NFPM_SHA256: 2afaa5ffb5e3493402e31e7c67a5a1fb42133e3f66fc315ca0051934125561c7
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
@@ -55,11 +55,11 @@ runs:
         VERSION: ${{ inputs.version }}
         OUT: ${{ inputs.out }}
         # renovate: datasource=docker depName=debian
-        DEBIAN: debian:13@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c
+        DEBIAN: debian:13@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6
         # Docker Hub numbers rawhide too, so Fedora's tags come from renovate.json's own list of
         # its releases.
         # renovate: datasource=custom.fedora depName=fedora
-        FEDORA: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80
+        FEDORA: fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c
       # Without Docker's seccomp filter, which answers the socket call 32-bit steamcmd makes with
       # ENOSYS: steamcmd then says "CreateBoundSocket: failed to create socket" and never reaches
       # Steam. A system of its own, which these stand in for, has no such filter.
