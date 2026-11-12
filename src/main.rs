@@ -21,8 +21,8 @@ use steamship::typing::{self, Echo};
 use steamship::update;
 use steamship::{
     assets, branch, builds, ci, conversation, digest, download, drm, dump, fetch, init, itself,
-    keychain, leaderboards, ledger, magic, po, presence, release, run, scripts, settings, steamcmd,
-    upload, vdf, webapi, workshop,
+    keychain, leaderboards, ledger, magic, po, presence, release, run, scripts, steamcmd, upload,
+    webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -40,6 +40,7 @@ mod commands {
     pub(crate) mod logout;
     pub(crate) mod ready;
     pub(crate) mod released;
+    pub(crate) mod settings;
     pub(crate) mod status;
     pub(crate) mod text;
     pub(crate) mod upload;
@@ -58,9 +59,8 @@ use commands::ready::{
     Source, account, dump_in_actions, home, installed, login_refused, named, packed_login, ready,
     restore, steamcmd_failed, verdict,
 };
-use commands::released::{
-    DEFAULT_RELEASED, app_info, refused_once_released, refused_unless, release_shown,
-};
+use commands::released::{DEFAULT_RELEASED, refused_once_released, refused_unless, release_shown};
+use commands::settings::{Snapshot, settings_in};
 use commands::status::{check_saved_login, try_status};
 use commands::text::text_in;
 use commands::upload::{output, upload_in};
@@ -214,46 +214,10 @@ fn run(command: Command) -> ExitCode {
     }
 }
 
-/// The snapshot `--save` or `--check` names: a file, or the game's own when it names none.
-enum Snapshot {
-    File(PathBuf),
-    Game,
-}
-
-impl Snapshot {
-    fn given(path: Option<PathBuf>) -> Self {
-        path.map_or(Self::Game, Self::File)
-    }
-}
-
 /// `promote` of the app named, or else the game's.
 fn promote_in(mut request: cli::Promote) -> Result<ExitCode, ExitCode> {
     request.app = Some(app_or_game(request.app.take(), request.demo)?);
     try_promote(&request)
-}
-
-/// `settings` with whatever is not given taken from the game.
-fn settings_in(
-    app: Option<String>,
-    demo: bool,
-    save: Option<Snapshot>,
-    check: Option<Snapshot>,
-    account: Option<&str>,
-) -> Result<ExitCode, ExitCode> {
-    let own = matches!(save, Some(Snapshot::Game)) || matches!(check, Some(Snapshot::Game));
-    let game = (app.is_none() || own).then(|| game_as(demo)).transpose()?;
-    let path = |given: Snapshot| match given {
-        Snapshot::File(path) => Some(path),
-        Snapshot::Game => game.as_ref().map(Project::snapshot),
-    };
-    let save = save.and_then(path);
-    let check = check.and_then(path);
-    try_settings(
-        &app_given_or(app, game.as_ref()),
-        save.as_deref(),
-        check.as_deref(),
-        account,
-    )
 }
 
 /// What `leaderboards` changes on Steam before it compares.
@@ -1261,15 +1225,6 @@ fn try_drm_wrap(
     }
 }
 
-/// The settings snapshot at `path`, refused before steamcmd is run when it is not `app`'s.
-fn settings_file(path: &Path, app: u32) -> Result<vdf::Block, ExitCode> {
-    let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
-    let text = fs::read_to_string(path).map_err(|error| refused(&error))?;
-    let wanted = settings::read(&text, app).map_err(|why| refused(&why))?;
-    show::field("file", &path.display().to_string());
-    Ok(wanted)
-}
-
 /// Whether a Workshop item for `app`, whose game's settings `file` holds its items until launch,
 /// may go up: only once Steam shows `account` the app released. Answers why not when it may not,
 /// and fails when Steam could not be asked.
@@ -1324,85 +1279,6 @@ fn held_until_launch(
     refused_unless(&home, packed, || {
         launched(&home, account, app, packed, &file)
     })
-}
-
-/// `app`'s settings, as Steam shows them to `account` through steamcmd.
-fn asked_settings(
-    account: &Account,
-    app: u32,
-    packed: Option<&ci::Login>,
-) -> Result<vdf::Block, ExitCode> {
-    let (held, home, manifest) = ready()?;
-    restore(packed, &home)?;
-    let asked = app_info(&home, account, app, packed, "asking for the settings");
-    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
-    let (console, spinner) = asked?;
-    match settings::from_console(&console, app) {
-        Ok(shown) => {
-            spinner.done("shown");
-            show::field("cloud", settings::cloud(&shown));
-            show::field("input", &settings::controls(&shown));
-            Ok(shown)
-        }
-        Err(why) => {
-            spinner.failed("none shown");
-            Err(fail(&why.and_again(), FAILED))
-        }
-    }
-}
-
-fn try_settings(
-    app: &str,
-    save: Option<&Path>,
-    check: Option<&Path>,
-    named: Option<&str>,
-) -> Result<ExitCode, ExitCode> {
-    show::title("settings");
-    let app_id = app_named(app)?;
-    let wanted = check.map(|path| settings_file(path, app_id)).transpose()?;
-    let packed = packed_login()?;
-    let account = match (&packed, named) {
-        (Some(packed), None) => packed.account().clone(),
-        _ => account(named, false)?.0,
-    };
-    let shown = asked_settings(&account, app_id, packed.as_ref())?;
-    let written = settings::snapshot(app_id, &shown).map_err(|why| fail(&why, FAILED))?;
-    let folder = settings::install_folder(&shown).map(|why| format!("app {app_id}: {why}"));
-    if let Some(path) = save {
-        if let Some(why) = &folder {
-            return Err(fail(why, REFUSED));
-        }
-        fs::write(path, &written)
-            .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
-        show::success(
-            &format!("app {app_id}: settings saved to {}", path.display()),
-            "steamship settings --check compares Steam's with them",
-        );
-        return Ok(ExitCode::SUCCESS);
-    }
-    let Some(wanted) = wanted else {
-        anstream::print!("{written}");
-        if let Some(why) = &folder {
-            show::note(why);
-        }
-        return Ok(ExitCode::SUCCESS);
-    };
-    let drift = settings::compare(&wanted, &shown);
-    if drift.is_empty() && folder.is_none() {
-        show::success("Steam's settings match the file", "");
-        return Ok(ExitCode::SUCCESS);
-    }
-    for difference in &drift {
-        show::failure(&difference.to_string(), "", None);
-    }
-    if let Some(why) = &folder {
-        show::failure(why, "", None);
-    }
-    show::aside(
-        "change the app in Steamworks, or run steamship settings --save again if the change \
-         was meant",
-    );
-    Ok(ExitCode::from(REFUSED))
 }
 
 fn leaderboards_file(path: &Path, app: u32) -> Result<leaderboards::Listed, ExitCode> {
