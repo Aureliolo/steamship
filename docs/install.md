@@ -36,11 +36,11 @@ On Windows:
 winget install Aureliolo.steamship
 ```
 
-winget carries some releases, not every one, since Microsoft reviews each version it takes. Scoop
-and the release archives carry every one.
+Microsoft reviews each winget version. winget therefore lags behind some releases. Scoop and the
+release archives carry every release.
 
-Homebrew, Scoop and winget install the release's archive only if it matches the SHA-256 the
-release is signed over.
+Homebrew, Scoop and winget install an archive only when its SHA-256 matches the one the signed
+release lists.
 
 ## Debian, Ubuntu and Fedora
 
@@ -54,10 +54,10 @@ sudo apt install ./steamship_{{version}}-1_amd64.deb
 sudo dnf install https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-1.x86_64.rpm
 ```
 
-Each package also installs the 32-bit C libraries Valve's steamcmd for Linux loads, and the
-certificates steamcmd checks Steam against. Each carries a man page per command and tab completion
-for bash, zsh and fish. Check one as [Verifying a download](#verifying-a-download) shows, with the
-package's name in place of the archive's.
+Each package also installs the 32-bit C libraries and certificates steamcmd needs, a man page per
+command and [tab completion](#tab-completion). Check one as
+[Verifying a download](#verifying-a-download) shows, with the package's name in place of the
+archive's.
 
 Any other install on Linux needs these packages:
 
@@ -69,14 +69,14 @@ Most systems have the certificates already. A minimal container may not.
 
 ## Cargo
 
-Anywhere Rust runs, built from source in a few minutes:
+Anywhere Rust runs, built from source:
 
 ```sh
 cargo install --locked steamship
 ```
 
-[cargo-binstall](https://github.com/cargo-bins/cargo-binstall), a Cargo add-on installed
-separately, fetches the release's own archive instead, in seconds:
+[cargo-binstall](https://github.com/cargo-bins/cargo-binstall), a separate Cargo add-on,
+downloads the release's own archive instead of building:
 
 ```sh
 cargo binstall steamship
@@ -136,9 +136,8 @@ gh attestation verify "${ARCHIVE}" --repo Aureliolo/steamship \
 
 The checksum proves the bytes are the ones the release lists. The attestation proves GitHub
 Actions built them from this repository, by the steps in `release-build.yml` at that tag, on a
-GitHub-hosted runner. A checksum cannot prove that. One made beside a tampered archive agrees with
-it. Every release also carries an SPDX SBOM of its five binaries, attested against each archive
-in the same file.
+GitHub-hosted runner. Every release also carries an SPDX SBOM of its five binaries, attested
+against each archive in the same file.
 
 Once installed, `steamship self check` compares its own binary with the SHA-256 that SBOM lists
 for your system, fetched from the release. When GitHub's download address fails, it reads the SBOM
@@ -193,9 +192,9 @@ changed stops steamship with exit code 4.
 `steamship install` installs it ahead of time, as a CI job would. It also verifies an install
 that is already there.
 
-Valve keeps old steamcmd builds on its CDN for years, then deletes them. An install already made
-keeps working after that. A new one fails. It says that Valve no longer serves the pinned steamcmd
-and how to upgrade to a steamship that pins one it does.
+Valve eventually deletes old steamcmd builds from its CDN. An existing install keeps working. A new
+install fails. It says that Valve no longer serves the pinned steamcmd and how to upgrade to a
+steamship that pins one it does.
 
 ### The home folder
 

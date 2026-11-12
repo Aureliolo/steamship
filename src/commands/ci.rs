@@ -173,7 +173,12 @@ fn ci_script(named: Option<&Path>, root: Option<&Path>) -> Result<PathBuf, ExitC
                 .ok()
                 .and_then(|number| several.get(number.checked_sub(1)?))
                 .cloned()
-                .ok_or_else(|| fail(&"pick a script by its number", REFUSED))
+                .ok_or_else(|| {
+                    fail(
+                        &"no such script. Type the number of one in the list",
+                        REFUSED,
+                    )
+                })
         }
         several => {
             let listed: Vec<String> = several.iter().map(|script| shown(script)).collect();
@@ -273,7 +278,11 @@ fn set_secret(repository: &str, secret: &str, packed: &str) -> Result<(), ExitCo
                 command: "https://cli.github.com",
                 after: ", or write the login to a file with --output",
             };
-            show::failure("the GitHub command line is needed", "", Some(install));
+            show::failure(
+                "gh, the GitHub command line, is needed to set the secret",
+                "",
+                Some(install),
+            );
             return Err(ExitCode::from(FAILED));
         }
         Err(error) => {

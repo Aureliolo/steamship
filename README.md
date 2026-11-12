@@ -19,8 +19,9 @@ steamcmd leaves out:
 - It sets steamcmd up for you, pinned and verified. It checks steamcmd again after every run.
 - Each upload ends in its BuildID, or the reason it failed, read from Valve's build log rather than
   from console output.
-- You log in once and no password is kept. Nothing steamship prints or writes contains your login
-  token.
+- You log in once and steamship keeps no password. It redacts the login token from everything it
+  prints. The token stays in steamship's home. `ci` copies it into a CI secret or a file you
+  name.
 - A script that would upload the wrong content, such as a depot of another app, is refused before
   anything is sent.
 

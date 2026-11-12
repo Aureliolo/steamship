@@ -407,7 +407,7 @@ fn status_with_steamcmd_altered_says_so_and_exits_4() {
     let (code, stdout, stderr) = steamship(&["status"], Some(home.path()), &[]);
     assert_eq!(code, Some(4_i32), "{stdout}{stderr}");
     assert!(
-        stdout.ends_with("  steamcmd  \u{2717} not as pinned\n"),
+        stdout.ends_with("  steamcmd  \u{2717} differs from the pinned version\n"),
         "{stdout}"
     );
     assert!(

@@ -97,8 +97,8 @@ the next run uploads.
 steamship ci --output login.txt
 ```
 
-`--output` writes the login to a file in place of a secret. Only you can read the file, whatever
-its folder allows others. Give its contents to your CI as the variable `STEAMSHIP_LOGIN`, then
+`--output` writes the login to a file in place of a secret. The file is readable by you alone.
+Give its contents to your CI as the variable `STEAMSHIP_LOGIN`, then
 delete the file. `steamship upload` reads the login from that variable. Nothing else about
 uploading changes.
 

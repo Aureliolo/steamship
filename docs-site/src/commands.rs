@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(more.len(), 1, "{more:?}");
         assert!(
             more.iter()
-                .all(|paragraph| paragraph.starts_with("Asks for the account's name")),
+                .all(|paragraph| paragraph.starts_with("Asks for the account name")),
             "{more:?}"
         );
     }

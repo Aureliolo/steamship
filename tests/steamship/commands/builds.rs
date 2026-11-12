@@ -313,11 +313,29 @@ fn an_app_that_is_neither_an_id_nor_a_script_is_refused_and_exits_2() {
     let (zero, _, said) = steamship(&["builds", "0"], Some(home.path()), &[]);
     assert_eq!(
         (zero, failure(&said)),
-        (Some(2_i32), "0 is not an app's ID")
+        (
+            Some(2_i32),
+            "0 is not an app ID. Give the app's ID from Steamworks"
+        )
     );
     let (missing, _, stderr) = steamship(&["builds", "no_such_app.vdf"], Some(home.path()), &[]);
     assert_eq!(missing, Some(2_i32));
-    assert_eq!(failure(&stderr), "refused: no_such_app.vdf: does not exist");
+    assert_eq!(
+        failure(&stderr),
+        "refused: no_such_app.vdf: does not exist. Name the app's build script, such as \
+         steam/app_build.vdf"
+    );
+}
+
+#[test]
+fn a_count_that_is_not_a_number_says_what_it_must_be() {
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship(&["builds", "480", "--count", "x"], Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(
+        stderr.contains("'x' is not a number. Give how many builds to list, such as 10"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -369,9 +387,9 @@ fn outside_a_game_a_command_needing_one_says_to_start_one_or_name_the_app() {
     assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
     assert!(
         failure(&stderr).ends_with(
-            ": no steamship.toml or steam/app_build.vdf in it or a folder above. Run steamship \
-             in the game's folder, start one here with steamship init <app ID>, or name the \
-             app and its files"
+            ": no steamship.toml or steam/app_build.vdf here or in a folder above. Run \
+             steamship in the game's folder, run `steamship init <app ID>` to start one, or \
+             name the app and its files"
         ),
         "{stderr}"
     );

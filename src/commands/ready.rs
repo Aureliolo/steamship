@@ -80,7 +80,7 @@ pub(crate) fn ready() -> Result<(install::Held, PathBuf, Manifest), ExitCode> {
         )),
         Err(error) => {
             spinner.failed(match error {
-                install::Error::Altered { .. } => "not as pinned",
+                install::Error::Altered { .. } => "differs from the pinned version",
                 install::Error::Withdrawn { .. } => "no longer served",
                 install::Error::Download(_)
                 | install::Error::Io { .. }

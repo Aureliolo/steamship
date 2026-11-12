@@ -68,11 +68,23 @@ fn init_writes_scripts_check_takes_and_never_overwrites_them() {
     assert_eq!(
         failure(&refused),
         format!(
-            "{} is already there, and is left as it is",
+            "{} already exists and is kept. Give another --folder, or remove it",
             Path::new("steam").join("app_build.vdf").display()
         )
     );
     assert_eq!(fs::read_to_string(&script).unwrap(), before);
+}
+
+#[test]
+fn an_app_that_is_not_a_number_says_what_an_app_id_is() {
+    let folder = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship_in(folder.path(), &["init", "abc"], Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(
+        stderr.contains("'abc' is not an app ID. Give the number from Steamworks, such as 480"),
+        "{stderr}"
+    );
 }
 
 #[test]

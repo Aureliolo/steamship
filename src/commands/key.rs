@@ -55,6 +55,10 @@ pub(crate) fn key_variable() -> Option<Zeroizing<String>> {
         .map(Zeroizing::new)
 }
 
+/// What a refused empty answer to the key prompt says.
+pub(crate) const NO_KEY_TYPED: &str =
+    "no Web API key was typed. Run `steamship login --web-api-key` and paste the publisher key";
+
 /// Where Steamworks shows the key, said before it is asked for.
 pub(crate) const WHERE_KEY: &str = "the publisher Web API key is in Steamworks under Users & Permissions, \
                          Manage Groups, in the group that holds the app";
@@ -96,7 +100,7 @@ pub(crate) fn web_api(home: &Path) -> Result<(webapi::Api, KeyFrom), ExitCode> {
         return Err(ExitCode::from(REFUSED));
     }
     show::aside(WHERE_KEY);
-    let key = typed_key()?.ok_or_else(|| fail(&"no Web API key typed", REFUSED))?;
+    let key = typed_key()?.ok_or_else(|| fail(&NO_KEY_TYPED, REFUSED))?;
     Ok((webapi::Api::new(key), KeyFrom::Typed))
 }
 

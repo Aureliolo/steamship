@@ -44,7 +44,7 @@ pub(crate) fn try_self_check() -> Result<ExitCode, ExitCode> {
     let listed = match itself::listed(&sbom, version, target) {
         Ok(listed) => listed,
         Err(why) => {
-            spinner.failed("unreadable");
+            spinner.failed("SBOM not usable");
             return Err(fail(&format!("{url} {why}"), FAILED));
         }
     };

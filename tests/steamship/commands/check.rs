@@ -984,7 +984,11 @@ fn the_command_says_a_script_that_is_not_there_does_not_exist_and_exits_2() {
         assert_eq!(code, Some(2_i32), "{missing}");
         assert_eq!(
             stderr,
-            format!("  \u{2717} refused: {}: does not exist\n", script.display()),
+            format!(
+                "  \u{2717} refused: {}: does not exist. Name the app's build script, such as \
+                 steam/app_build.vdf\n",
+                script.display()
+            ),
             "{missing}"
         );
     }
