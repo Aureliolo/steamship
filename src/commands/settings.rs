@@ -13,7 +13,7 @@ use steamship::{ci, install, settings, vdf};
 
 use super::exit::fail;
 use super::game::{app_given_or, app_named, game_as};
-use super::ready::{account, packed_login, ready, restore, steamcmd_failed};
+use super::ready::{ready, restore, run_as, steamcmd_failed};
 use super::released::app_info;
 
 /// The snapshot `--save` or `--check` names: a file, or the game's own when it names none.
@@ -95,11 +95,7 @@ pub(crate) fn try_settings(
     show::title("settings");
     let app_id = app_named(app)?;
     let wanted = check.map(|path| settings_file(path, app_id)).transpose()?;
-    let packed = packed_login()?;
-    let account = match (&packed, named) {
-        (Some(packed), None) => packed.account().clone(),
-        _ => account(named, false)?.0,
-    };
+    let (packed, account) = run_as(named)?;
     let shown = asked_settings(&account, app_id, packed.as_ref())?;
     let written = settings::snapshot(app_id, &shown).map_err(|why| fail(&why, FAILED))?;
     let folder = settings::install_folder(&shown).map(|why| format!("app {app_id}: {why}"));

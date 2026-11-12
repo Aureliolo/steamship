@@ -15,19 +15,26 @@ use zeroize::Zeroizing;
 
 use super::exit::fail;
 
+/// The key `STEAMSHIP_WEB_API_KEY` holds, none when it is unset, and a refusal when it holds no key.
+fn key_given() -> Result<Option<webapi::Key>, ExitCode> {
+    let Some(text) = key_variable() else {
+        return Ok(None);
+    };
+    webapi::Key::parse(&text).map(Some).map_err(|_not_a_key| {
+        fail(
+            &format!(
+                "{} does not hold a publisher Web API key, which is 32 hexadecimal digits",
+                webapi::KEY
+            ),
+            REFUSED,
+        )
+    })
+}
+
 /// The partner Web API, when a key is set in `STEAMSHIP_WEB_API_KEY` or kept. None otherwise,
 /// and none is asked for.
 pub(crate) fn key_at_hand() -> Result<Option<webapi::Api>, ExitCode> {
-    if let Some(text) = key_variable() {
-        let key = webapi::Key::parse(&text).map_err(|_not_a_key| {
-            fail(
-                &format!(
-                    "{} does not hold a publisher Web API key, which is 32 hexadecimal digits",
-                    webapi::KEY
-                ),
-                REFUSED,
-            )
-        })?;
+    if let Some(key) = key_given()? {
         return Ok(Some(webapi::Api::new(key)));
     }
     // Asked first without reading it, which no store prompts for. A store holding none is then
@@ -63,16 +70,7 @@ pub(crate) enum KeyFrom {
 /// The partner Web API, with the key from `STEAMSHIP_WEB_API_KEY`, or else the one kept in the
 /// credential store, or else, at a terminal, one typed in.
 pub(crate) fn web_api(home: &Path) -> Result<(webapi::Api, KeyFrom), ExitCode> {
-    if let Some(text) = key_variable() {
-        let key = webapi::Key::parse(&text).map_err(|_not_a_key| {
-            fail(
-                &format!(
-                    "{} does not hold a publisher Web API key, which is 32 hexadecimal digits",
-                    webapi::KEY
-                ),
-                REFUSED,
-            )
-        })?;
+    if let Some(key) = key_given()? {
         show::field("api key", &format!("from {}", webapi::KEY));
         return Ok((webapi::Api::new(key), KeyFrom::Variable));
     }

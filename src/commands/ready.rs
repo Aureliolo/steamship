@@ -109,7 +109,7 @@ pub(crate) fn steamcmd_failed(error: &install::Error) -> ExitCode {
 /// Where the account came from, which is what `login` shows of it: its name is never printed,
 /// being half of what logs it in, and output like this ends up in logs that others read.
 #[derive(Debug, Clone, Copy)]
-pub(crate) enum Source {
+enum Source {
     Named,
     Remembered,
     Typed,
@@ -117,7 +117,7 @@ pub(crate) enum Source {
 
 /// The account named on the command line or in the environment, or else the one remembered.
 /// With `ask`, and a person at a terminal, the account's name is asked for when there is none.
-pub(crate) fn account(named: Option<&str>, ask: bool) -> Result<(Account, Source), ExitCode> {
+fn account(named: Option<&str>, ask: bool) -> Result<(Account, Source), ExitCode> {
     if let Some(name) = named {
         let account = Account::parse(name).map_err(|error| fail(&error, REFUSED))?;
         return Ok((account, Source::Named));
@@ -138,6 +138,29 @@ pub(crate) fn account(named: Option<&str>, ask: bool) -> Result<(Account, Source
             FAILED,
         )),
     }
+}
+
+/// The account a command runs as, and the login a CI handed over, if it did. A handed-over
+/// login's account is the one used unless another is named.
+pub(crate) fn run_as(named: Option<&str>) -> Result<(Option<ci::Login>, Account), ExitCode> {
+    let packed = packed_login()?;
+    let account = match (&packed, named) {
+        (Some(packed), None) => packed.account().clone(),
+        _ => account(named, false)?.0,
+    };
+    Ok((packed, account))
+}
+
+/// The account for `login` and `ci`, asked for at a terminal when none is known. Says whether it
+/// was named or remembered, and nothing for one typed.
+pub(crate) fn account_shown(named: Option<&str>) -> Result<Account, ExitCode> {
+    let (account, source) = account(named, true)?;
+    match source {
+        Source::Named => show::field("account", "as named"),
+        Source::Remembered => show::field("account", "remembered"),
+        Source::Typed => {}
+    }
+    Ok(account)
 }
 
 /// The login a CI handed over in `STEAMSHIP_LOGIN`, packed by `steamship ci`, if it did.

@@ -20,8 +20,7 @@ use steamship::{ci, dump, release, scripts, steamcmd, workshop};
 use super::exit::{either, fail};
 use super::game::{app_named, game, script_named, shipped_from};
 use super::ready::{
-    account, dump_in_actions, home, login_refused, named, packed_login, ready, restore,
-    steamcmd_failed,
+    dump_in_actions, home, login_refused, named, ready, restore, run_as, steamcmd_failed,
 };
 use super::released::{refused_unless, release_shown};
 use super::upload::output;
@@ -182,12 +181,8 @@ fn try_workshop<'command>(
     }
     show::title("workshop");
     let given = given()?;
-    let packed = packed_login()?;
     let named = named(request.account.as_deref());
-    let account = match (&packed, named) {
-        (Some(packed), None) => packed.account().clone(),
-        _ => account(named, false)?.0,
-    };
+    let (packed, account) = run_as(named)?;
     let item = checked_item(&given, request.new)?;
     if !request.for_launch {
         held_until_launch(item.app_id, &account, packed.as_ref())?;
