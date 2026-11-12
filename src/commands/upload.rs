@@ -30,7 +30,8 @@ use super::ready::{
     account, dump_in_actions, login_refused, named, packed_login, ready, restore, steamcmd_failed,
 };
 use super::released::{DEFAULT_RELEASED, app_info, default_unreleased, release_judged};
-use crate::{try_branch, try_builds, try_settings};
+use super::settings::try_settings;
+use crate::{try_branch, try_builds};
 
 /// `upload` of the script given, or of the game when there is none.
 pub(crate) fn upload_in(request: &cli::Upload) -> ExitCode {
