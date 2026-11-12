@@ -77,6 +77,7 @@ use zeroize::{Zeroize as _, Zeroizing};
 use crate::keychain;
 use crate::parallel;
 use crate::run::{self, Finished, Startup};
+use crate::terminal::{COLUMNS, ROWS};
 use windows_sys::Win32::Security::Cryptography::{
     CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
 };
@@ -420,8 +421,14 @@ impl Terminal {
         let job = Job::create()?;
         let (typed, input) = io::pipe()?;
         let (output, written) = io::pipe()?;
-        // Wide enough that steamcmd's longest line is never broken across two.
-        let console = PseudoConsole::create(&typed, &written, COORD { X: 240, Y: 50 })?;
+        let console = PseudoConsole::create(
+            &typed,
+            &written,
+            COORD {
+                X: COLUMNS.cast_signed(),
+                Y: ROWS.cast_signed(),
+            },
+        )?;
         // The console holds its own copies now. Ours would keep the output open after it closes.
         drop(typed);
         drop(written);

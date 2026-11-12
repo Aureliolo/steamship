@@ -4,8 +4,14 @@
 //! whole lines, and as the line it has started but not ended, which is where a program leaves a
 //! prompt it waits at.
 
-use std::cmp::Ordering;
 use std::{mem, str};
+
+/// How many columns the screen of a program's terminal has: wide enough that steamcmd's longest
+/// line is never broken across two.
+pub const COLUMNS: u16 = 240;
+
+/// How many rows that screen has.
+pub const ROWS: u16 = 50;
 
 /// What the program has written so far and not yet been taken as a line.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -15,10 +21,12 @@ pub struct Reader {
     /// Where in the line the next character goes: a backspace moves it back, and what is
     /// written there then takes the place of what was.
     cursor: usize,
-    /// The screen row the line is on, counted from 0, once a move to a row has said where that
-    /// is. At the foot of the screen a line feed scrolls rather than moving down, so this can
-    /// run ahead of the true row, but never behind it.
-    row: Option<usize>,
+    /// The screen row the line starts on, counted from 0, the top row of a new screen. Lines
+    /// that scroll the screen count it on past the last row, which a move to a row takes off.
+    row: usize,
+    /// A carriage return was read and nothing written since. What is written next is the line
+    /// again, and a line feed ends the line as it was.
+    returned: bool,
     /// Bytes of a character or an escape sequence cut off at the end of the last chunk.
     carried: Vec<u8>,
 }
@@ -49,6 +57,7 @@ impl Reader {
                     };
                     match movement(rest.get(..length).unwrap_or_default()) {
                         Move::Forward(columns) => {
+                            self.restart();
                             self.cursor = self.cursor.saturating_add(columns);
                             self.fill();
                         }
@@ -59,24 +68,16 @@ impl Reader {
                     at = at.saturating_add(length.max(1));
                 }
                 b'\n' => {
+                    self.row = self.row.saturating_add(self.span()).saturating_add(1);
                     events.push(Event::Line(self.take()));
-                    self.row = self.row.map(|row| row.saturating_add(1));
                     at = at.saturating_add(1);
                 }
-                // A carriage return alone moves back over the line: what follows is the line
-                // again, so the part before is dropped. Before a line feed it ends nothing. One
-                // that ends the chunk waits for the next, which says which it is.
-                b'\r' => match bytes.get(at.saturating_add(1)) {
-                    None => {
-                        self.carried = vec![byte];
-                        break;
-                    }
-                    Some(b'\n') => at = at.saturating_add(1),
-                    Some(_) => {
-                        drop(self.take());
-                        at = at.saturating_add(1);
-                    }
-                },
+                // A carriage return moves back over the line. What is written next is the line
+                // again, so the part before is dropped then. A line feed ends it as it was.
+                b'\r' => {
+                    self.returned = true;
+                    at = at.saturating_add(1);
+                }
                 0x07 => at = at.saturating_add(1),
                 0x08 => {
                     self.cursor = self.cursor.saturating_sub(1);
@@ -88,6 +89,7 @@ impl Reader {
                         self.carried = rest.to_vec();
                         break;
                     };
+                    self.restart();
                     for written in
                         String::from_utf8_lossy(rest.get(..length).unwrap_or_default()).chars()
                     {
@@ -113,26 +115,53 @@ impl Reader {
     }
 
     /// Moves the cursor to `row` and `column` of the screen. A pseudo console writes an empty
-    /// line as such a move down past it, so a move down ends the line and leaves a blank one for
-    /// each row it passes. A move up, to write over what is shown, only ends the line.
+    /// line as such a move down past it, so a move below the line ends it and leaves a blank one
+    /// for each row it passes. A move onto a row of the line goes on writing it. A move above it,
+    /// to write over what is shown, only ends the line.
     fn move_to(&mut self, row: usize, column: usize, events: &mut Vec<Event>) {
-        match self.row.map(|from| (from, from.cmp(&row))) {
-            Some((_, Ordering::Equal)) => {}
-            Some((from, Ordering::Less)) => {
+        self.returned = false;
+        let span = self.span();
+        // The screen has scrolled until it shows the whole line, so the line's last row is
+        // never below the screen's.
+        let lowest = usize::from(ROWS).saturating_sub(1).saturating_sub(span);
+        let first = self.row.min(lowest);
+        let last = first.saturating_add(span);
+        if row < first {
+            if !self.pending.is_empty() {
                 events.push(Event::Line(self.take()));
-                for _ in from.saturating_add(1)..row {
-                    events.push(Event::Line(String::new()));
-                }
             }
-            Some((_, Ordering::Greater)) | None => {
-                if !self.pending.is_empty() {
-                    events.push(Event::Line(self.take()));
-                }
+            self.row = row;
+            self.cursor = column;
+        } else if row <= last {
+            self.cursor = row
+                .saturating_sub(first)
+                .saturating_mul(usize::from(COLUMNS))
+                .saturating_add(column);
+        } else {
+            events.push(Event::Line(self.take()));
+            for _ in last.saturating_add(1)..row {
+                events.push(Event::Line(String::new()));
             }
+            self.row = row;
+            self.cursor = column;
         }
-        self.row = Some(row);
-        self.cursor = column;
         self.fill();
+    }
+
+    /// How many rows below its first the line reaches, where it is wider than the screen.
+    fn span(&self) -> usize {
+        self.pending
+            .len()
+            .saturating_sub(1)
+            .checked_div(usize::from(COLUMNS))
+            .unwrap_or(0)
+    }
+
+    /// Drops the line a carriage return moved back over, before it is written again.
+    fn restart(&mut self) {
+        if self.returned {
+            drop(self.take());
+        }
     }
 
     /// Spaces up to the cursor, where it has moved past the end of the line.
@@ -144,6 +173,7 @@ impl Reader {
     /// The line so far, which starts a new one.
     fn take(&mut self) -> String {
         self.cursor = 0;
+        self.returned = false;
         mem::take(&mut self.pending).into_iter().collect()
     }
 }
@@ -379,6 +409,7 @@ mod tests {
         assert_eq!(
             reader.read(b"\x1b[2;1Ha\r\n\x1b[5;3Hb"),
             [
+                Event::Line(String::new()),
                 Event::Line("a".to_owned()),
                 Event::Line(String::new()),
                 Event::Line(String::new()),
@@ -392,7 +423,11 @@ mod tests {
         let mut reader = Reader::default();
         assert_eq!(
             reader.read(b"\x1b[3;1H[ 10%]\x1b[3;1f[ 90%]\x1b[3;9Hdone"),
-            [Event::Waiting("[ 90%]  done".to_owned())]
+            [
+                Event::Line(String::new()),
+                Event::Line(String::new()),
+                Event::Waiting("[ 90%]  done".to_owned())
+            ]
         );
         assert_eq!(
             reader.read(b"\x1b[1Habcdef\x1b[Hxy"),
@@ -408,16 +443,163 @@ mod tests {
     }
 
     #[test]
-    fn a_move_to_a_row_before_any_is_known_ends_only_a_line_written() {
-        let mut reader = Reader::default();
-        assert_eq!(reader.read(b"\x1b[9;1H"), []);
+    fn a_move_down_from_a_row_nothing_is_written_on_leaves_it_blank_and_a_move_up_ends_no_line() {
         assert_eq!(
-            Reader::default().read(b"a\x1b[9;1Hb"),
-            [Event::Line("a".to_owned()), Event::Waiting("b".to_owned())]
+            Reader::default().read(b"\x1b[9;1H"),
+            vec![Event::Line(String::new()); 8]
         );
+        let mut far = vec![Event::Line(String::new()); 511];
+        far.push(Event::Waiting("b".to_owned()));
         assert_eq!(
             Reader::default().read(b"\x1b[99999999999999999999;1Hb"),
-            [Event::Waiting("b".to_owned())]
+            far
+        );
+        assert_eq!(
+            Reader::default().read(b"a\r\n\x1b[1;1Hb"),
+            [Event::Line("a".to_owned()), Event::Waiting("b".to_owned())]
+        );
+    }
+
+    fn read_all(reader: &mut Reader, chunks: &[&[u8]]) -> Vec<Event> {
+        chunks.iter().flat_map(|chunk| reader.read(chunk)).collect()
+    }
+
+    /// What Microsoft's console writes before a program's first line, from a trial. It moves
+    /// the cursor nowhere.
+    const OPENING: [&[u8]; 4] = [
+        b"\x1b[1t",
+        b"\x1b[c\x1b[?1004h\x1b[?9001h",
+        b"\x1b[?7l",
+        b"\x1b[?7h",
+    ];
+
+    #[test]
+    fn a_new_screen_starts_on_its_top_row_so_an_echo_moved_to_the_prompts_row_continues_its_line() {
+        let mut reader = Reader::default();
+        let mut seen = read_all(&mut reader, &OPENING);
+        seen.extend(read_all(
+            &mut reader,
+            &[
+                b"exited 0 \r\n",
+                b"next: ",
+                b"\x1b[2;7Htyped after\x1b[2;18H",
+                b"\x1b[2;18H\r\n",
+                b"\x1b[?1004l\x1b[?9001l",
+            ],
+        ));
+        assert_eq!(lines(&seen), ["exited 0 ", "next: typed after"]);
+    }
+
+    /// The 60 lines a trial wrote down a screen of 50 rows, each in a chunk of its own.
+    fn sixty_lines(reader: &mut Reader) -> Vec<Event> {
+        let mut seen = read_all(reader, &OPENING);
+        for number in 1_u8..=60 {
+            seen.extend(reader.read(format!("line {number}\r\n").as_bytes()));
+        }
+        seen
+    }
+
+    #[test]
+    fn at_the_foot_of_the_screen_a_line_feed_scrolls_and_the_next_line_is_on_the_last_row() {
+        let mut reader = Reader::default();
+        let mut seen = sixty_lines(&mut reader);
+        seen.extend(read_all(
+            &mut reader,
+            &[
+                b"next: ",
+                b"\x1b[50;7Htyped after\x1b[50;18H",
+                b"\x1b[50;18H",
+                b"\r\n",
+            ],
+        ));
+        let seen = lines(&seen);
+        assert_eq!(seen.len(), 61);
+        assert_eq!(seen.last(), Some(&"next: typed after"));
+    }
+
+    /// A prompt of 256 characters as a trial wrote it, in two chunks, on a screen 240 wide.
+    fn wide_prompt(reader: &mut Reader) -> Vec<Event> {
+        let mut seen = reader.read(&[b'x'; 160]);
+        let mut rest = vec![b'x'; 90];
+        rest.extend_from_slice(b"next: ");
+        seen.extend(reader.read(&rest));
+        seen
+    }
+
+    #[test]
+    fn a_line_wider_than_the_screen_wraps_and_a_move_to_its_second_row_continues_it() {
+        let mut reader = Reader::default();
+        let mut seen = read_all(&mut reader, &OPENING);
+        seen.extend(wide_prompt(&mut reader));
+        seen.extend(read_all(
+            &mut reader,
+            &[b"\x1b[2;17Htyped after\x1b[2;28H", b"\x1b[2;28H\r\n"],
+        ));
+        assert_eq!(
+            lines(&seen),
+            [format!("{}next: typed after", "x".repeat(250))]
+        );
+    }
+
+    #[test]
+    fn a_wrapped_line_at_the_foot_scrolls_the_screen_and_its_rows_move_up() {
+        let mut reader = Reader::default();
+        let mut seen = sixty_lines(&mut reader);
+        seen.extend(wide_prompt(&mut reader));
+        seen.extend(read_all(
+            &mut reader,
+            &[b"\x1b[50;17Htyped after\x1b[50;28H", b"\x1b[50;28H\r\n"],
+        ));
+        let seen = lines(&seen);
+        assert_eq!(seen.len(), 61);
+        assert_eq!(
+            seen.last().copied(),
+            Some(format!("{}next: typed after", "x".repeat(250)).as_str())
+        );
+    }
+
+    #[test]
+    fn a_carriage_return_then_escapes_then_a_line_feed_ends_the_line_as_it_was() {
+        let mut reader = Reader::default();
+        let seen = read_all(
+            &mut reader,
+            &[
+                b"\nafter\r",
+                b"\nnext:\x1b[1C",
+                b"typed after\r",
+                b"\x1b[?9001l\x1b[?1004l\n",
+            ],
+        );
+        assert_eq!(lines(&seen), ["", "after", "next: typed after"]);
+    }
+
+    #[test]
+    fn after_a_carriage_return_a_move_forward_starts_the_line_again_and_a_move_to_a_row_keeps_it() {
+        assert_eq!(
+            Reader::default().read(b"ab\r\x1b[2Cc\n"),
+            [Event::Line("  c".to_owned())]
+        );
+        assert_eq!(
+            Reader::default().read(b"abc\r\x1b[3;1Hd"),
+            [
+                Event::Line("abc".to_owned()),
+                Event::Line(String::new()),
+                Event::Waiting("d".to_owned())
+            ]
+        );
+        assert_eq!(
+            Reader::default().read(b"abc\r\x1b[1;2Hd\n"),
+            [Event::Line("adc".to_owned())]
+        );
+    }
+
+    #[test]
+    fn the_line_after_a_wrapped_one_starts_below_its_last_row() {
+        let wide = "x".repeat(241);
+        let mut reader = Reader::default();
+        assert_eq!(
+            reader.read(format!("{wide}\r\nb\x1b[3;2Hc").as_bytes()),
+            [Event::Line(wide), Event::Waiting("bc".to_owned())]
         );
     }
 
