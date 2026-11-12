@@ -370,35 +370,12 @@ where
     Ok(written)
 }
 
-/// What `work` gives, which must come within `limit`: work that never ends fails the test rather
-/// than holding it up for good.
-#[cfg(test)]
-pub(crate) fn within<Done, Work>(limit: Duration, work: Work) -> Done
-where
-    Done: Send + 'static,
-    Work: FnOnce() -> Done + Send + 'static,
-{
-    use std::panic;
-    use std::sync::mpsc;
-    use std::thread;
-    let (sender, receiver) = mpsc::channel();
-    let working = thread::spawn(move || drop(sender.send(work())));
-    match receiver.recv_timeout(limit) {
-        Ok(done) => done,
-        Err(mpsc::RecvTimeoutError::Timeout) => panic!("still running after {limit:?}"),
-        Err(mpsc::RecvTimeoutError::Disconnected) => panic::resume_unwind(
-            working
-                .join()
-                .expect_err("the work gave nothing yet did not panic"),
-        ),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::env;
     use std::path::PathBuf;
+    use std::sync::mpsc;
     use std::thread;
     #[cfg(windows)]
     use windows_sys::Win32::System::Threading::DETACHED_PROCESS;
@@ -1159,16 +1136,22 @@ mod tests {
         )
     }
 
-    /// All of `output`, which must end within half a minute.
+    /// All of `output`, which must end within half a minute: output that never ends fails the
+    /// test rather than holding it up for good.
     fn to_the_end<Output>(mut output: Output) -> Vec<u8>
     where
         Output: Read + Send + 'static,
     {
-        within(Duration::from_secs(30), move || {
+        let (sender, receiver) = mpsc::channel();
+        let _reading = thread::spawn(move || {
             let mut written = Vec::new();
-            output.read_to_end(&mut written).map(|_| written)
-        })
-        .unwrap()
+            let read = output.read_to_end(&mut written).map(|_| written);
+            drop(sender.send(read));
+        });
+        receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the output never ended")
+            .unwrap()
     }
 
     fn terminal_shell(environment: &[(OsString, OsString)], directory: &Path) -> Option<i32> {

@@ -1630,6 +1630,7 @@ mod tests {
     use std::os::windows::ffi::OsStringExt as _;
     use std::path::PathBuf;
     use std::slice;
+    use std::sync::mpsc;
     use std::time::Instant;
     use windows_sys::Win32::Foundation::E_INVALIDARG;
     use windows_sys::Win32::Foundation::{GetHandleInformation, HWND, LPARAM};
@@ -2074,11 +2075,16 @@ mod tests {
             Some(0_i32)
         );
         drop(console);
-        let seen = run::within(Duration::from_secs(30), move || {
+        // Output that never ends fails the test rather than holding it up for good.
+        let (sender, receiver) = mpsc::channel();
+        let _reading = thread::spawn(move || {
             let mut seen = Vec::new();
-            io::Read::read_to_end(&mut output, &mut seen).map(|_| seen)
-        })
-        .unwrap();
+            drop(sender.send(io::Read::read_to_end(&mut output, &mut seen).map(|_| seen)));
+        });
+        let seen = receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the output never ended")
+            .unwrap();
         // Only Microsoft's host asks a terminal what it is, and Windows' own never does.
         assert!(
             seen.windows(3).any(|window| window == b"\x1b[c"),
@@ -2326,7 +2332,6 @@ mod tests {
         ) {
             use std::process::Stdio;
             use std::sync::Barrier;
-            use std::sync::mpsc;
             use windows_sys::Win32::Foundation::SetHandleInformation;
 
             let sort = Path::new(&env::var_os("SystemRoot").unwrap()).join(r"System32\sort.exe");
