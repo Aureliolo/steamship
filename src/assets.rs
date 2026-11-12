@@ -361,8 +361,7 @@ pub fn check(folder: &Path) -> io::Result<Store> {
 fn checked(name: String, path: &Path, folder: Option<(&str, &'static str)>) -> Checked {
     let stem = path
         .file_stem()
-        .map(|stem| stem.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_default(|stem| stem.to_string_lossy().into_owned());
     let kept_as = named(&stem);
     let of_folder = folder.map(|(_, language)| language);
     let found = kept_as
@@ -412,9 +411,7 @@ fn checked(name: String, path: &Path, folder: Option<(&str, &'static str)>) -> C
                 }
                 format!("{}x{} {}", picture.width, picture.height, picture.format)
             };
-            let language = language
-                .map(|language| format!(" for {language}"))
-                .unwrap_or_default();
+            let language = language.map_or_default(|language| format!(" for {language}"));
             Ok(format!("{}{language}, {held}", asset.name))
         });
     Checked {

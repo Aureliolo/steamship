@@ -73,8 +73,7 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     let made = fs::read_to_string(&game.items)
         .ok()
         .and_then(|text| workshop::Record::read(&text).ok())
-        .map(|record| record.items)
-        .unwrap_or_default();
+        .map_or_default(|record| record.items);
     for each in chosen {
         // Visibility is chosen once, for an item being made: a published item keeps whatever it
         // was given on Steam since.

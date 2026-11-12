@@ -141,8 +141,7 @@ impl DepotScript {
         let relative = relative.to_string_lossy().replace('\\', "/");
         let name = file
             .file_name()
-            .map(|name| name.to_string_lossy())
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy());
         self.exclusions.iter().any(|exclusion| {
             let exclusion = exclusion.replace('\\', "/");
             if exclusion.contains('/') {

@@ -713,7 +713,7 @@ pub fn host_or_stand_in(real: &str) -> String {
 /// app is released or not. The `icon` addresses the Web API gives serve nothing until it is.
 const IMAGES: &str = "https://shared.akamai.steamstatic.com/community_assets/images/apps";
 
-/// The size an image of an icon has to stay under to be read. Steam serves them at 256 pixels
+/// The most an image of an icon may hold to be read. Steam serves them at 256 pixels
 /// in a few kilobytes.
 const IMAGE_LIMIT: u64 = 4 * 1024 * 1024;
 
@@ -1109,10 +1109,7 @@ fn read(response: Result<Response<Body>, Error>) -> Result<Value, Error> {
     let body = response.body_mut().read_to_string().ok();
     let answer = body.and_then(|body| serde_json::from_str::<Value>(&body).ok());
     if !(200..=299).contains(&status) {
-        return Err(Error::Status(
-            status,
-            answer.as_ref().map(said).unwrap_or_default(),
-        ));
+        return Err(Error::Status(status, answer.as_ref().map_or_default(said)));
     }
     answer.ok_or(Error::Unreadable("JSON"))
 }
@@ -1120,9 +1117,7 @@ fn read(response: Result<Response<Body>, Error>) -> Result<Value, Error> {
 /// The reason Steam gave in an answer, such as "Unable to find specificed betakey x" with a 404.
 /// Empty when it gave none.
 fn said(answer: &Value) -> String {
-    field(answer, &["response", "result"])
-        .map(|inner| text(inner, &["message"]))
-        .unwrap_or_default()
+    field(answer, &["response", "result"]).map_or_default(|inner| text(inner, &["message"]))
 }
 
 #[cfg(test)]
@@ -1544,12 +1539,12 @@ mod tests {
         );
         let limit = usize::try_from(IMAGE_LIMIT).unwrap();
         let (host, _requests) = serving(vec![
-            ("200 OK", "0".repeat(limit.saturating_sub(1)).leak()),
             ("200 OK", "0".repeat(limit).leak()),
+            ("200 OK", "0".repeat(limit.saturating_add(1)).leak()),
         ]);
         assert_eq!(
             api(&host).icon_image(1, "ab.jpg").map(|image| image.len()),
-            Ok(4 * 1024 * 1024 - 1)
+            Ok(4 * 1024 * 1024)
         );
         let over = api(&host).icon_image(1, "ab.jpg").unwrap_err();
         assert!(

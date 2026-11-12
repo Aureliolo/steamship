@@ -334,10 +334,9 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
         .added(&steamcmd_logs)
         .into_iter()
         .find(|(name, _)| name == "content_log.txt")
-        .map(|(_, added)| {
+        .map_or_default(|(_, added)| {
             fetch::hidden(&String::from_utf8_lossy(&redactor.redact(&added)), &secret)
-        })
-        .unwrap_or_default();
+        });
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     match fetch::judge(finished.code, &console, &log, fetching.app) {
         fetch::Outcome::Fetched => spinner.done(&format!("downloaded in {took}")),

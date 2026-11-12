@@ -1,9 +1,4 @@
 //! Which commits an upload may ship: those on origin's `green` branch.
-#![expect(
-    clippy::unwrap_used,
-    reason = "a test reports failure by panicking, its helpers included"
-)]
-
 pub mod common;
 
 use common::git::{commit, git, head, with_origin};

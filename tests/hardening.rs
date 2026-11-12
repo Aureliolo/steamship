@@ -1,11 +1,6 @@
 //! The exploit mitigations each system's loader enforces, read from the steamship program as
 //! built, the way that loader reads them: a mitigation lost from the build fails here, in CI and
 //! in every release build, rather than shipping unnoticed.
-#![expect(
-    clippy::unwrap_used,
-    reason = "a test reports failure by panicking, its helpers included"
-)]
-
 use std::fs;
 
 /// The program's bytes, read as its own little-endian headers lay them out.

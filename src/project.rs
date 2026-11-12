@@ -583,8 +583,7 @@ impl Project {
             }
             let name = folder
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_default();
+                .map_or_default(|name| name.to_string_lossy().into_owned());
             workshop::named(&name)
                 .map_err(|why| format!("{}: the mod's folder {why}", folder.display()))?;
             let text = fs::read_to_string(&manifest)

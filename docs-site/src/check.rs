@@ -23,8 +23,7 @@ pub fn site(out: &Path) -> Result<(), String> {
             .path();
         let name = path
             .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
+            .map_or_default(|name| name.to_string_lossy().into_owned());
         let text = fs::read_to_string(&path).map_err(|error| format!("{name}: {error}"))?;
         let _earlier = files.insert(name, text);
     }

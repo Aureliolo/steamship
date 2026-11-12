@@ -1,9 +1,4 @@
 //! The app script steamcmd is given, and the commit the build is described by.
-#![expect(
-    clippy::unwrap_used,
-    reason = "a test reports failure by panicking, its helpers included"
-)]
-
 pub mod common;
 
 use common::git::git;
