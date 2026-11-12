@@ -1133,6 +1133,20 @@ mod tests {
         (Zeroizing::new("quit".to_owned()), Zeroizing::default())
     }
 
+    /// `commands` run under `home` with `command` typed, which must end within 20 seconds: a run
+    /// stopped at its limit whose output never ends would otherwise hold the test up for good.
+    fn typed_in_time(
+        commands: Commands,
+        home: &Path,
+        command: Zeroizing<String>,
+        secret: Zeroizing<String>,
+    ) -> io::Result<Finished> {
+        let home = home.to_owned();
+        run::within(Duration::from_secs(20), move || {
+            commands.typed(&home, &command, &secret)
+        })
+    }
+
     #[test]
     fn a_second_run_starts_with_its_ready_file_empty() {
         let (_home, log) = logged();
@@ -1228,10 +1242,9 @@ mod tests {
             limit: Duration::from_mins(1),
             startup: Duration::from_secs(1),
         };
-        let started = Instant::now();
         let command = Zeroizing::new("login hunter2".to_owned());
         let secret = Zeroizing::new("hunter2".to_owned());
-        let finished = commands.typed(home.path(), &command, &secret).unwrap();
+        let finished = typed_in_time(commands, home.path(), command, secret).unwrap();
         assert_eq!(finished.code, Some(3_i32));
         assert_eq!(runs(home.path()), 2);
         let typed = fs::read_to_string(home.path().join(install::FOLDER).join("typed")).unwrap();
@@ -1240,11 +1253,6 @@ mod tests {
         assert!(
             said.contains("<password>") && !said.contains("hunter2"),
             "{said}"
-        );
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "took {:?}",
-            started.elapsed()
         );
     }
 
@@ -1256,16 +1264,10 @@ mod tests {
             limit: Duration::from_mins(1),
             startup: Duration::from_secs(1),
         };
-        let started = Instant::now();
         let (command, secret) = quit();
-        let error = commands.typed(home.path(), &command, &secret).unwrap_err();
+        let error = typed_in_time(commands, home.path(), command, secret).unwrap_err();
         refused(home.path(), &error);
         assert_eq!(runs(home.path()), 1);
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "took {:?}",
-            started.elapsed()
-        );
     }
 
     #[test]
@@ -1296,17 +1298,11 @@ mod tests {
             limit: Duration::from_mins(1),
             startup: Duration::from_secs(1),
         };
-        let started = Instant::now();
         let (command, secret) = quit();
-        let error = commands.typed(home.path(), &command, &secret).unwrap_err();
+        let error = typed_in_time(commands, home.path(), command, secret).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
         assert_eq!(error.to_string(), not_started(home.path()));
         assert_eq!(runs(home.path()), 2);
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "took {:?}",
-            started.elapsed()
-        );
     }
 
     #[test]
@@ -1361,7 +1357,7 @@ mod tests {
             startup: Duration::from_secs(1),
         };
         let (command, secret) = quit();
-        let finished = commands.typed(home.path(), &command, &secret).unwrap();
+        let finished = typed_in_time(commands, home.path(), command, secret).unwrap();
         assert_eq!(finished.code, Some(3_i32));
     }
 
@@ -1379,7 +1375,7 @@ mod tests {
             startup: Duration::from_secs(3),
         };
         let (command, secret) = quit();
-        let finished = commands.typed(home.path(), &command, &secret).unwrap();
+        let finished = typed_in_time(commands, home.path(), command, secret).unwrap();
         assert_eq!(finished.code, None);
     }
 
@@ -1391,20 +1387,9 @@ mod tests {
             limit: Duration::from_secs(1),
             startup: Duration::from_mins(1),
         };
-        let started = Instant::now();
-        let finished = commands
-            .typed(
-                home.path(),
-                &Zeroizing::new("quit".to_owned()),
-                &Zeroizing::default(),
-            )
-            .unwrap();
+        let (command, secret) = quit();
+        let finished = typed_in_time(commands, home.path(), command, secret).unwrap();
         assert_eq!(finished.code, None);
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "took {:?}",
-            started.elapsed()
-        );
     }
 
     #[test]
@@ -1415,24 +1400,13 @@ mod tests {
             limit: Duration::from_mins(1),
             startup: Duration::from_mins(1),
         };
-        let started = Instant::now();
-        let finished = commands
-            .typed(
-                home.path(),
-                &Zeroizing::new("quit".to_owned()),
-                &Zeroizing::default(),
-            )
-            .unwrap();
+        let (command, secret) = quit();
+        let finished = typed_in_time(commands, home.path(), command, secret).unwrap();
         assert_eq!(finished.code, None);
         assert!(
             String::from_utf8_lossy(&finished.output).contains(conversation::NO_CERTIFICATES),
             "{:?}",
             String::from_utf8_lossy(&finished.output)
-        );
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "took {:?}",
-            started.elapsed()
         );
     }
 }

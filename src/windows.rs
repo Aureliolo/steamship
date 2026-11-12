@@ -2074,8 +2074,11 @@ mod tests {
             Some(0_i32)
         );
         drop(console);
-        let mut seen = Vec::new();
-        let _: usize = io::Read::read_to_end(&mut output, &mut seen).unwrap();
+        let seen = run::within(Duration::from_secs(30), move || {
+            let mut seen = Vec::new();
+            io::Read::read_to_end(&mut output, &mut seen).map(|_| seen)
+        })
+        .unwrap();
         // Only Microsoft's host asks a terminal what it is, and Windows' own never does.
         assert!(
             seen.windows(3).any(|window| window == b"\x1b[c"),
