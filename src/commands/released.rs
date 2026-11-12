@@ -11,7 +11,7 @@ use steamship::show::Spinner;
 use steamship::{ci, conversation, release, steamcmd};
 
 use super::exit::fail;
-use super::ready::{account, packed_login, ready, restore, steamcmd_failed, verdict};
+use super::ready::{ready, restore, run_as, steamcmd_failed, verdict};
 
 /// What steamcmd, run from `home` and logged in as `account`, printed of `app`'s info, redacted,
 /// with the spinner that said it was `doing` so still turning. Refused when Steam did not take
@@ -141,11 +141,7 @@ pub(crate) fn refused_once_released(
     asked_as: Option<&str>,
     left: (&str, &str),
 ) -> Result<(), ExitCode> {
-    let packed = packed_login()?;
-    let account = match (&packed, asked_as) {
-        (Some(packed), None) => packed.account().clone(),
-        _ => account(asked_as, false)?.0,
-    };
+    let (packed, account) = run_as(asked_as)?;
     refused_unless(home, packed.as_ref(), || {
         unreleased(home, &account, app, packed.as_ref(), left)
     })

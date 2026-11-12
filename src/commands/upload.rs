@@ -29,7 +29,7 @@ use super::exit::{either, fail, first_failure};
 use super::game::{game_as, game_script, script_named, shipped_from};
 use super::key::{KeyFrom, key_at_hand, key_variable, offer_to_keep, web_api};
 use super::ready::{
-    account, dump_in_actions, login_refused, named, packed_login, ready, restore, steamcmd_failed,
+    dump_in_actions, login_refused, named, ready, restore, run_as, steamcmd_failed,
 };
 use super::released::{DEFAULT_RELEASED, app_info, default_unreleased, release_judged};
 use super::settings::try_settings;
@@ -297,11 +297,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
     } else {
         "upload"
     });
-    let packed = packed_login()?;
-    let account = match (&packed, request.account) {
-        (Some(packed), None) => packed.account().clone(),
-        _ => account(request.account, false)?.0,
-    };
+    let (packed, account) = run_as(request.account)?;
     let (found, branch) = checked(request.script, false)?;
     let needing = needs_redistributable(&found)?;
     let description = upload::commit(request.script)

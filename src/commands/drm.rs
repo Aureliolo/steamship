@@ -13,7 +13,7 @@ use steamship::{drm, magic, steamcmd};
 
 use super::exit::fail;
 use super::game::app_named;
-use super::ready::{account, login_refused, packed_login, ready, restore, steamcmd_failed};
+use super::ready::{login_refused, ready, restore, run_as, steamcmd_failed};
 
 pub(crate) fn try_drm_wrap(
     app: &str,
@@ -46,11 +46,7 @@ pub(crate) fn try_drm_wrap(
     };
     // Beside where it goes, so that it is moved into place whole, and never copied half-written.
     let wrapped = folder.join(format!(".{}.steamship-drm", name.to_string_lossy()));
-    let packed = packed_login()?;
-    let account = match (&packed, named) {
-        (Some(packed), None) => packed.account().clone(),
-        _ => account(named, false)?.0,
-    };
+    let (packed, account) = run_as(named)?;
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;

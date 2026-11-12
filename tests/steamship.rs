@@ -1995,6 +1995,38 @@ fn ci_with_no_saved_login_says_to_log_in_first_and_exits_3() {
     assert!(!output.exists());
 }
 
+#[test]
+fn ci_says_whether_its_account_was_named_or_remembered() {
+    let home = answering("", 0);
+    let (project, script) = project(true);
+    let root = project.path().join("gate (x86) 1a2b");
+    let output = project.path().join("login.txt");
+    let run = |extra: &[&str]| {
+        let mut arguments = vec![
+            "ci",
+            "--script",
+            script.to_str().unwrap(),
+            "--output",
+            output.to_str().unwrap(),
+        ];
+        arguments.extend_from_slice(extra);
+        steamship_in(&root, &arguments, Some(home.path()), &[])
+    };
+    let (named, named_said, named_why) = run(&["--account", "build_bot"]);
+    assert_eq!(named, Some(3_i32), "{named_said}{named_why}");
+    assert!(
+        named_said.contains("  account   as named\n"),
+        "{named_said}"
+    );
+    fs::write(home.path().join("account"), "build_bot\n").unwrap();
+    let (kept, kept_said, kept_why) = run(&[]);
+    assert_eq!(kept, Some(3_i32), "{kept_said}{kept_why}");
+    assert!(
+        kept_said.contains("  account   remembered\n"),
+        "{kept_said}"
+    );
+}
+
 /// The game's repository from [`project`], cloned from GitHub as far as its `origin` says.
 fn github_project() -> (tempfile::TempDir, PathBuf) {
     let (project, _) = project(true);
@@ -3135,6 +3167,10 @@ fn login_on_a_terminal_hides_the_password_and_waits_for_approval_with_a_spinner(
     );
     assert!(!seen.contains("Mobile app..."), "{seen}");
     assert!(seen.contains("  account   build_bot\n"), "{seen}");
+    assert!(
+        !seen.contains("  account   as named") && !seen.contains("  account   remembered"),
+        "{seen}"
+    );
     assert!(
         seen.contains(&format!("  password  {}\n", "\u{2022}".repeat(7))),
         "{seen}"
@@ -4492,6 +4528,28 @@ fn check_asks_steam_whether_the_live_branch_exists_when_a_key_is_at_hand() {
         asked.starts_with("GET /ISteamApps/GetAppBetas/v1/?") && asked.contains("appid=480"),
         "{asked}"
     );
+}
+
+#[test]
+fn check_refuses_a_web_api_key_that_is_not_one_without_repeating_it() {
+    let home = tempfile::tempdir().unwrap();
+    let (_there, script) = setting_live("beta2");
+    let script = script.to_string_lossy().into_owned();
+    let (code, stdout, stderr) = steamship(
+        &["check", &script],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", "not_a_key_1234"),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+        ],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "STEAMSHIP_WEB_API_KEY does not hold a publisher Web API key, which is 32 hexadecimal \
+         digits"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("not_a_key"));
 }
 
 #[test]
@@ -7719,6 +7777,36 @@ fn a_web_api_key_that_is_not_one_is_refused_without_repeating_it() {
 }
 
 #[test]
+fn a_web_api_key_that_is_not_one_is_refused_beside_a_kept_key() {
+    let home = forgetting_home();
+    let (keeping, _asked) = web_api(vec![("200 OK", APPS)]);
+    let (kept, kept_said, kept_why) = login_with_key(home.path(), &keeping, KEY, &[]);
+    assert_eq!(kept, Some(0_i32), "{kept_said}{kept_why}");
+    let (host, requests) = web_api(vec![("200 OK", BETAS), ("200 OK", BUILDS)]);
+    let (code, stdout, stderr) = steamship(
+        &["builds", "1000010"],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_WEB_API_KEY", "not_a_key_1234"),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            (STAND_IN, &host),
+        ],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "STEAMSHIP_WEB_API_KEY does not hold a publisher Web API key, which is 32 hexadecimal \
+         digits"
+    );
+    assert!(!stdout.contains("kept in"), "{stdout}");
+    assert!(!format!("{stdout}{stderr}").contains("not_a_key"));
+    assert!(
+        requests.recv_timeout(Duration::from_secs(1)).is_err(),
+        "Steam was asked"
+    );
+}
+
+#[test]
 fn promote_sets_the_default_branch_live_only_while_steam_shows_the_app_unreleased() {
     let (_project, script) = project(false);
     let script = script.to_str().unwrap();
@@ -7758,6 +7846,10 @@ fn promote_sets_the_default_branch_live_only_while_steam_shows_the_app_unrelease
         ],
     );
     assert_eq!(from_ci, Some(0_i32), "{ci_said}{ci_why}");
+    assert!(
+        steamcmd::saved_login(handed_over.path(), Platform::THIS).exists(),
+        "the login handed over was put where steamcmd looks"
+    );
     assert!(
         ci_said.contains("app 1000: BuildID 1234 live on default"),
         "{ci_said}"
@@ -8296,7 +8388,37 @@ fn a_wrap_in_ci_is_done_as_the_account_handed_over() {
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     let args = fs::read_to_string(home.path().join("args")).unwrap();
     assert!(args.contains("+login build_bot "), "{args}");
+    assert!(
+        steamcmd::saved_login(home.path(), Platform::THIS).exists(),
+        "the login handed over was put where steamcmd looks"
+    );
     assert_eq!(fs::read_to_string(&game).unwrap(), "MZwrapped");
+}
+
+#[test]
+fn a_wrap_in_ci_with_an_account_named_is_done_as_the_account_named() {
+    let home = faked_with(WRAPS);
+    let files = tempfile::tempdir().unwrap();
+    let game = files.path().join("game.exe");
+    fs::write(&game, "MZplain").unwrap();
+    let (code, stdout, stderr) = steamship(
+        &[
+            "drm-wrap",
+            "1000",
+            &game.to_string_lossy(),
+            "--account",
+            "other_bot",
+        ],
+        Some(home.path()),
+        &[
+            ("STEAMSHIP_LOGIN", &packed_login()),
+            ("STEAMSHIP_NO_UPDATE_CHECK", "1"),
+            ("STEAMSHIP_FAKE_WRAPPED", "MZwrapped"),
+        ],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(args.contains("+login other_bot "), "{args}");
 }
 
 #[test]
@@ -8837,6 +8959,10 @@ fn a_fetch_in_ci_is_done_as_the_account_handed_over() {
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     let args = fs::read_to_string(home.path().join("args")).unwrap();
     assert!(args.contains("+login build_bot "), "{args}");
+    assert!(
+        steamcmd::saved_login(home.path(), Platform::THIS).exists(),
+        "the login handed over was put where steamcmd looks"
+    );
 }
 
 #[test]

@@ -13,7 +13,7 @@ use steamship::{ci, conversation, run};
 
 use super::check::checked;
 use super::exit::fail;
-use super::ready::{Source, account, home, verdict};
+use super::ready::{account_shown, home, verdict};
 use super::status::check_saved_login;
 
 pub(crate) struct Setup<'command> {
@@ -47,12 +47,7 @@ pub(crate) fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
         Some(_) => None,
         None => Some(ci_repository(setup.repo, &script)?),
     };
-    let (account, source) = account(setup.account, true)?;
-    match source {
-        Source::Named => show::field("account", "as named"),
-        Source::Remembered => show::field("account", "remembered"),
-        Source::Typed => {}
-    }
+    let account = account_shown(setup.account)?;
     let home = home()?;
     let packed = ci::Login::saved(&home, Platform::THIS, account.clone()).map_err(|error| {
         if matches!(error, ci::Error::NotSaved { .. }) {

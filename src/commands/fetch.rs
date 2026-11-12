@@ -20,9 +20,7 @@ use zeroize::Zeroizing;
 use super::exit::fail;
 use super::game::{app_named, app_or_game};
 use super::key::{offer_to_keep, web_api, web_api_failed, why_unanswered};
-use super::ready::{
-    account, home, login_refused, named, packed_login, ready, restore, steamcmd_failed,
-};
+use super::ready::{home, login_refused, named, ready, restore, run_as, steamcmd_failed};
 
 pub(crate) fn try_fetch(request: &cli::Fetch) -> Result<ExitCode, ExitCode> {
     if request.json {
@@ -308,11 +306,7 @@ struct Fetching<'command> {
 
 /// Has steamcmd download the build, and answers which one the folder then holds.
 fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
-    let packed = packed_login()?;
-    let account = match (&packed, fetching.named) {
-        (Some(packed), None) => packed.account().clone(),
-        _ => account(fetching.named, false)?.0,
-    };
+    let (packed, account) = run_as(fetching.named)?;
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;

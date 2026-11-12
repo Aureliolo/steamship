@@ -19,7 +19,7 @@ use zeroize::Zeroizing;
 
 use super::exit::fail;
 use super::key::{WHERE_KEY, check_key, keep_key, key_variable, typed_key};
-use super::ready::{Source, account, home, ready, steamcmd_failed};
+use super::ready::{account_shown, home, ready, steamcmd_failed};
 
 /// What steamship shows while it waits for the login to be approved.
 const APPROVING: &str = "waiting for you in the Steam Mobile app";
@@ -88,12 +88,7 @@ fn not_logged_in(reason: &str) -> ExitCode {
 pub(crate) fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     show::banner_on_terminal();
     show::title("login");
-    let (account, source) = account(named, true)?;
-    match source {
-        Source::Named => show::field("account", "as named"),
-        Source::Remembered => show::field("account", "remembered"),
-        Source::Typed => {}
-    }
+    let account = account_shown(named)?;
     let (held, home, manifest) = ready()?;
     let root = home.join(install::FOLDER);
     let program = steamcmd::program(&root, Platform::THIS);
