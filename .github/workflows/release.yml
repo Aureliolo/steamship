@@ -282,6 +282,11 @@ jobs:
           program="$(find "${RUNNER_TEMP}/steamship-${version}" -type f \
             \( -name steamship -o -name steamship.exe \) | head -n 1)"
           test "$("${program}" --version)" = "steamship ${version}"
+          if [[ "${RUNNER_OS}" == Windows ]]; then
+            for file in conpty.dll OpenConsole.exe LICENSE-CONPTY; do
+              test -f "$(dirname "${program}")/${file}"
+            done
+          fi
           test "${OUTCOME}" = failure
 
   # The formula, the Scoop manifest and the winget manifests for this release. winget gets them

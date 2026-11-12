@@ -102,6 +102,9 @@ any x86-64 Linux, whatever its glibc. These are steamship {{version}}'s:
 [windows]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-x86_64-pc-windows-msvc.zip
 [windows-arm]: https://github.com/Aureliolo/steamship/releases/download/v{{version}}/steamship-{{version}}-aarch64-pc-windows-msvc.zip
 
+The Windows archives also carry conpty.dll and OpenConsole.exe, Microsoft's console that
+steamcmd runs on, with their MIT licence in LICENSE-CONPTY. Keep them beside steamship.exe.
+
 ### From a terminal
 
 The Linux archive with curl, wget or the GitHub command line:

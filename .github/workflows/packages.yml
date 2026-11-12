@@ -238,6 +238,13 @@ jobs:
             $program = [IO.File]::ReadAllBytes("$env:SCOOP\apps\steamship\current\steamship.exe")
             $found = [BitConverter]::ToUInt16($program, [BitConverter]::ToInt32($program, 0x3C) + 4)
             if ($found -ne $machine) { throw ('Scoop installed a build for machine 0x{0:X4}, not 0x{1:X4}.' -f $found, $machine) }
+            # A pull request installs the release the committed files name, which a change to the
+            # packing has not reached.
+            if ($env:TAG) {
+              foreach ($file in 'conpty.dll', 'OpenConsole.exe', 'LICENSE-CONPTY') {
+                if (-not (Test-Path -PathType Leaf "$env:SCOOP\apps\steamship\current\$file")) { throw "Scoop installed no $file beside steamship.exe." }
+              }
+            }
           }
 
           $address = if ($env:TAG) {
@@ -327,6 +334,7 @@ jobs:
 
       - name: Install with winget, then start steamship as winget's validation does
         env:
+          TAG: ${{ inputs.tag }}
           ARCHITECTURE: ${{ matrix.architecture }}
           WINGET: ${{ steps.winget.outputs.winget }}
         run: |
@@ -339,6 +347,14 @@ jobs:
           $steamship = "$env:LOCALAPPDATA\Microsoft\WinGet\Links\steamship.exe"
           $said = & $steamship --version
           if ($said -ne "steamship $version") { throw "steamship said '$said' rather than version $version." }
+          # A pull request installs the release the committed files name, which a change to the
+          # packing has not reached.
+          if ($env:TAG) {
+            $folder = Split-Path -Parent (Get-Item $steamship).ResolveLinkTarget($true).FullName
+            foreach ($file in 'conpty.dll', 'OpenConsole.exe', 'LICENSE-CONPTY') {
+              if (-not (Test-Path -PathType Leaf "$folder\$file")) { throw "winget installed no $file beside steamship.exe." }
+            }
+          }
           $PSNativeCommandUseErrorActionPreference = $false
           foreach ($attempt in 1..5) {
             & $steamship | Out-Null
