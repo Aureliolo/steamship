@@ -760,7 +760,7 @@ impl Api {
     }
 
     /// The image Steam serves of one of `app`'s achievement icons, by the `name` it serves it
-    /// under, as [`crate::editor::steam_image`] gives it. The image is public, so the key is not
+    /// under, as [`crate::receipt::steam_image`] gives it. The image is public, so the key is not
     /// sent with the request.
     ///
     /// # Errors

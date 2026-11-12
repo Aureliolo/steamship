@@ -11,7 +11,7 @@ use std::time::SystemTime;
 use steamship::cli::{FAILED, REFUSED, Writing};
 use steamship::project::{self, Project};
 use steamship::show::{self, Spinner};
-use steamship::{check, editor, presets, redist, run, scripts, settings, upload, vdf};
+use steamship::{check, presets, receipt, redist, run, scripts, settings, upload, vdf};
 
 use super::achievements::try_achievements;
 use super::builds::try_builds;
@@ -241,7 +241,7 @@ pub(crate) fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> 
             ),
         );
     } else {
-        let receipt = game.import.join(editor::RECEIPT).is_file();
+        let receipt = game.import.join(receipt::RECEIPT).is_file();
         let writing = Writing {
             write: None,
             out: receipt.then(|| game.import.clone()),

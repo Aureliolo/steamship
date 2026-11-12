@@ -42,6 +42,7 @@ pub mod po;
 pub mod presence;
 pub mod presets;
 pub mod project;
+pub mod receipt;
 pub mod redact;
 pub mod redist;
 pub mod release;
