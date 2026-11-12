@@ -31,5 +31,5 @@ fi
 unzip -q "${work}/binskim.nupkg" -d "${out}"
 # A zip carries no executable bit, which only Linux asks for.
 if [[ "${OSTYPE}" == linux* ]]; then
-  chmod +x "${out}"/tools/*/linux-x64/BinSkim
+  chmod +x "${out}"/tools/linux-x64/BinSkim
 fi
