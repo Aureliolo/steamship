@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use steamship::cli::{FAILED, REFUSED, Writing};
 use steamship::project::Project;
 use steamship::show::{self, Spinner};
-use steamship::{achievements, builds, editor, likeness, picture, po, saved, webapi};
+use steamship::{achievements, builds, editor, likeness, picture, po, receipt, saved, webapi};
 
 use super::exit::{fail, refusals};
 use super::game::{app_given_or, app_named, game, game_achievements};
@@ -86,7 +86,7 @@ pub(crate) fn achievements_in(
     if let Some(game) = &game {
         if own_check {
             files = own(game, "--check")?;
-            let receipt = game.import.join(editor::RECEIPT);
+            let receipt = game.import.join(receipt::RECEIPT);
             writing.out = writing
                 .out
                 .take()
@@ -587,8 +587,8 @@ fn achievement_icons(listed: &achievements::Listed) -> Result<Vec<editor::Icon>,
 }
 
 /// The receipt kept in `out` of the last import of `app`'s icons, refused when there is none.
-fn receipt_in(out: &Path, app: u32) -> Result<editor::Receipt, ExitCode> {
-    let path = out.join(editor::RECEIPT);
+fn receipt_in(out: &Path, app: u32) -> Result<receipt::Receipt, ExitCode> {
+    let path = out.join(receipt::RECEIPT);
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
@@ -597,14 +597,14 @@ fn receipt_in(out: &Path, app: u32) -> Result<editor::Receipt, ExitCode> {
                     "{}: has no {}. Import and publish the files --write wrote there, then run \
                      --imported",
                     out.display(),
-                    editor::RECEIPT
+                    receipt::RECEIPT
                 ),
                 REFUSED,
             ));
         }
         Err(error) => return Err(fail(&format!("{}: {error}", path.display()), FAILED)),
     };
-    let receipt = editor::Receipt::read(&text)
+    let receipt = receipt::Receipt::read(&text)
         .map_err(|why| fail(&format!("{}: {why}", path.display()), REFUSED))?;
     if receipt.app != app {
         return Err(fail(
@@ -811,12 +811,12 @@ fn try_achievements_imported(
     icons: &[editor::Icon],
     out: &Path,
 ) -> Result<ExitCode, ExitCode> {
-    let path = out.join(editor::RECEIPT);
+    let path = out.join(receipt::RECEIPT);
     // Only a readable receipt of this app tells an import Steam has not taken. Any other is
     // replaced.
     let last = fs::read_to_string(&path)
         .ok()
-        .and_then(|text| editor::Receipt::read(&text).ok())
+        .and_then(|text| receipt::Receipt::read(&text).ok())
         .filter(|receipt| receipt.app == app);
     let home = home()?;
     let (api, from) = web_api(&home)?;
@@ -830,7 +830,7 @@ fn try_achievements_imported(
         show::counted(held.achievements.len(), "achievement")
     ));
     offer_to_keep(&home, &api, from);
-    let receipt = editor::Receipt::of(app, icons, &held.achievements);
+    let receipt = receipt::Receipt::of(app, icons, &held.achievements);
     let untaken = untaken_icons(icons, &held.achievements, last.as_ref());
     // An icon uploaded in the editor alone would pass unseen: the receipt records only the
     // icons the files give.
@@ -876,11 +876,11 @@ fn try_achievements_imported(
     }
     fs::write(&path, receipt.text())
         .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
-    show::field("wrote", editor::RECEIPT);
+    show::field("wrote", receipt::RECEIPT);
     show::success(
         &format!(
             "{} in {} records the {} Steam has published, each as its file",
-            editor::RECEIPT,
+            receipt::RECEIPT,
             out.display(),
             show::counted(icons.len(), "icon")
         ),
@@ -890,7 +890,7 @@ fn try_achievements_imported(
         "next",
         &format!(
             "keep {} with the files. --check with --out then names each icon that changes",
-            editor::RECEIPT
+            receipt::RECEIPT
         ),
     );
     Ok(ExitCode::SUCCESS)
@@ -901,7 +901,7 @@ fn try_achievements_imported(
 fn untaken_icons(
     icons: &[editor::Icon],
     held: &[webapi::Achievement],
-    last: Option<&editor::Receipt>,
+    last: Option<&receipt::Receipt>,
 ) -> Vec<String> {
     let mut untaken: Vec<String> = Vec::new();
     for icon in icons {
@@ -979,7 +979,7 @@ fn unlike_icons(
     );
     let mut unlike = Vec::new();
     for icon in icons {
-        let name = editor::steam_image(icon.on_steam(held));
+        let name = receipt::steam_image(icon.on_steam(held));
         let compared = api
             .icon_image(app, name)
             .and_then(|served| likeness::compare(&icon.bytes, &served));
