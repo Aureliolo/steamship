@@ -7,7 +7,24 @@ use std::time::{Duration, Instant};
 use steamship::platform::Platform;
 use steamship::{fetch, steamcmd};
 
-use crate::{faked_with, fetching, fetching_typed, packed_login, saved_login};
+use crate::{faked_with, fetching, fetching_typed, packed_login, saved_login, steamship_in};
+
+#[test]
+fn a_build_that_is_not_a_number_says_what_a_build_id_is() {
+    let folder = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship_in(
+        folder.path(),
+        &["fetch", "--build", "x"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(
+        stderr.contains("'x' is not a build ID. Give the number `builds` lists, such as 1234567"),
+        "{stderr}"
+    );
+}
 
 /// A steamcmd that fetches app 1000 as steamcmd 1792617903 did: it records the build,
 /// `STEAMSHIP_FAKE_BUILD` or 4242, and the branch `-beta` names in the folder it was given, and

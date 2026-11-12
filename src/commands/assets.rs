@@ -1,5 +1,6 @@
 //! `steamship assets`: store artwork checked against Valve's sizes.
 
+use std::io;
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -14,6 +15,15 @@ pub(crate) fn run_assets(folder: &Path) -> ExitCode {
     show::field("folder", &folder.display().to_string());
     let store = match assets::check(folder) {
         Ok(store) => store,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return fail(
+                &format!(
+                    "{} does not exist. Name the folder the artwork is kept in, such as steam/store",
+                    folder.display()
+                ),
+                REFUSED,
+            );
+        }
         Err(error) => return fail(&format!("{}: {error}", folder.display()), REFUSED),
     };
     if !store.unchecked.is_empty() {
@@ -26,7 +36,7 @@ pub(crate) fn run_assets(folder: &Path) -> ExitCode {
     if checked.is_empty() {
         return fail(
             &format!(
-                "{}: holds no PNG, JPEG, icon or zip, nor a folder for a language with one",
+                "{}: holds no PNG, JPEG, icon or zip, directly or in a language folder. Name the folder the artwork is kept in",
                 folder.display()
             ),
             REFUSED,

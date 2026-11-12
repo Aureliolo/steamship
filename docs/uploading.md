@@ -2,7 +2,6 @@
 
 steamship uploads with your own `app_build` and `depot_build` scripts, the same ones the
 Steamworks SDK's ContentBuilder uses. If you already upload with steamcmd, you already have them.
-Log in once, then check and upload as often as you like.
 
 ## The build account
 
@@ -161,7 +160,7 @@ only a pushed commit, built and checked first. [Shipping a game](games.md) has t
 The build's description is the version and the Git commit the app script's own repository is at.
 That holds whatever folder steamship runs in. A script in a worktree names that worktree's commit.
 
-Build output (logs, manifests, the chunk cache) goes to steamship's own folder for the app, never
+Build output (logs, manifests, the chunk cache) goes to steamship's home for the app, never
 into your content. It is kept between runs so that later uploads are faster. A failure or an
 expired token ends the run rather than waiting at a prompt.
 
@@ -172,7 +171,7 @@ GitHub Actions step, it also gives the BuildID as the step's `build-id` output.
 
 With a Web API key at hand, steamship then confirms with Steam that the build is live on its
 branch. If Steam goes on showing another build there, the run fails and gives the `promote`
-command. A script wrapping steamship can rely on its exit code. When the Web API does not answer,
+command. When the Web API does not answer,
 the run says the build is not confirmed and does not fail.
 
 When Valve builds the upload but steamcmd fails afterwards, as when setting it live, the run still
@@ -207,8 +206,8 @@ steamship then asks the CDN for that manifest every 30 seconds. It runs steamcmd
 manifest is served, for up to half an hour and four runs in all. A second upload straight after
 the first one waits rather than fails.
 
-steamship also runs steamcmd once more, once in all and within the four runs, when it fails in
-one of these ways:
+steamship also reruns steamcmd once, counted within the four runs, when it fails in one of these
+ways:
 
 - steamcmd reaches Steam but not its build server, `Failed to initialize build on server (No
   Connection)`.
@@ -216,13 +215,13 @@ one of these ways:
 - Steam sends it no client config as it connects, `Failed to load platform info`.
 
 steamship also stops a steamcmd that has not started within a minute, and runs it once more. A
-steamcmd that has not started has asked Steam nothing, so this holds for every command steamship
-runs it for unattended.
+steamcmd that has not started has asked Steam nothing. Running it again is safe for every command
+steamship runs it for unattended.
 
 ### Rehearsals and timings
 
-`--preview` is Valve's dry run. The whole build is computed and logged. Nothing is uploaded and
-nothing is set live.
+`--preview` is Valve's dry run. It computes and logs the whole build. Nothing is uploaded or set
+live.
 
 `--times`, given to any command, ends each step's line with how long it took, such as
 `pinned and verified (0.2 s)`. Times are to the tenth of a second up to two minutes. A log then
@@ -288,8 +287,7 @@ is given, since every run would make another item.
 
 ### Items without a script
 
-A game that would rather not write Valve's script gives the item's fields. steamship writes the
-script itself:
+Instead of Valve's script, give the item's fields. steamship writes the script itself:
 
 ```sh
 steamship workshop --app 1000070 --items steam/workshop_items.json --name example \
@@ -331,9 +329,8 @@ Each item has a folder of its own in steamship's home, named by `--name`, or for
 `publishedfileid`, or `new` when it has none. The script steamcmd is given and steamcmd's console
 go there. Uploading several items in a row leaves each one's console to read.
 
-With `--json`, either form prints what came of the upload as one line of JSON on standard output,
-once steamcmd has run. Everything meant for a person goes to standard error. Here the line is
-spread out:
+With `--json`, either form prints the result as one line of JSON on standard output once steamcmd
+has run, as [`upload --json`](#upload-results-as-json) does. Here the line is spread out:
 
 ```json
 {
@@ -380,8 +377,8 @@ steamship rollback 480 testing
 ```
 
 `rollback` sets a branch back to its previous build. Uploads [from a game](games.md) record the
-commit and build ID they set live on each branch, in steamship's own folder. So `rollback` works
-only on the machine that uploaded. A branch with no earlier recorded build is refused. The
+commit and build ID they set live on each branch, in steamship's home. So `rollback` works only on
+the machine that uploaded. A branch with no earlier recorded build is refused. The
 default branch can be rolled back only while the app is unreleased, as with `promote`.
 
 ### The first branch of a new app
@@ -427,9 +424,8 @@ refused. steamship never sends the SteamID that confirmation needs. Without it, 
 
 ### Builds as JSON
 
-For a script that runs steamship, `builds --json` prints the branches and builds as one line of
-JSON on standard output. Everything meant for a person goes to standard error. Here the line is
-spread out:
+`builds --json` prints the branches and builds as one line of JSON on standard output, as
+[`upload --json`](#upload-results-as-json) does. Here the line is spread out:
 
 ```json
 {
@@ -535,7 +531,7 @@ steamship fetch 480 --branch testing --keep-password
 ### Where a fetched build goes
 
 The depots are the ones Steam installs on this system, or on the one `--system` names
-(`windows`, `linux` or `macos`). Each app, branch and system has its own folder under the
+(`windows`, `linux` or `macos`). Each app, branch and system has its own folder under
 steamship's home, `fetched/<app>/<branch>-<system>`, or the one `--into` names. Nothing goes into
 a Steam library and no window opens.
 
@@ -577,7 +573,7 @@ A build runs only as Steamworks is set up for it:
 - The Common Redistributables the app ticks.
 - Where Steam Cloud keeps saves.
 
-None of that is in the build scripts. None of it can be changed but by hand in Steamworks.
+None of that is in the build scripts. All of it is set by hand in Steamworks.
 `settings` asks Steam for it through steamcmd with the saved login, as the build account sees the
 app. That works before the app is released. It shows the settings in Valve's own format.
 
@@ -585,15 +581,16 @@ app. That works before the app is released. It shows the settings in Valve's own
 
 `settings` also says whether Steam Cloud is set up. An app with none has no Cloud section at all.
 
-Cloud kept to developers is named as such, since players then have none while every check passes.
-Steamworks can keep an app's Cloud to developers by itself the first time it is saved.
+When Cloud is limited to developers, `settings` says so. Players then get no Cloud saves while
+every check passes. Steamworks can keep an app's Cloud to developers by itself the first time it
+is saved.
 
 From the app's Steam Input page, `settings` names the defaults chosen there, as the page names
 them. It gives the path of the action manifest for a Custom Configuration the game bundles. It
 names the Steam Deck's touchscreen mode and the controllers opted into Steam Input too.
 
 It says so when there is no Default Controller Configuration. A new app has none. On a Steam
-Deck, a demo without one has had no input from the Deck's controls.
+Deck, a demo without one gets no input from the Deck's controls.
 
 ### Keeping a snapshot
 
@@ -769,8 +766,8 @@ app checked. Other keys, such as your own tools', are left alone.
 `achievements 480 --save steam/achievements.json` writes what Steam holds to that file, its stats
 included. Achievements made by hand in Steamworks can then be checked. An achievement with no name
 in English exits 2, as the file must give one. As with leaderboards, `--save` writes over only a
-file holding nothing more than it writes, so an `icon`, a `sets` list or games-kit records are
-never lost.
+file holding nothing more than it writes, so an `icon`, a `sets` list or games-kit records
+(a layout of JSON records in which a game keeps its content) are never lost.
 
 Achievements and stats count on Steam only once published in Steamworks. One entered or imported
 but not yet published is missing from Steam's, or shows as it was before. A check that fails says
@@ -791,9 +788,9 @@ Steam's Web API. Only Steamworks shows them.
 
 ### games-kit records
 
-A game made with games-kit can be checked against its own achievement records instead. They are a
-list in which records typed `achievement` and `stat` are read as above, by the API name in
-`steam`:
+A game that keeps its content as games-kit records can be checked against its own achievement
+records instead. They are a list in which records typed `achievement` and `stat` are read as
+above, by the API name in `steam`:
 
 ```json
 [
@@ -824,8 +821,8 @@ and a stat of one API name, in one file or two. Steamworks saves such an import 
 publish it. It says the achievement "has API name conflict with stat".
 
 An achievement and a stat whose API names differ only in case are refused too. Steam publishes
-them. It
-then finds a stat by its API name in any case and answers for that stat as for the achievement.
+them. Steam
+then matches a stat's API name in any case and answers for that stat as for the achievement.
 Whether the stat is aggregated cannot be read.
 
 ### What the check cannot see
@@ -943,7 +940,7 @@ Besides what the check reads, an achievement may give these:
 
 Its icons are paths inside the games-kit mod its records are in, the folder holding the mod's
 `manifest.json`. For a file of the kind above, they are paths beside that file. Each has to be a
-square PNG of 64 pixels or more, 256 at best.
+square PNG of at least 64 pixels. 256 pixels is the best size.
 
 ### Achievement sets
 
@@ -1121,7 +1118,7 @@ that differs is changed in Steamworks, under Stats & Achievements, Leaderboards.
 ```
 
 `sort` is `ascending` (the lowest score first) or `descending`. `display` is `numeric`, `seconds`
-or `milliseconds`. Both are needed, since steamship makes no leaderboard with one guessed.
+or `milliseconds`. Both are needed, because steamship never guesses either.
 
 `trusted_writes` (only the Web API may set scores, never the game) and `friends_only` (players see
 only their friends' scores) may be left out, for `false`. `app`, when there, must be the app

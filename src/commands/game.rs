@@ -21,9 +21,9 @@ pub(crate) fn game() -> Result<Project, ExitCode> {
         .ok_or_else(|| {
             fail(
                 &format!(
-                    "there is no game in {}: no {} or steam/app_build.vdf in it or a folder \
-                     above. Run steamship in the game's folder, start one here with \
-                     steamship init <app ID>, or name the app and its files",
+                    "there is no game in {}: no {} or steam/app_build.vdf here or in a folder \
+                     above. Run steamship in the game's folder, run `steamship init <app ID>` \
+                     to start one, or name the app and its files",
                     here.display(),
                     project::FILE
                 ),
@@ -140,7 +140,12 @@ pub(crate) fn app_given_or(app: Option<String>, game: Option<&Project>) -> Strin
 pub(crate) fn app_named(app: &str) -> Result<u32, ExitCode> {
     let app_id = match app.parse::<u32>() {
         Ok(app_id) if app_id > 0 => app_id,
-        Ok(_) => return Err(fail(&"0 is not an app's ID", REFUSED)),
+        Ok(_) => {
+            return Err(fail(
+                &"0 is not an app ID. Give the app's ID from Steamworks",
+                REFUSED,
+            ));
+        }
         Err(_) => scripts::load(Path::new(app))
             .map(|script| script.app_id)
             .map_err(|problems| {

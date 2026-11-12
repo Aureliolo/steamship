@@ -43,7 +43,10 @@ pub(crate) fn run_init(app: u32, mut depots: Vec<init::Depot>, folder: &Path) ->
     // All or nothing: a script already there is someone's, and half a set would not check.
     if let Some((there, _)) = paths.iter().find(|(path, _)| path.exists()) {
         return fail(
-            &format!("{} is already there, and is left as it is", there.display()),
+            &format!(
+                "{} already exists and is kept. Give another --folder, or remove it",
+                there.display()
+            ),
             REFUSED,
         );
     }

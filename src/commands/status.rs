@@ -36,7 +36,7 @@ fn steamcmd_state(home: &Path, manifest: &Manifest) -> Result<(), ExitCode> {
             show::field("steamcmd", "not installed (steamship login installs it)");
         }
         Err(error) => {
-            show::failed("steamcmd", "not as pinned");
+            show::failed("steamcmd", "differs from the pinned version");
             return Err(steamcmd_failed(&error));
         }
     }

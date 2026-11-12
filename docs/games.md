@@ -2,7 +2,7 @@
 
 In a game's folder, or any folder inside it, steamship finds the game's files itself. The game is
 the nearest folder, from where steamship runs upwards, that holds a `steamship.toml` or else
-`steam/app_build.vdf`. steamship takes everything else from where the game keeps it.
+`steam/app_build.vdf`.
 
 ```sh
 steamship check                 # the scripts, records and rich presence against Steam's
@@ -13,8 +13,8 @@ steamship workshop              # each example mod, as its Workshop item
 
 ## Where steamship looks
 
-Without a `steamship.toml`, steamship expects the layout of a
-[games-kit](uploading.md#games-kit-records) game:
+Without a `steamship.toml`, steamship expects the layout of a game that keeps its content as
+[games-kit records](uploading.md#games-kit-records) in JSON files:
 
 | What | Where |
 | --- | --- |
@@ -34,13 +34,13 @@ steamship skips any of these the game does not have.
 
 Each command reads only the records of its own types. `achievements` reads games-kit's records
 typed `achievement`, `stat` and `achievement_set`. `leaderboards` reads those typed
-`leaderboard`. Either also reads steamship's own files of them.
+`leaderboard`. Both also read steamship's own record files.
 
 ## `steamship.toml`
 
-The file names what the game keeps elsewhere, how it is built, and the one steamship it ships
-with. Every setting is optional. Each path is relative to the file and stays inside the game. A
-setting steamship does not take is refused.
+The file names where the game keeps its files, how it is built and which steamship version it
+ships with. Every setting is optional. Each path is relative to the file and stays inside the
+game. A setting steamship does not take is refused.
 
 ```toml
 steamship = "0.9.30"
@@ -58,8 +58,8 @@ footer = "The game's own example mod, dedicated to the public domain under CC0 1
   version refuses every command that takes the game from its folder.
 - `build`: the program and its arguments that build the game into the folders its depots ship,
   run in the game's folder. Without it, the content goes up as it is.
-- `cores`: the most processors steamcmd and the build run on, if not 4. The rest of the machine
-  is left to whoever works on it.
+- `cores`: the most processors steamcmd and the build run on. The default is 4. The other
+  processors stay free for other work.
 
 On Windows and Linux, steamcmd and the build run on at most `cores` processors. On macOS they run
 on every processor.
@@ -131,7 +131,7 @@ to be there, with an install folder of letters and digits alone.
 
 The version comes from the first second-level heading in `CHANGES.md` that starts with one, such
 as `## 1.2.0, 2026-10-30`, `## v1.2.0` or `## [1.2.0]`. With none, it is `project.godot`'s.
-`--version` gives another. A version of noughts alone is refused, such as the 0.0.0 a project
+`--version` gives another. A version of all zeros is refused, such as the 0.0.0 a project
 keeps in `project.godot` between releases.
 
 ### After the build
@@ -139,8 +139,8 @@ keeps in `project.godot` between releases.
 The tree is refused again if the build changed it. So is every file the depots map that the build
 did not write, make or rename, such as an export from an earlier build.
 
-On Windows a copied file keeps its source's times. steamship then tells it is new only by when it
-was created. A build that copies over a file already there should empty the folder first.
+On Windows a copied file keeps its source's times. steamship can tell it is new only from its
+creation time. A build that copies over a file already there should empty the folder first.
 
 ### The first upload
 
@@ -398,9 +398,9 @@ for word.
 
 `workshop_english.json` holds the Workshop page's `title` and `description`.
 
-`presence_english.json` holds each rich presence token and its English line. A name ending in `_`
-with `{"records": "bishop"}` makes a token for each of the game's records of that type with a
-name. That token is `#Bishop_alder` for `base:alder`, its line the record's name.
+`presence_english.json` holds each rich presence token and its English line. A token name ending
+in `_` with `{"records": "bishop"}` makes one token for each game record of type `bishop` that
+has a name. For `base:alder` the token is `#Bishop_alder` and its line is the record's name.
 
 Without `presence_english.json`, a `rich_presence_english.vdf` kept by hand is the English. It is
 left as it is.
@@ -418,8 +418,6 @@ each of these, in English or any language:
 - a short description past the 300 characters the store page shows
 - a Workshop description past the 200 characters it takes
 - a rich presence line holding a slot Steam cannot fill, as `rich-presence` refuses one
-
-A translation that drops a field's closing brace is caught here.
 
 ### Files no longer written
 

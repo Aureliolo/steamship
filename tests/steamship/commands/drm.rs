@@ -31,6 +31,42 @@ const REFUSES_WRAP: &str = "#!/bin/sh\n\
     echo 'DRM wrap failed with EResult 8 (Invalid Parameter)'\n\
     exit 11\n";
 
+#[test]
+fn an_executable_that_is_not_there_is_named_with_what_to_give() {
+    let files = tempfile::tempdir().unwrap();
+    let missing = files.path().join("nothere.exe");
+    let (code, _, said) = steamship(
+        &["drm-wrap", "1000", &missing.to_string_lossy()],
+        None,
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(2_i32), "{said}");
+    assert!(
+        said.contains(&format!(
+            "{}: does not exist. Name the Windows executable to wrap, such as \
+             build/windows/game.exe",
+            missing.display()
+        )),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_folder_given_as_the_executable_is_refused_with_why_and_not_as_missing() {
+    let files = tempfile::tempdir().unwrap();
+    let (code, _, said) = steamship(
+        &["drm-wrap", "1000", &files.path().to_string_lossy()],
+        None,
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(2_i32), "{said}");
+    assert!(
+        said.contains(&format!("{}: ", files.path().display())),
+        "{said}"
+    );
+    assert!(!said.contains("does not exist"), "{said}");
+}
+
 #[cfg(unix)]
 #[test]
 fn an_executable_is_wrapped_in_place_or_into_the_output_keeping_its_permissions() {

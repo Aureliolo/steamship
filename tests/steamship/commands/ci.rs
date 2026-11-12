@@ -461,7 +461,10 @@ fn ci_without_gh_says_where_to_get_it_and_exits_1() {
         stdout.ends_with("  secret    \u{2717} gh is not installed\n"),
         "{stdout}"
     );
-    assert_eq!(failure(&stderr), "the GitHub command line is needed");
+    assert_eq!(
+        failure(&stderr),
+        "gh, the GitHub command line, is needed to set the secret"
+    );
     assert!(
         stderr.ends_with(
             "install it from https://cli.github.com, or write the login to a file with --output\n"

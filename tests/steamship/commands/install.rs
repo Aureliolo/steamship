@@ -52,7 +52,10 @@ fn install_names_what_changed_and_exits_4() {
     let home = recorded(&format!("file {} steamcmd.exe\n", "0".repeat(64)));
     let (code, stdout, stderr) = run(Some(home.path()));
     assert_eq!(code, Some(4_i32));
-    assert!(stdout.ends_with("\u{2717} not as pinned\n"), "{stdout}");
+    assert!(
+        stdout.ends_with("\u{2717} differs from the pinned version\n"),
+        "{stdout}"
+    );
     assert!(
         stderr.trim_end().ends_with("steamcmd.exe is missing"),
         "{stderr}"

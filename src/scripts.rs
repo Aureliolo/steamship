@@ -205,6 +205,12 @@ pub fn app_named(path: &Path) -> Option<u32> {
 ///
 /// Every problem that stops the scripts from being understood, all of them rather than the first.
 pub fn load(path: &Path) -> Result<AppScript, Vec<Problem>> {
+    if matches!(fs::metadata(path), Err(error) if error.kind() == io::ErrorKind::NotFound) {
+        return Err(vec![Problem::new(
+            path,
+            "does not exist. Name the app's build script, such as steam/app_build.vdf",
+        )]);
+    }
     let document = read(path).map_err(|problem| vec![problem])?;
     let Some(app) = document.block("AppBuild") else {
         return Err(vec![Problem::new(path, "there is no \"AppBuild\" block")]);

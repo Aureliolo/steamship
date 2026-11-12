@@ -50,9 +50,37 @@ fn artwork_is_checked_against_valves_sizes_with_nothing_sent() {
     let (none, _, said) = steamship(&["assets", &empty.path().to_string_lossy()], None, &quiet);
     assert_eq!(none, Some(2_i32), "{said}");
     assert!(
-        said.contains("holds no PNG, JPEG, icon or zip, nor a folder for a language with one"),
+        said.contains("holds no PNG, JPEG, icon or zip, directly or in a language folder"),
         "{said}"
     );
+}
+
+#[test]
+fn a_folder_that_is_not_there_is_named_with_what_to_give() {
+    let folder = tempfile::tempdir().unwrap();
+    let missing = folder.path().join("nothere");
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let (code, _, said) = steamship(&["assets", &missing.to_string_lossy()], None, &quiet);
+    assert_eq!(code, Some(2_i32), "{said}");
+    assert!(
+        said.contains(&format!(
+            "{} does not exist. Name the folder the artwork is kept in, such as steam/store",
+            missing.display()
+        )),
+        "{said}"
+    );
+}
+
+#[test]
+fn a_file_given_as_the_artwork_folder_is_refused_with_why_and_not_as_missing() {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("art.txt");
+    fs::write(&file, "").unwrap();
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let (code, _, said) = steamship(&["assets", &file.to_string_lossy()], None, &quiet);
+    assert_eq!(code, Some(2_i32), "{said}");
+    assert!(said.contains(&format!("{}: ", file.display())), "{said}");
+    assert!(!said.contains("does not exist"), "{said}");
 }
 
 #[test]

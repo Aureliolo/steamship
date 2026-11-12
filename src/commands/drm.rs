@@ -2,6 +2,7 @@
 
 use std::fmt::Display;
 use std::fs;
+use std::io;
 use std::path::{self, Path};
 use std::process::ExitCode;
 
@@ -28,6 +29,11 @@ pub(crate) fn try_drm_wrap(
     match magic::looks_like_windows_program(executable) {
         Ok(true) => {}
         Ok(false) => return Err(refused(&"is not a Windows executable")),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Err(refused(
+                &"does not exist. Name the Windows executable to wrap, such as build/windows/game.exe",
+            ));
+        }
         Err(error) => return Err(refused(&error)),
     }
     show::field("program", &executable.display().to_string());

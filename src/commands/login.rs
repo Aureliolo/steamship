@@ -18,7 +18,7 @@ use steamship::{conversation, keychain, steamcmd, webapi};
 use zeroize::Zeroizing;
 
 use super::exit::fail;
-use super::key::{WHERE_KEY, check_key, keep_key, key_variable, typed_key};
+use super::key::{NO_KEY_TYPED, WHERE_KEY, check_key, keep_key, key_variable, typed_key};
 use super::ready::{account_shown, home, ready, steamcmd_failed};
 
 /// What steamship shows while it waits for the login to be approved.
@@ -148,7 +148,7 @@ pub(crate) fn try_key_login() -> Result<ExitCode, ExitCode> {
     show::title("login");
     let home = home()?;
     show::aside(WHERE_KEY);
-    let key = typed_key()?.ok_or_else(|| fail(&"no Web API key typed", REFUSED))?;
+    let key = typed_key()?.ok_or_else(|| fail(&NO_KEY_TYPED, REFUSED))?;
     let api = webapi::Api::new(key);
     check_key(&api)?;
     if !keep_key(&home, api.key()) {

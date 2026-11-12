@@ -224,29 +224,31 @@ fn help_lists_every_command_with_one_short_line() {
     );
     for line in [
         "  login          Log in to Steam, once, for uploads\n",
-        "  status         Show the login and steamcmd, and whether Steam takes the login\n",
+        "  status         Show the login, steamcmd and whether Steam accepts the login\n",
         "  check          Check the build scripts, without logging in\n",
         "  upload         Check, build and upload, then print the build ID\n",
         "  workshop       Upload a Workshop item, then print its ID\n",
         "  builds         Show an app's branches and last builds\n",
-        "  fetch          Download a branch's build as Steam serves it, into a folder of its own\n",
-        "  achievements   Show or save an app's achievements and stats, check them against files, \
-         or write their import\n",
+        "  fetch          Download a branch's live build into its own folder\n",
+        "  achievements   Show, save or check an app's achievements and stats, or write their \
+         import\n",
         "  assets         Check artwork and icons against Valve's sizes, before they are \
          uploaded\n",
         "  drm-wrap       Wrap a Windows executable in Steam DRM, before it is uploaded\n",
         "  settings       Show an app's settings in Steamworks, or check them against a snapshot\n",
-        "  leaderboards   Show or save an app's leaderboards, check them against files, or make \
-         and delete them to match\n",
+        "  leaderboards   Show, save, check, create or delete an app's leaderboards\n",
         "  rich-presence  Upload an app's rich presence localisation\n",
         "  text           Write a game's store, Workshop and rich presence text in every language \
          it speaks\n",
         "  promote        Set an uploaded build live on a branch\n",
+        "  rollback       Set a branch back to its previous build\n",
         "  branch         Set the description players see for a beta branch\n",
-        "  ci             Set up uploads from CI, the login kept as a secret\n",
+        "  ci             Set up uploads from CI, with the login as a secret\n",
         "  logout         Forget the saved login\n",
         "  init           Write starter build scripts for an app\n",
         "  install        Install or verify the pinned steamcmd\n",
+        "  languages      List Steam's languages with their locale codes\n",
+        "  self           Check this steamship binary\n",
         "  completions    Print tab completion for bash, zsh, fish, PowerShell or elvish\n",
     ] {
         assert!(stdout.contains(line), "{line:?} in {stdout}");
@@ -1096,7 +1098,10 @@ fn refusing_web_api(count: usize) -> String {
 fn the_help_names_allow_ungreen_and_says_players_update_to_a_rolled_back_build() {
     for (command, said) in [
         ("upload", "--allow-ungreen"),
-        ("rollback", "which players on it then update to"),
+        (
+            "rollback",
+            "Players on the branch then update to that build.",
+        ),
     ] {
         let (code, stdout, stderr) = steamship(&[command, "--help"], Some(Path::new(".")), &[]);
         assert_eq!(code, Some(0_i32), "{command}: {stderr}");
