@@ -107,7 +107,7 @@ jobs:
           ACCEPTED: ${{ matrix.accepted }}
         run: |
           set -euo pipefail
-          binskim="$(echo .binskim/tools/net*/"${BINSKIM}")"
+          binskim=".binskim/tools/${BINSKIM}"
           status=0
           "${binskim}" analyze "target/${TARGET}/release/${PROGRAM}" --output raw.sarif \
             --insert FlattenedMessages --quiet || status=$?

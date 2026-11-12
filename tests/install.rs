@@ -1,11 +1,5 @@
 //! Installing steamcmd from packages built here, fetched by copying, so every path the installer
 //! can take is exercised without Valve's CDN.
-#![expect(
-    clippy::unwrap_used,
-    clippy::panic,
-    reason = "a test reports failure by panicking, its helpers included"
-)]
-
 use std::cell::Cell;
 use std::fs::{self, File};
 use std::io::Write as _;

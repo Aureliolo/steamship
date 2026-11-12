@@ -221,7 +221,7 @@ pub fn judged(report: &Report, settings: Option<&Block>) -> Judged {
         .filter_map(|file| file.file_name())
         .map(|name| name.to_string_lossy().to_ascii_lowercase())
         .collect();
-    let ticked = settings.map(|_| depots.map(ticked).unwrap_or_default());
+    let ticked = settings.map(|_| depots.map_or_default(ticked));
     let scripted = installing.iter().any(|depot| depot.install_scripts);
     let app = report.app_id.unwrap_or_default();
     let mut judged = Judged::default();

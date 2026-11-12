@@ -747,8 +747,7 @@ fn same_file(one: &Path, other: &Path) -> bool {
 fn content_problems(place: &str, file: &Path, problems: &mut Vec<Problem>) {
     let name = file
         .file_name()
-        .map(|name| name.to_string_lossy())
-        .unwrap_or_default();
+        .map_or_default(|name| name.to_string_lossy());
     if name.eq_ignore_ascii_case("steam_appid.txt") {
         problems.push(Problem::new(
             file,

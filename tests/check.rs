@@ -1,10 +1,5 @@
 //! `check` against real script and content trees, in a folder whose name has spaces and brackets
 //! the way a Steam library's or a build worktree's can.
-#![expect(
-    clippy::unwrap_used,
-    reason = "a test reports failure by panicking, its helpers included"
-)]
-
 use std::fmt::Write as _;
 use std::fs;
 use std::io;

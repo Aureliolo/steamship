@@ -8,8 +8,8 @@
 set -euo pipefail
 
 # renovate: datasource=nuget depName=Microsoft.CodeAnalysis.BinSkim
-version=4.4.9.11
-sha256=69678989cbc273b5b50fcf98fb0fd978e1e35a3f844acb24254b31f0ce90c447
+version=4.4.9.14
+sha256=ea2f48ed02e6d7ff569614d0895b80c2669fbc261c8b386639de551af049bcf4
 
 if [[ $# -ne 1 ]]; then
   echo "usage: bash $0 <folder to unpack into>" >&2
@@ -31,5 +31,5 @@ fi
 unzip -q "${work}/binskim.nupkg" -d "${out}"
 # A zip carries no executable bit, which only Linux asks for.
 if [[ "${OSTYPE}" == linux* ]]; then
-  chmod +x "${out}"/tools/*/linux-x64/BinSkim
+  chmod +x "${out}"/tools/linux-x64/BinSkim
 fi

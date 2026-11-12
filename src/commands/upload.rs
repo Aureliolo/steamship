@@ -602,9 +602,7 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
     // The info is read apart, as text anyone can write into an app's settings could pass for a
     // line of the build.
     let info = info_of.map(|app| {
-        release::info_at(&console, app)
-            .map(|at| console.drain(at).collect::<String>())
-            .unwrap_or_default()
+        release::info_at(&console, app).map_or_default(|at| console.drain(at).collect::<String>())
     });
     let log = log.as_deref().map(String::from_utf8_lossy);
     let outcome = upload::judge(

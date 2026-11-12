@@ -41,14 +41,12 @@ mod tests {
         let out = env::temp_dir().join(format!("steamship-package-{}", process::id()));
         let written = write(&out);
         let listed = |folder: &str| -> Vec<String> {
-            let mut names: Vec<String> = fs::read_dir(out.join(folder))
-                .map(|entries| {
-                    entries
-                        .filter_map(Result::ok)
-                        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                        .collect()
-                })
-                .unwrap_or_default();
+            let mut names: Vec<String> = fs::read_dir(out.join(folder)).map_or_default(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                    .collect()
+            });
             names.sort();
             names
         };

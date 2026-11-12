@@ -155,15 +155,9 @@ fn commands() -> Vec<(String, Command)> {
 /// A command's one line, as a sentence, and each paragraph its longer help adds. clap drops the
 /// full stop from the one line and keeps it in the longer help, so the two compare without it.
 fn described(command: &Command) -> (String, Vec<String>) {
-    let about = command
-        .get_about()
-        .map(ToString::to_string)
-        .unwrap_or_default();
+    let about = command.get_about().map_or_default(ToString::to_string);
     let about = about.trim_end_matches('.');
-    let long = command
-        .get_long_about()
-        .map(ToString::to_string)
-        .unwrap_or_default();
+    let long = command.get_long_about().map_or_default(ToString::to_string);
     let more = long
         .split("\n\n")
         .map(|paragraph| paragraph.split_whitespace().collect::<Vec<_>>().join(" "))
@@ -214,8 +208,7 @@ fn help(argument: &Arg) -> String {
     let said = argument
         .get_long_help()
         .or_else(|| argument.get_help())
-        .map(ToString::to_string)
-        .unwrap_or_default();
+        .map_or_default(ToString::to_string);
     said.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
@@ -349,8 +342,7 @@ mod tests {
         let login = commands().into_iter().find(|(name, _)| name == "login");
         let (about, more) = login
             .as_ref()
-            .map(|(_, command)| described(command))
-            .unwrap_or_default();
+            .map_or_default(|(_, command)| described(command));
         assert_eq!(about, "Log in to Steam, once, for uploads.");
         assert_eq!(more.len(), 1, "{more:?}");
         assert!(

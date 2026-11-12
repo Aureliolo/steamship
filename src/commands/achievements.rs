@@ -358,8 +358,7 @@ pub(crate) fn try_achievements(
     let stat_drift = listed
         .stats
         .as_ref()
-        .map(|stats| achievements::compare_stats(stats, &held.stats, totalled.as_ref()))
-        .unwrap_or_default();
+        .map_or_default(|stats| achievements::compare_stats(stats, &held.stats, totalled.as_ref()));
     if drift.is_empty() && stat_drift.is_empty() {
         let what = if listed.stats.is_some() {
             "achievements and stats"
@@ -770,8 +769,7 @@ fn changed_notes(
         package
             .iter()
             .find(|(name, _)| *name == table.name)
-            .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
-            .unwrap_or_default()
+            .map_or_default(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
     });
     for (api_name, was, is) in editor::rebarred(defined_before, &defined) {
         show::note(&format!(

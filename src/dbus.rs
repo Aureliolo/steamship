@@ -876,8 +876,7 @@ pub mod session {
         {
             let mut places = lookup("DBUS_SESSION_BUS_ADDRESS")
                 .and_then(|address| address.into_string().ok())
-                .map(|address| addresses(&address))
-                .unwrap_or_default();
+                .map_or_default(|address| addresses(&address));
             if places.is_empty()
                 && let Some(runtime) = lookup("XDG_RUNTIME_DIR")
             {

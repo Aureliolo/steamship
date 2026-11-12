@@ -207,8 +207,7 @@ pub fn depot_systems(settings: &Block, depot: u32) -> Vec<String> {
     settings
         .block("depots")
         .and_then(|depots| depots.block(&depot.to_string()))
-        .map(|listed| systems_of(listed.block("config")))
-        .unwrap_or_default()
+        .map_or_default(|listed| systems_of(listed.block("config")))
 }
 
 /// A default's name on the Steam Input page among `choices`, or its number when it is none of
@@ -403,7 +402,7 @@ pub fn unlaunched(settings: &Block) -> Vec<String> {
     let options: Vec<&Block> = settings
         .block("config")
         .and_then(|config| config.block("launch"))
-        .map(|launch| {
+        .map_or_default(|launch| {
             launch
                 .pairs
                 .iter()
@@ -412,8 +411,7 @@ pub fn unlaunched(settings: &Block) -> Vec<String> {
                     Value::Text(_) => None,
                 })
                 .collect()
-        })
-        .unwrap_or_default();
+        });
     // A launch option that names no system runs on every one.
     if options
         .iter()
@@ -527,34 +525,30 @@ pub fn foreign(settings: &Block, depots: &[u32]) -> Vec<u32> {
 /// The app's own depots by their IDs, without those another app's, such as a Common
 /// Redistributable, mounts.
 fn own_depots(settings: &Block) -> Vec<(u32, &Block)> {
-    settings
-        .block("depots")
-        .map(|listed| {
-            listed
-                .pairs
-                .iter()
-                .filter_map(|pair| match &pair.value {
-                    Value::Block(depot) if depot.text("depotfromapp").is_none() => {
-                        Some((pair.key.parse().ok()?, depot))
-                    }
-                    Value::Block(_) | Value::Text(_) => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    settings.block("depots").map_or_default(|listed| {
+        listed
+            .pairs
+            .iter()
+            .filter_map(|pair| match &pair.value {
+                Value::Block(depot) if depot.text("depotfromapp").is_none() => {
+                    Some((pair.key.parse().ok()?, depot))
+                }
+                Value::Block(_) | Value::Text(_) => None,
+            })
+            .collect()
+    })
 }
 
 /// The systems a `config` block's `oslist` names, such as `windows` and `linux`.
 fn systems_of(config: Option<&Block>) -> Vec<String> {
     config
         .and_then(|config| config.text("oslist"))
-        .map(|list| {
+        .map_or_default(|list| {
             list.split(',')
                 .map(|system| system.trim().to_ascii_lowercase())
                 .filter(|system| !system.is_empty())
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 /// Reads a snapshot's `text`, which must be `app`'s.

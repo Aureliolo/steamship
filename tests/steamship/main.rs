@@ -3,11 +3,6 @@
 //! These run after the library's own tests on purpose: a change that broke the installer would
 //! send `install` here to Valve's CDN, and the unit tests that fail at once on such a change are
 //! the ones that should say so.
-#![expect(
-    clippy::unwrap_used,
-    reason = "a test reports failure by panicking, its helpers included"
-)]
-
 #[path = "../common/mod.rs"]
 pub mod common;
 
