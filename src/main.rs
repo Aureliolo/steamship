@@ -1655,7 +1655,7 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
     ];
     let tables_before = tables
         .each_ref()
-        .map(|name| fs::read_to_string(out.join(name)).unwrap_or_default());
+        .map(|name| fs::read_to_string(out.join(name)));
     let failed = |error: &io::Error| fail(&format!("{folder}: {error}"), FAILED);
     fs::create_dir_all(out).map_err(|error| failed(&error))?;
     for (name, bytes) in &stale {
@@ -1690,13 +1690,28 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
 /// Names what an import of `package` changes that Steam's Web API cannot show, comparing its
 /// definitions and localisation, the `tables`, with what they held `before`: each progress bar
 /// that moves, and each achievement whose meaning changes while its icons, among the `stale`
-/// files written afresh, do not.
+/// files written afresh, do not. Definitions from before that are not UTF-8 text are said, since
+/// nothing can be compared with them.
 fn changed_notes(
     package: &[(String, Vec<u8>)],
     tables: &[String; 2],
-    before: &[String; 2],
+    before: &[io::Result<String>; 2],
     stale: &[&String],
 ) {
+    if before[0]
+        .as_ref()
+        .is_err_and(|error| error.kind() == io::ErrorKind::InvalidData)
+    {
+        show::note(&format!(
+            "{} was not UTF-8 text before this write, so its progress bars and wording cannot be \
+             compared. Look at each achievement's bar and icons in the editor once imported, \
+             before publishing",
+            tables[0]
+        ));
+    }
+    let [defined_before, localised_before] = before
+        .each_ref()
+        .map(|table| table.as_ref().map_or("", String::as_str));
     let [defined, localised] = tables.each_ref().map(|table| {
         package
             .iter()
@@ -1704,7 +1719,6 @@ fn changed_notes(
             .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
             .unwrap_or_default()
     });
-    let [defined_before, localised_before] = before;
     for (api_name, was, is) in editor::rebarred(defined_before, &defined) {
         show::note(&format!(
             "{api_name}'s progress bar goes from {was} to {is}, which Steam's Web API cannot \
