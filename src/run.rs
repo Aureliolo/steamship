@@ -15,6 +15,8 @@ use std::io::{self, BufReader, Read, Write as _};
 #[cfg(windows)]
 use std::os::windows::process::CommandExt as _;
 use std::path::Path;
+#[cfg(feature = "fake-steamcmd")]
+use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
@@ -120,6 +122,81 @@ impl<'file> Startup<'file> {
     pub fn begun(&self) -> bool {
         length(self.shown_in) != self.from
     }
+
+    /// The file a stand-in writes to when it is ready, beside the one the program adds to.
+    #[cfg(feature = "fake-steamcmd")]
+    fn ready_file(&self) -> PathBuf {
+        self.shown_in.with_file_name(READY)
+    }
+
+    /// Whether a stand-in has written to its ready file: none when there is no such file, which
+    /// is every run outside the tests.
+    #[cfg(feature = "fake-steamcmd")]
+    fn ready(&self) -> Option<bool> {
+        fs::metadata(self.ready_file())
+            .ok()
+            .map(|found| found.len() > 0)
+    }
+
+    /// Empties the ready file when there is one, so that a second run waits for its own stand-in.
+    /// It makes none.
+    ///
+    /// # Errors
+    ///
+    /// When the ready file is there and cannot be emptied.
+    #[cfg(feature = "fake-steamcmd")]
+    pub(crate) fn rearm(&self) -> io::Result<()> {
+        let file = self.ready_file();
+        if file.try_exists()? {
+            fs::write(&file, b"")
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// The name of the ready file, which a stand-in for steamcmd writes to once it has run its first
+/// commands. A run counts its limits from then, since a starved stand-in may take seconds to reach
+/// them.
+#[cfg(feature = "fake-steamcmd")]
+pub(crate) const READY: &str = "steamship-stand-in-ready";
+
+/// How many looks wait for a ready file: a minute of them.
+#[cfg(feature = "fake-steamcmd")]
+const READY_LOOKS: u32 = 1_200;
+
+/// While `startup`'s ready file is empty, looks at the program, and gives what a look gave once
+/// one sees it ended.
+///
+/// # Errors
+///
+/// When a look fails, or when nothing is written to the ready file in [`READY_LOOKS`] looks.
+#[cfg(feature = "fake-steamcmd")]
+fn readied<Ended, Look>(startup: Option<Startup<'_>>, look: &mut Look) -> io::Result<Option<Ended>>
+where
+    Look: FnMut(Duration) -> io::Result<Option<Ended>>,
+{
+    let Some(startup) = startup else {
+        return Ok(None);
+    };
+    for _ in 0..READY_LOOKS {
+        if startup.ready() != Some(false) {
+            return Ok(None);
+        }
+        if let Some(ended) = look(POLL)? {
+            return Ok(Some(ended));
+        }
+    }
+    if startup.ready() == Some(false) {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "{}: the stand-in wrote nothing to it",
+                startup.ready_file().display()
+            ),
+        ));
+    }
+    Ok(None)
 }
 
 /// How long `file` is now, 0 when there is none. Asked of the file itself, since a folder's
@@ -222,11 +299,11 @@ const POLL: Duration = Duration::from_millis(50);
 /// `startup`'s limit.
 ///
 /// A look is given how long it may take: `POLL`, or the time left to the nearest of those limits
-/// if that is less.
+/// if that is less. In a test build its limits count from a stand-in's ready file.
 ///
 /// # Errors
 ///
-/// When a look fails.
+/// When a look fails, or when a ready file is never written to.
 pub(crate) fn waited<Ended, Look>(
     limit: Duration,
     seen: &AtomicBool,
@@ -236,6 +313,10 @@ pub(crate) fn waited<Ended, Look>(
 where
     Look: FnMut(Duration) -> io::Result<Option<Ended>>,
 {
+    #[cfg(feature = "fake-steamcmd")]
+    if let Some(ended) = readied(startup, &mut look)? {
+        return Ok(Some(ended));
+    }
     // A limit the clock cannot add never passes.
     let began = Instant::now();
     let deadline = began.checked_add(limit);
@@ -738,12 +819,142 @@ mod tests {
         assert_eq!(result.unwrap(), Some(3_i32));
     }
 
-    /// The line that adds to the file `started` in the folder it runs in, then `rest`.
+    #[test]
+    fn a_wait_counts_its_limits_from_the_ready_file() {
+        let (_folder, file) = start_file();
+        let ready = file.with_file_name(READY);
+        fs::write(&ready, "").unwrap();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::ZERO, &file);
+        let mut pauses = Vec::new();
+        let result = waited::<i32, _>(Duration::ZERO, &seen, Some(startup), |pause| {
+            pauses.push(pause);
+            match pauses.len() {
+                3 => fs::write(&ready, "ready\n").map(|()| None),
+                1..=5 => Ok(None),
+                _ => Err(io::Error::other("looked again")),
+            }
+        });
+        assert_eq!(result.unwrap(), None);
+        assert_eq!(pauses, [POLL, POLL, POLL, Duration::ZERO]);
+    }
+
+    #[test]
+    fn a_program_that_ends_before_it_is_ready_is_not_waited_for() {
+        let (_folder, file) = start_file();
+        fs::write(file.with_file_name(READY), "").unwrap();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::ZERO, &file);
+        let mut looks = 0_u32;
+        let result = waited(Duration::ZERO, &seen, Some(startup), |_| {
+            looks += 1;
+            if looks == 1 {
+                Ok(Some(3_i32))
+            } else {
+                Err(io::Error::other("looked again"))
+            }
+        });
+        assert_eq!(result.unwrap(), Some(3_i32));
+        assert_eq!(looks, 1);
+    }
+
+    #[test]
+    fn a_program_that_has_not_started_is_given_its_start_up_limit_and_no_more() {
+        let (_folder, file) = start_file();
+        let limit = Duration::from_millis(200);
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(limit, &file);
+        let mut pauses = Vec::new();
+        let began = Instant::now();
+        let result = waited::<i32, _>(Duration::MAX, &seen, Some(startup), |pause| {
+            pauses.push(pause);
+            thread::sleep(pause);
+            Ok(None)
+        });
+        assert_eq!(result.unwrap(), None);
+        assert!(began.elapsed() >= limit, "{:?}", began.elapsed());
+        assert!(pauses.iter().sum::<Duration>() <= limit, "{pauses:?}");
+    }
+
+    #[test]
+    fn a_look_that_fails_before_the_ready_file_is_written_to_is_the_error_of_the_run() {
+        let (_folder, file) = start_file();
+        fs::write(file.with_file_name(READY), "").unwrap();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::ZERO, &file);
+        let mut looks = 0_u32;
+        let result = waited(Duration::ZERO, &seen, Some(startup), |_| {
+            looks += 1;
+            if looks == 1 {
+                Err(io::Error::other("refused"))
+            } else {
+                Ok(Some(3_i32))
+            }
+        });
+        assert_eq!(result.unwrap_err().to_string(), "refused");
+        assert_eq!(looks, 1);
+    }
+
+    #[test]
+    fn a_ready_file_written_to_at_the_last_look_is_no_error() {
+        let (_folder, file) = start_file();
+        let ready = file.with_file_name(READY);
+        fs::write(&ready, "").unwrap();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::ZERO, &file);
+        let mut looks = 0_u32;
+        let result = waited(Duration::ZERO, &seen, Some(startup), |_| {
+            looks += 1;
+            match looks {
+                1_200 => fs::write(&ready, "ready\n").map(|()| None),
+                1_201 => Ok(Some(3_i32)),
+                _ => Ok(None),
+            }
+        });
+        assert_eq!(result.unwrap(), Some(3_i32));
+        assert_eq!(looks, 1_201);
+    }
+
+    #[test]
+    fn a_ready_file_never_written_to_is_an_error_that_names_it() {
+        let (_folder, file) = start_file();
+        let ready = file.with_file_name(READY);
+        fs::write(&ready, "").unwrap();
+        let seen = AtomicBool::new(false);
+        let startup = Startup::new(Duration::ZERO, &file);
+        let mut looks = 0_u32;
+        let result = waited::<i32, _>(Duration::ZERO, &seen, Some(startup), |_| {
+            looks += 1;
+            if looks > 1_300 {
+                Err(io::Error::other("looked on"))
+            } else {
+                Ok(None)
+            }
+        });
+        let error = result.unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(
+            error.to_string(),
+            format!("{}: the stand-in wrote nothing to it", ready.display())
+        );
+        assert_eq!(looks, 1_200);
+    }
+
+    /// The line that writes to the ready file in the folder it runs in, then `rest`.
+    fn readying(rest: &str) -> String {
+        if cfg!(windows) {
+            format!("echo ready>> {READY}& {rest}")
+        } else {
+            format!("echo ready >> {READY}; {rest}")
+        }
+    }
+
+    /// The line that adds to the file `started` in the folder it runs in, is ready, then `rest`.
     fn starting(rest: &str) -> String {
         if cfg!(windows) {
-            format!("echo this run>> started& {rest}")
+            format!("echo this run>> started& {}", readying(rest))
         } else {
-            format!("echo this run >> started; {rest}")
+            format!("echo this run >> started; {}", readying(rest))
         }
     }
 
@@ -751,6 +962,7 @@ mod tests {
     /// `started` there and to half a minute in all, and how long it took.
     fn started_shell(line: &str) -> (Finished, Duration) {
         let (folder, file) = start_file();
+        fs::write(file.with_file_name(READY), "").unwrap();
         let began = Instant::now();
         let finished = run(
             Path::new(SHELL.0),
@@ -772,7 +984,7 @@ mod tests {
         } else {
             "sleep 60"
         };
-        let (finished, took) = started_shell(wait);
+        let (finished, took) = started_shell(&readying(wait));
         assert_eq!(finished.code, None);
         assert!(took < Duration::from_secs(20), "took {took:?}");
     }

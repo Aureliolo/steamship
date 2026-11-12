@@ -6,6 +6,7 @@ use std::fs;
 use std::io;
 use std::panic;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -179,15 +180,20 @@ fn stalled(finished: &Finished, startup: run::Startup<'_>) -> bool {
 ///
 /// # Errors
 ///
-/// When `run` fails, or when both runs were stopped before steamcmd had started.
+/// When `run` fails, when both runs were stopped before steamcmd had started, or when a test
+/// build cannot empty its ready file.
 fn started<Run>(startup: run::Startup<'_>, mut run: Run) -> io::Result<Finished>
 where
     Run: FnMut() -> io::Result<Finished>,
 {
+    #[cfg(feature = "fake-steamcmd")]
+    startup.rearm()?;
     let first = run()?;
     if !stalled(&first, startup) {
         return Ok(first);
     }
+    #[cfg(feature = "fake-steamcmd")]
+    startup.rearm()?;
     let second = run()?;
     if stalled(&second, startup) {
         return Err(io::Error::new(io::ErrorKind::TimedOut, NOT_STARTED));
@@ -288,12 +294,19 @@ impl Commands {
             let _told = ended.send(());
             read
         });
-        let first = self.startup.min(self.limit);
-        let in_time = ending.recv_timeout(first).is_ok()
-            || (startup.begun()
-                && ending
-                    .recv_timeout(self.limit.saturating_sub(first))
-                    .is_ok());
+        let in_time = run::waited(
+            self.limit,
+            &AtomicBool::new(false),
+            Some(startup),
+            |pause| {
+                // A closed channel means the reading is over as well.
+                Ok(match ending.recv_timeout(pause) {
+                    Err(mpsc::RecvTimeoutError::Timeout) => None,
+                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => Some(()),
+                })
+            },
+        )?
+        .is_some();
         // Dropping the terminal unwaited ends steamcmd, and with it the output being read.
         let terminal = in_time.then_some(terminal);
         let lines = reading
@@ -970,8 +983,10 @@ mod tests {
     /// the arguments that have the shell run `line`. On Unix the stand-in is a link, since a file
     /// this process writes can be held open by a program another test starts meanwhile, and then
     /// refuses to run. Windows hands no file on to a program unasked, so a copy is safe there.
+    /// Its ready file is there and empty.
     fn stand_in(line: &str) -> (tempfile::TempDir, Vec<OsString>) {
-        let (home, _) = logged();
+        let (home, log) = logged();
+        fs::write(log.with_file_name(run::READY), "").unwrap();
         let root = home.path().join(install::FOLDER);
         fs::create_dir_all(&root).unwrap();
         let stand_in = program(&root, Platform::THIS);
@@ -1020,15 +1035,29 @@ mod tests {
         }
     }
 
+    /// The line that writes to the ready file from the folder steamcmd runs in, as a stand-in does
+    /// once it has run its first commands.
+    fn readies() -> String {
+        if cfg!(windows) {
+            format!(r"echo ready>> logs\{}", run::READY)
+        } else {
+            let log = connection_log(Path::new(".."), Platform::THIS);
+            format!(
+                "echo ready >> '{}'",
+                log.with_file_name(run::READY).display()
+            )
+        }
+    }
+
     /// `first`, then `second`, as the system's shell joins two commands.
     fn then(first: &str, second: &str) -> String {
         let joined = if cfg!(windows) { "& " } else { "; " };
         format!("{first}{joined}{second}")
     }
 
-    /// A home whose stand-in steamcmd says `saying`, when given, then starts and waits.
+    /// A home whose stand-in steamcmd says `saying`, when given, then starts, is ready and waits.
     fn waiting(saying: Option<&str>) -> (tempfile::TempDir, Vec<OsString>) {
-        let started = then(&starts(), WAIT);
+        let started = then(&starts(), &then(&readies(), WAIT));
         stand_in(&saying.map_or_else(
             || started.clone(),
             |words| then(&format!("echo {words}"), &started),
@@ -1067,16 +1096,17 @@ mod tests {
     /// The line that waits at its first run, as a steamcmd that hangs as it loads does, and runs
     /// `second` at its second.
     fn starts_the_second_time(second: &str) -> String {
+        let ready = readies();
         if cfg!(windows) {
-            format!("if exist again ({second}) else (type nul > again & {WAIT})")
+            format!("if exist again ({second}) else (type nul > again & {ready}& {WAIT})")
         } else {
-            format!("if [ -e again ]; then {second}; else touch again; {WAIT}; fi")
+            format!("if [ -e again ]; then {second}; else touch again; {ready}; {WAIT}; fi")
         }
     }
 
-    /// The second run of a steamcmd that starts and ends with code 3.
+    /// The second run of a steamcmd that starts, is ready and ends with code 3.
     fn starts_and_ends() -> String {
-        then(&starts(), "exit 3")
+        then(&starts(), &then(&readies(), "exit 3"))
     }
 
     /// The second run of a steamcmd that starts, shows its prompt, records the line typed at it in
@@ -1084,14 +1114,16 @@ mod tests {
     fn starts_and_is_typed_at() -> String {
         if cfg!(windows) {
             format!(
-                "{} & set /p typed=Steam^> & call echo %typed%> typed& call echo %typed%& exit 3",
-                starts()
+                "{} & {}& set /p typed=Steam^> & call echo %typed%> typed& call echo %typed%& exit 3",
+                starts(),
+                readies()
             )
         } else {
             format!(
-                "{}; printf 'Steam>'; read -r typed; printf '%s' \"$typed\" > typed; \
+                "{}; {}; printf 'Steam>'; read -r typed; printf '%s' \"$typed\" > typed; \
                  echo \"$typed\"; exit 3",
-                starts()
+                starts(),
+                readies()
             )
         }
     }
@@ -1099,6 +1131,36 @@ mod tests {
     /// Input for a run typed into.
     fn quit() -> (Zeroizing<String>, Zeroizing<String>) {
         (Zeroizing::new("quit".to_owned()), Zeroizing::default())
+    }
+
+    #[test]
+    fn a_second_run_starts_with_its_ready_file_empty() {
+        let (_home, log) = logged();
+        let ready = log.with_file_name(run::READY);
+        let startup = run::Startup::new(Duration::from_secs(1), &log);
+        fs::write(&ready, "an earlier run\n").unwrap();
+        let ended = |code| Finished {
+            code,
+            output: Vec::new(),
+        };
+        let mut calls = 0_u32;
+        let mut seen = Vec::new();
+        let finished = started(startup, || {
+            calls += 1;
+            seen.push(fs::metadata(&ready)?.len());
+            if calls == 1 {
+                fs::write(&ready, "ready\n")?;
+                Ok(ended(None))
+            } else {
+                Ok(ended(Some(3_i32)))
+            }
+        })
+        .unwrap();
+        assert_eq!(finished.code, Some(3_i32));
+        assert_eq!(seen, [0, 0]);
+        fs::remove_file(&ready).unwrap();
+        let _unused: Finished = started(startup, || Ok(ended(Some(0_i32)))).unwrap();
+        assert!(!ready.exists(), "a ready file was made");
     }
 
     #[test]
@@ -1132,7 +1194,7 @@ mod tests {
         assert_eq!(finished.code, Some(3_i32));
         assert_eq!(runs(home.path()), 2);
         assert!(
-            started.elapsed() < Duration::from_secs(5),
+            started.elapsed() < Duration::from_secs(20),
             "took {:?}",
             started.elapsed()
         );
@@ -1140,7 +1202,7 @@ mod tests {
 
     #[test]
     fn a_run_whose_log_is_taken_as_it_starts_is_not_run_again() {
-        let (home, args) = stand_in(&then(COUNT, &then(&keeps(), WAIT)));
+        let (home, args) = stand_in(&then(COUNT, &then(&keeps(), &then(&readies(), WAIT))));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
@@ -1151,7 +1213,7 @@ mod tests {
         refused(home.path(), &error);
         assert_eq!(runs(home.path()), 1);
         assert!(
-            started.elapsed() < Duration::from_secs(5),
+            started.elapsed() < Duration::from_secs(20),
             "took {:?}",
             started.elapsed()
         );
@@ -1188,7 +1250,7 @@ mod tests {
 
     #[test]
     fn a_run_typed_into_whose_log_is_taken_as_it_starts_is_not_run_again() {
-        let (home, args) = stand_in(&then(COUNT, &then(&keeps(), WAIT)));
+        let (home, args) = stand_in(&then(COUNT, &then(&keeps(), &then(&readies(), WAIT))));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
@@ -1208,7 +1270,7 @@ mod tests {
 
     #[test]
     fn a_run_that_does_not_start_in_time_is_stopped_and_is_an_error_that_names_the_file() {
-        let (home, args) = stand_in(&then(COUNT, WAIT));
+        let (home, args) = stand_in(&then(COUNT, &then(&readies(), WAIT)));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
@@ -1228,7 +1290,7 @@ mod tests {
 
     #[test]
     fn a_run_typed_into_that_does_not_start_in_time_is_an_error_that_names_the_file() {
-        let (home, args) = stand_in(&then(COUNT, WAIT));
+        let (home, args) = stand_in(&then(COUNT, &then(&readies(), WAIT)));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
@@ -1249,7 +1311,7 @@ mod tests {
 
     #[test]
     fn a_run_stopped_at_its_limit_after_it_started_is_no_error() {
-        let (home, args) = stand_in(&then(COUNT, &then(&starts(), WAIT)));
+        let (home, args) = stand_in(&then(COUNT, &then(&starts(), &then(&readies(), WAIT))));
         let commands = Commands {
             args,
             limit: Duration::from_secs(2),
@@ -1263,7 +1325,7 @@ mod tests {
     #[test]
     fn a_run_that_says_it_never_will_finish_before_it_starts_is_no_error() {
         let said = format!("echo {}", conversation::NO_CERTIFICATES);
-        let (home, args) = stand_in(&then(COUNT, &then(&said, WAIT)));
+        let (home, args) = stand_in(&then(COUNT, &then(&said, &then(&readies(), WAIT))));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
@@ -1292,7 +1354,7 @@ mod tests {
         } else {
             "sleep 3; exit 3"
         };
-        let (home, args) = stand_in(&then(&starts(), ends));
+        let (home, args) = stand_in(&then(&starts(), &then(&readies(), ends)));
         let commands = Commands {
             args,
             limit: Duration::from_mins(1),
@@ -1310,7 +1372,7 @@ mod tests {
         } else {
             "sleep 6; exit 3"
         };
-        let (home, args) = stand_in(&then(&starts(), ends));
+        let (home, args) = stand_in(&then(&starts(), &then(&readies(), ends)));
         let commands = Commands {
             args,
             limit: Duration::from_secs(4),
