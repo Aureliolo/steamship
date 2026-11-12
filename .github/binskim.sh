@@ -9,7 +9,7 @@ set -euo pipefail
 
 # renovate: datasource=nuget depName=Microsoft.CodeAnalysis.BinSkim
 version=4.4.9.14
-sha256=69678989cbc273b5b50fcf98fb0fd978e1e35a3f844acb24254b31f0ce90c447
+sha256=ea2f48ed02e6d7ff569614d0895b80c2669fbc261c8b386639de551af049bcf4
 
 if [[ $# -ne 1 ]]; then
   echo "usage: bash $0 <folder to unpack into>" >&2
