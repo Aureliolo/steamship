@@ -21,7 +21,7 @@ use steamship::typing::{self, Echo};
 use steamship::update;
 use steamship::{
     assets, branch, ci, conversation, digest, download, drm, dump, fetch, init, itself, keychain,
-    ledger, magic, po, release, run, scripts, steamcmd, webapi, workshop,
+    magic, po, release, run, scripts, steamcmd, webapi, workshop,
 };
 use zeroize::Zeroizing;
 
@@ -44,6 +44,7 @@ mod commands {
     pub(crate) mod promote;
     pub(crate) mod ready;
     pub(crate) mod released;
+    pub(crate) mod rollback;
     pub(crate) mod settings;
     pub(crate) mod status;
     pub(crate) mod text;
@@ -66,7 +67,8 @@ use commands::ready::{
     Source, account, dump_in_actions, home, installed, login_refused, named, packed_login, ready,
     restore, steamcmd_failed, verdict,
 };
-use commands::released::{DEFAULT_RELEASED, refused_once_released, refused_unless, release_shown};
+use commands::released::{refused_unless, release_shown};
+use commands::rollback::try_rollback;
 use commands::settings::{Snapshot, settings_in};
 use commands::status::{check_saved_login, try_status};
 use commands::text::text_in;
@@ -1084,73 +1086,6 @@ fn held_until_launch(
     refused_unless(&home, packed, || {
         launched(&home, account, app, packed, &file)
     })
-}
-
-/// Sets `branch` of `app` back to the build the record shows live on it before the current one.
-fn try_rollback(request: &cli::Rollback) -> Result<ExitCode, ExitCode> {
-    show::title("rollback");
-    let app_id = app_named(&request.app)?;
-    let home = home()?;
-    let entries = ledger::load(&home, app_id).map_err(|why| fail(&why, FAILED))?;
-    let default = branch::is_default(&request.branch);
-    let name = branch::shown_name(&request.branch);
-    let (current, before) =
-        ledger::previous(&entries, app_id, name).map_err(|why| fail(&why, REFUSED))?;
-    show::field("branch", name);
-    show::field(
-        "from",
-        &format!(
-            "BuildID {}, commit {}",
-            current.build_id,
-            project::short(&current.commit)
-        ),
-    );
-    show::field(
-        "to",
-        &format!(
-            "BuildID {}, commit {}",
-            before.build_id,
-            project::short(&before.commit)
-        ),
-    );
-    let (api, from) = web_api(&home)?;
-    if default {
-        refused_once_released(
-            &home,
-            app_id,
-            named(request.account.as_deref()),
-            DEFAULT_RELEASED,
-        )?;
-    }
-    let key = branch::key(&request.branch);
-    let spinner = Spinner::start("steam", "setting it live", false);
-    if let Err(error) = api.set_live(app_id, before.build_id, key) {
-        return Err(web_api_failed(spinner, &error));
-    }
-    spinner.done("set live");
-    offer_to_keep(&home, &api, from);
-    let back = ledger::Entry {
-        app: app_id,
-        branch: name.to_owned(),
-        build_id: before.build_id,
-        commit: before.commit.clone(),
-        green: before.green,
-        rollback: true,
-    };
-    if let Err(why) = ledger::record(&home, back) {
-        show::note(&format!(
-            "the rollback is live on Steam but was not recorded, so another rollback of {name} \
-             would set the same build again: {why}"
-        ));
-    }
-    show::success(
-        &format!(
-            "app {app_id}: {name} is back on BuildID {}",
-            before.build_id
-        ),
-        "",
-    );
-    Ok(ExitCode::SUCCESS)
 }
 
 /// Where an item given by its fields keeps its ID: the `--items` file at `path`, as `record`
