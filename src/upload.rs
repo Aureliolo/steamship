@@ -1414,4 +1414,12 @@ mod tests {
             prop_assert!(elapsed >= Duration::from_millis(pauses));
         }
     }
+
+    #[test]
+    fn the_first_ask_for_what_is_live_does_not_wait() {
+        let started = Instant::now();
+        let seen = live_asked(Duration::from_secs(1), || Ok(Live::Confirmed));
+        assert_eq!(seen.ok(), Some(Live::Confirmed));
+        assert!(started.elapsed() < Duration::from_secs(1));
+    }
 }
