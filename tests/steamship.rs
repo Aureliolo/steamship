@@ -5380,6 +5380,130 @@ fn an_achievement_reworded_without_new_icons_is_named_to_look_at_them() {
 }
 
 #[test]
+fn definitions_saved_outside_utf8_are_said_and_nothing_is_compared_with_them() {
+    let game = inn_mod();
+    let (first, said, why) = write_inn(game.path(), false);
+    assert_eq!(first, Some(0_i32), "{said}{why}");
+    assert!(!why.contains("was not UTF-8 text"), "{why}");
+
+    let definitions = game
+        .path()
+        .join("steam/achievements/1000050-achievements-definitions.csv");
+    let mut bytes = fs::read(&definitions).unwrap();
+    bytes.push(0xFF);
+    fs::write(&definitions, bytes).unwrap();
+    fs::write(
+        game.path().join("mods/base/data/achievements.json"),
+        INN_RECORDS
+            .replace(r#""steam": "floors""#, r#""steam": "levels""#)
+            .replace(r#""stat": "floors""#, r#""stat": "levels""#)
+            .replace("Down by the Wheel", "Under the Taproom"),
+    )
+    .unwrap();
+    let (code, _, noted) = write_inn(game.path(), false);
+    assert_eq!(code, Some(0_i32), "{noted}");
+    let said_so: Vec<&str> = noted
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("was not UTF-8 text"))
+        .collect();
+    assert!(
+        said_so
+            == [
+                "1000050-achievements-definitions.csv was not UTF-8 text before this write, so \
+                 its progress bars and wording cannot be compared. Look at each achievement's \
+                 bar and icons in the editor once imported, before publishing"
+            ],
+        "{noted}"
+    );
+    assert!(!noted.contains("progress bar goes from"), "{noted}");
+    assert!(!noted.contains("its icons did not"), "{noted}");
+}
+
+#[test]
+fn each_achievement_is_compared_with_what_the_earlier_localisation_gives_of_it() {
+    let named_after = |change: fn(&str) -> Option<Vec<u8>>| -> Vec<String> {
+        let game = inn_mod();
+        let (first, said, why) = write_inn(game.path(), false);
+        assert_eq!(first, Some(0_i32), "{said}{why}");
+        let localisation = game
+            .path()
+            .join("steam/achievements/1000050-achievements-localization.csv");
+        match change(&fs::read_to_string(&localisation).unwrap()) {
+            Some(bytes) => fs::write(&localisation, bytes).unwrap(),
+            None => fs::remove_file(&localisation).unwrap(),
+        }
+        fs::write(
+            game.path().join("mods/base/data/achievements.json"),
+            INN_RECORDS
+                .replace(r#""steam": "floors""#, r#""steam": "levels""#)
+                .replace(r#""stat": "floors""#, r#""stat": "levels""#)
+                .replace("Down by the Wheel", "Under the Taproom"),
+        )
+        .unwrap();
+        let (code, _, noted) = write_inn(game.path(), false);
+        assert_eq!(code, Some(0_i32), "{noted}");
+        assert!(!noted.contains("was not UTF-8 text"), "{noted}");
+        noted
+            .lines()
+            .filter_map(|line| {
+                line.trim().strip_suffix(
+                    " changed and its icons did not. Look at them, so that they still show what \
+                     it asks for",
+                )
+            })
+            .map(str::to_owned)
+            .collect()
+    };
+    let all = [
+        "FIVE_LEVELS's English name, English description and progress stat",
+        "FIRST_ANCHOR's English name and English description",
+    ];
+    let cases = [
+        ("missing", named_after(|_| None), all),
+        ("empty", named_after(|_| Some(Vec::new())), all),
+        (
+            "its heads alone",
+            named_after(|text| Some(text.lines().take(1).collect::<String>().into_bytes())),
+            all,
+        ),
+        (
+            "no English column",
+            named_after(|text| Some(text.replacen(",english,", ",french,", 1).into_bytes())),
+            all,
+        ),
+        (
+            "saved in a code page, so not UTF-8",
+            named_after(|text| {
+                let bytes = text.chars().map(|each| u8::try_from(u32::from(each)));
+                Some(bytes.collect::<Result<_, _>>().unwrap())
+            }),
+            all,
+        ),
+        (
+            "no rows of FIRST_ANCHOR",
+            named_after(|text| Some(text.replace("FIRST_ANCHOR,", "LAST_ANCHOR,").into_bytes())),
+            [
+                "FIVE_LEVELS's progress stat",
+                "FIRST_ANCHOR's English name and English description",
+            ],
+        ),
+        (
+            "a name twice, which --check refuses",
+            named_after(|text| {
+                Some(format!("{text}FIVE_LEVELS,name,Twice,Zweimal\n").into_bytes())
+            }),
+            ["FIVE_LEVELS's progress stat", "FIRST_ANCHOR's English name"],
+        ),
+    ];
+    let wrong: Vec<_> = cases
+        .iter()
+        .filter(|(_, seen, named)| seen != named)
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
+}
+
+#[test]
 fn a_file_written_otherwise_or_left_over_is_named_and_rewritten_or_removed() {
     let game = inn_mod();
     let out = game.path().join("steam").join("achievements");

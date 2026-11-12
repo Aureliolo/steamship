@@ -986,6 +986,10 @@ Steam's Web API does not give an achievement's progress bar. `--check` cannot se
 ranges. Look at each in the editor once the import is saved. Before publishing, set by hand any
 bar that has not moved.
 
+When the definitions in the folder are not UTF-8 text, `--write` says so and compares nothing.
+That happens after a spreadsheet saves them as UTF-16 ("Unicode Text"), or in a code page with
+names outside ASCII. Look at every bar and icon then.
+
 `--write` also names each achievement whose English name, English description or counted stat
 changes while its icons stay as they were. Check that an icon drawn for what the achievement used
 to ask still fits before it goes up.
