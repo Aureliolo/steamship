@@ -1,16 +1,15 @@
 //! The command line.
 
 use std::env;
-use std::fs;
 use std::io::{self, IsTerminal as _};
 use std::process::ExitCode;
 
 use clap::{CommandFactory as _, FromArgMatches as _};
-use steamship::cli::{self, Cli, Command, FAILED, REFUSED};
+use steamship::cli::{self, Cli, Command, FAILED};
 use steamship::platform::Platform;
-use steamship::show::{self, Spinner};
+use steamship::show;
 use steamship::update;
-use steamship::{digest, download, drm, itself, po, run};
+use steamship::{drm, po, run};
 
 #[expect(
     clippy::redundant_pub_crate,
@@ -29,6 +28,7 @@ mod commands {
     pub(crate) mod game;
     pub(crate) mod init;
     pub(crate) mod install;
+    pub(crate) mod itself;
     pub(crate) mod key;
     pub(crate) mod leaderboards;
     pub(crate) mod login;
@@ -52,11 +52,12 @@ use commands::builds::try_builds;
 use commands::check::check_in;
 use commands::ci::{Setup, try_ci};
 use commands::drm::try_drm_wrap;
-use commands::exit::{either, fail};
+use commands::exit::either;
 use commands::fetch::try_fetch;
 use commands::game::app_or_game;
 use commands::init::run_init;
 use commands::install::run_install;
+use commands::itself::try_self_check;
 use commands::leaderboards::leaderboards_in;
 use commands::login::{try_key_login, try_login};
 use commands::logout::run_logout;
@@ -247,67 +248,4 @@ fn run_languages(json: bool) -> ExitCode {
         show::fields(&rows);
     }
     ExitCode::SUCCESS
-}
-
-/// `self check`: this binary's SHA-256 against the one its release's SBOM lists for this system.
-fn try_self_check() -> Result<ExitCode, ExitCode> {
-    show::title("self check");
-    let version = env!("CARGO_PKG_VERSION");
-    let Some(target) = itself::target() else {
-        return Err(fail(
-            &format!(
-                "steamship {version} was built for a system no release builds for, so there is no \
-                 release binary to compare it with"
-            ),
-            REFUSED,
-        ));
-    };
-    let path = env::current_exe()
-        .map_err(|error| fail(&format!("where this steamship is: {error}"), FAILED))?;
-    show::field("binary", &path.display().to_string());
-    let mut file = fs::File::open(&path)
-        .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
-    let own = digest::sha256(&mut file)
-        .map_err(|error| fail(&format!("{}: {error}", path.display()), FAILED))?;
-    let published = itself::sbom(version, |name| env::var(name).ok());
-    let url = &published.download;
-    let spinner = Spinner::start("release", &format!("reading {url}"), false);
-    let sbom = match download::asset_text(published.asset()) {
-        Ok(sbom) => sbom,
-        Err(error) => {
-            spinner.failed(&error.to_string());
-            return Err(ExitCode::from(FAILED));
-        }
-    };
-    let listed = match itself::listed(&sbom, version, target) {
-        Ok(listed) => listed,
-        Err(why) => {
-            spinner.failed("unreadable");
-            return Err(fail(&format!("{url} {why}"), FAILED));
-        }
-    };
-    if listed != own {
-        spinner.failed("differs");
-        show::field("this binary", &digest::hex(&own));
-        show::field("release's", &digest::hex(&listed));
-        return Err(fail(
-            &format!(
-                "{} is not the {target} binary of steamship {version}'s release. It was built \
-                 from source (as by cargo install), built elsewhere, or altered since. Install \
-                 the release's own binary from {}, or with cargo binstall steamship",
-                path.display(),
-                update::LATEST
-            ),
-            REFUSED,
-        ));
-    }
-    spinner.done(&format!("the {target} binary of v{version}"));
-    show::success(
-        &format!(
-            "{} is steamship {version}'s release binary for {target}, byte for byte",
-            path.display()
-        ),
-        &digest::hex(&own),
-    );
-    Ok(ExitCode::SUCCESS)
 }
