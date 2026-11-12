@@ -919,9 +919,9 @@ fn untaken_icons(
                 which: achievements::icon_word(icon.locked),
             }
             .to_string()
-        } else if recorded.is_some_and(|imported| {
-            imported.sha256 != icon.sha256() && imported.steam == editor::steam_image(address)
-        }) {
+        } else if recorded
+            .is_some_and(|imported| imported.file_changed(icon) && imported.still_on_steam(address))
+        {
             format!(
                 "{}: Steam still has the {} the last import made, where the file changed since",
                 icon.api_name,

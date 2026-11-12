@@ -377,9 +377,23 @@ pub fn steam_image(address: &str) -> &str {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Imported {
     /// The SHA-256 of the file imported, in hexadecimal.
-    pub sha256: String,
+    sha256: String,
     /// The image Steam made of it, as [`steam_image`] names it.
-    pub steam: String,
+    steam: String,
+}
+
+impl Imported {
+    /// Whether the file of `icon` is another than the one imported.
+    #[must_use]
+    pub fn file_changed(&self, icon: &Icon) -> bool {
+        self.sha256 != icon.sha256()
+    }
+
+    /// Whether the image Steam serves at `address` is still the one this import made.
+    #[must_use]
+    pub fn still_on_steam(&self, address: &str) -> bool {
+        self.steam == steam_image(address)
+    }
 }
 
 /// What an import left on Steam of each icon, by the name of its file.
@@ -485,11 +499,11 @@ impl Receipt {
                         "the {which} has no import in {RECEIPT}. Import it, publish, then run \
                          --imported"
                     ),
-                    Some(imported) if imported.sha256 != icon.sha256() => format!(
+                    Some(imported) if imported.file_changed(icon) => format!(
                         "the {which} changed in the files since the import {RECEIPT} records. \
                          Import it, publish, then run --imported"
                     ),
-                    Some(imported) if steam_image(address) != imported.steam => format!(
+                    Some(imported) if !imported.still_on_steam(address) => format!(
                         "the {which} on Steam changed since the import {RECEIPT} records, and \
                          not from the files. Import it again, publish, then run --imported"
                     ),
