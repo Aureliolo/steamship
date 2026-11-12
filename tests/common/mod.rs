@@ -2,4 +2,5 @@
 
 pub mod git;
 pub mod pe;
+pub mod project;
 pub mod store;
