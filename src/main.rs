@@ -41,6 +41,7 @@ mod commands {
     pub(crate) mod login;
     pub(crate) mod logout;
     pub(crate) mod presence;
+    pub(crate) mod promote;
     pub(crate) mod ready;
     pub(crate) mod released;
     pub(crate) mod settings;
@@ -60,6 +61,7 @@ use commands::leaderboards::leaderboards_in;
 use commands::login::{try_key_login, try_login};
 use commands::logout::run_logout;
 use commands::presence::rich_presence_in;
+use commands::promote::promote_in;
 use commands::ready::{
     Source, account, dump_in_actions, home, installed, login_refused, named, packed_login, ready,
     restore, steamcmd_failed, verdict,
@@ -217,12 +219,6 @@ fn run(command: Command) -> ExitCode {
         Command::Status { account } => either(try_status(named(account.as_deref()))),
         Command::Upload(request) => upload_in(&request),
     }
-}
-
-/// `promote` of the app named, or else the game's.
-fn promote_in(mut request: cli::Promote) -> Result<ExitCode, ExitCode> {
-    request.app = Some(app_or_game(request.app.take(), request.demo)?);
-    try_promote(&request)
 }
 
 /// `workshop` of the script given, or of the item its fields give, or of the game's example mods
@@ -1088,38 +1084,6 @@ fn held_until_launch(
     refused_unless(&home, packed, || {
         launched(&home, account, app, packed, &file)
     })
-}
-
-fn try_promote(request: &cli::Promote) -> Result<ExitCode, ExitCode> {
-    show::title("promote");
-    let app_id = app_named(request.app.as_deref().unwrap_or_default())?;
-    let build = request.build;
-    let default = branch::is_default(&request.branch);
-    let branch = branch::shown_name(&request.branch);
-    let key = branch::key(&request.branch);
-    show::field("build", &build.to_string());
-    show::field("branch", branch);
-    let home = home()?;
-    let (api, from) = web_api(&home)?;
-    if default {
-        refused_once_released(
-            &home,
-            app_id,
-            named(request.account.as_deref()),
-            DEFAULT_RELEASED,
-        )?;
-    }
-    let spinner = Spinner::start("steam", "setting it live", false);
-    if let Err(error) = api.set_live(app_id, build, key) {
-        return Err(web_api_failed(spinner, &error));
-    }
-    spinner.done("set live");
-    offer_to_keep(&home, &api, from);
-    show::success(
-        &format!("app {app_id}: BuildID {build} live on {branch}"),
-        "",
-    );
-    Ok(ExitCode::SUCCESS)
 }
 
 /// Sets `branch` of `app` back to the build the record shows live on it before the current one.
