@@ -2,7 +2,7 @@
 //! for a home of its own, so it never meets a person's real key, and forgets it again. On Linux the
 //! store is a gnome-keyring of this process's own.
 //!
-//! A key the `steamship` command keeps, shows and forgets is tested in `steamship.rs`, by the
+//! A key the `steamship` command keeps, shows and forgets is tested in `steamship/commands/`, by the
 //! command itself: on macOS a Keychain item answers the program that made it, so a key this test
 //! program kept is not one a `steamship` it runs may remove.
 #![expect(

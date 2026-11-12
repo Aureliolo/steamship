@@ -515,7 +515,7 @@ mod tests {
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            // Declared through reflection, as the icon test in tests/steamship.rs says why.
+            // Declared through reflection, as the icon test in tests/steamship/main.rs says why.
             "$type = [AppDomain]::CurrentDomain.DefineDynamicAssembly( \
                  [Reflection.AssemblyName]::new('Shown'), 'Run').DefineDynamicModule( \
                  'Shown').DefineType('Console', 'Public'); \
