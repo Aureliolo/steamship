@@ -7,7 +7,8 @@
     "The dependency dashboard is on: it is the only place that shows what Renovate tried and could not land, which the weekly pull request never mentions.",
     "The commit pins.yml adds to finish a raise is not taken as someone else's edit, so Renovate still rebases and updates its branch."
   ],
-  "dependencyDashboard": { "enabled": true, "labels": ["renovate"] },
+  "dependencyDashboard": true,
+  "dependencyDashboardLabels": ["renovate"],
   "separateMajorMinor": false,
   "gitIgnoredAuthors": ["41898282+github-actions[bot]@users.noreply.github.com"],
   "commitMessageAction": "Raise",
