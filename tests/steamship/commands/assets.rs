@@ -72,6 +72,18 @@ fn a_folder_that_is_not_there_is_named_with_what_to_give() {
 }
 
 #[test]
+fn a_file_given_as_the_artwork_folder_is_refused_with_why_and_not_as_missing() {
+    let folder = tempfile::tempdir().unwrap();
+    let file = folder.path().join("art.txt");
+    fs::write(&file, "").unwrap();
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let (code, _, said) = steamship(&["assets", &file.to_string_lossy()], None, &quiet);
+    assert_eq!(code, Some(2_i32), "{said}");
+    assert!(said.contains(&format!("{}: ", file.display())), "{said}");
+    assert!(!said.contains("does not exist"), "{said}");
+}
+
+#[test]
 fn a_store_folder_is_checked_with_its_folders_for_each_language_and_the_rest_named() {
     let folder = tempfile::tempdir().unwrap();
     for inner in ["de", "pt_BR", "achievements"] {

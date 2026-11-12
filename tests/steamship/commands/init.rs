@@ -88,6 +88,15 @@ fn an_app_that_is_not_a_number_says_what_an_app_id_is() {
 }
 
 #[test]
+fn an_app_of_0_is_refused_as_no_app_id() {
+    let folder = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship_in(folder.path(), &["init", "0"], Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(stderr.contains("'0' is not an app ID"), "{stderr}");
+}
+
+#[test]
 fn init_leaves_the_branch_to_choose_for_scripts_no_game_keeps() {
     let folder = tempfile::tempdir().unwrap();
     let home = folder.path().join("home");
