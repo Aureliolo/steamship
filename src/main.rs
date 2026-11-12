@@ -7,7 +7,6 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory as _, FromArgMatches as _};
 use steamship::cli::{self, Cli, Command, FAILED, REFUSED};
-use steamship::install;
 use steamship::platform::Platform;
 use steamship::show::{self, Spinner};
 use steamship::update;
@@ -29,6 +28,7 @@ mod commands {
     pub(crate) mod fetch;
     pub(crate) mod game;
     pub(crate) mod init;
+    pub(crate) mod install;
     pub(crate) mod key;
     pub(crate) mod leaderboards;
     pub(crate) mod login;
@@ -56,12 +56,13 @@ use commands::exit::{either, fail};
 use commands::fetch::try_fetch;
 use commands::game::app_or_game;
 use commands::init::run_init;
+use commands::install::run_install;
 use commands::leaderboards::leaderboards_in;
 use commands::login::{try_key_login, try_login};
 use commands::logout::run_logout;
 use commands::presence::rich_presence_in;
 use commands::promote::promote_in;
-use commands::ready::{installed, named, ready};
+use commands::ready::{installed, named};
 use commands::rollback::try_rollback;
 use commands::settings::{Snapshot, settings_in};
 use commands::status::try_status;
@@ -226,17 +227,6 @@ fn update_check() -> Option<update::Check> {
     }
     let home = Platform::THIS.home(|name| env::var_os(name)).ok()?;
     Some(update::Check::start(home))
-}
-
-fn run_install() -> ExitCode {
-    show::title("install");
-    match ready() {
-        Ok((_held, home, _)) => {
-            show::field("folder", &home.join(install::FOLDER).display().to_string());
-            ExitCode::SUCCESS
-        }
-        Err(code) => code,
-    }
 }
 
 /// `languages`: every locale a catalogue may be named by, with Steam's name for its language.
