@@ -17,8 +17,9 @@ use super::achievements::try_achievements;
 use super::exit::{either, fail, first_failure, refusals};
 use super::game::{game_achievements, game_as, game_script, script_named};
 use super::key::{key_at_hand, why_unanswered};
+use super::leaderboards::{Changes, Listing, try_leaderboards};
 use super::settings::settings_file;
-use crate::{Changes, Listing, presence_read, try_builds, try_leaderboards, try_rich_presence};
+use crate::{presence_read, try_builds, try_rich_presence};
 
 /// `check` of the build's folder or the script given, or of the game, or its demo, when there is
 /// neither.
