@@ -4,7 +4,7 @@
 //! steamcmd is told not to update itself, but an install is only known to be the pinned one by
 //! looking: every file it unpacked is recorded with its SHA-256 in an inventory beside it, and
 //! checked against that record after every run. Its `config` folder, where steamcmd keeps the
-//! login token, is steamcmd's to write, is never recorded, and is carried across a reinstall.
+//! login token, is steamcmd's to write, is never recorded, and stays where it is through a reinstall.
 
 use std::collections::BTreeMap;
 use std::error;
@@ -125,6 +125,24 @@ fn at(path: &Path) -> impl FnOnce(io::Error) -> Error {
     move |error| Error::Io { path, error }
 }
 
+/// [`at`], with what gets past a stop in the install's working folders. The system's error names
+/// neither a step nor, for a folder, that the entry it refused on lies inside it.
+fn stuck(path: &Path, folder: bool) -> impl FnOnce(io::Error) -> Error {
+    let path = path.to_path_buf();
+    move |error| {
+        let step = if folder {
+            "That folder or something inside it is held open or cannot be written. Fix or remove \
+             that path"
+        } else {
+            "Fix or remove that path"
+        };
+        Error::Io {
+            path,
+            error: io::Error::new(error.kind(), format!("{error}. {step}")),
+        }
+    }
+}
+
 /// A home no other steamship is installing, running or checking steamcmd in, for as long as this
 /// is kept.
 ///
@@ -203,7 +221,7 @@ where
 {
     let home = held.home();
     let root = home.join(FOLDER);
-    if let Some(inventory) = Inventory::read(&home.join(INVENTORY))
+    if let Some(inventory) = recorded(home)
         && inventory.describes(manifest)
     {
         return inventory.check(&root).map(|()| Outcome::Verified);
@@ -249,7 +267,7 @@ pub enum State {
 ///
 /// When the pinned version is installed but has been altered since.
 pub fn state(home: &Path, manifest: &Manifest) -> Result<State, Error> {
-    match Inventory::read(&home.join(INVENTORY)) {
+    match recorded(home) {
         None => Ok(State::Missing),
         Some(inventory) if inventory.describes(manifest) => {
             inventory.check(&home.join(FOLDER)).map(|()| State::Pinned)
@@ -281,16 +299,10 @@ fn fresh<Fetch>(home: &Path, root: &Path, manifest: &Manifest, fetch: &Fetch) ->
 where
     Fetch: Fn(&Package, &Path) -> Result<(), Error>,
 {
+    clear_working(home)?;
     let previous = home.join(PREVIOUS);
-    // A run that stopped between moving the old install aside and moving the new one in leaves
-    // the old install in steamcmd.old and the login in steamcmd.new. Put the old one back before
-    // anything else.
-    if !root.exists() && previous.exists() {
-        fs::rename(&previous, root).map_err(at(root))?;
-    }
     let downloads = home.join(DOWNLOADS);
     let staging = home.join(STAGING);
-    clear(&staging)?;
     fs::create_dir_all(&downloads).map_err(at(&downloads))?;
     fs::create_dir_all(&staging).map_err(at(&staging))?;
     for package in &manifest.packages {
@@ -315,19 +327,49 @@ where
     let copy = bookkeeping.join(format!("steam_cmd_{}.manifest", manifest.system));
     fs::write(&copy, &manifest.text).map_err(at(&copy))?;
     let inventory = Inventory::take(&staging, manifest)?;
-    let config = root.join(CONFIG);
-    if config.exists() {
-        let carried = staging.join(CONFIG);
-        fs::rename(&config, &carried).map_err(at(&carried))?;
+    // A steamship of another pin in this home would hold a half-replaced folder to this record.
+    let record = home.join(INVENTORY);
+    match fs::remove_file(&record) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => {
+            return Err(stuck(&record, false)(error));
+        }
+        _ => {}
     }
-    clear(&previous)?;
-    if root.exists() {
-        fs::rename(root, &previous).map_err(at(&previous))?;
-    }
-    fs::rename(&staging, root).map_err(at(root))?;
-    clear(&previous)?;
-    inventory.write(&home.join(INVENTORY))?;
+    fs::create_dir_all(root).map_err(at(root))?;
+    fs::create_dir_all(&previous).map_err(at(&previous))?;
+    shift(root, &previous)?;
+    shift(&staging, root)?;
+    clear_working(home)?;
+    inventory.write(&record)?;
     clear(&downloads)
+}
+
+/// Moves each top-level entry of `from` into `into`, but the `config` folder, which is steamcmd's
+/// login and never travels with an install. Only a folder of that name stays: `walk` records any
+/// other entry called `config`, so an install has to carry it.
+fn shift(from: &Path, into: &Path) -> Result<(), Error> {
+    // Listed first, since entries leave the folder as it is read.
+    let entries = fs::read_dir(from)
+        .and_then(Iterator::collect::<Result<Vec<_>, _>>)
+        .map_err(at(from))?;
+    for entry in entries {
+        let path = entry.path();
+        let folder = entry.file_type().map_err(at(&path))?.is_dir();
+        if folder && entry.file_name() == CONFIG {
+            continue;
+        }
+        fs::rename(&path, into.join(entry.file_name())).map_err(stuck(&path, folder))?;
+    }
+    Ok(())
+}
+
+/// The record of the install in `home`, while there is an install for it to describe.
+fn recorded(home: &Path) -> Option<Inventory> {
+    if home.join(FOLDER).exists() {
+        Inventory::read(&home.join(INVENTORY))
+    } else {
+        None
+    }
 }
 
 /// Removes the folders an install works in, `steamcmd.new` and `steamcmd.old`, and nothing else.
@@ -344,10 +386,7 @@ pub fn clear_working(home: &Path) -> Result<(), Error> {
 
 fn clear(path: &Path) -> Result<(), Error> {
     match fs::remove_dir_all(path) {
-        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(Error::Io {
-            path: path.to_path_buf(),
-            error,
-        }),
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Err(stuck(path, true)(error)),
         _ => Ok(()),
     }
 }
