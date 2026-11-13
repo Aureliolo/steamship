@@ -63,7 +63,7 @@ impl Version {
     }
 }
 
-fn number(part: &str) -> Option<u64> {
+pub(crate) fn number(part: &str) -> Option<u64> {
     // u64's own parser takes a leading `+`.
     if !part.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;

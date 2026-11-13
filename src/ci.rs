@@ -5,6 +5,11 @@
 //! `status` unpack it into the home when `STEAMSHIP_LOGIN` holds it. It never holds a password
 //! or a Steam Guard secret, but it logs the account in until the token expires, so it is kept
 //! like one.
+//!
+//! The value starts with its format's number. A release writes the oldest format that holds its
+//! fields, and raises the number only for a change an older reader must refuse. Format 2 holds
+//! the day, the account and the file by position. Format 3 holds them as `name=value` fields,
+//! so a later release can add one without a new number.
 
 use std::error;
 use std::fmt;
@@ -21,6 +26,7 @@ use crate::platform::Platform;
 use crate::steamcmd;
 #[cfg(unix)]
 use crate::unix as native;
+use crate::update;
 use crate::vdf;
 #[cfg(windows)]
 use crate::windows as native;
@@ -28,9 +34,14 @@ use crate::windows as native;
 /// The environment variable a CI hands the packed login over in, and the secret's name.
 pub const VARIABLE: &str = "STEAMSHIP_LOGIN";
 
-/// Marks a value as a login packed by steamship, which carries the day it was packed before the
-/// account.
-const TAG: &str = "steamship-login-2:";
+/// Marks a value as a login packed by steamship. The format's number follows it.
+const PREFIX: &str = "steamship-login-";
+
+/// The format `packed` writes.
+const WRITTEN: u64 = 2;
+
+/// The newest format this steamship reads.
+const NEWEST: u64 = 3;
 
 /// The most GitHub keeps in one secret, in bytes.
 pub const SECRET_LIMIT: usize = 48 * 1024;
@@ -55,6 +66,10 @@ impl fmt::Debug for Login {
 pub enum Error {
     /// The value is not a packed login. None of it is repeated, as it may be one damaged.
     Unreadable,
+    /// The value is a login packed in a format newer than this steamship reads.
+    Newer {
+        format: u64,
+    },
     /// There is no saved login to pack.
     NotSaved {
         path: PathBuf,
@@ -72,6 +87,12 @@ impl fmt::Display for Error {
                 formatter,
                 "{VARIABLE} does not hold a login packed by steamship ci. Pack the login again \
                  with steamship ci"
+            ),
+            Self::Newer { format } => write!(
+                formatter,
+                "{VARIABLE} holds a login packed by a newer steamship, in format {format}. This \
+                 steamship reads formats {WRITTEN} and {NEWEST}. Upgrade steamship, or raise the \
+                 action's pin, to the release that packed it"
             ),
             Self::NotSaved { path } => {
                 write!(formatter, "there is no saved login in {}", path.display())
@@ -108,21 +129,64 @@ impl Login {
     #[must_use]
     pub fn packed(&self, on: &str) -> Zeroizing<String> {
         let digits = Zeroizing::new(digest::hex(&self.config));
-        Zeroizing::new(format!("{TAG}{on}:{}:{}", self.account.name(), *digits))
+        Zeroizing::new(format!(
+            "{PREFIX}{WRITTEN}:{on}:{}:{}",
+            self.account.name(),
+            *digits
+        ))
     }
 
     /// The login `text` packs.
     ///
     /// # Errors
     ///
-    /// When `text` is not a login packed by [`Login::packed`].
+    /// When `text` is not a login packed by [`Login::packed`], or was packed in a newer format.
     pub fn unpack(text: &str) -> Result<Self, Error> {
-        let rest = text.trim().strip_prefix(TAG).ok_or(Error::Unreadable)?;
+        let rest = text.trim().strip_prefix(PREFIX).ok_or(Error::Unreadable)?;
+        let (number, rest) = rest.split_once(':').ok_or(Error::Unreadable)?;
+        match update::number(number).ok_or(Error::Unreadable)? {
+            WRITTEN => Self::unpack_by_position(rest),
+            NEWEST => Self::unpack_by_name(rest),
+            0..WRITTEN => Err(Error::Unreadable),
+            format => Err(Error::Newer { format }),
+        }
+    }
+
+    /// Format 3: `name=value` fields joined by `:`, each of `on`, `account` and `config` once.
+    /// A field with another name is skipped, so a later release can add one.
+    fn unpack_by_name(fields: &str) -> Result<Self, Error> {
+        let mut on = None;
+        let mut account = None;
+        let mut config = None;
+        for field in fields.split(':') {
+            let (name, value) = field.split_once('=').ok_or(Error::Unreadable)?;
+            let slot = match name {
+                "on" => &mut on,
+                "account" => &mut account,
+                "config" => &mut config,
+                _ => continue,
+            };
+            if slot.replace(value).is_some() {
+                return Err(Error::Unreadable);
+            }
+        }
+        let on = on.ok_or(Error::Unreadable)?;
+        let account = account.ok_or(Error::Unreadable)?;
+        let config = config.ok_or(Error::Unreadable)?;
+        Self::from_parts(on, account, config)
+    }
+
+    /// Format 2: the day, the account and the file, by position.
+    fn unpack_by_position(rest: &str) -> Result<Self, Error> {
         let (on, rest) = rest.split_once(':').ok_or(Error::Unreadable)?;
+        let (name, digits) = rest.split_once(':').ok_or(Error::Unreadable)?;
+        Self::from_parts(on, name, digits)
+    }
+
+    fn from_parts(on: &str, name: &str, digits: &str) -> Result<Self, Error> {
         if !is_day(on) {
             return Err(Error::Unreadable);
         }
-        let (name, digits) = rest.split_once(':').ok_or(Error::Unreadable)?;
         // The name is not repeated in the error, as the rest may be a real login.
         let account = Account::parse(name).ok().ok_or(Error::Unreadable)?;
         let config = digest::bytes_from_hex(digits)
@@ -405,6 +469,126 @@ mod tests {
                  again with steamship ci"
             );
         }
+    }
+
+    fn digits() -> String {
+        digest::hex(&login().config)
+    }
+
+    #[test]
+    fn a_login_of_a_newer_format_is_named_as_newer() {
+        for (text, expected) in [
+            ("steamship-login-4:x", 4_u64),
+            ("steamship-login-12:on=2026-01-01", 12_u64),
+        ] {
+            let error = Login::unpack(text).unwrap_err();
+            assert!(
+                matches!(error, Error::Newer { format } if format == expected),
+                "{text}"
+            );
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "STEAMSHIP_LOGIN holds a login packed by a newer steamship, in format \
+                     {expected}. This steamship reads formats 2 and 3. Upgrade steamship, or \
+                     raise the action's pin, to the release that packed it"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn format_3_is_read_by_name_in_any_order_and_unknown_fields_are_skipped() {
+        let digits = digits();
+        let by_position =
+            Login::unpack(&format!("steamship-login-2:{DAY}:build_bot:{digits}")).unwrap();
+        let by_name = Login::unpack(&format!(
+            "steamship-login-3:config={digits}:later=1:account=build_bot:on={DAY}"
+        ))
+        .unwrap();
+        assert_eq!(by_name.account().name(), by_position.account().name());
+        assert_eq!(*by_name.config, *by_position.config);
+        assert_eq!(by_name.packed_on(), Some(DAY));
+    }
+
+    #[test]
+    fn format_3_without_a_needed_field_or_with_one_twice_is_unreadable() {
+        let digits = digits();
+        for wrong in [
+            format!("steamship-login-3:on={DAY}:account=build_bot"),
+            format!("steamship-login-3:account=build_bot:config={digits}"),
+            format!("steamship-login-3:on={DAY}:config={digits}"),
+            format!("steamship-login-3:on={DAY}:account=build_bot:account=other:config={digits}"),
+            format!("steamship-login-3:on={DAY}:on={DAY}:account=build_bot:config={digits}"),
+            format!("steamship-login-3:on={DAY}:account=build_bot:config={digits}:config={digits}"),
+            format!("steamship-login-3:on={DAY}:account=build_bot:config={digits}:stray"),
+            format!("steamship-login-3:on={DAY}:account=build_bot:config={digits}:account=a=b"),
+            format!("steamship-login-3:on={DAY}:account=build_bot:config="),
+            format!("steamship-login-3:on=2026-9-28:account=build_bot:config={digits}"),
+            format!("steamship-login-3:on={DAY}:account=+quit:config={digits}"),
+        ] {
+            let error = Login::unpack(&wrong).unwrap_err();
+            assert!(matches!(error, Error::Unreadable), "{wrong}");
+            let shown = error.to_string();
+            assert!(!shown.contains("build_bot") && !shown.contains(&digits));
+        }
+    }
+
+    #[test]
+    fn a_tag_with_no_number_or_an_older_one_is_unreadable() {
+        let thirty = "9".repeat(30);
+        for wrong in [
+            "steamship-login-:x".to_owned(),
+            "steamship-login-1:x".to_owned(),
+            "steamship-login-0:x".to_owned(),
+            "steamship-login-x:y".to_owned(),
+            "steamship-login-+4:x".to_owned(),
+            "steamship-login-4".to_owned(),
+            format!("steamship-login-{thirty}:x"),
+        ] {
+            let error = Login::unpack(&wrong).unwrap_err();
+            assert!(matches!(error, Error::Unreadable), "{wrong}");
+        }
+    }
+
+    #[test]
+    fn a_number_is_read_as_a_number() {
+        let digits = digits();
+        let padded =
+            Login::unpack(&format!("steamship-login-02:{DAY}:build_bot:{digits}")).unwrap();
+        assert_eq!(padded.account().name(), "build_bot");
+        assert_eq!(*padded.config, *login().config);
+        let padded_three = Login::unpack(&format!(
+            "steamship-login-03:on={DAY}:account=build_bot:config={digits}"
+        ))
+        .unwrap();
+        assert_eq!(padded_three.packed_on(), Some(DAY));
+        let error = Login::unpack("steamship-login-99999999999:x").unwrap_err();
+        assert!(
+            matches!(
+                error,
+                Error::Newer {
+                    format: 99_999_999_999
+                }
+            ),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_format_3_value_may_hold_an_equals_sign() {
+        let digits = digits();
+        let plain = Login::unpack(&format!(
+            "steamship-login-3:on={DAY}:account=build_bot:config={digits}"
+        ))
+        .unwrap();
+        let with_equals = Login::unpack(&format!(
+            "steamship-login-3:on={DAY}:later=a=b:account=build_bot:config={digits}"
+        ))
+        .unwrap();
+        assert_eq!(with_equals.account().name(), plain.account().name());
+        assert_eq!(*with_equals.config, *plain.config);
+        assert_eq!(with_equals.packed_on(), plain.packed_on());
     }
 
     #[test]

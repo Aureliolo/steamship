@@ -237,6 +237,21 @@ fn a_login_handed_over_that_is_not_one_is_refused_without_repeating_it() {
 }
 
 #[test]
+fn a_login_from_a_newer_steamship_is_refused_with_how_to_upgrade() {
+    let home = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["status"],
+        Some(home.path()),
+        &[("STEAMSHIP_LOGIN", "steamship-login-4:x")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}");
+    assert!(
+        failure(&stderr).contains("packed by a newer steamship, in format 4"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn an_empty_account_variable_names_no_account() {
     let home = tempfile::tempdir().unwrap();
     let (code, stdout, _) = steamship(&["status"], Some(home.path()), &[("STEAMSHIP_ACCOUNT", "")]);
