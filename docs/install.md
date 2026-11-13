@@ -211,7 +211,7 @@ macOS. `steamship status` prints the folder in use.
 | Entry                                           | Holds                                                           |
 | ----------------------------------------------- | --------------------------------------------------------------- |
 | `steamcmd/` and `steamcmd.inventory`            | The pinned steamcmd and the record it is verified against       |
-| `steamcmd.new/`, `steamcmd.old/`, `downloads/`  | An install's working folders, removed when the install finishes |
+| `steamcmd.new/`, `steamcmd.old/`, `downloads/`  | An install's working folders, gone when it ends                 |
 | `steamship.lock`                                | What two runs take turns on                                     |
 | `account`                                       | The build account `login` remembered                            |
 | `latest-release`                                | The update check's last answer                                  |
@@ -223,8 +223,7 @@ macOS. `steamship status` prints the folder in use.
 
 The token is `steamcmd/config/config.vdf` on Windows, `Steam/config/config.vdf` on Linux and
 `Library/Application Support/Steam/config/config.vdf` on macOS. The `logs/` folder beside `config/`
-holds the account's name. An install that stopped midway can leave the token's file in
-`steamcmd.new/`.
+holds the account's name.
 
 Each log steamship saves or rewrites under `apps/<app>/output` shows `[redacted]` where the token
 or the account's name stood. When a log can be neither rewritten nor removed, the `log` line names
