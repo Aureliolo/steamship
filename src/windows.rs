@@ -1884,9 +1884,16 @@ mod tests {
         let code = process.ended_within(Duration::from_secs(30)).unwrap();
         let name = String::from_utf16_lossy(&desktop.name);
         let place = format!("runs on {}\n", name.trim_end_matches('\0'));
+        // 0xC0000142 is STATUS_DLL_INIT_FAILED, which Windows gives a program that cannot start
+        // on the desktop it was sent to.
+        let cause = if code == Some(-0x3fff_febe_i32) {
+            ", the code of a program that could not start on its desktop"
+        } else {
+            ""
+        };
         assert!(
             !said.is_empty(),
-            "the program printed nothing, so it never started on {name:?} (exit code {code:?})"
+            "the program printed nothing on {name:?} (exit code {code:?}{cause})"
         );
         assert!(said.contains(&place), "no {place:?} in:\n{said}");
     }
