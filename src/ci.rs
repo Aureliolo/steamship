@@ -91,7 +91,7 @@ impl fmt::Display for Error {
             Self::Newer { format } => write!(
                 formatter,
                 "{VARIABLE} holds a login packed by a newer steamship, in format {format}. This \
-                 steamship reads formats {WRITTEN} and {NEWEST}. Upgrade steamship, or the \
+                 steamship reads formats {WRITTEN} and {NEWEST}. Upgrade steamship, or raise the \
                  action's pin, to the release that packed it"
             ),
             Self::NotSaved { path } => {
@@ -491,7 +491,7 @@ mod tests {
                 format!(
                     "STEAMSHIP_LOGIN holds a login packed by a newer steamship, in format \
                      {expected}. This steamship reads formats 2 and 3. Upgrade steamship, or \
-                     the action's pin, to the release that packed it"
+                     raise the action's pin, to the release that packed it"
                 )
             );
         }
