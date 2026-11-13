@@ -42,8 +42,7 @@ use windows_sys::Win32::Security::{
     GetSecurityDescriptorControl, GetTokenInformation, InitializeAcl, InitializeSecurityDescriptor,
     OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
     SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
-    SetSecurityDescriptorControl, SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser,
-    WinLocalSystemSid,
+    SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser, WinLocalSystemSid,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ALL_ACCESS, FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
@@ -379,13 +378,9 @@ impl Station {
         let ready = unsafe { InitializeSecurityDescriptor(pointer, SECURITY_DESCRIPTOR_REVISION) }
             != 0_i32
             // SAFETY: `access` is a complete access list that outlives the desktop's making.
+            // The station's inheritable entries stay out of a list given at the making.
             && unsafe { SetSecurityDescriptorDacl(pointer, 1_i32, self.access.as_ptr().cast(), 0_i32) }
-                != 0_i32
-            // SAFETY: the descriptor was initialised above. Protecting its list keeps the
-            // station's inheritable entries out of it.
-            && unsafe {
-                SetSecurityDescriptorControl(pointer, SE_DACL_PROTECTED, SE_DACL_PROTECTED)
-            } != 0_i32;
+                != 0_i32;
         if !ready {
             return Err(io::Error::last_os_error());
         }
@@ -1531,7 +1526,7 @@ impl User {
     }
 }
 
-/// A file or folder's permissions as Windows reports them.
+/// An object's permissions as Windows reports them.
 struct Security {
     /// Freed with `LocalFree`; `acl` points into it.
     descriptor: PSECURITY_DESCRIPTOR,
@@ -1579,6 +1574,11 @@ impl Security {
 
     /// Each entry's type, flags and access, and whether it is for `user`.
     fn entries(&self, user: &User) -> Vec<(u32, u32, u32, bool)> {
+        self.entries_for(user.sid())
+    }
+
+    /// Each entry's type, flags and access, and whether it is for `whom`.
+    fn entries_for(&self, whom: PSID) -> Vec<(u32, u32, u32, bool)> {
         let Some(acl) = self.acl else {
             return Vec::new();
         };
@@ -1606,7 +1606,7 @@ impl Security {
                     // SAFETY: an access-allowed entry holds its SID from SidStart on.
                     let sid = unsafe { &raw const (*entry.as_ptr()).SidStart };
                     // SAFETY: both SIDs are valid for the length of the call.
-                    let equal = unsafe { EqualSid(sid.cast_mut().cast(), user.sid()) };
+                    let equal = unsafe { EqualSid(sid.cast_mut().cast(), whom) };
                     equal != 0_i32
                 };
                 Some((kind, u32::from(header.AceFlags), mask, mine))
@@ -1834,6 +1834,7 @@ mod tests {
     use windows_sys::Win32::Foundation::E_INVALIDARG;
     use windows_sys::Win32::Foundation::GetHandleInformation;
     use windows_sys::Win32::Globalization::lstrlenW;
+    use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_WINDOW_OBJECT};
     use windows_sys::Win32::Security::{
         CreateRestrictedToken, INHERITED_ACE, ImpersonateLoggedOnUser, RevertToSelf,
         SID_AND_ATTRIBUTES, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_IMPERSONATE,
@@ -2285,6 +2286,64 @@ mod tests {
         assert_eq!(hooking_refused(None, rest), None);
         // 5 is ERROR_ACCESS_DENIED.
         assert_eq!(hooking_refused(Some(&stranger), rest), Some(5_i32));
+    }
+
+    #[test]
+    fn a_desktop_is_open_to_the_user_and_the_system_alone() {
+        let desktop = Desktop::create().unwrap();
+        let mut acl = MaybeUninit::<*mut ACL>::uninit();
+        let mut descriptor = MaybeUninit::<PSECURITY_DESCRIPTOR>::uninit();
+        // SAFETY: the desktop's handle is open, and both outputs are valid places for pointers.
+        let status = unsafe {
+            GetSecurityInfo(
+                desktop.handle,
+                SE_WINDOW_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                acl.as_mut_ptr(),
+                ptr::null_mut(),
+                descriptor.as_mut_ptr(),
+            )
+        };
+        win32(status).unwrap();
+        let security = Security {
+            // SAFETY: the call succeeded, and on success it writes both.
+            descriptor: unsafe { descriptor.assume_init() },
+            // SAFETY: as above.
+            acl: NonNull::new(unsafe { acl.assume_init() }),
+        };
+        let user = User::current().unwrap();
+        let mut system = system_sid().unwrap();
+        // GENERIC_ALL as a desktop reads it: every desktop right and the standard ones.
+        let all = 0x000f_01ff;
+        assert_eq!(
+            security.entries_for(user.sid()),
+            [
+                (ACCESS_ALLOWED_ACE_TYPE, 0, all, true),
+                (ACCESS_ALLOWED_ACE_TYPE, 0, all, false)
+            ]
+        );
+        assert_eq!(
+            security.entries_for(system.as_mut_ptr().cast()),
+            [
+                (ACCESS_ALLOWED_ACE_TYPE, 0, all, false),
+                (ACCESS_ALLOWED_ACE_TYPE, 0, all, true)
+            ]
+        );
+    }
+
+    #[test]
+    fn making_a_desktop_leaves_the_process_on_its_own_station() {
+        let _desktop = Desktop::create().unwrap();
+        let (own, made_on) = {
+            // Held so that no other test's desktop is being made meanwhile.
+            let held = STATION.lock().unwrap_or_else(PoisonError::into_inner);
+            // SAFETY: takes no arguments. The handle belongs to the process and is never closed.
+            let own = station_name(unsafe { GetProcessWindowStation() }).unwrap();
+            (own, held.as_ref().map(|station| station.name.clone()))
+        };
+        assert_ne!(Some(own), made_on);
     }
 
     #[test]
