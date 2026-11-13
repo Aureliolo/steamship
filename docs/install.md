@@ -226,9 +226,9 @@ The token is `steamcmd/config/config.vdf` on Windows, `Steam/config/config.vdf` 
 holds the account's name. An install that stopped midway can leave the token's file in
 `steamcmd.new/`.
 
-When an upload ends, each `.log` under `apps/<app>/output` shows `[redacted]` where the token or
-the account name stood, or is gone. A run that was killed leaves steamcmd's own logs as steamcmd
-wrote them.
+Once steamcmd has run, each `.log` under `apps/<app>/output` shows `[redacted]` where the token or
+the account's name stood, or is gone. The `log` line names any log that is neither. A run that was
+killed leaves steamcmd's own logs as steamcmd wrote them.
 
 To cache between CI jobs, keep `apps` and `recorded-builds` from a job that ended well, without
 the logs `apps/*/output/*.log`. Never keep `account`, the folders that hold the token, or an

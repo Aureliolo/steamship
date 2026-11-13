@@ -23,7 +23,9 @@ pub(crate) fn app_info(
     packed: Option<&ci::Login>,
     doing: &str,
 ) -> Result<(String, Spinner), ExitCode> {
-    let before = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
+    let before = Redactor::for_home(home)
+        .map_err(|error| fail(&error, FAILED))?
+        .and_name(account.name());
     let spinner = Spinner::start("steam", doing, true);
     let finished = match steamcmd::app_info(account, app).run(home) {
         Ok(finished) => finished,
@@ -33,12 +35,14 @@ pub(crate) fn app_info(
         }
     };
     let redactor = before.and(Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?);
-    let console = String::from_utf8_lossy(&redactor.redact(&finished.output)).into_owned();
+    // Judged and read as steamcmd wrote it: an account named `limit` or `released` must change no
+    // outcome. Only what is shown is redacted.
+    let console = String::from_utf8_lossy(&finished.output).into_owned();
     match conversation::judge_login(finished.code, &console) {
         conversation::Login::Taken => Ok((console, spinner)),
         judged @ (conversation::Login::Refused(_) | conversation::Login::Failed(_)) => {
             spinner.failed("not logged in");
-            Err(verdict(judged, packed))
+            Err(verdict(judged, &redactor, packed))
         }
     }
 }

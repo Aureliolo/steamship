@@ -213,6 +213,36 @@ fn by_fields(folder: &Path, items: &Path, extra: &[&str]) -> Vec<String> {
 }
 
 #[test]
+fn an_accounts_name_in_a_refusal_changes_neither_the_exit_code_nor_the_message() {
+    for (name, said, code, words) in [
+        (
+            "limit",
+            "Logging in user 'limit' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "cached",
+            "Logging in user 'cached' [U:1:0] to Steam Public...FAILED (No cached credentials \
+             and @NoPromptForPassword is set)",
+            3_i32,
+            "steamcmd holds no saved login for the build account",
+        ),
+    ] {
+        let home = faked_with(&format!("#!/bin/sh\necho \"{said}\"\nexit 5\n"));
+        saved_login(home.path());
+        let (_temp, script) = workshop_item("");
+        let (found, stdout, stderr) = steamship(
+            &["workshop", script.to_str().unwrap(), "--account", name],
+            Some(home.path()),
+            &[],
+        );
+        assert_eq!(found, Some(code), "{name}: {stdout}{stderr}");
+        assert!(stderr.contains(words), "{name}: {stderr}");
+    }
+}
+
+#[test]
 fn an_items_saved_console_names_no_account() {
     let home = faked_with(
         "#!/bin/sh\n\

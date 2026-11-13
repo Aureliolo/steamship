@@ -62,9 +62,9 @@ pub(crate) fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
             fail(&error, FAILED)
         }
     })?;
-    let judged = check_saved_login(&account, None)?;
+    let (judged, redactor) = check_saved_login(&account, None)?;
     if judged != conversation::Login::Taken {
-        return Ok(verdict(judged, None));
+        return Ok(verdict(judged, &redactor, None));
     }
     let today = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)

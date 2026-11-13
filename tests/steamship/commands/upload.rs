@@ -1447,6 +1447,57 @@ fn an_upload_exits_6_when_steam_limits_logins_and_3_when_it_refuses_the_login() 
     }
 }
 
+/// A steamcmd that prints `said` as the account it was given, then exits 5.
+fn refusing_as_given(said: &str) -> String {
+    format!(
+        "#!/bin/sh\n\
+         for arg in \"$@\"; do [ \"$previous\" = +login ] && account=\"$arg\"; previous=\"$arg\"; done\n\
+         {said}\n\
+         exit 5\n"
+    )
+}
+
+#[test]
+fn an_accounts_name_in_a_refusal_changes_neither_its_exit_code_nor_its_message() {
+    let (_project, script) = project(true);
+    let cases = [
+        (
+            "limit",
+            "echo \"Logging in user '$account' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "cached",
+            "echo \"Logging in user '$account' [U:1:0] to Steam Public...\"\n\
+             echo 'FAILED (No cached credentials and @NoPromptForPassword is set)'",
+            3_i32,
+            "steamcmd holds no saved login for the build account",
+        ),
+    ];
+    for (name, said, expected, words) in cases {
+        let home = faked_with(&refusing_as_given(said));
+        let (code, stdout, stderr) = steamship(
+            &[
+                "upload",
+                script.to_str().unwrap(),
+                "--account",
+                name,
+                "--version",
+                "1.4.0",
+            ],
+            Some(home.path()),
+            &[],
+        );
+        assert_eq!(code, Some(expected), "{name}: {stdout}{stderr}");
+        assert_eq!(
+            failure(&stderr),
+            format!("not logged in: {words}"),
+            "{name}"
+        );
+    }
+}
+
 #[test]
 fn a_dry_run_says_nothing_was_uploaded() {
     let home = leaking();

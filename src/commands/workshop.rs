@@ -339,7 +339,7 @@ fn upload_item(
         }
         workshop::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
-            let refused = login_refused(&redacted(redactor_in_use, &reason), packed);
+            let refused = login_refused(&reason, redactor_in_use, packed);
             after_failure(given, item, copied, &log, refused)
         }
         workshop::Outcome::Failed(reasons) => {

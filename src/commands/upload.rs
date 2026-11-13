@@ -907,7 +907,7 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
         }
         upload::Outcome::NotLoggedIn(line) => {
             spinner.failed(&format!("refused after {took}"));
-            login_refused(&redacted(redactor, line), packed)
+            login_refused(line, redactor, packed)
         }
         upload::Outcome::BuiltThenFailed { build_id, reasons } => {
             spinner.failed(&format!("failed after {took}"));

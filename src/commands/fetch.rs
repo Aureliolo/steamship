@@ -21,6 +21,7 @@ use super::exit::fail;
 use super::game::{app_named, app_or_game};
 use super::key::{offer_to_keep, web_api, web_api_failed, why_unanswered};
 use super::ready::{home, login_refused, named, ready, restore, run_as, steamcmd_failed};
+use super::upload::redacted;
 
 pub(crate) fn try_fetch(request: &cli::Fetch) -> Result<ExitCode, ExitCode> {
     if request.json {
@@ -309,7 +310,9 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
     let (packed, account) = run_as(fetching.named)?;
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
-    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
+    let before = Redactor::for_home(&home)
+        .map_err(|error| fail(&error, FAILED))?
+        .and_name(account.name());
     let secret = fetching
         .password
         .map_or_else(Zeroizing::default, |password| password.text.clone());
@@ -326,28 +329,25 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
         }
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
-    let console = fetch::hidden(
-        &String::from_utf8_lossy(&redactor.redact(&finished.output)),
-        &secret,
-    );
+    // Judged as steamcmd wrote it, with the branch's password hidden: an account named `limit`
+    // must not turn a refusal into another. Only what is shown goes through the redactor.
+    let console = fetch::hidden(&String::from_utf8_lossy(&finished.output), &secret);
     let log = marks
         .added(&steamcmd_logs)
         .into_iter()
         .find(|(name, _)| name == "content_log.txt")
-        .map_or_default(|(_, added)| {
-            fetch::hidden(&String::from_utf8_lossy(&redactor.redact(&added)), &secret)
-        });
+        .map_or_default(|(_, added)| fetch::hidden(&String::from_utf8_lossy(&added), &secret));
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     match fetch::judge(finished.code, &console, &log, fetching.app) {
         fetch::Outcome::Fetched => spinner.done(&format!("downloaded in {took}")),
         fetch::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
-            return Err(login_refused(&reason, packed.as_ref()));
+            return Err(login_refused(&reason, &redactor, packed.as_ref()));
         }
         fetch::Outcome::PasswordRefused(reasons) => {
             spinner.failed(&format!("refused after {took}"));
             for reason in &reasons {
-                show::failure(reason, "", None);
+                show::failure(&redacted(&redactor, reason), "", None);
             }
             forget_refused_password(&home, fetching);
             return Err(ExitCode::from(FAILED));
@@ -355,7 +355,7 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
         fetch::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
             for reason in &reasons {
-                show::failure(reason, "", None);
+                show::failure(&redacted(&redactor, reason), "", None);
             }
             return Err(ExitCode::from(FAILED));
         }

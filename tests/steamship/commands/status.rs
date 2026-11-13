@@ -217,6 +217,56 @@ fn a_login_check_that_fails_without_a_reason_shows_steams_logs_in_actions() {
 }
 
 #[test]
+fn a_login_check_that_fails_names_no_account_in_actions_group() {
+    let home = checking(
+        "Logging in user 'build_bot' [U:1:0] to Steam Public...",
+        137,
+    );
+    let (code, stdout, stderr) = steamship(
+        &["status"],
+        Some(home.path()),
+        &[("GITHUB_ACTIONS", "true")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("::group::steamcmd's console\n")
+            && stdout.contains("Logging in user [redacted] [U:1:0]"),
+        "{stdout}"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("build_bot"));
+}
+
+#[test]
+fn an_accounts_name_in_a_refusal_changes_neither_the_exit_code_nor_the_message() {
+    for (name, said, code, words) in [
+        (
+            "limit",
+            "Logging in user 'limit' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "cached",
+            "Logging in user 'cached' [U:1:0] to Steam Public...FAILED (No cached credentials \
+             and @NoPromptForPassword is set)",
+            3_i32,
+            "steamcmd holds no saved login for the build account",
+        ),
+    ] {
+        let home = answering(said, 5);
+        saved_login(home.path());
+        let (found, stdout, stderr) =
+            steamship(&["status", "--account", name], Some(home.path()), &[]);
+        assert_eq!(found, Some(code), "{name}: {stdout}{stderr}");
+        assert_eq!(
+            failure(&stderr),
+            format!("not logged in: {words}"),
+            "{name}"
+        );
+    }
+}
+
+#[test]
 fn a_login_handed_over_that_is_not_one_is_refused_without_repeating_it() {
     let home = tempfile::tempdir().unwrap();
     let (code, stdout, stderr) = steamship(

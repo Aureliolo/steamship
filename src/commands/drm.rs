@@ -15,6 +15,7 @@ use steamship::{drm, magic, steamcmd};
 use super::exit::fail;
 use super::game::{app_named, app_or_game};
 use super::ready::{login_refused, ready, restore, run_as, steamcmd_failed};
+use super::upload::redacted;
 
 pub(crate) fn try_drm_wrap(
     app: Option<String>,
@@ -55,7 +56,9 @@ pub(crate) fn try_drm_wrap(
     let (packed, account) = run_as(named)?;
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
-    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
+    let before = Redactor::for_home(&home)
+        .map_err(|error| fail(&error, FAILED))?
+        .and_name(account.name());
     drop(fs::remove_file(&wrapped));
     let spinner = Spinner::start("steam", "wrapping", true);
     let finished = steamcmd::drm_wrap(&account, app_id, &input, &wrapped, mode).run(&home);
@@ -68,10 +71,11 @@ pub(crate) fn try_drm_wrap(
         }
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
-    let console = redactor.redact(&finished.output);
+    // Judged as steamcmd wrote it, and only what is shown redacted.
+    let console = String::from_utf8_lossy(&finished.output);
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     let written = fs::metadata(&wrapped).is_ok_and(|found| found.len() > 0);
-    match drm::judge(finished.code, &String::from_utf8_lossy(&console), written) {
+    match drm::judge(finished.code, &console, written) {
         drm::Outcome::Wrapped => {
             let placed = fs::metadata(&input)
                 .and_then(|original| fs::set_permissions(&wrapped, original.permissions()))
@@ -91,13 +95,13 @@ pub(crate) fn try_drm_wrap(
         drm::Outcome::NotLoggedIn(reason) => {
             drop(fs::remove_file(&wrapped));
             spinner.failed(&format!("refused after {took}"));
-            Err(login_refused(&reason, packed.as_ref()))
+            Err(login_refused(&reason, &redactor, packed.as_ref()))
         }
         drm::Outcome::Failed(reasons) => {
             drop(fs::remove_file(&wrapped));
             spinner.failed(&format!("failed after {took}"));
             for reason in &reasons {
-                show::failure(reason, "", None);
+                show::failure(&redacted(&redactor, reason), "", None);
             }
             Err(ExitCode::from(FAILED))
         }
