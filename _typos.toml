@@ -40,6 +40,7 @@ extend-ignore-re = [
 finalize = "finalize"
 InitializeAcl = "InitializeAcl"
 InitializeProcThreadAttributeList = "InitializeProcThreadAttributeList"
+InitializeSecurityDescriptor = "InitializeSecurityDescriptor"
 Authorization = "Authorization"
 Win32_Security_Authorization = "Win32_Security_Authorization"
 Globalization = "Globalization"
