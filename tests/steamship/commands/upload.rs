@@ -1045,14 +1045,16 @@ fn a_retry_that_cannot_start_prints_the_line_of_the_run_before_it() {
     let line = summary_of(&stdout);
     assert_eq!(at(&line, "/outcome"), serde_json::Value::Null, "{line}");
     assert_eq!(at(&line, "/error/code"), "steamcmd-not-run", "{line}");
-    assert!(!text_at(&line, "/error/message").is_empty(), "{line}");
-    assert!(stderr.contains("denied"), "{stderr}");
+    let message = text_at(&line, "/error/message");
+    assert!(!message.is_empty(), "{line}");
+    assert!(stderr.contains(&message), "{stderr}");
 }
 
 #[test]
 fn a_secret_in_steams_answer_is_hidden_in_the_json_message() {
     let home = faked_with(&released_as("prerelease"));
     let [token, _] = SECRETS;
+    saved_login(home.path());
     let config = home.path().join("Steam/config/config.vdf");
     fs::create_dir_all(config.parent().unwrap()).unwrap();
     fs::write(
@@ -1063,7 +1065,6 @@ fn a_secret_in_steams_answer_is_hidden_in_the_json_message() {
         ),
     )
     .unwrap();
-    saved_login(home.path());
     let (_project, script) = project(true);
     let answer = format!(r#"{{"response": {{"message": "{token}"}}}}"#);
     let (host, _requests) = web_api(vec![

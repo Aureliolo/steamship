@@ -16,6 +16,7 @@ use crate::{
 fn a_secret_in_steams_answer_is_hidden_from_a_failed_promote() {
     let home = faked_with(&released_as("prerelease"));
     let [token, _] = SECRETS;
+    saved_login(home.path());
     let config = home.path().join("Steam/config/config.vdf");
     fs::create_dir_all(config.parent().unwrap()).unwrap();
     fs::write(
@@ -26,7 +27,6 @@ fn a_secret_in_steams_answer_is_hidden_from_a_failed_promote() {
         ),
     )
     .unwrap();
-    saved_login(home.path());
     let (_project, script) = project(false);
     let answer = format!(r#"{{"response": {{"message": "{token}"}}}}"#);
     let (host, _requests) = web_api(vec![("500 Internal Server Error", answer)]);
