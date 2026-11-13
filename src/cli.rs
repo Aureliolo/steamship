@@ -24,7 +24,7 @@ pub const REFUSED: u8 = 2;
 pub const LOGIN: u8 = 3;
 /// steamcmd's install is missing, altered or failed.
 pub const STEAMCMD: u8 = 4;
-/// Steam holds a build or Workshop item that a second run would make again.
+/// Steam holds a build or Workshop item that a second run would duplicate.
 pub const UNFINISHED: u8 = 5;
 /// Steam is limiting login attempts.
 pub const LIMITED: u8 = 6;
@@ -37,7 +37,7 @@ pub const EXIT_CODES: [(u8, &str); 7] = [
     (0, "Done"),
     (
         FAILED,
-        "The command failed and printed why. Steam holds nothing a second run would make again",
+        "The command failed and printed why. A second run makes no duplicate",
     ),
     (
         REFUSED,
@@ -49,11 +49,11 @@ pub const EXIT_CODES: [(u8, &str); 7] = [
     ),
     (
         STEAMCMD,
-        "steamcmd's install is missing, altered or failed. Steam holds nothing a second run would make again",
+        "steamcmd's install is missing, altered or failed. A second run makes no duplicate",
     ),
     (
         UNFINISHED,
-        "Steam holds a build or Workshop item that a second run would make again. The output says what to do",
+        "Steam holds a build or Workshop item that a second run would duplicate. The output says what to do",
     ),
     (
         LIMITED,
@@ -1228,16 +1228,16 @@ mod tests {
                 .unwrap()
                 .1
         };
-        let nothing = "Steam holds nothing a second run would make again";
+        let nothing = "A second run makes no duplicate";
         assert!(row(FAILED).contains(nothing));
         assert!(row(STEAMCMD).contains(nothing));
         assert_eq!(
             row(FAILED),
-            "The command failed and printed why. Steam holds nothing a second run would make again"
+            "The command failed and printed why. A second run makes no duplicate"
         );
         assert_eq!(
             row(UNFINISHED),
-            "Steam holds a build or Workshop item that a second run would make again. The output says what to do"
+            "Steam holds a build or Workshop item that a second run would duplicate. The output says what to do"
         );
         for (_, words) in EXIT_CODES {
             for old in [
