@@ -54,15 +54,12 @@ pub fn chosen<'branches>(
     build: Option<u64>,
 ) -> Result<&'branches Branch, String> {
     let found = match (branch, build) {
-        (Some(given), _) => branches
-            .iter()
-            .find(|found| named(given, &found.name))
-            .ok_or_else(|| {
-                format!(
-                    "app {app} has no branch {given}: its branches are {}",
-                    listed(branches)
-                )
-            })?,
+        (Some(given), _) => branch::find(branches, given).ok_or_else(|| {
+            format!(
+                "app {app} has no branch {given}: its branches are {}",
+                listed(branches)
+            )
+        })?,
         (None, Some(build)) => branches
             .iter()
             .filter(|found| found.build_id == build)
@@ -187,15 +184,6 @@ where
         }
     }
     Ok(lines)
-}
-
-/// Whether the branch `given` on the command line is the one Steam calls `name`.
-fn named(given: &str, name: &str) -> bool {
-    if branch::is_default(given) {
-        branch::is_default(name)
-    } else {
-        given == name
-    }
 }
 
 /// The names of `branches`, as Steamworks shows them, in one line.

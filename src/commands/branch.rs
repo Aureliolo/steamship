@@ -44,7 +44,7 @@ pub(crate) fn try_branch(app: &str, branch: &str, description: &str) -> Result<E
             return Err(code);
         }
     };
-    let Some(found) = branches.iter().find(|found| found.name == branch) else {
+    let Some(found) = branch::find(&branches, branch) else {
         asking.failed("not on Steam");
         return Err(fail(
             &format!(
@@ -60,20 +60,18 @@ pub(crate) fn try_branch(app: &str, branch: &str, description: &str) -> Result<E
         asking.done(&format!("described as \"{}\"", found.description));
     }
     offer_to_keep(&home, &api, from);
+    let name = found.name.as_str();
     if found.description == description {
-        show::success(
-            &format!("app {app_id}: {branch} is already described so"),
-            "",
-        );
+        show::success(&format!("app {app_id}: {name} is already described so"), "");
         return Ok(ExitCode::SUCCESS);
     }
     let setting = Spinner::start("steam", "setting the description", false);
-    if let Err(error) = api.describe_branch(app_id, branch, description) {
+    if let Err(error) = api.describe_branch(app_id, name, description) {
         return Err(web_api_failed(setting, &error));
     }
     setting.done("set");
     show::success(
-        &format!("app {app_id}: {branch} described as \"{description}\""),
+        &format!("app {app_id}: {name} described as \"{description}\""),
         "",
     );
     Ok(ExitCode::SUCCESS)

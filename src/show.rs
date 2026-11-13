@@ -7,8 +7,8 @@
 use std::io::{self, IsTerminal as _, Write};
 use std::mem;
 use std::panic;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
@@ -42,6 +42,17 @@ pub fn divert() {
 #[must_use]
 pub fn diverted() -> bool {
     DIVERTED.load(Ordering::Relaxed)
+}
+
+/// What a [`failure`] is shown under as a [`note`], once [`failures_as_notes`] has set it.
+static NOTES_ONLY: Mutex<Option<String>> = Mutex::new(None);
+
+/// Shows each failure from now on as a note that opens with `unmade`, what was not done.
+/// The command's outcome is already said.
+pub fn failures_as_notes(unmade: &str) {
+    if let Ok(mut held) = NOTES_ONLY.lock() {
+        *held = Some(unmade.to_owned());
+    }
 }
 
 /// Whether each step's line ends with how long it took, as `--times` asks.
@@ -195,14 +206,19 @@ pub fn success(headline: &str, detail: &str) {
 }
 
 /// The command's outcome, when it is not. `hint`, if any, says what to do, with its `command`
-/// set apart.
+/// set apart. After [`failures_as_notes`], it is shown as a note.
 pub fn failure(headline: &str, reason: &str, hint: Option<Hint<'_>>) {
     let reason = if reason.is_empty() {
         String::new()
     } else {
         format!(": {reason}")
     };
-    anstream::eprintln!("  {RED}\u{2717}{RED:#} {BOLD}{headline}{BOLD:#}{reason}");
+    let unmade = NOTES_ONLY.lock().ok().and_then(|held| held.clone());
+    if let Some(unmade) = unmade {
+        note(&format!("{unmade}{headline}{reason}"));
+    } else {
+        anstream::eprintln!("  {RED}\u{2717}{RED:#} {BOLD}{headline}{BOLD:#}{reason}");
+    }
     if let Some(hint) = hint {
         hinted(hint);
     }

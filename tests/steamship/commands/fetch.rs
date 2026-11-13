@@ -7,7 +7,10 @@ use std::time::{Duration, Instant};
 use steamship::platform::Platform;
 use steamship::{fetch, steamcmd};
 
-use crate::{faked_with, fetching, fetching_typed, packed_login, saved_login, steamship_in};
+use crate::{
+    faked_with, fetching, fetching_typed, packed_login, saved_login, steamship, steamship_in,
+    web_api, web_api_variables,
+};
 
 #[test]
 fn a_build_that_is_not_a_number_says_what_a_build_id_is() {
@@ -139,6 +142,49 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
         updated.contains(&format!("+force_install_dir {} ", chosen.display()))
             && updated.ends_with("+app_update 1000 -beta public validate +quit\n"),
         "{updated}"
+    );
+}
+
+#[test]
+fn a_branch_named_in_another_case_is_fetched_under_steams_name() {
+    let home = faked_with(FETCHES);
+    saved_login(home.path());
+    let system = fetch::system_name(Platform::THIS);
+
+    let (code, stdout, stderr) = fetching(home.path(), &["1000", "--branch", "Testing"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(args.contains(" -beta testing "), "{args}");
+    let shown = format!("{stdout}{stderr}");
+    assert!(
+        shown.contains("build 4242 of the testing branch")
+            && shown.contains(&format!("testing-{system}")),
+        "{shown}"
+    );
+}
+
+#[test]
+fn a_branch_steam_lists_in_two_cases_is_fetched_under_the_name_typed() {
+    let home = faked_with(FETCHES);
+    saved_login(home.path());
+    let (host, _requests) = web_api(vec![(
+        "200 OK",
+        r#"{"response": {"result": 1, "betas": {
+            "Testing": {"BuildID": 4100},
+            "testing": {"BuildID": 4242}
+        }}}"#,
+    )]);
+    let (code, stdout, stderr) = steamship(
+        &["fetch", "1000", "--branch", "testing"],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(args.contains(" -beta testing "), "{args}");
+    assert!(
+        format!("{stdout}{stderr}").contains("build 4242 of the testing branch"),
+        "{stdout}{stderr}"
     );
 }
 

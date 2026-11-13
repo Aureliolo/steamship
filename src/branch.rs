@@ -1,5 +1,7 @@
-//! The default branch's names. It is `default` on the Steamworks site and in every message of
+//! Branch names. The default branch is `default` on the Steamworks site and in every message of
 //! steamship's, and `public` to the Web API and steamcmd.
+
+use crate::webapi::Branch;
 
 /// The names the default branch goes by: `default` on the Steamworks site, `public` in the Web
 /// API.
@@ -14,6 +16,26 @@ pub fn is_default(branch: &str) -> bool {
     DEFAULT
         .iter()
         .any(|default| branch.eq_ignore_ascii_case(default))
+}
+
+/// The branch of `branches` that `name` means.
+///
+/// That is the default branch in either of its names, else the one spelt exactly so, else the
+/// first that differs in ASCII case alone. Steam keeps `Testing` and `testing` apart, so the exact
+/// one must win.
+#[must_use]
+pub fn find<'branches>(branches: &'branches [Branch], name: &str) -> Option<&'branches Branch> {
+    if is_default(name) {
+        return branches.iter().find(|found| is_default(&found.name));
+    }
+    branches
+        .iter()
+        .find(|found| found.name == name)
+        .or_else(|| {
+            branches
+                .iter()
+                .find(|found| found.name.eq_ignore_ascii_case(name))
+        })
 }
 
 /// The name Steamworks shows for `branch`: the Web API calls the default branch `public`, which

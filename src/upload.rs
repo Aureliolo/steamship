@@ -495,10 +495,7 @@ pub enum Live {
 /// What `branches` show live on `branch`, against the `build_id` just uploaded.
 #[must_use]
 pub fn live_now(branches: &[webapi::Branch], branch: &str, build_id: u64) -> Live {
-    match branches
-        .iter()
-        .find(|found| found.name.eq_ignore_ascii_case(branch))
-    {
+    match branch::find(branches, branch) {
         Some(found) if found.build_id == build_id => Live::Confirmed,
         Some(found) => Live::Other(found.build_id),
         None => Live::Missing,
@@ -1039,6 +1036,20 @@ mod tests {
             Live::Other(20_000_740)
         );
         assert_eq!(live_now(&branches, "beta", 20_000_740), Live::Missing);
+    }
+
+    #[test]
+    fn a_branch_steam_lists_in_two_cases_is_read_under_the_name_given() {
+        let branch = |name: &str, build_id| webapi::Branch {
+            name: name.to_owned(),
+            build_id,
+            description: String::new(),
+            locked: false,
+        };
+        let branches = [branch("Testing", 100), branch("testing", 200)];
+        assert_eq!(live_now(&branches, "testing", 200), Live::Confirmed);
+        assert_eq!(live_now(&branches, "Testing", 100), Live::Confirmed);
+        assert_eq!(live_now(&branches, "testing", 100), Live::Other(200));
     }
 
     #[test]
