@@ -167,6 +167,26 @@ fn login_with_a_wrong_password_says_steam_refused_it_and_exits_1() {
 }
 
 #[test]
+fn a_typed_login_steam_limits_exits_6() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo 'Cached credentials not found.'\n\
+         printf 'password: '\n\
+         read -r typed\n\
+         echo\n\
+         echo \"Logging in user 'build_bot' [U:1:0] to Steam Public...ERROR (Rate Limit Exceeded)\"\n\
+         exit 5\n",
+    );
+    let (code, stdout, stderr) = login_typing(home.path(), "hunter2\n", &[]);
+    assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        "not logged in: Steam is limiting login attempts. Wait, then try again"
+    );
+    assert!(!home.path().join("account").exists());
+}
+
+#[test]
 fn login_with_no_password_to_give_ends_steamcmd_and_exits_1() {
     let home = asking();
     let (code, _, stderr) = login_typing(home.path(), "", &[]);

@@ -4,7 +4,7 @@ use std::io::{self, IsTerminal as _};
 use std::path::Path;
 use std::process::ExitCode;
 
-use steamship::cli::{FAILED, REFUSED};
+use steamship::cli::{FAILED, LIMITED, REFUSED};
 use steamship::install;
 use steamship::login::{self, Ending, Person};
 use steamship::platform::Platform;
@@ -76,13 +76,18 @@ impl Person for Typist {
 
 /// `login` failed, for `reason`, and can be tried again.
 fn not_logged_in(reason: &str) -> ExitCode {
+    not_logged_in_with(reason, FAILED)
+}
+
+/// [`not_logged_in`], exiting with `code`.
+fn not_logged_in_with(reason: &str, code: u8) -> ExitCode {
     let again = Hint {
         before: "run ",
         command: "steamship login",
         after: " to try again",
     };
     show::failure("not logged in", reason, Some(again));
-    ExitCode::from(FAILED)
+    ExitCode::from(code)
 }
 
 pub(crate) fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
@@ -118,7 +123,12 @@ pub(crate) fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
         .map_err(|error| not_logged_in(&format!("{}: {error}", program.display())))?;
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     if let Ending::Refused(reason) = ending {
-        return Err(not_logged_in(&conversation::explain(&reason)));
+        let exit = if conversation::limited(&reason) {
+            LIMITED
+        } else {
+            FAILED
+        };
+        return Err(not_logged_in_with(&conversation::explain(&reason), exit));
     }
     if code != Some(0_i32) {
         let exited = code.map_or_else(

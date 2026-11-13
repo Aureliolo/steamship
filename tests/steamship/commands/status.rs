@@ -323,7 +323,7 @@ fn status_with_a_login_steam_limits_says_to_wait_and_gives_no_hint_to_log_in() {
         Some(home.path()),
         &[],
     );
-    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
     assert_eq!(
         failure(&stderr),
         "not logged in: Steam is limiting login attempts. Wait, then try again"
@@ -339,7 +339,7 @@ fn status_with_a_login_steam_limits_says_to_wait_and_gives_no_hint_to_log_in() {
 #[test]
 fn a_login_handed_over_that_steam_limits_says_to_wait_and_not_when_it_was_packed() {
     let home = answering(
-        "Logging in user 'build_bot' to Steam Public...FAILED (Rate Limit Exceeded)",
+        "Logging in user 'build_bot' to Steam Public...FAILED (Account Login Denied Throttle)",
         5,
     );
     let (code, stdout, stderr) = steamship(
@@ -350,7 +350,7 @@ fn a_login_handed_over_that_steam_limits_says_to_wait_and_not_when_it_was_packed
             ("STEAMSHIP_ACCOUNT", ""),
         ],
     );
-    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
     assert_eq!(
         failure(&stderr),
         "not logged in: Steam is limiting login attempts. Wait, then try again"

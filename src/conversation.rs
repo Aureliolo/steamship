@@ -128,15 +128,20 @@ pub fn refused_login(console: &str) -> Option<String> {
     })
 }
 
+/// Whether `reason` is Steam limiting login attempts, which a new login only deepens.
+#[must_use]
+pub fn limited(reason: &str) -> bool {
+    ["Account Login Denied Throttle", "Rate Limit Exceeded"]
+        .iter()
+        .any(|said| reason.eq_ignore_ascii_case(said))
+}
+
 /// A refused saved login in words for the person who must act on it, from the `reason`
 /// [`refused_login`] gave. Also whether logging in again is the advice: it is not when Steam is
 /// limiting attempts.
 #[must_use]
 pub fn saved_login_words(reason: &str) -> (String, bool) {
-    let limited = ["Account Login Denied Throttle", "Rate Limit Exceeded"]
-        .iter()
-        .any(|said| reason.eq_ignore_ascii_case(said));
-    if limited {
+    if limited(reason) {
         (
             "Steam is limiting login attempts. Wait, then try again".to_owned(),
             false,
@@ -368,6 +373,14 @@ mod tests {
             [Step::Refused("Invalid Password".to_owned())]
         );
         assert_eq!(refused_login(line), Some("Invalid Password".to_owned()));
+    }
+
+    #[test]
+    fn a_limit_is_told_from_a_refusal_in_any_case() {
+        assert!(limited("rate limit exceeded"));
+        assert!(limited("Account Login Denied Throttle"));
+        assert!(!limited("Invalid Password"));
+        assert!(!limited(""));
     }
 
     #[test]

@@ -147,7 +147,7 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
         &["--version", "1.4.0"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &other)],
     );
-    assert_eq!(refused, Some(1_i32), "{said}{why}");
+    assert_eq!(refused, Some(5_i32), "{said}{why}");
     assert!(
         said.contains("testing: BuildID 7, as Steam shows it"),
         "{said}"
@@ -328,7 +328,7 @@ fn an_upload_asked_for_default_too_with_no_key_once_steam_shows_the_app_released
 }
 
 #[test]
-fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_1() {
+fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_5() {
     let home = faked_with(&released_as("prerelease"));
     saved_login(home.path());
     let (_project, script) = project(true);
@@ -343,7 +343,7 @@ fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_1() {
         &["--version", "1.4.0", "--default", "--json"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
-    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     assert!(
         stdout.contains("\"default\":false")
             && stdout.contains("\"live\":true")
@@ -424,7 +424,7 @@ fn an_upload_to_an_app_with_no_branch_yet_goes_live_on_default_alone_and_says_ho
         &["--version", "1.4.0"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &alone)],
     );
-    assert_eq!(nowhere, Some(1_i32), "{said}{why}");
+    assert_eq!(nowhere, Some(5_i32), "{said}{why}");
     for line in [
         "app 1000: BuildID 4242 uploaded, but set live nowhere",
         "app 1000 has no branch but default until a build is live there, so steamcmd was not \
@@ -738,7 +738,7 @@ fn a_failed_upload_with_json_still_says_what_steam_kept() {
     let (_project, script) = project(true);
     let (code, stdout, stderr) =
         upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
-    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     let summary = summary_of(&stdout);
     for (field, expected) in [
         ("outcome", serde_json::json!("built-then-failed")),
@@ -754,7 +754,7 @@ fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_
     let home = faked_with(COMMIT_REFUSED);
     let (_project, script) = project(true);
     let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
-    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     for said in [
         "Failed to commit build for AppID 1000 : Failure",
         "the build is on Steam but not live: it is listed in Steamworks under SteamPipe, Builds",
@@ -783,7 +783,7 @@ fn a_build_steam_kept_but_set_live_nowhere_is_said_to_be_there_and_found_with_a_
         &["--version", "1.4.0"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
-    assert_eq!(keyed, Some(1_i32), "{keyed_out}{keyed_err}");
+    assert_eq!(keyed, Some(5_i32), "{keyed_out}{keyed_err}");
     for said in [
         "app 1000: built as BuildID 20000001, then steamcmd failed",
         "\"SetLive\" names \"testing\". Steam sets no build live on a branch the app does not have",
@@ -819,7 +819,7 @@ fn an_upload_built_then_failed_keeps_its_build_id_and_shows_steams_logs_in_actio
             ("GITHUB_OUTPUT", outputs.to_str().unwrap()),
         ],
     );
-    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     for said in [
         "app 1000: built as BuildID 777, then steamcmd failed",
         "Failed to set build live on branch testing",
@@ -943,7 +943,7 @@ fn a_failed_upload_outside_actions_shows_no_log_groups() {
     let home = faked_with(BUILT_THEN_FAILED);
     let (_project, script) = project(true);
     let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
-    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     assert!(
         stderr.contains("Failed to set build live on branch testing"),
         "{stdout}{stderr}"
@@ -1247,6 +1247,20 @@ fn an_upload_without_a_login_says_to_log_in_and_exits_3() {
     );
     assert_no_secret_in("stdout", stdout.as_bytes());
     assert_no_secret_in("stderr", stderr.as_bytes());
+}
+
+#[test]
+fn an_upload_steam_limits_exits_6_and_a_refused_login_3() {
+    let (_project, script) = project(true);
+    for (reason, expected) in [("Rate Limit Exceeded", 6_i32), ("Invalid Password", 3_i32)] {
+        let home = faked_with(&format!(
+            "#!/bin/sh\n\
+             echo \"Logging in user 'build_bot' [U:1:0] to Steam Public...FAILED ({reason})\"\n\
+             exit 5\n"
+        ));
+        let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+        assert_eq!(code, Some(expected), "{reason}: {stdout}{stderr}");
+    }
 }
 
 #[test]

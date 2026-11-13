@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use steamship::account::Account;
-use steamship::cli::{self, FAILED, REFUSED};
+use steamship::cli::{self, FAILED, REFUSED, UNFINISHED};
 use steamship::install;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
@@ -782,16 +782,17 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
             }
             show::note(&logs);
             hand_on(*build_id);
-            ExitCode::from(FAILED)
+            ExitCode::from(UNFINISHED)
         }
         upload::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
             for reason in reasons {
                 show::failure(reason, "", None);
             }
-            if let Some(why) = upload::commit_refused(reasons, prepared.set_live.as_deref()) {
+            let kept = upload::commit_refused(reasons, prepared.set_live.as_deref());
+            if let Some(why) = &kept {
                 show::note(upload::NOT_LIVE);
-                show::note(&why);
+                show::note(why);
                 show::hint(Hint {
                     before: "see the app's branches with ",
                     command: &format!("steamship builds {app}"),
@@ -799,7 +800,7 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
                 });
             }
             show::note(&logs);
-            ExitCode::from(FAILED)
+            ExitCode::from(if kept.is_some() { UNFINISHED } else { FAILED })
         }
     };
     (code, Live::default())
@@ -831,7 +832,7 @@ fn set_live(
             }),
         );
         show::note(logs);
-        return (ExitCode::from(FAILED), Live::default());
+        return (ExitCode::from(UNFINISHED), Live::default());
     }
     let mut live = Live {
         branch: branch.is_some(),
@@ -840,7 +841,7 @@ fn set_live(
     if let Some(api) = default {
         if !live_on_default(api, app, build_id, branch) {
             show::note(logs);
-            return (ExitCode::from(FAILED), live);
+            return (ExitCode::from(UNFINISHED), live);
         }
         live.default = true;
     }
@@ -887,7 +888,7 @@ fn first_on_default(
             after: "",
         });
         show::note(logs);
-        return (ExitCode::from(FAILED), Live::default());
+        return (ExitCode::from(UNFINISHED), Live::default());
     };
     let (code, live) = set_live(app, build_id, None, Some(api), logs);
     if live.default {
