@@ -303,10 +303,11 @@ fn upload_item(
     let after = Redactor::for_home(home);
     // The outcome is judged on the output as steamcmd wrote it, since redacting could turn an
     // account named `Success` into a different result.
+    let copied = workshop::published(&copy);
     let outcome = workshop::judge(
         finished.code,
         &String::from_utf8_lossy(&finished.output),
-        workshop::published(&copy),
+        copied,
     );
     let (redactor, written, log) = match after {
         Ok(after) => {
@@ -327,7 +328,6 @@ fn upload_item(
     let (code, unkept) = match outcome {
         workshop::Outcome::Published { published } => {
             spinner.done(&format!("uploaded in {took}"));
-            output("published-file-id", published, "the item's ID");
             let said = item_published(given, item, published, &log);
             // A new item's line has no room for the log, which matters most when it was not kept.
             if !written && item.published.is_none() {
@@ -337,10 +337,8 @@ fn upload_item(
         }
         workshop::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
-            (
-                login_refused(&redacted(redactor_in_use, &reason), packed),
-                false,
-            )
+            let refused = login_refused(&redacted(redactor_in_use, &reason), packed);
+            after_failure(given, item, copied, &log, refused)
         }
         workshop::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
@@ -361,10 +359,28 @@ fn upload_item(
                     redactor,
                 );
             }
-            (ExitCode::from(FAILED), false)
+            after_failure(given, item, copied, &log, ExitCode::from(FAILED))
         }
     };
     Ok((code, unkept))
+}
+
+/// The exit of a failed run of `item`, given as `given`, whose own exit is `code`. An ID in the
+/// copy steamcmd was given (`copied`) that the item lacked means Steam made the item, so it is
+/// kept or named all the same, and the exit is 5 when no file holds it.
+fn after_failure(
+    given: &Given<'_>,
+    item: &workshop::Item,
+    copied: Option<u64>,
+    log: &str,
+    code: ExitCode,
+) -> (ExitCode, bool) {
+    copied
+        .filter(|_| item.published.is_none())
+        .map_or((code, false), |published| {
+            let (_, unkept) = item_published(given, item, published, log);
+            (late(code, unkept), unkept)
+        })
 }
 
 /// Writes `console` at `saved`, and answers whether that worked with the `log` line that says
@@ -415,7 +431,7 @@ fn item_summary(
 }
 
 /// Says that `item`, given as `given`, is up as `published`, and keeps a new one's ID where it
-/// was given by its fields.
+/// was given by its fields. An item a failed run made is kept or named all the same.
 ///
 /// Returns whether the item's ID is in no file, which means a second run would make another item.
 fn item_published(
@@ -424,6 +440,7 @@ fn item_published(
     published: u64,
     log: &str,
 ) -> (ExitCode, bool) {
+    output("published-file-id", published, "the item's ID");
     let said = format!("app {}: Workshop item {published}", item.app_id);
     match (given, item.published) {
         (_, Some(_)) => show::success(&said, log),

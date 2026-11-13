@@ -159,7 +159,7 @@ fn a_workshop_upload_steam_will_not_log_in_for_exits_3() {
         "Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)",
         5,
     );
-    let (_temp, script) = workshop_item("");
+    let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
     let (code, stdout, stderr) = steamship(
         &["workshop", script.to_str().unwrap()],
         Some(home.path()),
@@ -340,6 +340,142 @@ fn an_item_made_whose_id_cannot_be_kept_says_what_to_keep_by_hand_and_exits_5() 
     assert_eq!(
         fs::read_to_string(&items).unwrap(),
         r#"{"app": 480, "items": {"hats": 5674}}"#
+    );
+}
+
+const DENIED: &str = "ERROR! Failed to update workshop item (Access Denied).";
+const REFUSED_LOGIN: &str =
+    "Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)";
+
+#[test]
+fn an_item_made_by_a_run_that_then_failed_is_kept_and_exits_1() {
+    let home = publishing(DENIED, 1);
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("Failed to update workshop item (Access Denied).")
+            && stdout.contains("Workshop item 777"),
+        "{stdout}{stderr}"
+    );
+    assert_eq!(
+        fs::read_to_string(&items).unwrap(),
+        "{\n  \"app\": 480,\n  \"items\": {\n    \"example\": 777\n  }\n}\n"
+    );
+}
+
+#[test]
+fn an_item_a_failed_run_made_from_a_script_exits_5_and_names_its_id() {
+    let home = publishing(DENIED, 1);
+    let (_temp, script) = workshop_item("");
+    let before = fs::read_to_string(&script).unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("Failed to update workshop item (Access Denied).")
+            && stdout.contains("Workshop item 777")
+            && stdout.contains("\"publishedfileid\" \"777\""),
+        "{stdout}{stderr}"
+    );
+    assert_eq!(fs::read_to_string(&script).unwrap(), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_item_a_failed_run_made_that_cannot_be_kept_exits_5() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let home = publishing(DENIED, 1);
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    fs::write(&items, r#"{"app": 480, "items": {"hats": 5674}}"#).unwrap();
+    fs::set_permissions(&items, fs::Permissions::from_mode(0o444)).unwrap();
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(stderr.contains("Workshop item 777 was made"), "{stderr}");
+}
+
+#[test]
+fn an_item_made_before_steam_refused_the_login_is_kept_and_exits_3() {
+    let home = publishing(REFUSED_LOGIN, 5);
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert!(
+        fs::read_to_string(&items).unwrap().contains("777"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn an_item_made_from_a_script_before_steam_refused_the_login_exits_5_and_names_its_id() {
+    let home = publishing(REFUSED_LOGIN, 5);
+    let (_temp, script) = workshop_item("");
+    let before = fs::read_to_string(&script).unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("not logged in")
+            && stdout.contains("Workshop item 777")
+            && stdout.contains("\"publishedfileid\" \"777\""),
+        "{stdout}{stderr}"
+    );
+    assert_eq!(fs::read_to_string(&script).unwrap(), before);
+}
+
+#[test]
+fn an_item_a_failed_run_made_in_actions_hands_its_id_to_the_workflow() {
+    let home = publishing(DENIED, 1);
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    let outputs = home.path().join("github_output");
+    fs::write(&outputs, "").unwrap();
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private", "--new"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(
+        &args,
+        Some(home.path()),
+        &[
+            ("GITHUB_ACTIONS", "true"),
+            ("GITHUB_OUTPUT", outputs.to_str().unwrap()),
+        ],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(
+        fs::read_to_string(&outputs).unwrap(),
+        "published-file-id=777\n"
     );
 }
 

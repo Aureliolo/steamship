@@ -296,7 +296,8 @@ released.
 A script with no `publishedfileid`, or `0`, makes a new item and needs a `previewfile`. Without
 one, Steam still makes the item, silently, with its grey default picture. steamship prints the new
 item's ID and the line to add to the script. With that line, later uploads update the same item.
-Your script is never rewritten.
+Your script is never rewritten. When the run fails after Steam made the item, steamship still
+prints its ID and the line to add, and exits 5.
 
 In CI, nobody adds that line. There a script with no `publishedfileid` is refused unless `--new`
 is given, since every run would make another item.
@@ -329,8 +330,9 @@ what it has.
 gives it. A name may not begin with `.` and holds only letters, digits, `-`, `_` and `.`.
 
 When the file has no item of that name, a new one is made. steamship writes its ID into the file
-and makes the file if it is missing. When the file has one, that item is updated. Commit the file.
-Then a run from any machine, CI among them, updates the items made before:
+and makes the file if it is missing. An item made by a run that then failed is kept there too. When
+the file has one, that item is updated. Commit the file. Then a run from any machine, CI among
+them, updates the items made before:
 
 ```json
 {
