@@ -1676,21 +1676,18 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Instant;
     use windows_sys::Win32::Foundation::E_INVALIDARG;
-    use windows_sys::Win32::Foundation::{GetHandleInformation, HWND, LPARAM};
+    use windows_sys::Win32::Foundation::GetHandleInformation;
     use windows_sys::Win32::Globalization::lstrlenW;
     use windows_sys::Win32::Security::{
         CreateWellKnownSid, INHERITED_ACE, SECURITY_MAX_SID_SIZE, WinLocalSystemSid,
     };
-    use windows_sys::Win32::System::StationsAndDesktops::EnumDesktopWindows;
     use windows_sys::Win32::System::StationsAndDesktops::{
-        CreateWindowStationW, SetProcessWindowStation,
+        CreateWindowStationW, GetThreadDesktop, SetProcessWindowStation,
     };
     use windows_sys::Win32::System::StationsAndDesktops::{DESKTOP_READOBJECTS, OpenDesktopW};
-    use windows_sys::Win32::System::Threading::GetProcessId;
+    use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowThreadProcessId, IsWindowVisible, WINSTA_ALL_ACCESS,
-    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::WINSTA_ALL_ACCESS;
 
     /// A library Windows installs with a signature of its own inside it, rather than in a
     /// catalogue, which is the kind steamcmd's files carry.
@@ -1810,64 +1807,95 @@ mod tests {
         read
     }
 
-    struct Search {
-        process: u32,
-        found: usize,
-    }
-
-    /// Counts `search`'s process's visible windows, one window per call.
-    unsafe extern "system" fn count(window: HWND, pointer: LPARAM) -> BOOL {
-        let place: *mut Search = ptr::with_exposed_provenance_mut(pointer.cast_unsigned());
-        // SAFETY: `search` is the one `visible_windows` exposed, which outlives the enumeration
-        // and is reached through nothing else meanwhile.
-        let search = unsafe { &mut *place };
-        let mut owner = 0_u32;
-        // SAFETY: `owner` is a valid place for the id. A window that has gone just leaves it 0.
-        let _: u32 = unsafe { GetWindowThreadProcessId(window, &raw mut owner) };
-        // SAFETY: any handle may be asked about. One that has gone is not visible.
-        if owner == search.process && unsafe { IsWindowVisible(window) } != 0_i32 {
-            search.found = search.found.saturating_add(1);
-        }
-        1_i32
-    }
-
-    /// How many visible windows the process `process` has on `desktop`, or on the caller's own
-    /// desktop when `desktop` is null.
-    fn visible_windows(desktop: HDESK, process: u32) -> usize {
-        let mut search = Search { process, found: 0 };
-        let pointer = (&raw mut search).expose_provenance().cast_signed();
-        // SAFETY: `count` matches the callback's signature and `pointer` leads to `search`,
-        // which outlives the call.
-        let _: BOOL = unsafe { EnumDesktopWindows(desktop, Some(count), pointer) };
-        search.found
+    /// The name of the window station or desktop behind `object`. It is read apart from
+    /// `station`, whose answer the test below holds it against.
+    fn name_of(object: HANDLE) -> String {
+        let mut needed = 0_u32;
+        // SAFETY: no buffer with a length of 0 asks for the size needed. The call then fails,
+        // which is expected.
+        let _: BOOL = unsafe {
+            GetUserObjectInformationW(object, UOI_NAME, ptr::null_mut(), 0, &raw mut needed)
+        };
+        let mut name = vec![0_u16; usize::try_from(needed).unwrap().div_ceil(2)];
+        // SAFETY: `name` holds at least `needed` bytes and outlives the call.
+        let read = unsafe {
+            GetUserObjectInformationW(
+                object,
+                UOI_NAME,
+                name.as_mut_ptr().cast(),
+                needed,
+                &raw mut needed,
+            )
+        };
+        assert_ne!(read, 0_i32, "{}", io::Error::last_os_error());
+        String::from_utf16_lossy(name.split(|&unit| unit == 0).next().unwrap())
     }
 
     #[test]
-    fn a_program_shows_its_window_only_on_a_desktop_nobody_sees() {
+    #[ignore = "a part of the test below, which runs it on a desktop made for it"]
+    fn the_station_and_desktop_this_process_runs_on() {
+        // SAFETY: takes no arguments. The handle belongs to the process and is never closed.
+        let station = unsafe { GetProcessWindowStation() };
+        // SAFETY: takes no arguments and touches no memory.
+        let id = unsafe { GetCurrentThreadId() };
+        // SAFETY: `id` names this thread. The handle is the thread's own and is never closed.
+        let desktop = unsafe { GetThreadDesktop(id) };
+        println!("runs on {}\\{}", name_of(station), name_of(desktop));
+    }
+
+    /// The program is this test binary, which says where it runs and makes no window. Windows
+    /// keeps a thread's windows on the desktop the thread runs on, so a program's windows are
+    /// where it says it is. A program with a window of its own would put it in front of whoever
+    /// is at the machine whenever a fault here left it off its desktop.
+    #[test]
+    fn a_program_runs_on_the_desktop_made_for_it() {
         let desktop = Desktop::create().unwrap();
         let job = Job::create().unwrap();
+        let (mut reader, writer) = io::pipe().unwrap();
         let input = File::open("NUL").unwrap();
-        let output = File::options().write(true).open("NUL").unwrap();
-        let winver = Path::new(&env::var_os("SystemRoot").unwrap()).join(r"System32\winver.exe");
         let process = spawn(
-            &winver,
-            &[],
+            &env::current_exe().unwrap(),
+            &[
+                "--exact",
+                "windows::tests::the_station_and_desktop_this_process_runs_on",
+                "--ignored",
+                "--nocapture",
+            ]
+            .map(OsString::from),
             None,
             &env::temp_dir(),
             &desktop,
             &job,
-            Streams::Handles([input.as_raw_handle(), output.as_raw_handle()]),
+            Streams::Handles([input.as_raw_handle(), writer.as_raw_handle()]),
         )
         .unwrap();
-        // SAFETY: the process handle is open for as long as `process`.
-        let id = unsafe { GetProcessId(process.0.as_raw_handle()) };
-        // Finding the window where it was put is what shows that the search would see it.
-        let shown = (0..400_u32).any(|_| {
-            thread::sleep(Duration::from_millis(50));
-            visible_windows(desktop.handle, id) > 0
+        // The program has its own copy. Holding this one would keep the output open after it ends.
+        drop(writer);
+        // A program that hangs fails the test rather than holding it up for good.
+        let (sender, receiver) = mpsc::channel();
+        let _reading = thread::spawn(move || {
+            let mut said = String::new();
+            drop(sender.send(io::Read::read_to_string(&mut reader, &mut said).map(|_| said)));
         });
-        assert!(shown, "winver never showed its window");
-        assert_eq!(visible_windows(ptr::null_mut(), id), 0);
+        let said = receiver
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the program never ended its output")
+            .unwrap();
+        let code = process.ended_within(Duration::from_secs(30)).unwrap();
+        let name = String::from_utf16_lossy(&desktop.name);
+        let place = format!("runs on {}\n", name.trim_end_matches('\0'));
+        // 0xC0000142 is STATUS_DLL_INIT_FAILED, which Windows gives a program that cannot start
+        // on the desktop it was sent to.
+        let cause = if code == Some(-0x3fff_febe_i32) {
+            ", the code of a program that could not start on its desktop"
+        } else {
+            ""
+        };
+        assert!(
+            !said.is_empty(),
+            "the program printed nothing on {name:?} (exit code {code:?}{cause})"
+        );
+        assert!(said.contains(&place), "no {place:?} in:\n{said}");
     }
 
     /// A process that runs for a minute on a desktop of its own, inside a job.

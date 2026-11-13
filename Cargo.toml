@@ -88,7 +88,7 @@ tempfile = "3.27.0"
 
 [target.'cfg(windows)'.dev-dependencies]
 # Windows' own argument parser, which the tests hold the command line steamship writes against,
-# and its window list, which they search for anything a program run out of sight has shown.
+# and the rights they ask for on a window station of their own.
 windows-sys = { version = "0.61.2", features = [
   "Win32_Globalization",
   "Win32_UI_Shell",
