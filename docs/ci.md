@@ -72,7 +72,7 @@ A Workshop item goes up the same way, with its `workshopitem` script in place of
     login: ${{ secrets.STEAMSHIP_LOGIN }}
 ```
 
-The item's ID is its `published-file-id` output. A script with no `publishedfileid` is refused
+The item's ID is its `item-id` output. A script with no `publishedfileid` is refused
 there, since every run would make another item. Make the item once and add its ID to the script.
 Or set `new-item: true` for the one run that makes it.
 

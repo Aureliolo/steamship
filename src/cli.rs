@@ -106,7 +106,7 @@ pub const VARIABLES: [(&str, &str); 14] = [
     ),
     (
         "GITHUB_OUTPUT",
-        "In GitHub Actions, the file steamship writes the build ID to, as a step output",
+        "In GitHub Actions, the file steamship writes the build ID or the item's ID to, as a step output",
     ),
     (
         "HOME",
@@ -785,8 +785,8 @@ pub struct Upload {
     #[arg(long, env = ACCOUNT)]
     pub account: Option<String>,
     /// Once steamcmd has run, print what came of it on standard output as one line of JSON:
-    /// `outcome`, `app`, `build_id`, `branch`, `live`, `default` and `description`. Everything
-    /// else goes to standard error.
+    /// `outcome`, `app`, `build_id`, `branch`, `live`, `default`, `description` and, when the run
+    /// failed, `error` with a `code` and a `message`. Everything else goes to standard error.
     #[arg(long)]
     pub json: bool,
     /// Upload a commit that is not on the game's `green` branch, such as a hotfix.
@@ -908,8 +908,9 @@ pub struct Workshop {
     /// Check each item and upload nothing.
     #[arg(long)]
     pub dry_run: bool,
-    /// Print what came of each item on standard output as one line of JSON: `outcome`, `app`,
-    /// `item`, `name` and `log`. Everything else goes to standard error.
+    /// Once steamcmd has run, print what came of the run on standard output as one line of JSON:
+    /// `app`, `items` (each with `name`, `item_id`, `outcome` and `log`) and, when the run failed,
+    /// `error` with a `code` and a `message`. Everything else goes to standard error.
     #[arg(long)]
     pub json: bool,
 }

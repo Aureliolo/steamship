@@ -115,6 +115,13 @@ fn build_line(build: &Build, branches: &[Branch]) -> String {
     parts.join(", ")
 }
 
+/// The `error` of a failed run's `--json` line: a `code` word and the `message` a person would
+/// read.
+#[must_use]
+pub fn failure_json(code: &str, message: &str) -> Value {
+    json!({ "code": code, "message": message })
+}
+
 /// What `--json` prints when Steam did not answer about `app`: the code from
 /// [`webapi::Error::code`], or `no-build-live` when `why` says that is the reason, and the
 /// message a person would read.
@@ -124,7 +131,7 @@ pub fn error_json(app: u32, error: &webapi::Error, why: Option<&str>) -> Value {
         || (error.code(), error.to_string()),
         |why| ("no-build-live", format!("{error}: {why}")),
     );
-    json!({ "app": app, "error": { "code": code, "message": message } })
+    json!({ "app": app, "error": failure_json(code, &message) })
 }
 
 #[cfg(test)]
@@ -285,5 +292,26 @@ mod tests {
                 "message": "Steam answered HTTP 500: none live",
             }})
         );
+    }
+
+    #[test]
+    fn every_error_is_a_code_and_a_message() {
+        let errors = [
+            webapi::Error::NotAKey,
+            webapi::Error::Refused,
+            webapi::Error::Status(500, String::new()),
+            webapi::Error::Unreadable("the build list"),
+            webapi::Error::Failed("no".to_owned()),
+        ];
+        let mut lines = vec![failure_json("x", "y")];
+        for error in &errors {
+            lines.push(error_json(480, error, None)["error"].clone());
+            lines.push(error_json(480, error, Some("none live"))["error"].clone());
+        }
+        for line in lines {
+            let mut keys: Vec<&String> = line.as_object().unwrap().keys().collect();
+            keys.sort();
+            assert_eq!(keys, ["code", "message"], "{line}");
+        }
     }
 }

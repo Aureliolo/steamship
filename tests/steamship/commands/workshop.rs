@@ -127,10 +127,7 @@ fn a_new_workshop_item_asked_for_in_actions_hands_its_id_to_the_workflow() {
         ],
     );
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
-    assert_eq!(
-        fs::read_to_string(&outputs).unwrap(),
-        "published-file-id=777\n"
-    );
+    assert_eq!(fs::read_to_string(&outputs).unwrap(), "item-id=777\n");
 }
 
 #[test]
@@ -333,10 +330,12 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci
             "{}\n",
             serde_json::json!({
                 "app": 480_u32,
-                "item": 777_u64,
-                "log": log.to_str().unwrap(),
-                "name": "example",
-                "outcome": outcome,
+                "items": [{
+                    "item_id": 777_u64,
+                    "log": log.to_str().unwrap(),
+                    "name": "example",
+                    "outcome": outcome,
+                }],
             })
         )
     };
@@ -562,10 +561,13 @@ fn an_item_a_failed_run_made_in_actions_hands_its_id_to_the_workflow() {
         ],
     );
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
-    assert_eq!(
-        fs::read_to_string(&outputs).unwrap(),
-        "published-file-id=777\n"
-    );
+    assert_eq!(fs::read_to_string(&outputs).unwrap(), "item-id=777\n");
+}
+
+/// The one line of JSON `stdout` is, parsed.
+fn one_line(stdout: &str) -> serde_json::Value {
+    assert_eq!(stdout.trim_end().lines().count(), 1, "{stdout}");
+    serde_json::from_str(stdout.trim()).unwrap()
 }
 
 #[test]
@@ -578,9 +580,112 @@ fn an_item_a_failed_run_made_from_a_script_is_named_in_the_json() {
         &[],
     );
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
-    let summary: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
-    assert_eq!(summary.get("outcome"), Some(&serde_json::json!("failed")));
-    assert_eq!(summary.get("item"), Some(&serde_json::json!(777_u64)));
+    let line = one_line(&stdout);
+    assert_eq!(line.pointer("/items/0/outcome"), Some(&"made".into()));
+    assert_eq!(line.pointer("/items/0/item_id"), Some(&777_u64.into()));
+    assert_eq!(line.pointer("/error/code"), Some(&"unfinished".into()));
+    let message = line.pointer("/error/message").unwrap().as_str().unwrap();
+    assert!(
+        message.starts_with(&format!(
+            "Steam holds Workshop item 777 of app 480, which {} does not name",
+            script.display()
+        )) && message.contains("Failed to update workshop item (Access Denied)."),
+        "{message}"
+    );
+}
+
+#[test]
+fn an_item_made_by_a_run_that_then_failed_is_made_in_the_json() {
+    let home = publishing(DENIED, 1);
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private", "--json"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let line = one_line(&stdout);
+    assert_eq!(line.pointer("/items/0/outcome"), Some(&"made".into()));
+    assert_eq!(line.pointer("/items/0/item_id"), Some(&777_u64.into()));
+    assert_eq!(line.pointer("/error/code"), Some(&"steamcmd-failed".into()));
+    assert!(
+        line.pointer("/error/message")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("Failed to update workshop item (Access Denied)."),
+        "{line}"
+    );
+}
+
+#[test]
+fn an_item_made_from_a_script_before_steamcmd_altered_itself_says_so_as_json() {
+    let home = publishing_then("echo >> \"$0\"");
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap(), "--json"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    let line = one_line(&stdout);
+    assert_eq!(line.pointer("/items/0/outcome"), Some(&"made".into()));
+    assert_eq!(line.pointer("/items/0/item_id"), Some(&777_u64.into()));
+    assert_eq!(line.pointer("/error/code"), Some(&"unfinished".into()));
+    let message = line.pointer("/error/message").unwrap().as_str().unwrap();
+    assert!(
+        message.starts_with("Steam holds Workshop item 777 of app 480, which")
+            && message.contains(&script.display().to_string())
+            && message.contains("no longer the pinned one"),
+        "{message}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_item_made_and_not_kept_says_so_as_json() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let home = publishing("Success.", 0);
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    fs::write(&items, r#"{"app": 480, "items": {"hats": 5674}}"#).unwrap();
+    fs::set_permissions(&items, fs::Permissions::from_mode(0o444)).unwrap();
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private", "--json"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    let line = one_line(&stdout);
+    assert_eq!(line.pointer("/items/0/outcome"), Some(&"made".into()));
+    assert_eq!(line.pointer("/items/0/item_id"), Some(&777_u64.into()));
+    assert_eq!(line.pointer("/error/code"), Some(&"unfinished".into()));
+    let message = line.pointer("/error/message").unwrap().as_str().unwrap();
+    assert!(
+        message.starts_with("Steam holds Workshop item 777 of app 480, which")
+            && message.contains(&items.display().to_string()),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_refused_item_prints_no_json() {
+    let home = publishing("Success.", 0);
+    let (_temp, script) = workshop_item("");
+    fs::remove_dir_all(script.parent().unwrap().join("hat")).unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap(), "--json"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(stdout, "");
 }
 
 #[test]
@@ -1270,8 +1375,69 @@ fn a_dry_run_prints_its_outcome_as_json() {
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     assert_eq!(
         stdout,
-        "{\"app\":480,\"item\":5674,\"log\":null,\"name\":null,\"outcome\":\"dry-run\"}\n"
+        "{\"app\":480,\"items\":[{\"item_id\":5674,\"log\":null,\"name\":null,\"outcome\":\"dry-run\"}]}\n"
     );
+}
+
+#[test]
+fn two_mods_are_one_line_of_json() {
+    let (_temp, root) = two_mods(None, None);
+    let home = publishing("Success.", 0);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--visibility", "private", "--json"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let line = one_line(&stdout);
+    let names: Vec<&str> = line["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["example", "fresh"], "{line}");
+    assert!(line.get("error").is_none(), "{line}");
+}
+
+#[test]
+fn a_second_mod_steam_fails_is_the_last_item_and_the_lines_error() {
+    let (_temp, root) = two_mods(None, None);
+    let third = root.join("modding").join("third");
+    fs::create_dir_all(&third).unwrap();
+    fs::write(
+        third.join("manifest.json"),
+        r#"{"name": "Third Harbour", "version": "1.0.0", "description": "A third mod."}"#,
+    )
+    .unwrap();
+    fs::write(third.join("preview.png"), icon_png(256, 40)).unwrap();
+    pushed(&root, "A third example mod");
+    let home = faked_with(
+        "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
+         if [ -e \"$HOME/second\" ]; then\n\
+           printf '%s\\r\\n' 'ERROR! Failed to update workshop item (Access Denied).'\n\
+           exit 1\n\
+         fi\n\
+         touch \"$HOME/second\"\n\
+         printf '\"workshopitem\"\\n{\\n\"appid\" \"480\"\\n\"publishedfileid\" \"777\"\\n}\\n' > \"$script\"\n\
+         printf '%s\\r\\n' 'Success.'\n",
+    );
+    saved_login(home.path());
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--visibility", "private", "--json"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let line = one_line(&stdout);
+    let items = line["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2, "{line}");
+    assert_eq!(items[0]["outcome"], "made", "{line}");
+    assert_eq!(items[1]["outcome"], serde_json::Value::Null, "{line}");
+    assert_eq!(line.pointer("/error/code"), Some(&"steamcmd-failed".into()));
 }
 
 #[test]
