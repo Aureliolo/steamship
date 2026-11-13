@@ -38,9 +38,11 @@ use windows_sys::Win32::Security::Credentials::{
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAceEx, CONTAINER_INHERIT_ACE,
-    DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid, GetSecurityDescriptorControl,
-    GetTokenInformation, InitializeAcl, OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION,
-    PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetLengthSid,
+    GetSecurityDescriptorControl, GetTokenInformation, InitializeAcl, InitializeSecurityDescriptor,
+    OBJECT_INHERIT_ACE, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    SE_DACL_PROTECTED, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_MAX_SID_SIZE,
+    SetSecurityDescriptorDacl, TOKEN_QUERY, TOKEN_USER, TokenUser, WinLocalSystemSid,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     FILE_ALL_ACCESS, FILE_BASIC_INFO, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
@@ -65,10 +67,12 @@ use windows_sys::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
 use windows_sys::Win32::System::StationsAndDesktops::{
-    CloseDesktop, CreateDesktopW, GetProcessWindowStation, GetUserObjectInformationW, HDESK,
-    UOI_NAME,
+    CloseDesktop, CreateDesktopW, CreateWindowStationW, GetProcessWindowStation,
+    GetUserObjectInformationW, HDESK, HWINSTA, SetProcessWindowStation, UOI_NAME,
 };
-use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
+use windows_sys::Win32::System::SystemServices::{
+    ACCESS_ALLOWED_ACE_TYPE, SECURITY_DESCRIPTOR_REVISION,
+};
 use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
     DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
@@ -78,6 +82,7 @@ use windows_sys::Win32::System::Threading::{
     STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, SetProcessAffinityMask, TerminateProcess,
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
+use windows_sys::Win32::UI::WindowsAndMessaging::WINSTA_ALL_ACCESS;
 use zeroize::{Zeroize as _, Zeroizing};
 
 use crate::keychain;
@@ -283,21 +288,158 @@ const CREATION: PROCESS_CREATION_FLAGS =
 /// in place of the pseudo console, and nothing it wrote would arrive.
 const PIPED: PROCESS_CREATION_FLAGS = CREATION | CREATE_NO_WINDOW;
 
-/// The desktop a program runs on. Nobody switches to it, so nothing on it is ever seen, and
-/// Windows keeps the keyboard focus from crossing from one desktop to another.
+/// The desktop a program runs on. It is made on a station without input or display, so nothing
+/// on it is ever seen, and Windows keeps the keyboard focus from crossing from one station to
+/// another.
+///
+/// A desktop made on `WinSta0` would cost an entry in the Desktop Window Manager's table that
+/// outlives the desktop, and every run would add one until the whole screen stalls. The Desktop
+/// Window Manager keeps nothing for a desktop on a station without display.
 ///
 /// Its name carries the station it is on. In the session of whoever is signed in, Windows looks a
-/// desktop named alone up on `WinSta0`, whatever station it was made on.
+/// desktop named alone up on `WinSta0`.
 #[derive(Debug)]
 struct Desktop {
     handle: HDESK,
     name: Vec<u16>,
 }
 
-/// The name of the window station this process is on, which goes in front of a desktop's name.
-fn station() -> io::Result<Vec<u16>> {
-    // SAFETY: takes no arguments. The handle belongs to the process and is never closed.
-    let station = unsafe { GetProcessWindowStation() };
+/// The station without input that every desktop is made on, with its name.
+///
+/// Windows lets a user make only an unnamed station, which is the one the logon session keeps
+/// for programs without input. So every steamship running under one logon shares it. It is
+/// opened once and held for as long as the process runs, which keeps it from going away between
+/// runs.
+///
+/// Windows lets everyone open this station and gives a desktop made on it with default security
+/// to everyone too. So each desktop gets `access` instead. The station on its own gives no way to
+/// reach a desktop's windows, hook its input or start a program on it, which all take rights on
+/// the desktop.
+#[derive(Debug)]
+struct Station {
+    handle: HWINSTA,
+    name: Vec<u16>,
+    /// The access list every desktop is made with: the user and the system, nobody else. The
+    /// user's SID rather than the logon's, since the user owns the desktop and an owner can
+    /// rewrite its access list whatever it says.
+    access: Vec<u32>,
+}
+
+// SAFETY: the handle is the process's, valid on any thread, and never closed. Every use of it goes
+// through `STATION`'s lock.
+unsafe impl Send for Station {}
+
+/// Moves the process back onto the station it was on when dropped, so that nothing, a panic
+/// included, leaves it on another.
+struct Back(HWINSTA);
+
+impl Drop for Back {
+    fn drop(&mut self) {
+        // SAFETY: the handle is the station the process was on before, which the process holds
+        // open and never closes.
+        let _: BOOL = unsafe { SetProcessWindowStation(self.0) };
+    }
+}
+
+/// The station, once opened. Its lock is also held for as long as the process is moved onto the
+/// station, since the move holds for every thread in the process.
+static STATION: Mutex<Option<Station>> = Mutex::new(None);
+
+impl Station {
+    fn open() -> io::Result<Self> {
+        // SAFETY: a null name and null security make or open the logon session's station
+        // without input, with default security.
+        let handle = unsafe {
+            CreateWindowStationW(
+                ptr::null(),
+                0,
+                WINSTA_ALL_ACCESS.cast_unsigned(),
+                ptr::null(),
+            )
+        };
+        if handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        let user = User::current()?;
+        let mut system = system_sid()?;
+        Ok(Self {
+            handle,
+            name: station_name(handle)?,
+            access: list_allowing(&[user.sid(), system.as_mut_ptr().cast()], 0, GENERIC_ALL)?,
+        })
+    }
+
+    /// Makes the desktop `bare` with `access` as its whole access list. The process must be on
+    /// the station.
+    fn make(&self, bare: &[u16]) -> io::Result<HDESK> {
+        let mut descriptor = SECURITY_DESCRIPTOR::default();
+        let pointer: PSECURITY_DESCRIPTOR = (&raw mut descriptor).cast();
+        // SAFETY: `descriptor` is a SECURITY_DESCRIPTOR that outlives every call here.
+        let ready = unsafe { InitializeSecurityDescriptor(pointer, SECURITY_DESCRIPTOR_REVISION) }
+            != 0_i32
+            // SAFETY: `access` is a complete access list that outlives the desktop's making.
+            // The station's inheritable entries stay out of a list given at the making.
+            && unsafe { SetSecurityDescriptorDacl(pointer, 1_i32, self.access.as_ptr().cast(), 0_i32) }
+                != 0_i32;
+        if !ready {
+            return Err(io::Error::last_os_error());
+        }
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of_u32::<SECURITY_ATTRIBUTES>(),
+            lpSecurityDescriptor: pointer,
+            bInheritHandle: 0_i32,
+        };
+        // SAFETY: `bare` is NUL-terminated and, like `attributes` and what it points to,
+        // outlives the call. Null for the device and mode means the default display settings.
+        let handle = unsafe {
+            CreateDesktopW(
+                bare.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                0,
+                GENERIC_ALL,
+                &raw const attributes,
+            )
+        };
+        if handle.is_null() {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(handle)
+        }
+    }
+
+    /// Does `work` with the process moved onto the station, which is where `CreateDesktopW` and
+    /// `OpenDesktopW` look. A thread stays on the desktop it already runs on.
+    fn holding<T>(&self, work: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+        // SAFETY: takes no arguments. The handle belongs to the process and is never closed.
+        let own = unsafe { GetProcessWindowStation() };
+        if own.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the station's handle is open for as long as the process runs.
+        if unsafe { SetProcessWindowStation(self.handle) } == 0_i32 {
+            return Err(io::Error::last_os_error());
+        }
+        let _back = Back(own);
+        work()
+    }
+}
+
+/// Does `work` on the station, opened first if it is not yet.
+fn on_station<T>(work: impl FnOnce(&Station) -> io::Result<T>) -> io::Result<T> {
+    let mut held = STATION.lock().unwrap_or_else(PoisonError::into_inner);
+    let station = match &mut *held {
+        Some(station) => station,
+        None => held.insert(Station::open()?),
+    };
+    let done = station.holding(|| work(station));
+    // Let go only once the process is back on its own station.
+    drop(held);
+    done
+}
+
+/// The name of a window station, which goes in front of a desktop's name.
+fn station_name(station: HWINSTA) -> io::Result<Vec<u16>> {
     let mut needed = 0_u32;
     // SAFETY: no buffer with a length of 0 is how the needed size is asked for. The call then
     // fails with ERROR_INSUFFICIENT_BUFFER, which is expected.
@@ -329,29 +471,15 @@ fn station() -> io::Result<Vec<u16>> {
 
 impl Desktop {
     fn create() -> io::Result<Self> {
-        let station = station()?;
         let number = DESKTOPS.fetch_add(1, Ordering::Relaxed);
         let bare = wide(OsStr::new(&format!("steamship-{}-{number}", process::id())));
-        // SAFETY: `bare` is NUL-terminated and outlives the call. Null for the other arguments
-        // means the default display settings and security.
-        let handle = unsafe {
-            CreateDesktopW(
-                bare.as_ptr(),
-                ptr::null(),
-                ptr::null(),
-                0,
-                GENERIC_ALL,
-                ptr::null(),
-            )
-        };
-        if handle.is_null() {
-            Err(io::Error::last_os_error())
-        } else {
-            let mut name = station;
+        on_station(|station| {
+            let handle = station.make(&bare)?;
+            let mut name = station.name.clone();
             name.push(0x5C);
             name.extend_from_slice(&bare);
             Ok(Self { handle, name })
-        }
+        })
     }
 }
 
@@ -1249,7 +1377,7 @@ pub fn create_private(path: &Path) -> io::Result<File> {
         .share_mode(0)
         .open(path)?;
     let user = User::current()?;
-    let list = list_allowing(&[user.sid()], 0)?;
+    let list = list_allowing(&[user.sid()], 0, FILE_ALL_ACCESS)?;
     // SAFETY: the handle is open with WRITE_DAC, and `list` is a complete list. The owner, the
     // group and the audit list are left as they are.
     let status = unsafe {
@@ -1270,7 +1398,11 @@ pub fn create_private(path: &Path) -> io::Result<File> {
 /// Gives the file or folder `name` permissions of its own, not inherited from above: one entry
 /// for each of `sids`, which allows everything and is passed down to all a folder holds.
 fn allow_alone(name: &[u16], sids: &[PSID]) -> io::Result<()> {
-    let list = list_allowing(sids, OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)?;
+    let list = list_allowing(
+        sids,
+        OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE,
+        FILE_ALL_ACCESS,
+    )?;
     // SAFETY: `name` is NUL-terminated and `list` is a complete list. The owner, the group and
     // the audit list are left as they are.
     let status = unsafe {
@@ -1287,9 +1419,29 @@ fn allow_alone(name: &[u16], sids: &[PSID]) -> io::Result<()> {
     win32(status)
 }
 
-/// An access list with one entry for each of `sids`, allowing everything, with `flags`. It is held in
-/// words so that it is aligned as an ACL must be.
-fn list_allowing(sids: &[PSID], flags: u32) -> io::Result<Vec<u32>> {
+/// The local system's SID, held in words so that it is aligned as a SID must be.
+fn system_sid() -> io::Result<Vec<u32>> {
+    let mut sid =
+        vec![0_u32; usize::try_from(SECURITY_MAX_SID_SIZE.div_ceil(4)).map_err(io::Error::other)?];
+    let mut size = SECURITY_MAX_SID_SIZE;
+    // SAFETY: `sid` holds `size` bytes, aligned as a SID must be.
+    if unsafe {
+        CreateWellKnownSid(
+            WinLocalSystemSid,
+            ptr::null_mut(),
+            sid.as_mut_ptr().cast(),
+            &raw mut size,
+        )
+    } == 0_i32
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(sid)
+}
+
+/// An access list with one entry for each of `sids`, allowing `access`, with `flags`. It is held
+/// in words so that it is aligned as an ACL must be.
+fn list_allowing(sids: &[PSID], flags: u32, access: u32) -> io::Result<Vec<u32>> {
     // An entry's size counts its SID in place of the SidStart field that marks where it begins.
     let entry = size_of_u32::<ACCESS_ALLOWED_ACE>().saturating_sub(size_of_u32::<u32>());
     let size = sids.iter().fold(size_of_u32::<ACL>(), |size, &sid| {
@@ -1305,8 +1457,7 @@ fn list_allowing(sids: &[PSID], flags: u32) -> io::Result<Vec<u32>> {
     }
     for &sid in sids {
         // SAFETY: the list was sized for exactly these entries, and each SID is copied into it.
-        if unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION, flags, FILE_ALL_ACCESS, sid) } == 0_i32
-        {
+        if unsafe { AddAccessAllowedAceEx(acl, ACL_REVISION, flags, access, sid) } == 0_i32 {
             return Err(io::Error::last_os_error());
         }
     }
@@ -1375,7 +1526,7 @@ impl User {
     }
 }
 
-/// A file or folder's permissions as Windows reports them.
+/// An object's permissions as Windows reports them.
 struct Security {
     /// Freed with `LocalFree`; `acl` points into it.
     descriptor: PSECURITY_DESCRIPTOR,
@@ -1423,6 +1574,11 @@ impl Security {
 
     /// Each entry's type, flags and access, and whether it is for `user`.
     fn entries(&self, user: &User) -> Vec<(u32, u32, u32, bool)> {
+        self.entries_for(user.sid())
+    }
+
+    /// Each entry's type, flags and access, and whether it is for `whom`.
+    fn entries_for(&self, whom: PSID) -> Vec<(u32, u32, u32, bool)> {
         let Some(acl) = self.acl else {
             return Vec::new();
         };
@@ -1450,7 +1606,7 @@ impl Security {
                     // SAFETY: an access-allowed entry holds its SID from SidStart on.
                     let sid = unsafe { &raw const (*entry.as_ptr()).SidStart };
                     // SAFETY: both SIDs are valid for the length of the call.
-                    let equal = unsafe { EqualSid(sid.cast_mut().cast(), user.sid()) };
+                    let equal = unsafe { EqualSid(sid.cast_mut().cast(), whom) };
                     equal != 0_i32
                 };
                 Some((kind, u32::from(header.AceFlags), mask, mine))
@@ -1678,16 +1834,20 @@ mod tests {
     use windows_sys::Win32::Foundation::E_INVALIDARG;
     use windows_sys::Win32::Foundation::GetHandleInformation;
     use windows_sys::Win32::Globalization::lstrlenW;
+    use windows_sys::Win32::Security::Authorization::{GetSecurityInfo, SE_WINDOW_OBJECT};
     use windows_sys::Win32::Security::{
-        CreateWellKnownSid, INHERITED_ACE, SECURITY_MAX_SID_SIZE, WinLocalSystemSid,
+        CreateRestrictedToken, INHERITED_ACE, ImpersonateLoggedOnUser, RevertToSelf,
+        SID_AND_ATTRIBUTES, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE, TOKEN_GROUPS, TOKEN_IMPERSONATE,
+        TokenGroups,
     };
     use windows_sys::Win32::System::StationsAndDesktops::{
-        CreateWindowStationW, GetThreadDesktop, SetProcessWindowStation,
+        DESKTOP_HOOKCONTROL, DESKTOP_READOBJECTS, GetThreadDesktop, OpenDesktopW, UOI_FLAGS,
+        USEROBJECTFLAGS,
     };
-    use windows_sys::Win32::System::StationsAndDesktops::{DESKTOP_READOBJECTS, OpenDesktopW};
+    use windows_sys::Win32::System::SystemServices::SE_GROUP_LOGON_ID;
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::WINSTA_ALL_ACCESS;
+    use windows_sys::Win32::UI::WindowsAndMessaging::WSF_VISIBLE;
 
     /// A library Windows installs with a signature of its own inside it, rather than in a
     /// catalogue, which is the kind steamcmd's files carry.
@@ -1808,7 +1968,7 @@ mod tests {
     }
 
     /// The name of the window station or desktop behind `object`. It is read apart from
-    /// `station`, whose answer the test below holds it against.
+    /// `station_name`, whose answer the test below holds it against.
     fn name_of(object: HANDLE) -> String {
         let mut needed = 0_u32;
         // SAFETY: no buffer with a length of 0 asks for the size needed. The call then fails,
@@ -1961,16 +2121,229 @@ mod tests {
         );
     }
 
-    /// Whether a desktop called `name` exists.
+    /// Whether a desktop called `name` exists on the station desktops are made on.
     fn desktop_exists(name: &[u16]) -> bool {
-        // SAFETY: `name` is NUL-terminated and outlives the call.
-        let handle = unsafe { OpenDesktopW(name.as_ptr(), 0, 0, DESKTOP_READOBJECTS) };
-        if handle.is_null() {
-            return false;
-        }
-        // SAFETY: the handle was just opened, and is closed once, here.
-        let _: BOOL = unsafe { CloseDesktop(handle) };
-        true
+        on_station(|_| {
+            // SAFETY: `name` is NUL-terminated and outlives the call.
+            let handle = unsafe { OpenDesktopW(name.as_ptr(), 0, 0, DESKTOP_READOBJECTS) };
+            if handle.is_null() {
+                return Ok(false);
+            }
+            // SAFETY: the handle was just opened, and is closed once, here.
+            let _: BOOL = unsafe { CloseDesktop(handle) };
+            Ok(true)
+        })
+        .unwrap()
+    }
+
+    /// The Desktop Window Manager keeps an entry for every desktop ever made on a station with a
+    /// display, and the screen stalls once there are thousands.
+    #[test]
+    fn a_desktop_is_made_on_a_station_with_no_display() {
+        let desktop = Desktop::create().unwrap();
+        let name = String::from_utf16_lossy(&desktop.name);
+        assert!(!name.starts_with("WinSta0\\"), "{name:?}");
+        let flags = on_station(|station| {
+            let mut flags = USEROBJECTFLAGS::default();
+            // SAFETY: `flags` is as large as the size passed and outlives the call.
+            let read = unsafe {
+                GetUserObjectInformationW(
+                    station.handle,
+                    UOI_FLAGS,
+                    (&raw mut flags).cast(),
+                    size_of_u32::<USEROBJECTFLAGS>(),
+                    ptr::null_mut(),
+                )
+            };
+            if read == 0_i32 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(flags.dwFlags)
+        })
+        .unwrap();
+        assert_eq!(flags & WSF_VISIBLE.cast_unsigned(), 0, "{name:?}");
+    }
+
+    /// This process's token with the user's and the logon's SIDs left only to deny, which
+    /// stands for a program another account runs in the same session.
+    fn another_account() -> OwnedHandle {
+        let mut token: HANDLE = ptr::null_mut();
+        // SAFETY: returns a pseudo handle for this process, which needs no closing.
+        let process = unsafe { GetCurrentProcess() };
+        // SAFETY: `token` is a valid place for the new handle.
+        let opened = unsafe {
+            OpenProcessToken(
+                process,
+                TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_IMPERSONATE | TOKEN_ASSIGN_PRIMARY,
+                &raw mut token,
+            )
+        };
+        assert_ne!(opened, 0_i32, "{}", io::Error::last_os_error());
+        // SAFETY: the handle is new and owned by nobody else.
+        let token = unsafe { OwnedHandle::from_raw_handle(token) };
+        let mut size = 0_u32;
+        // SAFETY: no buffer with a size of 0 asks for the size needed. The call then fails,
+        // which is expected.
+        let _: BOOL = unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                TokenGroups,
+                ptr::null_mut(),
+                0,
+                &raw mut size,
+            )
+        };
+        let mut storage =
+            vec![0_usize; usize::try_from(size).unwrap().div_ceil(size_of::<usize>())];
+        // SAFETY: `storage` holds at least `size` bytes, aligned for a TOKEN_GROUPS.
+        let read = unsafe {
+            GetTokenInformation(
+                token.as_raw_handle(),
+                TokenGroups,
+                storage.as_mut_ptr().cast(),
+                size,
+                &raw mut size,
+            )
+        };
+        assert_ne!(read, 0_i32, "{}", io::Error::last_os_error());
+        let start: *const TOKEN_GROUPS = storage.as_ptr().cast();
+        // SAFETY: GetTokenInformation wrote a TOKEN_GROUPS at the start of `storage`.
+        let written = unsafe { &*start };
+        let count = usize::try_from(written.GroupCount).unwrap();
+        // SAFETY: the array GetTokenInformation wrote holds `GroupCount` entries, inside
+        // `storage`.
+        let groups = unsafe { slice::from_raw_parts(written.Groups.as_ptr(), count) };
+        let logon = SE_GROUP_LOGON_ID.cast_unsigned();
+        let logon = groups
+            .iter()
+            .find(|group| group.Attributes & logon == logon)
+            .expect("a token with no logon SID");
+        let user = User::current().unwrap();
+        let denied = [
+            SID_AND_ATTRIBUTES {
+                Sid: user.sid(),
+                Attributes: 0,
+            },
+            SID_AND_ATTRIBUTES {
+                Sid: logon.Sid,
+                Attributes: 0,
+            },
+        ];
+        let mut restricted: HANDLE = ptr::null_mut();
+        // SAFETY: `denied` holds the 2 entries counted, whose SIDs outlive the call, and
+        // `restricted` is a valid place for the new handle.
+        let made = unsafe {
+            CreateRestrictedToken(
+                token.as_raw_handle(),
+                0,
+                2,
+                denied.as_ptr(),
+                0,
+                ptr::null(),
+                0,
+                ptr::null(),
+                &raw mut restricted,
+            )
+        };
+        assert_ne!(made, 0_i32, "{}", io::Error::last_os_error());
+        // SAFETY: the handle is new and owned by nobody else.
+        unsafe { OwnedHandle::from_raw_handle(restricted) }
+    }
+
+    /// The error `token` is refused with when it asks to hook the input of the desktop `name`,
+    /// on the station desktops are made on. None when it is allowed.
+    fn hooking_refused(token: Option<&OwnedHandle>, name: &[u16]) -> Option<i32> {
+        on_station(|_| {
+            if let Some(token) = token {
+                // SAFETY: the token is open for the length of this call.
+                if unsafe { ImpersonateLoggedOnUser(token.as_raw_handle()) } == 0_i32 {
+                    return Err(io::Error::last_os_error());
+                }
+            }
+            // SAFETY: `name` is NUL-terminated and outlives the call.
+            let handle = unsafe { OpenDesktopW(name.as_ptr(), 0, 0, DESKTOP_HOOKCONTROL) };
+            let error = io::Error::last_os_error();
+            if token.is_some() {
+                // SAFETY: ends the impersonation begun above, on this thread.
+                let _: BOOL = unsafe { RevertToSelf() };
+            }
+            if handle.is_null() {
+                return Ok(error.raw_os_error());
+            }
+            // SAFETY: the handle was just opened, and is closed once, here.
+            let _: BOOL = unsafe { CloseDesktop(handle) };
+            Ok(None)
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_desktop_refuses_a_program_of_another_account() {
+        let desktop = Desktop::create().unwrap();
+        let slash = desktop.name.iter().position(|&unit| unit == 0x5C).unwrap();
+        let (_, rest) = desktop.name.split_at(slash.saturating_add(1));
+        let stranger = another_account();
+        assert_eq!(hooking_refused(None, rest), None);
+        // 5 is ERROR_ACCESS_DENIED.
+        assert_eq!(hooking_refused(Some(&stranger), rest), Some(5_i32));
+    }
+
+    #[test]
+    fn a_desktop_is_open_to_the_user_and_the_system_alone() {
+        let desktop = Desktop::create().unwrap();
+        let mut acl = MaybeUninit::<*mut ACL>::uninit();
+        let mut descriptor = MaybeUninit::<PSECURITY_DESCRIPTOR>::uninit();
+        // SAFETY: the desktop's handle is open, and both outputs are valid places for pointers.
+        let status = unsafe {
+            GetSecurityInfo(
+                desktop.handle,
+                SE_WINDOW_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                ptr::null_mut(),
+                ptr::null_mut(),
+                acl.as_mut_ptr(),
+                ptr::null_mut(),
+                descriptor.as_mut_ptr(),
+            )
+        };
+        win32(status).unwrap();
+        let security = Security {
+            // SAFETY: the call succeeded, and on success it writes both.
+            descriptor: unsafe { descriptor.assume_init() },
+            // SAFETY: as above.
+            acl: NonNull::new(unsafe { acl.assume_init() }),
+        };
+        let user = User::current().unwrap();
+        let mut system = system_sid().unwrap();
+        // GENERIC_ALL as a desktop reads it: every desktop right and the standard ones.
+        let all = 0x000f_01ff;
+        assert_eq!(
+            security.entries_for(user.sid()),
+            [
+                (ACCESS_ALLOWED_ACE_TYPE, 0, all, true),
+                (ACCESS_ALLOWED_ACE_TYPE, 0, all, false)
+            ]
+        );
+        assert_eq!(
+            security.entries_for(system.as_mut_ptr().cast()),
+            [
+                (ACCESS_ALLOWED_ACE_TYPE, 0, all, false),
+                (ACCESS_ALLOWED_ACE_TYPE, 0, all, true)
+            ]
+        );
+    }
+
+    #[test]
+    fn making_a_desktop_leaves_the_process_on_its_own_station() {
+        let _desktop = Desktop::create().unwrap();
+        let (own, made_on) = {
+            // Held so that no other test's desktop is being made meanwhile.
+            let held = STATION.lock().unwrap_or_else(PoisonError::into_inner);
+            // SAFETY: takes no arguments. The handle belongs to the process and is never closed.
+            let own = station_name(unsafe { GetProcessWindowStation() }).unwrap();
+            (own, held.as_ref().map(|station| station.name.clone()))
+        };
+        assert_ne!(Some(own), made_on);
     }
 
     #[test]
@@ -2076,18 +2449,7 @@ mod tests {
     fn shared_folder() -> tempfile::TempDir {
         let parent = tempfile::tempdir().unwrap();
         let user = User::current().unwrap();
-        let mut system = vec![0_u32; usize::try_from(SECURITY_MAX_SID_SIZE.div_ceil(4)).unwrap()];
-        let mut size = SECURITY_MAX_SID_SIZE;
-        // SAFETY: `system` holds `size` bytes, aligned as a SID must be.
-        let made = unsafe {
-            CreateWellKnownSid(
-                WinLocalSystemSid,
-                ptr::null_mut(),
-                system.as_mut_ptr().cast(),
-                &raw mut size,
-            )
-        };
-        assert_ne!(made, 0_i32, "{}", io::Error::last_os_error());
+        let mut system = system_sid().unwrap();
         allow_alone(
             &wide(parent.path().as_os_str()),
             &[user.sid(), system.as_mut_ptr().cast()],
