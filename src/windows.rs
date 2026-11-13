@@ -2959,22 +2959,38 @@ mod tests {
                 let turn = Turn::take(&name, Duration::from_secs(5)).unwrap();
                 taken.send(()).unwrap();
                 released.recv().unwrap();
+                // Long enough for the waiter to hold the mutex open: once its last handle
+                // closes, Windows drops the mutex and a turn never given back goes unseen.
+                thread::sleep(Duration::from_millis(200));
                 drop(turn);
-                taken.send(()).unwrap();
-                // Alive until the end, so that the turn is never left abandoned.
+                // Alive until the end, so that a turn not given back is never abandoned.
                 ended.recv().unwrap();
             })
         };
         held.recv().unwrap();
-        assert!(matches!(
-            Turn::take(&name, Duration::from_millis(50)),
-            Err(keychain::Error::Failed(_))
-        ));
+        assert_eq!(
+            Turn::take(&name, Duration::from_millis(50)).unwrap_err(),
+            keychain::Error::Failed(
+                "another steamship run has been changing credentials for 0 s. Run this command \
+                 again once it ends"
+                    .to_owned()
+            )
+        );
         release.send(()).unwrap();
-        held.recv().unwrap();
         drop(Turn::take(&name, Duration::from_secs(5)).unwrap());
         end.send(()).unwrap();
         holder.join().unwrap();
+    }
+
+    #[test]
+    fn a_key_that_was_never_kept_has_not_shown_once_the_limit_has_passed() {
+        let home = tempfile::tempdir().unwrap();
+        let started = Instant::now();
+        assert_eq!(
+            settled(&keychain::Item::key(home.path()), |kept| kept.is_some()),
+            Ok(false)
+        );
+        assert!(started.elapsed() >= SETTLE);
     }
 
     #[test]
