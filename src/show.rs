@@ -229,10 +229,18 @@ pub fn hint(hint: Hint<'_>) {
     hinted(hint);
 }
 
-/// Text for the program reading steamship's output rather than a person, as it is: GitHub
-/// Actions' workflow commands, which it reads only from the start of a line on standard output.
+/// Text for the program reading steamship's output rather than a person, as it is: the one line of
+/// JSON a command prints under `--json`.
 pub fn plain(text: &str) {
     anstream::print!("{text}");
+}
+
+/// Writes a GitHub Actions workflow command.
+///
+/// The runner reads them from standard output and standard error alike. They go to standard error
+/// so that standard output holds only what a program reads.
+pub fn workflow(text: &str) {
+    anstream::eprint!("{text}");
 }
 
 fn hinted(

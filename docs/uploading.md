@@ -286,7 +286,10 @@ Here the line is spread out:
 - `error` is there only when the run failed.
 
 A build that Steam holds but did not set live as asked is `uploaded` with `live` or `default`
-`false`, and the run exits 5. A failed run looks like this:
+`false`, and the run exits 5. The one exception is
+[an app with no default build](#an-app-with-no-default-build) given `--default`: the build goes
+live on default alone, `live` is `false` and `default` is `true`, and the run exits 0. A failed run
+looks like this:
 
 ```json
 {

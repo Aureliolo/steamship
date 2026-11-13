@@ -1379,6 +1379,78 @@ fn a_dry_run_prints_its_outcome_as_json() {
     );
 }
 
+/// Makes the folder steamship keeps `mod_name`'s copy in a file, so that the copy cannot be made.
+fn block_copy(home: &Path, mod_name: &str) {
+    let folder = home.join("workshop/1000050");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join(mod_name), "in the way").unwrap();
+}
+
+#[test]
+fn a_second_mod_whose_copy_cannot_be_made_is_the_last_item_and_steamcmd_not_run() {
+    let (_temp, root) = two_mods(None, None);
+    let home = publishing("Success.", 0);
+    block_copy(home.path(), "fresh");
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--visibility", "private", "--json"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let line = one_line(&stdout);
+    assert_eq!(at(&line, "/items/0/outcome"), "made", "{line}");
+    assert_eq!(text_at(&line, "/items/1/name"), "fresh", "{line}");
+    assert_eq!(
+        at(&line, "/items/1/outcome"),
+        serde_json::Value::Null,
+        "{line}"
+    );
+    assert_eq!(at(&line, "/items/2"), serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/error/code"), "steamcmd-not-run", "{line}");
+}
+
+#[test]
+fn a_first_mod_whose_copy_cannot_be_made_prints_no_json() {
+    let (_temp, root) = two_mods(None, None);
+    let home = publishing("Success.", 0);
+    block_copy(home.path(), "example");
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--visibility", "private", "--json"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(stdout, "");
+}
+
+#[test]
+fn a_workshop_run_whose_login_cannot_be_read_after_it_says_so_in_the_json_message() {
+    let home = faked_with(&format!(
+        "#!/bin/sh\n\
+         printf '%s\\r\\n' '{DENIED}'\n\
+         rm -f \"$HOME/Steam/config/config.vdf\"; mkdir -p \"$HOME/Steam/config/config.vdf\"\n\
+         exit 1\n"
+    ));
+    saved_login(home.path());
+    let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap(), "--json"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let line = one_line(&stdout);
+    assert_eq!(at(&line, "/error/code"), "steamcmd-failed", "{line}");
+    let message = text_at(&line, "/error/message");
+    assert!(
+        message.starts_with("none kept, since steamcmd's login could not be read again"),
+        "{message}"
+    );
+    assert!(!message.contains("Access Denied"), "{message}");
+}
+
 #[test]
 fn two_mods_are_one_line_of_json() {
     let (_temp, root) = two_mods(None, None);

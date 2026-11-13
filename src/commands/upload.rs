@@ -471,9 +471,10 @@ impl Failure {
     }
 
     /// The failure the word `code` names, said as the `reasons` steamcmd gave that may be shown.
-    pub(crate) fn of_reasons(code: &'static str, reasons: &[String]) -> Self {
+    /// When none may be, the person read the `log` line's sentence instead.
+    pub(crate) fn of_reasons(code: &'static str, reasons: &[String], log: &str) -> Self {
         let message = if reasons.is_empty() {
-            "steamcmd failed".to_owned()
+            log.strip_prefix("log  ").unwrap_or(log).to_owned()
         } else {
             reasons.join("\n")
         };
@@ -1200,7 +1201,7 @@ fn refused(
     } else {
         (FAILED, "steamcmd-failed")
     };
-    (ExitCode::from(code), Failure::of_reasons(word, lines))
+    (ExitCode::from(code), Failure::of_reasons(word, lines, logs))
 }
 
 /// `text` with every secret `redactor` knows replaced, for what steamship prints after judging it.

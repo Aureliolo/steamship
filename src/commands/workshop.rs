@@ -268,6 +268,7 @@ fn try_workshop<'command>(
             Err((exit, stopped)) => {
                 // The line is due once steamcmd has run, which it has for any item after the first.
                 if request.json && index > 0 {
+                    lines.push(unreached(item, each));
                     let error = error_of(exit, "", Some(&stopped), None);
                     print_line(&run_summary(app_id, &lines, error));
                 }
@@ -446,7 +447,7 @@ fn upload_item(
                 );
             }
             let (code, unkept) = after_failure(given, item, copied, &log, ExitCode::from(FAILED));
-            let failure = Failure::of_reasons("steamcmd-failed", &lines);
+            let failure = Failure::of_reasons("steamcmd-failed", &lines, &log);
             (code, unkept, Some(failure))
         }
     };
@@ -516,16 +517,30 @@ fn item_summary(
         }
     };
     let log = uploaded.map(|(_, log)| log.to_string_lossy());
-    let name = match given {
-        Given::Script(_) => None,
-        Given::Fields(_, kept) => Some(kept.name),
-    };
     serde_json::json!({
-        "name": name,
+        "name": item_name(given),
         "item_id": published,
         "outcome": said,
         "log": log,
     })
+}
+
+/// The item a run stopped at before steamcmd was started for it, as the run's JSON lists it.
+fn unreached(item: &workshop::Item, given: &Given<'_>) -> serde_json::Value {
+    serde_json::json!({
+        "name": item_name(given),
+        "item_id": item.published,
+        "outcome": serde_json::Value::Null,
+        "log": serde_json::Value::Null,
+    })
+}
+
+/// The item's name in the `--items` file, or none for a script.
+const fn item_name<'command>(given: &Given<'command>) -> Option<&'command str> {
+    match given {
+        Given::Script(_) => None,
+        Given::Fields(_, kept) => Some(kept.name),
+    }
 }
 
 /// What came of keeping an item Steam made.

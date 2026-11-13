@@ -170,7 +170,7 @@ pub(crate) fn packed_login() -> Result<Option<ci::Login>, ExitCode> {
     let login = ci::Login::unpack(text).map_err(|error| fail(&error, REFUSED))?;
     // GitHub masks the secret, but not the account's name inside it, which steamcmd's logs name.
     if dump::in_actions(|name| env::var(name).ok()) {
-        show::plain(&format!("::add-mask::{}\n", login.account().name()));
+        show::workflow(&format!("::add-mask::{}\n", login.account().name()));
     }
     Ok(Some(login))
 }
@@ -278,7 +278,7 @@ pub(crate) fn dump_in_actions(
             &token,
         ));
     }
-    show::plain(&shown);
+    show::workflow(&shown);
 }
 
 #[cfg(test)]
