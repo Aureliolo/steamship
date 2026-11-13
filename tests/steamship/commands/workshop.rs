@@ -501,8 +501,8 @@ fn workshop_names_each_field_an_item_lacks_and_each_flag_an_item_script_cannot_g
         assert_eq!(
             failure(&beside),
             format!(
-                "{flag} does not go with an item script, and {word} is read as one. Without a \
-                 first word, {flag} applies to the game's own mods"
+                "{flag} does not go with the item script {word}. Drop {flag}, or leave out the \
+                 script to use it for the game's own mods"
             ),
             "{beside}"
         );
@@ -512,8 +512,13 @@ fn workshop_names_each_field_an_item_lacks_and_each_flag_an_item_script_cannot_g
 #[test]
 fn a_word_with_no_field_is_an_item_script_or_the_games_app() {
     let home = tempfile::tempdir().unwrap();
-    let note = "with none of an item's fields, the first word is an item script. Leave it out for \
-                the game's own mods";
+    let note = |word: &str| {
+        format!(
+            "{word} is not an item script. Give the path of one, or the app's ID with `--items`, \
+             `--name`, `--content` and `--title`. In a game's folder, leaving the word out \
+             uploads the game's mods"
+        )
+    };
 
     let exits_2 = |run: (Option<i32>, String, String)| {
         assert_eq!(run.0, Some(2_i32), "{}{}", run.1, run.2);
@@ -529,7 +534,7 @@ fn a_word_with_no_field_is_an_item_script_or_the_games_app() {
         failure(&misspelt).starts_with("refused: item.vfd: "),
         "{misspelt}"
     );
-    assert!(misspelt.contains(note), "{misspelt}");
+    assert!(misspelt.contains(&note("item.vfd")), "{misspelt}");
 
     let (_temp, script) = workshop_item("");
     let text = fs::read_to_string(&script).unwrap();
@@ -545,7 +550,10 @@ fn a_word_with_no_field_is_an_item_script_or_the_games_app() {
         failure(&damaged).starts_with(&format!("refused: {}: ", cut.display())),
         "{damaged}"
     );
-    assert!(damaged.contains(note), "{damaged}");
+    assert!(
+        damaged.contains(&note(&cut.display().to_string())),
+        "{damaged}"
+    );
 
     let (_game, root) = pushed_game(None);
     let (_, strange) = exits_2(in_game(&root, &["workshop", "480"]));
@@ -615,6 +623,28 @@ fn own_args<'args>(args: &[&'args str]) -> Vec<&'args str> {
         .filter(|&(at, _)| at != 1)
         .map(|(_, arg)| *arg)
         .collect()
+}
+
+#[test]
+fn an_item_script_with_a_real_fault_shows_that_fault_without_the_note_on_the_word() {
+    let (_temp, script) = workshop_item(r#""visibility" "9""#);
+    let home = tempfile::tempdir().unwrap();
+    let (code, _, stderr) = steamship(
+        &[
+            "workshop",
+            script.to_str().unwrap(),
+            "--account",
+            "build_bot",
+        ],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(
+        failure(&stderr).contains("\"visibility\" is not 0 (public)"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("is not an item script"), "{stderr}");
 }
 
 #[test]

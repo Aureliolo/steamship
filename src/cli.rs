@@ -243,9 +243,8 @@ pub enum Command {
     Upload(Upload),
     /// Upload a Workshop item, then print its ID.
     ///
-    /// Takes the item as a Valve `workshopitem` script given as the first word, or as fields given
-    /// with `--items` and the other options, after the app. From the fields, steamship writes the
-    /// script itself. It checks the item and what it names, then has steamcmd upload it with the
+    /// Takes the item as a Valve `workshopitem` script, or as fields: the app first, then `--items`
+    /// and the other options. From the fields, steamship writes the script itself. It checks the item and what it names, then has steamcmd upload it with the
     /// saved login.
     ///
     /// A script with no `publishedfileid` makes a new item. Its ID is printed for you to add to
@@ -253,9 +252,9 @@ pub enum Command {
     /// its ID is written into that file. Either way, later uploads update the same item. In CI, a
     /// new item needs `--new`, since every run would make another.
     ///
-    /// With no field, and no first word or the game's own app, in a game's folder it uploads each
-    /// of the game's example mods, or only the one `--name` names. An example mod is a folder in `modding/` holding a `manifest.json`.
-    /// This is refused unless the tree is pushed, as for `upload`. Each mod's title, description
+    /// With no fields, and either no first word or the game's own app as it, in a game's folder it
+    /// uploads each example mod, or only the one `--name` names. An example mod is a folder in
+    /// `modding/` holding a `manifest.json`. This is refused unless the tree is pushed, as for `upload`. Each mod's title, description
     /// and version come from its manifest. Its preview is the `preview.png` in its folder. Each
     /// item's ID is kept in `steam/workshop_items.json`.
     ///
@@ -861,8 +860,8 @@ pub struct Rollback {
 /// What `workshop` uploads, and how.
 #[derive(Debug, Args)]
 pub struct Workshop {
-    /// The app, by its ID or its app build script, for an item given by its fields. With none of
-    /// them, an item script, such as `workshop/item.vdf`, or the game's own app.
+    /// With the item's fields, the app by its ID or its app build script. Without them, an item
+    /// script such as `workshop/item.vdf`, or the game's own app.
     pub app: Option<String>,
     #[command(flatten)]
     pub item: Option<WorkshopItem>,

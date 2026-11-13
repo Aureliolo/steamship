@@ -42,6 +42,12 @@ pub struct Item {
     pub files: usize,
 }
 
+/// Whether `path` is a readable script with a `workshopitem` block, whatever else is wrong in it.
+#[must_use]
+pub fn is_item_script(path: &Path) -> bool {
+    scripts::read(path).is_ok_and(|document| document.block("workshopitem").is_some())
+}
+
 /// Checks the item script at `path` and what it names, and says every problem at once.
 ///
 /// # Errors

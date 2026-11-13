@@ -26,7 +26,7 @@ use super::released::{refused_unless, release_shown};
 use super::upload::output;
 
 /// `workshop` of the item its fields give, after the app or the game's own. With no field, a first
-/// word that is no number is an item script, and anything else the game's example mods.
+/// word that is not a number is an item script, and a number or no word is the game's example mods.
 pub(crate) fn workshop_in(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     // clap takes `--items` only with `--name`. No name reads as the empty one, which is refused.
     if let Some(item) = &request.item {
@@ -59,8 +59,8 @@ fn given_script<'command>(
         .map(|(flag, _)| {
             fail(
                 &format!(
-                    "{flag} does not go with an item script, and {word} is read as one. Without \
-                     a first word, {flag} applies to the game's own mods"
+                    "{flag} does not go with the item script {word}. Drop {flag}, or leave out \
+                     the script to use it for the game's own mods"
                 ),
                 REFUSED,
             )
@@ -422,10 +422,14 @@ fn checked_item(given: &Given<'_>, new: bool) -> Result<workshop::Item, ExitCode
             for problem in &problems {
                 show::failure("refused", &problem.to_string(), None);
             }
-            show::note(
-                "with none of an item's fields, the first word is an item script. Leave it out \
-                 for the game's own mods",
-            );
+            if !workshop::is_item_script(script) {
+                show::note(&format!(
+                    "{} is not an item script. Give the path of one, or the app's ID with \
+                     `--items`, `--name`, `--content` and `--title`. In a game's folder, leaving \
+                     the word out uploads the game's mods",
+                    script.display()
+                ));
+            }
             ExitCode::from(REFUSED)
         })?,
         Given::Fields(fields, _) => workshop::check_fields(fields).map_err(|problems| {
