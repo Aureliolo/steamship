@@ -6,7 +6,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::steamcmd;
 
@@ -95,6 +95,46 @@ impl Redactor {
         }
         text
     }
+}
+
+/// Removes every log in `folder` and no other file, since a log that cannot be redacted is not
+/// kept. The chunk cache sits beside the logs and stays. A folder that is not there holds none.
+///
+/// A log that cannot be removed does not stop the rest from going.
+///
+/// # Errors
+///
+/// When the folder cannot be listed, or a log cannot be removed. The error names the first log
+/// that stayed.
+pub fn remove_logs(folder: &Path) -> io::Result<()> {
+    let mut first = None;
+    for log in logs(folder)? {
+        let error = fs::remove_file(&log).map_err(steamcmd::named(&log)).err();
+        first = first.or(error);
+    }
+    first.map_or(Ok(()), Err)
+}
+
+/// The files of `folder` whose extension is `log` in any case, in name order, so that the log an
+/// error names does not depend on the system's listing.
+fn logs(folder: &Path) -> io::Result<Vec<PathBuf>> {
+    let entries = match fs::read_dir(folder) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(steamcmd::named(folder)(error)),
+    };
+    let mut found = Vec::new();
+    for entry in entries {
+        let path = entry.map_err(steamcmd::named(folder))?.path();
+        let is_log = path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("log"));
+        if is_log && path.is_file() {
+            found.push(path);
+        }
+    }
+    found.sort();
+    Ok(found)
 }
 
 fn read_if_there(path: &Path) -> io::Result<Option<Vec<u8>>> {
@@ -195,6 +235,65 @@ mod tests {
 	}
 }
 "#;
+
+    #[test]
+    fn every_log_of_a_folder_is_removed_and_no_other_file() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::write(folder.path().join("a.log"), "one").unwrap();
+        fs::write(folder.path().join("B.LOG"), "two").unwrap();
+        fs::write(folder.path().join("depot.csm"), "cache").unwrap();
+        fs::create_dir_all(folder.path().join("c.log")).unwrap();
+        remove_logs(folder.path()).unwrap();
+        assert!(!folder.path().join("a.log").exists());
+        assert!(!folder.path().join("B.LOG").exists());
+        assert!(folder.path().join("depot.csm").is_file());
+        assert!(folder.path().join("c.log").is_dir());
+        remove_logs(&folder.path().join("missing")).unwrap();
+    }
+
+    #[test]
+    fn a_folder_that_cannot_be_listed_is_an_error_that_names_it() {
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("not_a_folder");
+        fs::write(&file, "one").unwrap();
+        let error = remove_logs(&file).unwrap_err();
+        assert!(error.to_string().contains("not_a_folder"), "{error}");
+        assert!(file.is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_log_that_cannot_be_removed_is_an_error_that_names_it() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let folder = tempfile::tempdir().unwrap();
+        fs::write(folder.path().join("a.log"), "one").unwrap();
+        fs::set_permissions(folder.path(), fs::Permissions::from_mode(0o555)).unwrap();
+        let result = remove_logs(folder.path());
+        fs::set_permissions(folder.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("a.log"), "{error}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_log_held_open_is_named_and_the_next_is_still_removed() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        let folder = tempfile::tempdir().unwrap();
+        let held = folder.path().join("a.log");
+        fs::write(&held, "one").unwrap();
+        fs::write(folder.path().join("b.log"), "build_bot").unwrap();
+        // Shared for reading only, so that Windows refuses to delete it while it is open.
+        let _open = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&held)
+            .unwrap();
+        let error = remove_logs(folder.path()).unwrap_err();
+        assert!(error.to_string().contains("a.log"), "{error}");
+        assert!(!folder.path().join("b.log").exists());
+    }
 
     #[test]
     fn takes_the_long_values_and_leaves_settings_alone() {

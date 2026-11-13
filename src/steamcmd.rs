@@ -157,8 +157,8 @@ pub fn login_files(home: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
-/// An error that names `file`, which starts steamcmd, since the system's reason alone does not.
-fn named(file: &Path) -> impl FnOnce(io::Error) -> io::Error {
+/// An error that names `file`, since the system's reason alone does not.
+pub(crate) fn named(file: &Path) -> impl FnOnce(io::Error) -> io::Error {
     move |error| io::Error::new(error.kind(), format!("{}: {error}", file.display()))
 }
 
