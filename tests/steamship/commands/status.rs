@@ -276,9 +276,9 @@ fn an_accounts_name_in_a_refusal_changes_neither_the_exit_code_nor_the_message()
 fn an_account_named_like_a_word_of_steamcmds_errors_changes_no_reason_or_advice() {
     for (name, said, words) in [
         (
-            "error",
-            "ERROR! Steam reported an error while checking",
-            "Steam reported an error while checking",
+            "failed",
+            "ERROR! Failed to load platform info",
+            "Failed to load platform info",
         ),
         (
             "trusted",

@@ -1535,9 +1535,9 @@ fn an_account_named_like_a_word_of_steamcmds_errors_changes_no_reason_or_advice(
     let (_project, script) = project(true);
     for (name, said, words) in [
         (
-            "error",
-            "echo '[..]: ERROR! Steam reported an error while building'",
-            "Steam reported an error while building",
+            "failed",
+            "echo 'ERROR! Failed to set build live on branch testing'",
+            "Failed to set build live on branch testing",
         ),
         (
             "trusted",
@@ -1561,6 +1561,54 @@ fn an_account_named_like_a_word_of_steamcmds_errors_changes_no_reason_or_advice(
         assert_eq!(code, Some(1_i32), "{name}: {stdout}{stderr}");
         assert!(stderr.contains(words), "{name}: {stderr}");
     }
+}
+
+#[test]
+fn a_redistributables_check_steam_refuses_leaves_no_log_naming_the_account() {
+    let home = faked_with(&refusing_as_given(
+        "echo \"Logging in user '$account' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"",
+    ));
+    let old = home.path().join("apps/1000/output/old.log");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::write(&old, "Logging in user 'build_bot'").unwrap();
+    let (_project, script) = shipping_dll(&["kernel32.dll", "vcruntime140.dll"], None);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
+    assert_eq!(
+        fs::read_to_string(&old).unwrap(),
+        "Logging in user '[redacted]'"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_log_held_after_a_default_check_steam_refuses_is_named_in_a_note() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (_project, script) = project(true);
+    let home = faked_with(&refusing_as_given(
+        "echo \"Logging in user '$account' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"",
+    ));
+    let output = home.path().join("apps/1000/output");
+    let old = output.join("old.log");
+    fs::create_dir_all(&output).unwrap();
+    fs::write(&old, "Logging in user 'build_bot'").unwrap();
+    fs::set_permissions(&old, fs::Permissions::from_mode(0o444)).unwrap();
+    fs::set_permissions(&output, fs::Permissions::from_mode(0o555)).unwrap();
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default"],
+        &[],
+    );
+    fs::set_permissions(&output, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
+    let seen = format!("{stdout}{stderr}");
+    assert!(
+        seen.contains("These logs may still hold the token or the account's name")
+            && seen.contains("old.log"),
+        "{seen}"
+    );
 }
 
 #[test]

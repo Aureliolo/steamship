@@ -227,8 +227,9 @@ holds the account's name. An install that stopped midway can leave the token's f
 `steamcmd.new/`.
 
 Each log steamship saves or rewrites under `apps/<app>/output` shows `[redacted]` where the token
-or the account's name stood. The `log` line names any log it could neither rewrite nor remove. A
-log a run did not write, such as one from a run that was killed, is not covered.
+or the account's name stood. The `log` line, or for an upload Steam refuses before its build a
+note, names any log it could neither rewrite nor remove. A log a run did not write, such as one
+from a run that was killed, is not covered.
 
 To cache between CI jobs, keep `apps` and `recorded-builds` from a job that ended well, without
 the logs `apps/*/output/*.log`. Never keep `account`, the folders that hold the token, or an
