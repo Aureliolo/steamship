@@ -60,7 +60,7 @@ fn ci_in_a_repository_without_an_app_build_script_says_so_and_exits_2() {
         "{stderr}"
     );
     assert!(
-        stderr.contains(". Name the script as the first word"),
+        stderr.contains(". Give the script or its app ID as the first word"),
         "{stderr}"
     );
 }
@@ -84,8 +84,8 @@ fn ci_outside_a_repository_asks_for_the_script_and_exits_2() {
     assert_eq!(code, Some(2_i32), "{stderr}");
     assert_eq!(
         failure(&stderr),
-        "this folder is in no Git repository. Run steamship ci in the game's. Name the script as \
-         the first word"
+        "this folder is in no Git repository. Run steamship ci in the game's, or give the \
+         script or its app ID as the first word"
     );
 }
 
@@ -131,7 +131,7 @@ fn ci_with_several_scripts_and_nobody_to_ask_names_them_and_exits_2() {
     assert_eq!(
         failure(&stderr),
         format!(
-            "several app build scripts, {}, {}. Name the script as the first word",
+            "several app build scripts, {}, {}. Give the script or its app ID as the first word",
             steam.join("app_build.vdf").display(),
             steam.join("app_build_demo.vdf").display()
         )

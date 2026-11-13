@@ -189,7 +189,7 @@ fn a_games_rich_presence_is_sent_from_its_pushed_tree_and_one_without_any_is_ref
 }
 
 #[test]
-fn a_file_given_first_is_refused_as_no_app_with_the_order_to_give() {
+fn a_file_given_first_is_refused_with_where_the_app_goes() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
     let english = presence_file(files.path(), "english", "\t\t\"#menu\"\t\"At the menu\"\n");

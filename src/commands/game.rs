@@ -158,9 +158,15 @@ fn names_app(game: &Project, app_id: u32) -> Result<(), ExitCode> {
         Some(named) if named == app_id => Ok(()),
         named => Err(fail(
             &format!(
-                "app {app_id} is not this game's: {} names {}",
+                "app {app_id} is not this game's: {} {}",
                 game.script.display(),
-                named.map_or_else(|| "no app".to_owned(), |named| format!("app {named}"))
+                named.map_or_else(
+                    || format!("names no app. Give the path of a script that names {app_id}"),
+                    |named| format!(
+                        "names app {named}. Give that app's ID, or the path of the script that \
+                         names {app_id}"
+                    )
+                )
             ),
             REFUSED,
         )),

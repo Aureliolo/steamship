@@ -200,8 +200,9 @@ pub enum Command {
     /// The game's rich presence files are read too, as `rich-presence --dry-run` reads them. All
     /// of this is offline.
     Check {
-        /// The app, by its ID or its app build script, such as `steam/app_build.vdf`, or a
-        /// build's folder, such as `export/windows`. In a game's folder, the game's own.
+        /// The app, by its ID or its app build script, such as `steam/app_build.vdf`. A build's
+        /// folder, such as `export/windows`, is checked instead of a script. In a game's folder,
+        /// the game's own.
         app: Option<String>,
         /// Check the scripts alone, not the content they map, as before the build exists.
         /// `upload` still checks both.
@@ -343,7 +344,7 @@ pub enum Command {
         /// read by the API name in `steam`. Each
         /// achievement and stat is in one file only. A `.csv` file is a localisation in the
         /// columns Steamworks' achievement editor exports. A `.po` file is a gettext catalogue.
-        /// Either must translate every achievement. Files follow the app, and `--check` or
+        /// Either must translate every achievement. Files follow the app. `--check` or
         /// `--write` says what to do with them.
         #[arg(value_name = "FILES", requires = "file_switches")]
         files: Vec<PathBuf>,
@@ -408,9 +409,10 @@ pub enum Command {
     ///
     /// Asks Steam, through steamcmd with the saved login, for the Steamworks settings a build
     /// depends on. These are the app's name, type and systems, its install folder, launch options
-    /// and runtime, its depots' systems, and Steam Cloud. `--save` keeps them in a file
-    /// beside the build scripts, in Valve's own format. `--check` exits 2 naming every setting
-    /// that differs from that file. Nothing on Steam is changed.
+    /// and runtime, its depots' systems, and Steam Cloud. `--save` keeps them in a snapshot
+    /// file, in Valve's own format. `--check` exits 2 naming every setting that differs from that
+    /// file. In a game's folder, with no file given, it is `settings.vdf` beside the build
+    /// scripts. Nothing on Steam is changed.
     Settings(Settings),
     /// Show, save, check, create or delete an app's leaderboards.
     ///
@@ -450,8 +452,8 @@ pub enum Command {
         /// In a game's folder, send the full game's files to its demo.
         #[arg(long, conflicts_with = "app")]
         demo: bool,
-        /// The rich presence files, such as `steam/rich_presence_english.vdf`, which follow the
-        /// app. In a game's folder, every one beside its build scripts.
+        /// The rich presence files after the app, such as `steam/rich_presence_english.vdf`. In a
+        /// game's folder, every one beside its build scripts.
         files: Vec<PathBuf>,
         /// Check the files and show what would be sent, without sending anything.
         #[arg(long)]
@@ -598,12 +600,12 @@ pub enum Command {
 pub struct Settings {
     /// The app, by its ID or its app build script. In a game's folder, the game's own.
     pub app: Option<String>,
-    /// The snapshot file, which follows the app. In a game's folder, `settings.vdf` beside its
-    /// build scripts.
+    /// The snapshot file, after the app. In a game's folder, `settings.vdf` beside its build
+    /// scripts.
     #[arg(value_name = "FILE", requires = "file_switches")]
     pub file: Option<PathBuf>,
-    /// In a game's folder, its demo's, with the demo's own snapshot beside its build scripts. To
-    /// name a file, give the demo's ID first.
+    /// In a game's folder, its demo's, with the demo's own snapshot beside its build scripts. Takes no
+    /// app or file. To name a file, give the demo's ID as the app instead of `--demo`.
     #[arg(long, conflicts_with = "app")]
     pub demo: bool,
     /// Write the settings to the snapshot file, replacing it, to check against later. Refused,
@@ -637,7 +639,7 @@ pub struct Leaderboards {
     /// `display`, `trusted_writes`, `friends_only` and `period`. A file may instead be a list of
     /// games-kit records, the JSON records a game keeps its content in. Those typed `leaderboard`
     /// are read by the name in `steam`. Each leaderboard is in one file only. Files follow the
-    /// app, and `--check`, `--create` or `--delete-missing` says what to do with them.
+    /// app. `--check`, `--create` or `--delete-missing` says what to do with them.
     #[arg(value_name = "FILES", requires = "file_switches")]
     pub files: Vec<PathBuf>,
     /// Compare the leaderboards Steam holds with the files.
@@ -704,7 +706,7 @@ pub enum Itself {
 /// What `achievements` writes for Steamworks' achievement editor, from what, and where.
 #[derive(Debug, Args)]
 pub struct Writing {
-    /// Write the achievement editor's files from the files, read as `--check` reads them. In a
+    /// Write the achievement editor's import files from the achievement files, read as `--check` reads them. In a
     /// game's folder, with no files, write from the game's own into `steam/achievements`.
     ///
     /// The uploading page of the docs lists the fields an achievement and a set may give. It also
@@ -1093,7 +1095,7 @@ mod tests {
     }
 
     #[test]
-    fn save_goes_with_no_file_switch_and_no_files() {
+    fn save_refuses_a_file_switch_and_files() {
         for line in [
             &["achievements", "480", "--check", "--save", "a.json"][..],
             &["achievements", "480", "--write", "--save", "a.json"],
@@ -1126,7 +1128,7 @@ mod tests {
     }
 
     #[test]
-    fn one_word_is_the_branch_or_the_executable() {
+    fn a_lone_word_is_the_branch_or_the_executable_and_never_the_app() {
         let Command::Rollback(alone) = parsed(&["rollback", "testing"]) else {
             panic!("rollback");
         };

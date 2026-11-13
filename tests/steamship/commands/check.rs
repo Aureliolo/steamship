@@ -344,7 +344,11 @@ fn an_app_id_must_be_the_one_the_games_script_names() {
         let refusal = failure(&stderr);
         let script = refusal
             .strip_prefix("app 480 is not this game's: ")
-            .and_then(|rest| rest.strip_suffix(" names app 1000050"))
+            .and_then(|rest| {
+                rest.strip_suffix(
+                " names app 1000050. Give that app's ID, or the path of the script that names 480",
+            )
+            })
             .unwrap_or_else(|| panic!("{args:?}: {refusal}"));
         assert!(
             Path::new(script).ends_with(Path::new("steam").join("app_build.vdf")),

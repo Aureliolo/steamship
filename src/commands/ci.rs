@@ -137,8 +137,8 @@ fn ci_script(named: Option<&str>, root: Option<&Path>) -> Result<PathBuf, ExitCo
     }
     let root = root.ok_or_else(|| {
         fail(
-            &"this folder is in no Git repository. Run steamship ci in the game's. Name the \
-              script as the first word",
+            &"this folder is in no Git repository. Run steamship ci in the game's, or give \
+              the script or its app ID as the first word",
             REFUSED,
         )
     })?;
@@ -156,7 +156,7 @@ fn ci_script(named: Option<&str>, root: Option<&Path>) -> Result<PathBuf, ExitCo
     match found.as_slice() {
         [] => Err(fail(
             &format!(
-                "no app build script in {}{}. Name the script as the first word",
+                "no app build script in {}{}. Give the script or its app ID as the first word",
                 root.display(),
                 wanted.map_or_else(String::new, |app| format!(" names app {app}"))
             ),
@@ -189,7 +189,7 @@ fn ci_script(named: Option<&str>, root: Option<&Path>) -> Result<PathBuf, ExitCo
             let listed: Vec<String> = several.iter().map(|script| shown(script)).collect();
             Err(fail(
                 &format!(
-                    "several app build scripts, {}. Name the script as the first word",
+                    "several app build scripts, {}. Give the script or its app ID as the first word",
                     listed.join(", ")
                 ),
                 REFUSED,
