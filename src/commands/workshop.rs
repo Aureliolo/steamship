@@ -20,7 +20,8 @@ use steamship::{ci, dump, release, scripts, steamcmd, workshop};
 use super::exit::{fail, late};
 use super::game::{app_named, app_or_game, game, script_given, shipped_from};
 use super::ready::{
-    dump_in_actions, home, login_refused, named, ready, restore, run_as, steamcmd_failed,
+    dump_in_actions, home, login_refused, named, ready, reasons_shown, restore, run_as,
+    steamcmd_failed,
 };
 use super::released::{refused_unless, release_shown};
 use super::upload::{earlier_kept, login_unread, output, redacted};
@@ -344,8 +345,22 @@ fn upload_item(
         }
         workshop::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
-            for reason in reasons.iter().filter(|_| redactor.is_some()) {
-                show::failure(&redacted(redactor_in_use, reason), "", None);
+            // The redacted console is judged too, so that steamship's own sentences among the
+            // reasons keep their words.
+            let seen = workshop::judge(
+                finished.code,
+                &redacted(redactor_in_use, &String::from_utf8_lossy(&finished.output)),
+                copied,
+            );
+            let seen = match seen {
+                workshop::Outcome::Failed(seen) => Some(seen),
+                workshop::Outcome::Published { .. } | workshop::Outcome::NotLoggedIn(_) => None,
+            };
+            for reason in reasons_shown(&reasons, seen, redactor_in_use)
+                .iter()
+                .filter(|_| redactor.is_some())
+            {
+                show::failure(reason, "", None);
             }
             // Valve gives the real reason for a Workshop failure there, not on the console.
             show::note(&format!(

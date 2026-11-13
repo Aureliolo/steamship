@@ -1505,6 +1505,32 @@ fn an_accounts_name_in_a_refusal_changes_neither_its_exit_code_nor_its_message()
 }
 
 #[test]
+fn an_account_named_like_steamships_words_leaves_its_sentences_whole_in_a_failed_upload() {
+    let (_project, script) = project(true);
+    let home = faked_with(&refusing_as_given(
+        "echo \"Logging in user '$account' [U:1:0] to Steam Public...OK\"",
+    ));
+    let (code, stdout, stderr) = steamship(
+        &[
+            "upload",
+            script.to_str().unwrap(),
+            "--account",
+            "steamcmd",
+            "--version",
+            "1.4.0",
+        ],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("steamcmd exited 5 without saying why"),
+        "{stderr}"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("user 'steamcmd'"));
+}
+
+#[test]
 fn a_default_check_steam_refuses_leaves_no_log_naming_the_account() {
     let (_project, script) = project(true);
     let home = faked_with(&refusing_as_given(

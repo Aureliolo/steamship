@@ -249,6 +249,33 @@ fn an_accounts_name_in_a_refusal_changes_neither_the_exit_code_nor_the_message()
 }
 
 #[test]
+fn an_account_named_like_steamships_words_leaves_its_sentences_whole_in_a_failed_item() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'steamcmd' [U:1:0] to Steam Public...OK\"\n\
+         exit 137\n",
+    );
+    saved_login(home.path());
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &[
+            "workshop",
+            script.to_str().unwrap(),
+            "--account",
+            "steamcmd",
+        ],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("steamcmd exited 137 without saying why"),
+        "{stderr}"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("user 'steamcmd'"));
+}
+
+#[test]
 fn an_items_saved_console_names_no_account() {
     let home = faked_with(
         "#!/bin/sh\n\
