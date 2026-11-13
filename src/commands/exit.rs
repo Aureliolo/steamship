@@ -27,7 +27,7 @@ pub(crate) fn fail(error: &dyn Display, code: u8) -> ExitCode {
 }
 
 /// The code of a failure once steamcmd has run: `UNFINISHED` when the run left something a second
-/// run would make again, otherwise `code`.
+/// run would duplicate, otherwise `code`.
 pub(crate) fn late(code: ExitCode, again: bool) -> ExitCode {
     if again {
         ExitCode::from(UNFINISHED)

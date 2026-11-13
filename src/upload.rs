@@ -371,7 +371,7 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    /// Whether Steam holds a build that a second upload would make again. That is a build that was
+    /// Whether Steam holds a build that a second upload would duplicate. That is a build that was
     /// made, or one Steam kept after refusing to commit it to the branch `set_live` names.
     #[must_use]
     pub fn kept_on_steam(&self, set_live: Option<&str>) -> bool {
