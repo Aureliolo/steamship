@@ -342,7 +342,7 @@ Then a run from any machine, CI among them, updates the items made before:
 ```
 
 When steamship cannot read or write the items file, it says what to add by hand and exits 5.
-The item is made, and the next run would make another.
+The item is made. The next run would make another.
 
 A new item is refused in CI unless `--new` is given, as for a script.
 

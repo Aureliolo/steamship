@@ -57,7 +57,8 @@ pub const EXIT_CODES: [(u8, &str); 7] = [
     ),
     (
         LIMITED,
-        "Steam is limiting login attempts. Wait, then run again",
+        "Steam is limiting login attempts. Wait, then run the same command again. Do not log in \
+         again",
     ),
 ];
 
