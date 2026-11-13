@@ -411,7 +411,7 @@ pub enum Command {
     /// depends on. These are the app's name, type and systems, its install folder, launch options
     /// and runtime, its depots' systems, and Steam Cloud. `--save` keeps them in a snapshot
     /// file, in Valve's own format. `--check` exits 2 naming every setting that differs from that
-    /// file. In a game's folder, with no file given, it is `settings.vdf` beside the build
+    /// file. In a game's folder, with no file given, the file is `settings.vdf` beside the build
     /// scripts. Nothing on Steam is changed.
     Settings(Settings),
     /// Show, save, check, create or delete an app's leaderboards.
@@ -604,8 +604,8 @@ pub struct Settings {
     /// scripts.
     #[arg(value_name = "FILE", requires = "file_switches")]
     pub file: Option<PathBuf>,
-    /// In a game's folder, its demo's, with the demo's own snapshot beside its build scripts. Takes no
-    /// app or file. To name a file, give the demo's ID as the app instead of `--demo`.
+    /// In a game's folder, uses the demo and its own snapshot beside the build scripts. Takes no
+    /// app or file. To name a file, give the demo's ID as the app instead.
     #[arg(long, conflicts_with = "app")]
     pub demo: bool,
     /// Write the settings to the snapshot file, replacing it, to check against later. Refused,

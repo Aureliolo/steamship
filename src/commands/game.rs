@@ -163,8 +163,8 @@ fn names_app(game: &Project, app_id: u32) -> Result<(), ExitCode> {
                 named.map_or_else(
                     || format!("names no app. Give the path of a script that names {app_id}"),
                     |named| format!(
-                        "names app {named}. Give that app's ID, or the path of the script that \
-                         names {app_id}"
+                        "names app {named}. Give {named}, or the path of a script that names \
+                         {app_id}"
                     )
                 )
             ),
