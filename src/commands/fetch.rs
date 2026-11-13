@@ -452,7 +452,10 @@ fn forget_refused_password(home: &Path, fetching: &Fetching<'_>) -> String {
             note
         }
         Err(error) => {
-            let said = error.to_string();
+            let said = format!(
+                "{error}. Remove the branch's password from {} by hand, then fetch again",
+                keychain::STORE
+            );
             show::failure(&said, "", None);
             said
         }
