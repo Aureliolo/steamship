@@ -860,6 +860,10 @@ pub struct Rollback {
 
 /// What `workshop` uploads, and how.
 #[derive(Debug, Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is a switch of its own on the command line, which clap reads into a field"
+)]
 pub struct Workshop {
     /// The app, by its ID or its app build script, when the item is given by fields. Otherwise an
     /// item script such as `workshop/item.vdf`, or the game's own app.
@@ -885,8 +889,11 @@ pub struct Workshop {
     /// its Workshop items until launch.
     #[arg(long)]
     pub for_launch: bool,
-    /// Once steamcmd has run, print what came of it on standard output as one line of JSON:
-    /// `outcome`, `app`, `item` and `name`. Everything else goes to standard error.
+    /// Check each item and upload nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Print what came of each item on standard output as one line of JSON: `outcome`, `app`,
+    /// `item`, `name` and `log`. Everything else goes to standard error.
     #[arg(long)]
     pub json: bool,
 }

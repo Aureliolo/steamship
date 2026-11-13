@@ -278,6 +278,10 @@ anything is sent, it refuses a script with any of these:
 
 Paths are relative to the script.
 
+Every item of a run is checked before the first goes up. With `--dry-run`,
+steamship stops after that check, uploads nothing and never asks Steam whether the game is
+released.
+
 ### Making a new item
 
 A script with no `publishedfileid`, or `0`, makes a new item and needs a `previewfile`. Without
@@ -336,8 +340,8 @@ Each item has a folder of its own in steamship's home, named by `--name`, or for
 `publishedfileid`, or `new` when it has none. The script steamcmd is given and steamcmd's console
 go there. Uploading several items in a row leaves each one's console to read.
 
-With `--json`, either form prints the result as one line of JSON on standard output once steamcmd
-has run, as [`upload --json`](#upload-results-as-json) does. Here the line is spread out:
+With `--json`, either form prints one line of JSON per item on standard output, as
+[`upload --json`](#upload-results-as-json) does. Here a line is spread out:
 
 ```json
 {
@@ -349,9 +353,9 @@ has run, as [`upload --json`](#upload-results-as-json) does. Here the line is sp
 }
 ```
 
-- `outcome` is `made`, `updated`, `failed` or `not-logged-in`.
+- `outcome` is `made`, `updated`, `failed` or `not-logged-in`, and `dry-run` under `--dry-run`.
 - `item` is the item's ID, when there is one.
-- `log` is where steamcmd's console was saved.
+- `log` is where steamcmd's console was saved, or `null` for a dry run.
 - `name` is the item's name in the `--items` file, or `null` for a script.
 
 The exit code is the same as without `--json`. A run refused before steamcmd starts prints no
