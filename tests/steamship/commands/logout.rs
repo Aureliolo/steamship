@@ -4,10 +4,12 @@ use std::fs::{self, File};
 use std::thread;
 use std::time::Duration;
 
+use crate::common;
 use crate::steamship;
 
 #[test]
 fn logout_waits_for_another_steamship_using_the_home_and_keeps_the_login_until_then() {
+    let _store = common::store::lock();
     let home = tempfile::tempdir().unwrap();
     let saved = home.path().join("steamcmd/config/config.vdf");
     fs::create_dir_all(saved.parent().unwrap()).unwrap();
@@ -40,6 +42,7 @@ fn logout_waits_for_another_steamship_using_the_home_and_keeps_the_login_until_t
 
 #[test]
 fn logout_forgets_steamcmds_saved_login_on_every_system_and_the_account() {
+    let _store = common::store::lock();
     let home = tempfile::tempdir().unwrap();
     let saved = [
         "steamcmd/config/config.vdf",

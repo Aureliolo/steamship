@@ -17,6 +17,21 @@ use crate::steamcmd;
 /// What a secret is replaced with.
 pub const MARKER: &[u8] = b"[redacted]";
 
+/// What replaces the words Steam gave when the login files that name the secrets cannot be read.
+pub const WITHHELD: &str = "withheld, because steamcmd's login files could not be read. Make them readable by this account, then run the command again";
+
+/// `text`, words Steam gave, with every secret of `redactor` replaced and the account's name kept.
+///
+/// Without a redactor nothing of them can be known safe, so [`WITHHELD`] stands for them. Only
+/// Steam's words go through here, never steamship's own.
+#[must_use]
+pub fn answer(redactor: Option<&Redactor>, text: &str) -> String {
+    redactor.map_or_else(
+        || WITHHELD.to_owned(),
+        |redactor| String::from_utf8_lossy(&redactor.redact_secrets(text.as_bytes())).into_owned(),
+    )
+}
+
 /// Values shorter than this are settings (a number, a flag, a language), not tokens, and would
 /// only blank out ordinary words.
 const SHORTEST: usize = 16;
@@ -629,6 +644,16 @@ mod tests {
             both.redact(b"the_token_before_the_run the_token_after_the_run"),
             b"[redacted] [redacted]"
         );
+    }
+
+    #[test]
+    fn steams_words_are_shown_redacted_or_not_at_all() {
+        let redactor = Redactor::from_texts(&[CONFIG.as_bytes().to_vec()]);
+        assert_eq!(
+            answer(Some(&redactor), &format!("HTTP 500: {TOKEN}")),
+            "HTTP 500: [redacted]"
+        );
+        assert_eq!(answer(None, &format!("HTTP 500: {TOKEN}")), WITHHELD);
     }
 
     #[test]

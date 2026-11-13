@@ -1,6 +1,7 @@
 //! `steamship upload`: a build sent to Steam, set live and reported.
 
 use std::env;
+use std::fmt::Display;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -8,7 +9,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use steamship::account::Account;
-use steamship::cli::{self, FAILED, REFUSED, UNFINISHED};
+use steamship::cli::{self, FAILED, LIMITED, REFUSED, UNFINISHED};
 use steamship::install;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
@@ -16,8 +17,8 @@ use steamship::project;
 use steamship::redact::{self, Redactor};
 use steamship::show::{self, Hint, Spinner};
 use steamship::{
-    branch, check, ci, download, dump, green, keychain, ledger, redist, release, run, settings,
-    steamcmd, upload, webapi,
+    branch, builds, check, ci, download, dump, green, keychain, ledger, redist, release, run,
+    settings, steamcmd, upload, webapi,
 };
 
 use super::branch::try_branch;
@@ -29,7 +30,7 @@ use super::exit::{either, fail, first_failure, late};
 use super::game::{game_as, game_script, script_given, script_named, shipped_from};
 use super::key::{KeyFrom, key_at_hand, key_variable, offer_to_keep, web_api};
 use super::ready::{
-    dump_in_actions, login_refused, named, ready, restore, run_as, steamcmd_failed,
+    dump_in_actions, login_refusal, named, ready, restore, run_as, steamcmd_failed,
 };
 use super::released::{DEFAULT_RELEASED, app_info, default_unreleased, release_judged};
 use super::settings::try_settings;
@@ -311,11 +312,8 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
     if request.json {
         show::divert();
     }
-    show::title(if request.preview {
-        "upload, dry run"
-    } else {
-        "upload"
-    });
+    let (title, doing, again) = wording(request.preview);
+    show::title(title);
     let (packed, account) = run_as(request.account)?;
     let (found, branch) = checked(request.script, false)?;
     let needing = needs_redistributable(&found)?;
@@ -364,12 +362,20 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         log,
         written,
         ..
-    } = build_retrying(&steam, wording(request.preview))?;
+    } = match build_retrying(&steam, (doing, again)) {
+        Ok(ran) => ran,
+        Err(halt) => {
+            if request.json {
+                print_halted(&halt, &prepared, &description);
+            }
+            return Err(halt.code);
+        }
+    };
     let (default, spinner) = shown_unreleased(
         default,
         &outcome,
         info.as_deref().map(|info| (info, redactor.is_some())),
-        (prepared.app_id, spinner, wording(request.preview).0),
+        (prepared.app_id, spinner, doing),
     );
     let outcome = found_on_steam(outcome, &prepared, &description);
     let reporting = Reporting {
@@ -379,54 +385,191 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         log: &log,
         shown: redactor.is_some(),
         redactor: redactor.as_ref().unwrap_or(&before),
+        answers: redactor.as_ref(),
         packed: packed.as_ref(),
         default: default.as_ref().map(|(api, _)| api),
     };
-    let (code, live) = report(&outcome, reporting);
-    record_live(&home, &prepared, (&outcome, live), request.shipped);
-    let setting_default = default.is_some();
+    let reported = report(&outcome, reporting);
+    record_live(&home, &prepared, (&outcome, reported.live), request.shipped);
     if let Some((api, from)) = default {
         offer_to_keep(&home, &api, from);
-    }
-    if request.json {
-        show::plain(&format!(
-            "{}\n",
-            summary(&outcome, live, setting_default, &prepared, &description)
-        ));
     }
     if matches!(
         outcome,
         upload::Outcome::Failed(_) | upload::Outcome::BuiltThenFailed { .. }
     ) && let Some(redactor) = &redactor
     {
-        dump_failed(
-            written.then_some(saved),
-            &prepared,
-            &marks.added(&steamcmd_logs),
-            redactor,
-        );
+        let added = marks.added(&steamcmd_logs);
+        dump_failed(written.then_some(saved), &prepared, &added, redactor);
     }
-    checked_after(&held, &manifest, &outcome, &prepared)?;
-    Ok((code, prepared.held_back))
+    let after = checked_after(&held, &manifest, &outcome, &prepared);
+    if request.json {
+        let shown = (&reported, redactor.as_ref().unwrap_or(&before));
+        let ended = (&outcome, (reported.code, &after));
+        print_ended(ended, shown, (&prepared, &description));
+    }
+    after.map_err(|(stopped, _)| stopped)?;
+    Ok((reported.code, prepared.held_back))
 }
 
-/// What the spinner says while a run of steamcmd goes on, and when it is run again.
-const fn wording(preview: bool) -> (&'static str, &'static str) {
-    if preview {
-        ("computing the build", "computing the build again")
+/// What the check of steamcmd's files after a run found: nothing, or the exit code with the fault's
+/// text.
+type Checked = Result<(), (ExitCode, String)>;
+
+/// Prints the line of an upload whose retry stopped, when steamcmd has run before it.
+fn print_halted(halt: &Halt, prepared: &upload::Prepared, description: &str) {
+    if let Some(earlier) = &halt.earlier {
+        let error = error_of(halt.code, "", Some(&halt.failure), None);
+        let line = summary(earlier, Live::default(), prepared, description, error);
+        print_line(&line);
+    }
+}
+
+/// Prints an upload's line once the check after its run is made. `ended` holds the outcome, the
+/// run's exit code and what that check found. `reported` holds what the run said. `shown` hides the
+/// secrets in the fault.
+fn print_ended(
+    ended: (&upload::Outcome, (ExitCode, &Checked)),
+    (reported, shown): (&Reported, &Redactor),
+    (prepared, description): (&upload::Prepared, &str),
+) {
+    let (outcome, (code, after)) = ended;
+    let (exit, later) = match after {
+        Ok(()) => (code, None),
+        Err((stopped, why)) => (*stopped, Some(redacted(shown, why))),
+    };
+    let holds = format!(
+        "Steam holds a build of app {0}, so a second upload would make another. List it with \
+         steamship builds {0}",
+        prepared.app_id
+    );
+    let error = error_of(exit, &holds, reported.failure.as_ref(), later.as_deref());
+    print_line(&summary(
+        outcome,
+        reported.live,
+        prepared,
+        description,
+        error,
+    ));
+}
+
+/// Prints `line`, an upload's or a Workshop run's JSON, on its own line.
+pub(crate) fn print_line(line: &serde_json::Value) {
+    show::plain(&format!("{line}\n"));
+}
+
+/// The first failure of a run, for the `error` of its `--json` line.
+pub(crate) struct Failure {
+    /// The word for the failure. Under exit 5 `error_of` reports `unfinished` instead.
+    code: &'static str,
+    /// What a person reads, redacted.
+    message: String,
+}
+
+impl Failure {
+    /// The failure the word `code` names, said as `message`.
+    pub(crate) const fn new(code: &'static str, message: String) -> Self {
+        Self { code, message }
+    }
+
+    /// The failure the word `code` names, said as the `reasons` steamcmd gave that may be shown.
+    /// When none may be, the sentence of the `log` line stands in.
+    pub(crate) fn of_reasons(code: &'static str, reasons: &[String], log: &str) -> Self {
+        let message = if reasons.is_empty() {
+            log.strip_prefix("log  ").unwrap_or(log).to_owned()
+        } else {
+            reasons.join("\n")
+        };
+        Self { code, message }
+    }
+}
+
+/// The failure of a login Steam refused, which [`login_refusal`] answered `code` and `message` for.
+pub(crate) fn login_failure(code: ExitCode, message: String) -> Failure {
+    let word = if code == ExitCode::from(LIMITED) {
+        "login-limited"
     } else {
-        ("uploading", "uploading again")
+        "not-logged-in"
+    };
+    Failure::new(word, message)
+}
+
+/// `headline` and `reason` as `show::failure` prints them, without its mark.
+pub(crate) fn said(headline: &str, reason: &str) -> String {
+    if reason.is_empty() {
+        headline.to_owned()
+    } else {
+        format!("{headline}: {reason}")
+    }
+}
+
+/// Prints a failure of steamship's own that stops steamcmd from running, and answers the exit code
+/// and the failure. `redactor` hides the secrets in its text, when one could be built.
+pub(crate) fn not_run(error: &dyn Display, redactor: Option<&Redactor>) -> (ExitCode, Failure) {
+    let code = fail(error, FAILED);
+    let message = error.to_string();
+    let message = redactor.map_or_else(|| message.clone(), |redactor| redacted(redactor, &message));
+    (
+        code,
+        Failure {
+            code: "steamcmd-not-run",
+            message,
+        },
+    )
+}
+
+/// The `error` a run's `--json` line holds, or none when the run exited 0.
+///
+/// Exit 5 is `unfinished`: its message opens with `held`, what Steam holds and what to do, then
+/// the `first` failure and the `later` steamcmd fault. Any other exit gives the word and message
+/// of the `first` failure, or `steamcmd-install` with the `later` fault when nothing failed before.
+pub(crate) fn error_of(
+    exit: ExitCode,
+    held: &str,
+    first: Option<&Failure>,
+    later: Option<&str>,
+) -> Option<serde_json::Value> {
+    if exit == ExitCode::SUCCESS {
+        return None;
+    }
+    if exit == ExitCode::from(UNFINISHED) {
+        let message = [Some(held), first.map(|first| first.message.as_str()), later]
+            .into_iter()
+            .flatten()
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Some(builds::failure_json("unfinished", &message));
+    }
+    Some(match (first, later) {
+        (Some(first), _) => builds::failure_json(first.code, &first.message),
+        (None, later) => builds::failure_json("steamcmd-install", later.unwrap_or_default()),
+    })
+}
+
+/// The title of the run, and what the spinner says while a run of steamcmd goes on and when it is
+/// run again.
+const fn wording(preview: bool) -> (&'static str, &'static str, &'static str) {
+    if preview {
+        (
+            "upload, dry run",
+            "computing the build",
+            "computing the build again",
+        )
+    } else {
+        ("upload", "uploading", "uploading again")
     }
 }
 
 /// Checks steamcmd's files again after the run. A failed check exits 5 when Steam holds a build
-/// that a second upload would duplicate, and says so.
+/// that a second upload would duplicate, and says so. It answers the exit code and the fault's
+/// text.
 fn checked_after(
     held: &install::Held,
     manifest: &Manifest,
     outcome: &upload::Outcome,
     prepared: &upload::Prepared,
-) -> Result<(), ExitCode> {
+) -> Checked {
     let Err(error) = install::verify(held, manifest) else {
         return Ok(());
     };
@@ -443,7 +586,7 @@ fn checked_after(
             after: "",
         });
     }
-    Err(failed)
+    Err((failed, error.to_string()))
 }
 
 /// The key an upload `asked` for the default branch too sets it live with, and whether the build's
@@ -594,11 +737,23 @@ struct Ran {
     written: bool,
 }
 
+/// Why an upload's runs of steamcmd stopped short of an outcome.
+struct Halt {
+    code: ExitCode,
+    failure: Failure,
+    /// What the run before came to, when steamcmd had run: the upload's line is due then.
+    earlier: Option<upload::Outcome>,
+}
+
 /// Runs steamcmd's build, saying it is `doing` so, and runs it `again` while it fails in a way
 /// that may pass: once Steam's CDN serves a manifest it did not, and once more for no connection
 /// to Steam's build server.
-fn build_retrying(steam: &Steam<'_>, (doing, again): (&str, &str)) -> Result<Ran, ExitCode> {
-    let mut ran = build(steam, doing, steam.info_of)?;
+fn build_retrying(steam: &Steam<'_>, (doing, again): (&str, &str)) -> Result<Ran, Halt> {
+    let mut ran = build(steam, doing, steam.info_of).map_err(|(code, failure)| Halt {
+        code,
+        failure,
+        earlier: None,
+    })?;
     let info = ran.info.take();
     let mut tries = upload::Tries::default();
     while let Some(retry) = ran.retry.take() {
@@ -654,7 +809,12 @@ fn build_retrying(steam: &Steam<'_>, (doing, again): (&str, &str)) -> Result<Ran
                 ran.spinner.failed(&format!("{what} after {}", ran.took));
             }
         }
-        ran = build(steam, again, None)?;
+        let earlier = ran.outcome;
+        ran = build(steam, again, None).map_err(|(code, failure)| Halt {
+            code,
+            failure,
+            earlier: Some(earlier),
+        })?;
     }
     ran.info = info;
     Ok(ran)
@@ -662,8 +822,8 @@ fn build_retrying(steam: &Steam<'_>, (doing, again): (&str, &str)) -> Result<Ran
 
 /// Runs steamcmd's build once, printing first the info of the app `info_of` names, saying it is
 /// `doing` so, and reads what it came to.
-fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, ExitCode> {
-    upload::clear_log(steam.prepared).map_err(|error| fail(&error, FAILED))?;
+fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, (ExitCode, Failure)> {
+    upload::clear_log(steam.prepared).map_err(|error| not_run(&error, None))?;
     // A console left by an earlier run must never pass for this one's, so it goes first. One that
     // stays is said, and stops nothing: the run's own outcome matters more.
     let removed = match fs::remove_file(steam.saved) {
@@ -672,7 +832,7 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
     };
     let name = steam.account.name();
     let before = Redactor::for_home(steam.home)
-        .map_err(|error| fail(&error, FAILED))?
+        .map_err(|error| not_run(&error, None))?
         .and_name(name);
     let spinner = Spinner::start("steam", doing, true);
     let finished = steamcmd::upload(steam.account, &steam.prepared.script, info_of).run(steam.home);
@@ -681,7 +841,7 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
         Ok(finished) => finished,
         Err(error) => {
             spinner.failed(&format!("could not start after {took}"));
-            return Err(fail(&error, FAILED));
+            return Err(not_run(&error, Some(&before)));
         }
     };
     // steamcmd may renew its token as it runs, so what is shown or saved of the run is redacted
@@ -813,7 +973,7 @@ fn logs_removed(steam: &Steam<'_>, error: &io::Error, removed: Option<io::Error>
 /// Asks Steam, when a key is at hand, whether `build_id` is what is live on `branch` now. False
 /// only when Steam shows another build there, or no such branch. Asked a few times, since a
 /// build just set live may not show at once. A Steam that cannot be asked holds nothing up.
-fn confirmed_live(app: u32, branch: &str, build_id: u64) -> bool {
+fn confirmed_live(app: u32, branch: &str, build_id: u64, answers: Option<&Redactor>) -> bool {
     const APART: Duration = Duration::from_secs(2);
     let Ok(Some(api)) = key_at_hand() else {
         return true;
@@ -838,7 +998,7 @@ fn confirmed_live(app: u32, branch: &str, build_id: u64) -> bool {
         }
         Err(error) => {
             spinner.failed("not confirmed");
-            show::aside(&error.to_string());
+            show::aside(&steams_words(&error, answers));
             true
         }
     }
@@ -876,7 +1036,8 @@ fn found_on_steam(
 
 /// What the end of an upload is said with: the spinner, steamcmd's duration, the `log` line,
 /// whether steamcmd's lines may be shown and the redactor for them, the login handed over, and the
-/// Web API for setting the build live.
+/// Web API for setting the build live. `answers` is the redactor of the login after the run, none
+/// when it could not be read, and the Web API's words are shown only through it.
 struct Reporting<'upload> {
     spinner: Spinner,
     took: &'upload str,
@@ -884,6 +1045,7 @@ struct Reporting<'upload> {
     log: &'upload str,
     shown: bool,
     redactor: &'upload Redactor,
+    answers: Option<&'upload Redactor>,
     packed: Option<&'upload ci::Login>,
     default: Option<&'upload webapi::Api>,
 }
@@ -897,8 +1059,32 @@ struct Live {
     default: bool,
 }
 
-/// Says what `outcome` came to, and answers its exit code and where the build is live.
-fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Live) {
+/// What [`report`] says an upload came to.
+struct Reported {
+    code: ExitCode,
+    /// Where the build is live.
+    live: Live,
+    /// The failure that gave `code`, if any.
+    failure: Option<Failure>,
+}
+
+impl Reported {
+    /// Exit 5 for a build Steam holds but did not set live everywhere it was asked to. `live`
+    /// shows where it is live. The failure's text is the `headline` and `reason` as printed.
+    fn unfinished(live: Live, headline: &str, reason: &str) -> Self {
+        Self {
+            code: ExitCode::from(UNFINISHED),
+            live,
+            failure: Some(Failure {
+                code: "unfinished",
+                message: said(headline, reason),
+            }),
+        }
+    }
+}
+
+/// Says what `outcome` came to, and answers its exit code, where the build is live and the failure.
+fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> Reported {
     let Reporting {
         spinner,
         took,
@@ -906,37 +1092,49 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
         log: logs,
         shown,
         redactor,
+        answers,
         packed,
         default,
     } = reporting;
     let app = prepared.app_id;
-    let code = match outcome {
+    let (code, failure) = match outcome {
         upload::Outcome::Built { build_id } => {
             spinner.done(&format!("uploaded in {took}"));
             hand_on(*build_id);
-            if let Some(branch) = &prepared.held_back {
-                return first_on_default(app, *build_id, branch, default, logs);
-            }
-            return set_live(app, *build_id, prepared.set_live.as_deref(), default, logs);
+            let live = prepared.held_back.as_ref().map_or_else(
+                || {
+                    set_live(
+                        app,
+                        *build_id,
+                        prepared.set_live.as_deref(),
+                        default,
+                        logs,
+                        answers,
+                    )
+                },
+                |branch| first_on_default(app, *build_id, branch, default, logs, answers),
+            );
+            return live;
         }
         upload::Outcome::Previewed => {
             spinner.done(&format!("dry run finished in {took}"));
             show::success("nothing was uploaded, as asked", logs);
-            ExitCode::SUCCESS
+            (ExitCode::SUCCESS, None)
         }
         upload::Outcome::NotLoggedIn(line) => {
             spinner.failed(&format!("refused after {took}"));
-            login_refused(line, redactor, packed)
+            let (code, message) = login_refusal(line, redactor, packed);
+            (code, Some(login_failure(code, message)))
         }
         upload::Outcome::BuiltThenFailed { build_id, reasons } => {
             spinner.failed(&format!("failed after {took}"));
-            show::failure(
-                &format!("app {app}: built as BuildID {build_id}, then steamcmd failed"),
-                "",
-                None,
-            );
+            let headline = format!("app {app}: built as BuildID {build_id}, then steamcmd failed");
+            show::failure(&headline, "", None);
+            let mut lines = vec![headline];
             for reason in reasons.iter().filter(|_| shown) {
-                show::failure(&redacted(redactor, reason), "", None);
+                let reason = redacted(redactor, reason);
+                show::failure(&reason, "", None);
+                lines.push(reason);
             }
             if let Some(why) = upload::commit_refused(reasons, prepared.set_live.as_deref()) {
                 show::note(&why);
@@ -957,28 +1155,62 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
             }
             show::note(logs);
             hand_on(*build_id);
-            ExitCode::from(UNFINISHED)
+            let failure = Failure::new("unfinished", lines.join("\n"));
+            (ExitCode::from(UNFINISHED), Some(failure))
         }
         upload::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
-            for reason in reasons.iter().filter(|_| shown) {
-                show::failure(&redacted(redactor, reason), "", None);
+            let lines: Vec<String> = reasons
+                .iter()
+                .filter(|_| shown)
+                .map(|reason| redacted(redactor, reason))
+                .collect();
+            for line in &lines {
+                show::failure(line, "", None);
             }
-            let kept = upload::commit_refused(reasons, prepared.set_live.as_deref());
-            if let Some(why) = &kept {
-                show::note(upload::NOT_LIVE);
-                show::note(why);
-                show::hint(Hint {
-                    before: "see the app's branches with ",
-                    command: &format!("steamship builds {app}"),
-                    after: "",
-                });
-            }
-            show::note(logs);
-            ExitCode::from(if kept.is_some() { UNFINISHED } else { FAILED })
+            let (code, failure) = refused(reasons, &lines, prepared, logs);
+            (code, Some(failure))
         }
     };
-    (code, Live::default())
+    Reported {
+        code,
+        live: Live::default(),
+        failure,
+    }
+}
+
+/// Says what a failed build left, and answers the exit code and the failure. `reasons` are
+/// steamcmd's, `lines` the ones that were shown. Exit 5 is for a build Steam kept without setting
+/// it live.
+fn refused(
+    reasons: &[String],
+    lines: &[String],
+    prepared: &upload::Prepared,
+    logs: &str,
+) -> (ExitCode, Failure) {
+    let kept = upload::commit_refused(reasons, prepared.set_live.as_deref());
+    if let Some(why) = &kept {
+        show::note(upload::NOT_LIVE);
+        show::note(why);
+        show::hint(Hint {
+            before: "see the app's branches with ",
+            command: &format!("steamship builds {}", prepared.app_id),
+            after: "",
+        });
+    }
+    show::note(logs);
+    let (code, word) = if kept.is_some() {
+        (UNFINISHED, "unfinished")
+    } else {
+        (FAILED, "steamcmd-failed")
+    };
+    (ExitCode::from(code), Failure::of_reasons(word, lines, logs))
+}
+
+/// `error` as a person reads it, with the words Steam gave redacted, or withheld when no redactor
+/// could be built.
+fn steams_words(error: &webapi::Error, answers: Option<&Redactor>) -> String {
+    error.said_with(&|steam| redact::answer(answers, steam))
 }
 
 /// `text` with every secret `redactor` knows replaced, for what steamship prints after judging it.
@@ -989,22 +1221,23 @@ pub(crate) fn redacted(redactor: &Redactor, text: &str) -> String {
 
 /// Says where `build_id`, just uploaded for `app`, is live: on `branch`, which the script set it
 /// live on, once Steam shows it there, and then on default, set through `default` when given.
-/// Answers the upload's exit code and where the build is live. `logs` says where to look.
+/// Answers as [`report`] does. `logs` says where to look.
 fn set_live(
     app: u32,
     build_id: u64,
     branch: Option<&str>,
     default: Option<&webapi::Api>,
     logs: &str,
-) -> (ExitCode, Live) {
+    answers: Option<&Redactor>,
+) -> Reported {
     if let Some(branch) = branch
-        && !confirmed_live(app, branch, build_id)
+        && !confirmed_live(app, branch, build_id, answers)
     {
+        let headline = format!(
+            "app {app}: BuildID {build_id} uploaded, but Steam does not show it live on {branch}"
+        );
         show::failure(
-            &format!(
-                "app {app}: BuildID {build_id} uploaded, but Steam does not show it live on \
-                 {branch}"
-            ),
+            &headline,
             "",
             Some(Hint {
                 before: "set it live with ",
@@ -1013,16 +1246,16 @@ fn set_live(
             }),
         );
         show::note(logs);
-        return (ExitCode::from(UNFINISHED), Live::default());
+        return Reported::unfinished(Live::default(), &headline, "");
     }
     let mut live = Live {
         branch: branch.is_some(),
         default: false,
     };
     if let Some(api) = default {
-        if !live_on_default(api, app, build_id, branch) {
+        if let Err(why) = live_on_default(api, app, build_id, branch, answers) {
             show::note(logs);
-            return (ExitCode::from(UNFINISHED), live);
+            return Reported::unfinished(live, &why, "");
         }
         live.default = true;
     }
@@ -1033,7 +1266,11 @@ fn set_live(
         (None, false) => String::new(),
     };
     show::success(&format!("app {app}: BuildID {build_id}{set}"), logs);
-    (ExitCode::SUCCESS, live)
+    Reported {
+        code: ExitCode::SUCCESS,
+        live,
+        failure: None,
+    }
 }
 
 /// Says where `build_id`, just uploaded for `app`, is live while the app has no branch but
@@ -1045,18 +1282,21 @@ fn first_on_default(
     branch: &str,
     default: Option<&webapi::Api>,
     logs: &str,
-) -> (ExitCode, Live) {
+    answers: Option<&Redactor>,
+) -> Reported {
     let make = format!(
         "make {branch} in Steamworks under SteamPipe, Builds, and set the build live there with "
     );
     let promote = format!("steamship promote {app} --build {build_id} --branch {branch}");
     let Some(api) = default else {
+        let headline = format!("app {app}: BuildID {build_id} uploaded, but set live nowhere");
+        let reason = format!(
+            "app {app} has no branch but default until a build is live there, so steamcmd was \
+             not asked to set it live on {branch}"
+        );
         show::failure(
-            &format!("app {app}: BuildID {build_id} uploaded, but set live nowhere"),
-            &format!(
-                "app {app} has no branch but default until a build is live there, so steamcmd \
-                 was not asked to set it live on {branch}"
-            ),
+            &headline,
+            &reason,
             Some(Hint {
                 before: "set it live on default with ",
                 command: &format!("steamship promote {app} --build {build_id} --branch default"),
@@ -1069,10 +1309,10 @@ fn first_on_default(
             after: "",
         });
         show::note(logs);
-        return (ExitCode::from(UNFINISHED), Live::default());
+        return Reported::unfinished(Live::default(), &headline, &reason);
     };
-    let (code, live) = set_live(app, build_id, None, Some(api), logs);
-    if live.default {
+    let reported = set_live(app, build_id, None, Some(api), logs, answers);
+    if reported.live.default {
         show::note(&format!(
             "not set live on {branch}: Steam gives app {app} no branch but default until a build \
              is live there"
@@ -1083,69 +1323,82 @@ fn first_on_default(
             after: "",
         });
     }
-    (code, live)
+    reported
 }
 
-/// Sets `build_id` of `app` live on the default branch through `api`, and says whether Steam
-/// did. The build is already live on `branch`, if the script sets one live.
-fn live_on_default(api: &webapi::Api, app: u32, build_id: u64, branch: Option<&str>) -> bool {
+/// Sets `build_id` of `app` live on the default branch through `api`. When Steam did not, prints it
+/// and answers the failure's text. The build is already live on `branch`, if the script sets one
+/// live.
+fn live_on_default(
+    api: &webapi::Api,
+    app: u32,
+    build_id: u64,
+    branch: Option<&str>,
+    answers: Option<&Redactor>,
+) -> Result<(), String> {
     let spinner = Spinner::start("default", "setting it live", false);
     let Err(error) = api.set_live(app, build_id, branch::DEFAULT_KEY) else {
         spinner.done("set live");
-        return true;
+        return Ok(());
     };
     spinner.failed("not set live");
     let also = branch.map_or_else(String::new, |branch| format!(" and live on {branch}"));
+    let headline = format!(
+        "app {app}: BuildID {build_id} uploaded{also}, but Steam did not set it live on default"
+    );
+    let reason = steams_words(&error, answers);
     show::failure(
-        &format!(
-            "app {app}: BuildID {build_id} uploaded{also}, but Steam did not set it live on \
-             default"
-        ),
-        &error.to_string(),
+        &headline,
+        &reason,
         Some(Hint {
             before: "set it live with ",
             command: &format!("steamship promote {app} --build {build_id} --branch default"),
             after: "",
         }),
     );
-    false
+    Err(said(&headline, &reason))
 }
 
-/// What an upload came to, for the program that ran steamship with `--json`: the outcome, the
-/// app, the build Steam made of it if any, the branch the script sets live and whether the build
-/// is live there and on default, and the build's description. `default` is whether it was to go
-/// live on default too: asked to, while the app is unreleased.
+/// What an upload came to, for the program that ran steamship with `--json`: `outcome` (`uploaded`
+/// where Steam holds a build, `dry-run` for a dry run that finished, otherwise null), `app`,
+/// `build_id` (null where nothing gave it), the `branch` the script sets live, whether the build is
+/// `live` there and on `default`, and the build's `description`. A run that failed adds `error`.
 fn summary(
     outcome: &upload::Outcome,
     live: Live,
-    default: bool,
     prepared: &upload::Prepared,
     description: &str,
+    error: Option<serde_json::Value>,
 ) -> serde_json::Value {
     let branch = prepared.set_live.as_ref().or(prepared.held_back.as_ref());
-    let (said, build_id) = match outcome {
-        upload::Outcome::Built { build_id } => {
-            let said = if (branch.is_some() && !live.branch) || (default && !live.default) {
-                "not-live"
-            } else {
-                "uploaded"
-            };
-            (said, Some(*build_id))
+    let build_id = match outcome {
+        upload::Outcome::Built { build_id } | upload::Outcome::BuiltThenFailed { build_id, .. } => {
+            Some(*build_id)
         }
-        upload::Outcome::Previewed => ("dry-run", None),
-        upload::Outcome::NotLoggedIn(_) => ("not-logged-in", None),
-        upload::Outcome::BuiltThenFailed { build_id, .. } => ("built-then-failed", Some(*build_id)),
-        upload::Outcome::Failed(_) => ("failed", None),
+        upload::Outcome::Previewed
+        | upload::Outcome::NotLoggedIn(_)
+        | upload::Outcome::Failed(_) => None,
     };
-    serde_json::json!({
-        "outcome": said,
+    let label = if *outcome == upload::Outcome::Previewed {
+        Some("dry-run")
+    } else {
+        outcome
+            .kept_on_steam(prepared.set_live.as_deref())
+            .then_some("uploaded")
+    };
+    let mut printed = serde_json::json!({
+        "outcome": label,
         "app": prepared.app_id,
         "build_id": build_id,
         "branch": branch,
         "live": live.branch,
         "default": live.default,
         "description": description,
-    })
+    });
+    if let (Some(error), Some(fields)) = (error, printed.as_object_mut()) {
+        drop(fields.insert("error".to_owned(), error));
+    }
+    printed
 }
 
 /// Each depot's build log in `output`, by name, in name order.

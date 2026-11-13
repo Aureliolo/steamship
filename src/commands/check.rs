@@ -17,7 +17,7 @@ use super::achievements::try_achievements;
 use super::builds::try_builds;
 use super::exit::{either, fail, first_failure, refusals};
 use super::game::{game_achievements, game_as, game_script, script_given, script_named};
-use super::key::{key_at_hand, why_unanswered};
+use super::key::{answered, key_at_hand, why_unanswered};
 use super::leaderboards::{Changes, Listing, try_leaderboards};
 use super::presence::{presence_read, try_rich_presence};
 use super::settings::settings_file;
@@ -538,7 +538,7 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<Branch, Ex
                 return Ok(Branch::Unbranched);
             }
             spinner.failed("not checked");
-            show::aside(&error.to_string());
+            show::aside(&answered(&error));
             Ok(Branch::Ready)
         }
     }

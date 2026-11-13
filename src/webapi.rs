@@ -68,37 +68,96 @@ pub enum Error {
     Unreachable(Unreached),
     /// Steam answered with something that is not what the method answers.
     Unreadable(&'static str),
-    /// Steam answered that the call failed, with this message.
-    Failed(String),
+    /// Steam answered that the call failed. `own` is steamship's words for it and `said` the text
+    /// Steam sent, if it sent any.
+    Failed { own: Own, said: Option<String> },
+}
+
+/// steamship's own words for a failed call.
+///
+/// Only fixed phrases and parsed numbers can be built, so no text from Steam's answer can end up
+/// here. That text goes into [`Error::Failed`]'s `said`, shown only through [`Error::said_with`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Own {
+    /// No words of steamship's own.
+    Nothing,
+    /// The `result` number of a response.
+    Result(u64),
+    /// The `EResult` number of a service method.
+    EResult(u64),
+    /// Steam answered a request to make a leaderboard with the ID 0.
+    NoLeaderboard,
+}
+
+impl fmt::Display for Own {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Nothing => Ok(()),
+            Self::Result(number) => write!(formatter, "result {number}"),
+            Self::EResult(number) => write!(formatter, "EResult {number}"),
+            Self::NoLeaderboard => formatter.write_str("Steam made no leaderboard"),
+        }
+    }
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotAKey => {
-                formatter.write_str("not a publisher Web API key, which is 32 hexadecimal digits")
-            }
-            Self::Refused => formatter.write_str(
-                "Steam refused the Web API key. It must be the publisher key of a group that \
-                 holds the app",
-            ),
-            Self::Status(status, said) if said.is_empty() => {
-                write!(formatter, "Steam answered HTTP {status}")
-            }
-            Self::Status(status, said) => write!(formatter, "Steam answered HTTP {status}: {said}"),
-            Self::Unreachable(unreached) => write!(
-                formatter,
-                "partner.steam-api.com could not be reached, tried twice: {unreached}"
-            ),
-            Self::Unreadable(what) => write!(formatter, "Steam's answer holds no {what}"),
-            Self::Failed(message) => write!(formatter, "Steam says: {message}"),
-        }
+        formatter.write_str(&self.said_with(&str::to_owned))
     }
 }
 
 impl error::Error for Error {}
 
 impl Error {
+    /// The error as a person reads it, with the words Steam gave passed through `steam`. The rest
+    /// is steamship's own and is never changed.
+    #[must_use]
+    pub fn said_with(&self, steam: &dyn Fn(&str) -> String) -> String {
+        match self {
+            Self::NotAKey => {
+                "not a publisher Web API key, which is 32 hexadecimal digits".to_owned()
+            }
+            Self::Refused => "Steam refused the Web API key. It must be the publisher key of a \
+                              group that holds the app"
+                .to_owned(),
+            Self::Status(status, said) if said.is_empty() => {
+                format!("Steam answered HTTP {status}")
+            }
+            Self::Status(status, said) => {
+                format!("Steam answered HTTP {status}: {}", steam(said))
+            }
+            Self::Unreachable(unreached) => {
+                format!("partner.steam-api.com could not be reached, tried twice: {unreached}")
+            }
+            Self::Unreadable(what) => format!("Steam's answer holds no {what}"),
+            Self::Failed { own, said } => {
+                let own = own.to_string();
+                let said = said.as_deref().map(steam);
+                let words: Vec<&str> = [Some(own.as_str()), said.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .filter(|part| !part.is_empty())
+                    .collect();
+                format!("Steam says: {}", words.join(", "))
+            }
+        }
+    }
+
+    /// A failure Steam reported in its own words only.
+    #[must_use]
+    pub fn told(said: &str) -> Self {
+        Self::Failed {
+            own: Own::Nothing,
+            said: Some(said.to_owned()),
+        }
+    }
+
+    /// A failure Steam reported with no message, which `own` describes.
+    #[must_use]
+    pub const fn failed(own: Own) -> Self {
+        Self::Failed { own, said: None }
+    }
+
     /// What went wrong, as a word a program can match on, which `--json` gives with the message.
     #[must_use]
     pub const fn code(&self) -> &'static str {
@@ -108,7 +167,7 @@ impl Error {
             Self::Status(..) => "http-error",
             Self::Unreachable(_) => "unreachable",
             Self::Unreadable(_) => "unreadable",
-            Self::Failed(_) => "steam-failed",
+            Self::Failed { .. } => "steam-failed",
         }
     }
 }
@@ -462,7 +521,7 @@ pub fn created_from(answer: &Value) -> Result<Leaderboard, Error> {
     let entry = field(result, &["leaderboard"]).ok_or(Error::Unreadable("leaderboard"))?;
     // Steam answers a leaderboard it neither found nor made with the ID 0.
     if number(field(entry, &["leaderBoardID", "id"])).unwrap_or(0) == 0 {
-        return Err(Error::Failed("Steam made no leaderboard".to_owned()));
+        return Err(Error::failed(Own::NoLeaderboard));
     }
     leaderboard(entry)
 }
@@ -536,15 +595,29 @@ fn entries<'answer>(
     }
 }
 
+/// What a service method's `X-EResult` header and `X-Error_Message` header say of a failed call.
+/// Only a number in the header is steamship's to word. Anything else is Steam's text, as is the
+/// message.
+fn eresult_failure(result: &str, message: Option<String>) -> Error {
+    match result.trim().parse::<u64>() {
+        Ok(number) => Error::Failed {
+            own: Own::EResult(number),
+            said: message,
+        },
+        Err(_) => Error::told(&message.map_or_else(
+            || format!("EResult {result}"),
+            |message| format!("EResult {result}, {message}"),
+        )),
+    }
+}
+
 /// Refuses a response whose `result` says the call failed. Steam's 1 is success.
 fn succeeded(response: &Value) -> Result<(), Error> {
     match number(field(response, &["result"])) {
         None | Some(1) => Ok(()),
-        Some(result) => Err(Error::Failed(
-            field(response, &["message", "error"])
-                .and_then(Value::as_str)
-                .map_or_else(|| format!("result {result}"), str::to_owned),
-        )),
+        Some(result) => Err(field(response, &["message", "error"])
+            .and_then(Value::as_str)
+            .map_or_else(|| Error::failed(Own::Result(result)), Error::told)),
     }
 }
 
@@ -1012,10 +1085,7 @@ impl Api {
                     .map(ToOwned::to_owned)
             };
             if let Some(result) = header("x-eresult").filter(|result| result != "1") {
-                return Err(Error::Failed(header("x-error_message").map_or_else(
-                    || format!("EResult {result}"),
-                    |message| format!("EResult {result}, {message}"),
-                )));
+                return Err(eresult_failure(&result, header("x-error_message")));
             }
         }
         read(response)
@@ -1240,11 +1310,11 @@ mod tests {
             changed_from(&answer(
                 r#"{"response": {"result": 2, "message": "Invalid build"}}"#
             )),
-            Err(Error::Failed("Invalid build".to_owned()))
+            Err(Error::told("Invalid build"))
         );
         assert_eq!(
             changed_from(&answer(r#"{"response": {"result": 8}}"#)),
-            Err(Error::Failed("result 8".to_owned()))
+            Err(Error::failed(Own::Result(8)))
         );
         assert_eq!(
             changed_from(&answer(r#"{"response": {"result": 1}}"#)),
@@ -1272,9 +1342,59 @@ mod tests {
                  connection refused after 0.4 s",
             ),
             (Error::Unreadable("betas"), "Steam's answer holds no betas"),
-            (Error::Failed("no".to_owned()), "Steam says: no"),
+            (Error::told("no"), "Steam says: no"),
+            (Error::failed(Own::Result(8)), "Steam says: result 8"),
+            (
+                Error::Failed {
+                    own: Own::EResult(8),
+                    said: Some("no".to_owned()),
+                },
+                "Steam says: EResult 8, no",
+            ),
         ] {
             assert_eq!(error.to_string(), said);
+        }
+    }
+
+    #[test]
+    fn an_eresult_header_is_worded_by_steamship_only_when_it_is_a_number() {
+        assert_eq!(
+            eresult_failure("8", Some("no".to_owned())),
+            Error::Failed {
+                own: Own::EResult(8),
+                said: Some("no".to_owned()),
+            }
+        );
+        let hide = |_: &str| "[hidden]".to_owned();
+        assert_eq!(
+            eresult_failure("a_secret_token", None).said_with(&hide),
+            "Steam says: [hidden]"
+        );
+        assert_eq!(
+            eresult_failure("a_secret_token", Some("b".to_owned())).said_with(&hide),
+            "Steam says: [hidden]"
+        );
+    }
+
+    #[test]
+    fn only_the_words_steam_sent_pass_through_the_redactor() {
+        let hide = |_: &str| "[hidden]".to_owned();
+        for (error, said) in [
+            (Error::failed(Own::Result(8)), "Steam says: result 8"),
+            (
+                Error::failed(Own::NoLeaderboard),
+                "Steam says: Steam made no leaderboard",
+            ),
+            (Error::told("secret"), "Steam says: [hidden]"),
+            (
+                Error::Failed {
+                    own: Own::EResult(8),
+                    said: Some("secret".to_owned()),
+                },
+                "Steam says: EResult 8, [hidden]",
+            ),
+        ] {
+            assert_eq!(error.said_with(&hide), said);
         }
     }
 
@@ -1405,7 +1525,7 @@ mod tests {
         ));
         assert_eq!(
             leaderboards_from(&answer(r#"{"response": {"result": 8}}"#)),
-            Err(Error::Failed("result 8".to_owned()))
+            Err(Error::failed(Own::Result(8)))
         );
 
         let made = r#"{"result": {"result": 1, "leaderboard": {"leaderboardName": "steamship_probe",
@@ -1414,7 +1534,7 @@ mod tests {
         assert_eq!(created_from(&answer(made)).unwrap(), probe);
         assert_eq!(
             created_from(&answer(&made.replace("21153543", "0"))),
-            Err(Error::Failed("Steam made no leaderboard".to_owned())),
+            Err(Error::failed(Own::NoLeaderboard)),
             "the ID Steam gives one it neither found nor made"
         );
         assert_eq!(
@@ -1427,7 +1547,7 @@ mod tests {
         );
         assert_eq!(
             created_from(&answer(r#"{"result": {"result": 2, "message": "no"}}"#)),
-            Err(Error::Failed("no".to_owned()))
+            Err(Error::told("no"))
         );
     }
 
@@ -1972,7 +2092,7 @@ mod tests {
             Error::Status(500, String::new()),
             refused(),
             Error::Unreadable("betas"),
-            Error::Failed("no".to_owned()),
+            Error::told("no"),
         ]
         .iter()
         .map(Error::code)

@@ -233,10 +233,36 @@ steamship runs it for unattended.
 `pinned and verified (0.2 s)`. Times are to the tenth of a second up to two minutes. A log then
 shows where an upload's time went.
 
+### JSON output
+
+With `--json`, standard output holds one JSON object on one line, or nothing. Everything meant for a
+person goes to standard error.
+
+- A run that worked exits 0 and prints its line with no `error`.
+- A run refused with exit 2 prints nothing.
+- A failed run prints its line with an `error` object holding a `code` and a `message`, for the
+  failures listed below and under its command. Any other failure prints nothing. The exit code says
+  what happened.
+- `code` is `unfinished` under exit 5. Any other exit gives the word of the run's first failure.
+- `message` is the run's first failure as steamship printed it, with secrets hidden. Under exit 5
+  it opens with what Steam holds and what to do. A later steamcmd fault follows the first failure.
+
+Each word with the exit code it comes with when it is the only failure:
+
+- From the Web API (1): `key-refused`, `not-a-key`, `http-error`, `unreachable`, `unreadable`,
+  `steam-failed` and `no-build-live`.
+- `not-logged-in` (3) and `login-limited` (6): Steam refused the login, or is limiting attempts.
+- `steamcmd-failed` (1): steamcmd ran and failed.
+- `steamcmd-install` (4): steamcmd could not be installed, was withdrawn by Valve or is not the
+  pinned one, checked before the run or after it.
+- `steamcmd-not-run` (1): steamship failed on its own and could not run steamcmd again after an
+  earlier run, as when a later Workshop item's copy cannot be made.
+- `unfinished` (5): Steam holds a build or a Workshop item that a second run would make again. The
+  fields say which.
+
 ### Upload results as JSON
 
-For a script that runs steamship, `--json` prints what came of the upload as one line of JSON on
-standard output, once steamcmd has run. Everything meant for a person goes to standard error.
+`upload --json` prints its line once steamcmd's build has run and the run's last check is made.
 Here the line is spread out:
 
 ```json
@@ -251,24 +277,34 @@ Here the line is spread out:
 }
 ```
 
-- `outcome` is `uploaded`, `dry-run`, `not-live`, `built-then-failed`, `failed` or
-  `not-logged-in`.
-- `not-live` is a build made but not set live as asked. Steam shows another build on the branch,
-  the app cannot have the branch yet, or Steam did not set it live on default when asked.
-- `build_id` is the build Steam made, when it made one.
+- `outcome` is `uploaded` where Steam holds the build, `dry-run` for a dry run that finished, and
+  `null` otherwise. It never names a failure. `error` does, as [above](#json-output).
+- `build_id` is the build Steam made, or `null` when nothing gave it.
 - `branch` is the one the script sets live, when it names one.
 - `live` says whether the build is live on that branch.
 - `default` says whether it is live on [the default branch](#the-default-branch).
+- `error` is there only when the run failed.
 
-The exit code is the same as without `--json`:
+A build that Steam holds but did not set live as asked has `outcome` `uploaded`, a `false` in
+`live` or `default`, and exit 5. An [app with no default build](#an-app-with-no-default-build)
+given `--default` is the one exception: the build goes live on default alone, so `live` is
+`false`, `default` is `true` and the run exits 0. A failed run looks like this:
 
-- `uploaded` and `dry-run` exit 0.
-- `not-live` and `built-then-failed` exit 5. A build is up, and a second upload makes another.
-- `failed` exits 5 when Steam kept the build after refusing to set it live, and 1 when no build
-  was made.
-- `not-logged-in` exits 3, or 6 when Steam is limiting login attempts.
-
-A run refused before steamcmd starts prints no JSON.
+```json
+{
+  "app": 1000,
+  "branch": "testing",
+  "build_id": 4242,
+  "default": false,
+  "description": "1.4.0 4f3c2a1e9b07",
+  "error": {
+    "code": "unfinished",
+    "message": "Steam holds a build of app 1000, so a second upload would make another. List it with steamship builds 1000\n..."
+  },
+  "live": false,
+  "outcome": "uploaded"
+}
+```
 
 ## Workshop items
 
@@ -355,32 +391,33 @@ Each item has a folder of its own in steamship's home, named by `--name`, or for
 `publishedfileid`, or `new` when it has none. The script steamcmd is given and steamcmd's console
 go there. Uploading several items in a row leaves each one's console to read.
 
-With `--json`, either form prints one line of JSON per item on standard output, as
-[`upload --json`](#upload-results-as-json) does. Here a line is spread out:
+With `--json`, either form prints one line of JSON for the run (see [JSON output](#json-output)).
+It comes once steamcmd has run for the first item and the run's last check is made, or under
+`--dry-run` once every item is checked. Here the line is spread out:
 
 ```json
 {
   "app": 1000070,
-  "item": 3000000001,
-  "log": "/home/you/.local/share/steamship/workshop/1000070/example/steamcmd.log",
-  "name": "example",
-  "outcome": "made"
+  "items": [
+    {
+      "name": "example",
+      "item_id": 3000000001,
+      "outcome": "made",
+      "log": "/home/you/.local/share/steamship/workshop/1000070/example/steamcmd.log"
+    }
+  ]
 }
 ```
 
-- `outcome` is `made`, `updated`, `failed` or `not-logged-in`, and `dry-run` under `--dry-run`.
-- `item` is the item's ID, when there is one.
+- `items` lists the items the run reached, in order. A run stops at its first failure, whose item is
+  the last listed.
+- `outcome` of an item is `made`, `updated`, `dry-run` or `null`. An item the run made is `made`
+  with its `item_id` on a failed run too.
+- `item_id` is the item's ID, when there is one.
 - `log` is where steamcmd's console was saved, or `null` for a dry run.
 - `name` is the item's name in the `--items` file, or `null` for a script.
-
-The exit code is the same as without `--json`:
-
-- `made` and `updated` exit 0, or 5 when steamship cannot keep a new item in the items file.
-- `failed` exits 1, or 5 when the run made a new item that no file keeps.
-- `not-logged-in` exits 3, or 6 when Steam is limiting login attempts. It exits 5 when the run made
-  a new item that no file keeps.
-
-A run refused before steamcmd starts prints no JSON.
+- `error` is there only when the run failed. Exit 5 is a new item that no file keeps, or a fault in
+  steamcmd's files found after the run.
 
 ## Builds and branches
 
@@ -443,8 +480,8 @@ Before anything is sent, steamship asks steamcmd, logged in as the build account
 release state. It goes on only while Steam shows it `unavailable` (no store page yet) or
 `prerelease` (coming soon).
 
-With `--json`, `default` says whether the build is live on the default branch. `outcome` is
-`not-live` when the app is unreleased and Steam did not set it there.
+With `--json`, `default` says whether the build is live on the default branch. When the app is
+unreleased and Steam did not set it there, the run exits 5.
 
 ### Once a game is released
 
@@ -491,9 +528,8 @@ then 1:
 ```
 
 `no-build-live` is Steam's answer while no build is live on the app's default branch. The other
-codes are `key-refused`, `http-error`, `unreachable`, `unreadable` and `steam-failed`. A run
-refused before Steam is asked, such as one with no key, prints no JSON and exits 2. With
-`--json`, steamship never asks for a key.
+codes are under [JSON output](#json-output). A run refused before Steam is asked, such as one with
+no key, prints no JSON and exits 2. With `--json`, steamship never asks for a key.
 
 ### The Web API key
 

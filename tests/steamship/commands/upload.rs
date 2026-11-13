@@ -30,9 +30,9 @@ use crate::common;
 use crate::steamship_command;
 use crate::{
     BETAS, BUILDS, CUT_OFF, CUT_OFF_SAID, DEMO_TYPED, DESCRIBED, KEY, NEEDS_VC, SECRETS, SET_LIVE,
-    Session, UPDATED, assert_no_secret_in, failure, faked_with, in_game, in_game_with,
+    Session, UPDATED, assert_no_secret_in, at, failure, faked_with, in_game, in_game_with,
     packed_login, project, pushed, pushed_game, released_as, saved_login, shipping_dll, steamship,
-    steamship_in, summary_of, upload, web_api, web_api_variables, with_demo, written,
+    steamship_in, summary_of, text_at, upload, web_api, web_api_variables, with_demo, written,
 };
 
 #[test]
@@ -341,6 +341,51 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
 }
 
 #[test]
+fn a_secret_in_steams_answer_to_the_check_of_what_is_live_is_hidden() {
+    let home = faked_with(BUILT);
+    let [token, _] = SECRETS;
+    saved_login(home.path());
+    let config = home.path().join("Steam/config/config.vdf");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(
+        config,
+        format!(
+            "\"InstallConfigStore\" {{ \"Software\" {{ \"Valve\" {{ \"Steam\" {{ \
+             \"ConnectCache\" {{ \"3a1f0c2e\" \"{token}\" }} }} }} }} }}\n"
+        ),
+    )
+    .unwrap();
+    let (_project, script) = project(true);
+    let answer = format!(r#"{{"response": {{"message": "{token}"}}}}"#);
+    // The first answer is for the check of the branch before the upload, the second for the apps
+    // the key holds, which that check asks after a 500, and the third for the check of what is
+    // live after the upload.
+    let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", answer.clone()),
+        ("500 Internal Server Error", answer.clone()),
+        ("500 Internal Server Error", answer),
+    ]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        !format!("{stdout}{stderr}").contains(token),
+        "a secret was printed"
+    );
+    assert_eq!(
+        stdout
+            .matches("Steam answered HTTP 500: [redacted]")
+            .count(),
+        2,
+        "{stdout}"
+    );
+}
+
+#[test]
 fn an_upload_asked_for_default_too_is_set_live_there_while_steam_shows_the_app_unreleased() {
     let home = faked_with(&released_as("unavailable"));
     saved_login(home.path());
@@ -524,11 +569,22 @@ fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_5() {
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    let json = summary_of(&stdout);
+    assert_eq!(at(&json, "/default"), false, "{json}");
+    assert_eq!(at(&json, "/live"), true, "{json}");
+    assert_eq!(at(&json, "/outcome"), "uploaded", "{json}");
+    assert_eq!(at(&json, "/build_id"), 4242_u64, "{json}");
+    assert_eq!(at(&json, "/error/code"), "unfinished", "{json}");
+    let message = text_at(&json, "/error/message");
     assert!(
-        stdout.contains("\"default\":false")
-            && stdout.contains("\"live\":true")
-            && stdout.contains("\"outcome\":\"not-live\""),
-        "{stdout}"
+        message.starts_with(
+            "Steam holds a build of app 1000, so a second upload would make another. List it with \
+             steamship builds 1000"
+        ) && message.contains(
+            "app 1000: BuildID 4242 uploaded and live on testing, but Steam did not set it \
+                 live on default"
+        ),
+        "{message}"
     );
     for line in [
         "app 1000: BuildID 4242 uploaded and live on testing, but Steam did not set it live on \
@@ -561,13 +617,12 @@ fn an_upload_to_an_app_with_no_branch_yet_goes_live_on_default_alone_and_says_ho
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
-    assert!(
-        stdout.contains("\"branch\":\"testing\"")
-            && stdout.contains("\"default\":true")
-            && stdout.contains("\"live\":false")
-            && stdout.contains("\"outcome\":\"not-live\""),
-        "{stdout}"
-    );
+    let json = summary_of(&stdout);
+    assert_eq!(at(&json, "/branch"), "testing", "{json}");
+    assert_eq!(at(&json, "/default"), true, "{json}");
+    assert_eq!(at(&json, "/live"), false, "{json}");
+    assert_eq!(at(&json, "/outcome"), "uploaded", "{json}");
+    assert!(json.get("error").is_none(), "{json}");
     for line in [
         "  branch    testing, not on Steam yet\n",
         "app 1000 has no build live on its default branch, and Steam gives it no other branch \
@@ -921,12 +976,379 @@ fn a_failed_upload_with_json_still_says_what_steam_kept() {
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     let summary = summary_of(&stdout);
     for (field, expected) in [
-        ("outcome", serde_json::json!("built-then-failed")),
+        ("outcome", serde_json::json!("uploaded")),
         ("build_id", serde_json::json!(777_u64)),
         ("live", serde_json::json!(false)),
     ] {
         assert_eq!(summary.get(field), Some(&expected), "{field}: {summary}");
     }
+    assert_eq!(at(&summary, "/error/code"), "unfinished", "{summary}");
+    let message = text_at(&summary, "/error/message");
+    assert!(
+        message
+            .starts_with("Steam holds a build of app 1000, so a second upload would make another")
+            && message.contains("Failed to set build live on branch testing"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_failed_upload_gives_its_reasons_as_json() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo 'Logging in user build_bot to Steam Public...OK'\n\
+         echo 'ERROR! Failed to initialize build on server (Access Denied)'\n\
+         exit 1\n",
+    );
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) =
+        upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/outcome"), serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/build_id"), serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/error/code"), "steamcmd-failed", "{line}");
+    let message = text_at(&line, "/error/message");
+    assert!(
+        message.contains("Failed to initialize build on server (Access Denied)"),
+        "{message}"
+    );
+}
+
+#[test]
+fn an_upload_steam_limits_says_login_limited_as_json() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'build_bot' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"\n\
+         exit 5\n",
+    );
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) =
+        upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+    assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/error/code"), "login-limited", "{line}");
+}
+
+#[test]
+fn under_actions_json_is_the_only_line_on_standard_output() {
+    let home = faked_with(BUILT_THEN_FAILED);
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--json"],
+        &[
+            ("STEAMSHIP_LOGIN", &packed_login()),
+            ("GITHUB_ACTIONS", "true"),
+        ],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/error/code"), "unfinished", "{line}");
+    assert!(stderr.contains("::add-mask::build_bot\n"), "{stderr}");
+    assert!(stderr.contains("::group::steamcmd's console\n"), "{stderr}");
+}
+
+#[test]
+fn a_run_whose_login_cannot_be_read_after_it_says_so_in_the_json_message() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo 'Logging in user build_bot to Steam Public...OK'\n\
+         echo 'ERROR! Failed to initialize build on server (Access Denied)'\n\
+         rm -f \"$HOME/Steam/config/config.vdf\"; mkdir -p \"$HOME/Steam/config/config.vdf\"\n\
+         exit 1\n",
+    );
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) =
+        upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/error/code"), "steamcmd-failed", "{line}");
+    let message = text_at(&line, "/error/message");
+    assert!(
+        message.starts_with("none kept, since steamcmd's login could not be read again"),
+        "{message}"
+    );
+    assert!(!message.contains("Access Denied"), "{message}");
+    assert!(stderr.contains(&format!("log  {message}")), "{stderr}");
+}
+
+#[test]
+fn a_retry_that_cannot_start_prints_the_line_of_the_run_before_it() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo 'Logging in user build_bot to Steam Public...OK'\n\
+         echo 'ERROR! Failed to initialize build on server (No Connection)'\n\
+         rm -f \"$HOME/Steam/config/config.vdf\"; mkdir -p \"$HOME/Steam/config/config.vdf\"\n\
+         exit 1\n",
+    );
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) =
+        upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/outcome"), serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/error/code"), "steamcmd-not-run", "{line}");
+    let message = text_at(&line, "/error/message");
+    assert!(!message.is_empty(), "{line}");
+    assert!(stderr.contains(&message), "{stderr}");
+}
+
+#[test]
+fn a_token_steamcmd_renewed_is_not_printed_when_its_login_cannot_be_read_after_the_run() {
+    let renewed = "a_renewed_login_token_9876543210";
+    let home = faked_with(&format!(
+        "{}\nrm -f \"$HOME/Steam/config/config.vdf\"; mkdir -p \"$HOME/Steam/config/config.vdf\"\n",
+        released_as("prerelease")
+    ));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let answer = format!(r#"{{"response": {{"message": "{renewed}"}}}}"#);
+    let (host, _requests) = web_api(vec![
+        ("200 OK", BETAS.to_owned()),
+        ("500 Internal Server Error", answer.clone()),
+        ("500 Internal Server Error", answer),
+    ]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(
+        !format!("{stdout}{stderr}").contains(renewed),
+        "a secret was printed: {stdout}{stderr}"
+    );
+    let message = text_at(&summary_of(&stdout), "/error/message");
+    assert!(
+        message.contains("Steam did not set it live on default: Steam answered HTTP 500: withheld"),
+        "{message}"
+    );
+    assert!(
+        stderr.contains("Steam answered HTTP 500: withheld"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_secret_in_steams_answer_is_hidden_in_the_json_message() {
+    let home = faked_with(&released_as("prerelease"));
+    let [token, _] = SECRETS;
+    saved_login(home.path());
+    let config = home.path().join("Steam/config/config.vdf");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(
+        config,
+        format!(
+            "\"InstallConfigStore\" {{ \"Software\" {{ \"Valve\" {{ \"Steam\" {{ \
+             \"ConnectCache\" {{ \"3a1f0c2e\" \"{token}\" }} }} }} }} }}\n"
+        ),
+    )
+    .unwrap();
+    let (_project, script) = project(true);
+    let answer = format!(r#"{{"response": {{"message": "{token}"}}}}"#);
+    let (host, _requests) = web_api(vec![
+        ("200 OK", BETAS.to_owned()),
+        ("200 OK", testing_live(4242).to_owned()),
+        ("500 Internal Server Error", answer),
+    ]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(!stdout.contains(token), "{stdout}");
+    assert!(!stderr.contains(token), "a secret reached standard error");
+    assert!(stderr.contains("[redacted]"), "{stderr}");
+    let line = summary_of(&stdout);
+    assert!(
+        text_at(&line, "/error/message").contains("[redacted]"),
+        "{line}"
+    );
+}
+
+#[test]
+fn a_packed_login_steam_refuses_says_when_it_was_packed_as_json() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)\"\n\
+         exit 5\n",
+    );
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--json"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/error/code"), "not-logged-in", "{line}");
+    assert_eq!(
+        text_at(&line, "/error/message"),
+        "not logged in: Steam refused the saved login (Expired Login Auth Code). The login in \
+         STEAMSHIP_LOGIN was packed on 2026-09-28"
+    );
+}
+
+#[test]
+fn a_build_up_before_steamcmd_altered_itself_says_so_as_json() {
+    let up = faked_with(&built_then("echo >> \"$0\""));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        up.path(),
+        &["--version", "1.4.0", "--json"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/outcome"), "uploaded", "{line}");
+    assert_eq!(at(&line, "/live"), true, "{line}");
+    assert_eq!(at(&line, "/build_id"), 4242_u64, "{line}");
+    assert_eq!(at(&line, "/error/code"), "unfinished", "{line}");
+    let message = text_at(&line, "/error/message");
+    assert!(
+        message.contains("Steam holds a build of app 1000")
+            && message.contains("no longer the pinned one"),
+        "{message}"
+    );
+
+    // A dry run holds nothing on Steam, so the fault is the failure.
+    let preview = leaking_with("echo >> \"$0\"");
+    let (earlier, said, errors) = upload(
+        &script,
+        preview.path(),
+        &["--version", "1.4.0", "--dry-run", "--json"],
+        &[],
+    );
+    assert_eq!(earlier, Some(4_i32), "{said}{errors}");
+    let dry = summary_of(&said);
+    assert_eq!(at(&dry, "/outcome"), "dry-run", "{dry}");
+    assert_eq!(at(&dry, "/error/code"), "steamcmd-install", "{dry}");
+    assert!(
+        !text_at(&dry, "/error/message").contains("Steam holds"),
+        "{dry}"
+    );
+}
+
+#[test]
+fn a_secret_in_the_fault_steamcmd_leaves_after_a_build_is_hidden_on_both_streams() {
+    let home = faked_with(&built_then(
+        "printf '#!' > \"$(dirname \"$0\")/a_saved_login_token_0123456789\"",
+    ));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) =
+        upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(
+        !format!("{stdout}{stderr}").contains("a_saved_login_token_0123456789"),
+        "a secret was printed"
+    );
+    assert!(stderr.contains("[redacted] is new"), "{stderr}");
+    let message = text_at(&summary_of(&stdout), "/error/message");
+    assert!(message.contains("[redacted] is new"), "{message}");
+}
+
+#[test]
+fn a_build_steam_would_not_set_live_before_steamcmd_altered_itself_names_both_as_json() {
+    let home = faked_with(&BUILT_THEN_FAILED.replace("exit 6\n", "echo >> \"$0\"\nexit 6\n"));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--json"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/outcome"), "uploaded", "{line}");
+    assert_eq!(at(&line, "/build_id"), 777_u64, "{line}");
+    assert_eq!(at(&line, "/live"), false, "{line}");
+    assert_eq!(at(&line, "/error/code"), "unfinished", "{line}");
+    let message = text_at(&line, "/error/message");
+    let held = message.find("Failed to set build live on branch testing");
+    let altered = message.find("no longer the pinned one");
+    assert!(
+        held.is_some() && altered.is_some() && held < altered,
+        "{message}"
+    );
+}
+
+#[test]
+fn a_failed_upload_whose_steamcmd_then_altered_itself_keeps_its_own_word_as_json() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo 'Logging in user build_bot to Steam Public...OK'\n\
+         echo 'ERROR! Failed to initialize build on server (Access Denied)'\n\
+         echo >> \"$0\"\n\
+         exit 1\n",
+    );
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--json"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(code, Some(4_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/outcome"), serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/error/code"), "steamcmd-failed", "{line}");
+    let message = text_at(&line, "/error/message");
+    assert!(
+        message.contains("Failed to initialize build on server (Access Denied)")
+            && !message.contains("no longer the pinned one"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_build_steam_kept_unnamed_is_uploaded_with_no_id_as_json() {
+    let home = faked_with(COMMIT_REFUSED);
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) =
+        upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/outcome"), "uploaded", "{line}");
+    assert_eq!(at(&line, "/build_id"), serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/error/code"), "unfinished", "{line}");
+}
+
+#[test]
+fn an_upload_that_worked_has_no_error_and_exactly_the_documented_fields() {
+    let home = faked_with(BUILT);
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) =
+        upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    let mut keys: Vec<&str> = line
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "app",
+            "branch",
+            "build_id",
+            "default",
+            "description",
+            "live",
+            "outcome"
+        ],
+        "{line}"
+    );
 }
 
 #[test]
@@ -1008,24 +1430,24 @@ fn an_upload_built_then_failed_keeps_its_build_id_and_shows_steams_logs_in_actio
         assert!(stderr.contains(said), "{said:?} in {stderr}");
     }
     assert_eq!(fs::read_to_string(&outputs).unwrap(), "build-id=777\n");
-    assert!(stdout.contains("::add-mask::build_bot\n"), "{stdout}");
+    assert!(stderr.contains("::add-mask::build_bot\n"), "{stderr}");
     for group in [
         "::group::steamcmd's console\n",
         "::group::app_build_1000.log\n",
         "::group::depot_build_1001.log\n",
         "::group::steamcmd's content_log.txt, from this run\n::stop-commands::",
     ] {
-        assert!(stdout.contains(group), "{group:?} in {stdout}");
+        assert!(stderr.contains(group), "{group:?} in {stderr}");
     }
     assert_eq!(
-        stdout.matches("::group::").count(),
+        stderr.matches("::group::").count(),
         4,
-        "the console and app log once each, and no other log taken for a depot's: {stdout}"
+        "the console and app log once each, and no other log taken for a depot's: {stderr}"
     );
-    assert!(stdout.contains("this run: chunks sent"), "{stdout}");
-    assert!(!stdout.contains("an older run"), "{stdout}");
-    let forged = stdout.find("::set-output name=forged::yes").unwrap();
-    let stopped = stdout.find("::stop-commands::").unwrap();
+    assert!(stderr.contains("this run: chunks sent"), "{stderr}");
+    assert!(!stderr.contains("an older run"), "{stderr}");
+    let forged = stderr.find("::set-output name=forged::yes").unwrap();
+    let stopped = stderr.find("::stop-commands::").unwrap();
     assert!(
         stopped < forged,
         "a command in a log is shown only with commands stopped"
@@ -1109,9 +1531,9 @@ fn an_upload_told_to_stop_stops_steamcmd_shows_what_it_said_and_ends_by_that_sig
             "{name}: {stderr}"
         );
         assert!(
-            stdout.contains("::group::steamcmd's console\n")
-                && stdout.contains("Logging in user [redacted] to Steam Public...OK"),
-            "{name}: {stdout}"
+            stderr.contains("::group::steamcmd's console\n")
+                && stderr.contains("Logging in user [redacted] to Steam Public...OK"),
+            "{name}: {stderr}"
         );
         let gone = run::output(run::command("kill").args(["-0", &steamcmd])).unwrap();
         assert!(!gone.status.success(), "{name}: steamcmd still runs");
@@ -2889,9 +3311,9 @@ fn a_failed_save_in_actions_shows_no_earlier_console() {
     );
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     assert!(stderr.contains("could not be written to"), "{stderr}");
-    assert!(stdout.contains("::group::app_build_1000.log"), "{stdout}");
-    assert!(!stdout.contains("::group::steamcmd's console"), "{stdout}");
-    assert!(!stdout.contains("an earlier console"), "{stdout}");
+    assert!(stderr.contains("::group::app_build_1000.log"), "{stderr}");
+    assert!(!stderr.contains("::group::steamcmd's console"), "{stderr}");
+    assert!(!stderr.contains("an earlier console"), "{stderr}");
 }
 
 #[cfg(windows)]
@@ -2923,8 +3345,8 @@ fn an_earlier_console_held_open_is_not_shown_as_this_runs() {
         stderr.contains("The earlier console could not be removed"),
         "{stderr}"
     );
-    assert!(!stdout.contains("::group::steamcmd's console"), "{stdout}");
-    assert!(!stdout.contains("an earlier console"), "{stdout}");
+    assert!(!stderr.contains("::group::steamcmd's console"), "{stderr}");
+    assert!(!stderr.contains("an earlier console"), "{stderr}");
 }
 
 /// The shell line that leaves the login unreadable on every system: `config.vdf` becomes a folder.

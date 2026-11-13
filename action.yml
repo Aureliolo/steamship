@@ -42,9 +42,9 @@ outputs:
   build-id:
     description: The BuildID Steam gave the upload; empty for a preview or a Workshop item.
     value: ${{ steps.upload.outputs.build-id }}
-  published-file-id:
+  item-id:
     description: The ID of the Workshop item uploaded; empty for a build.
-    value: ${{ steps.upload.outputs.published-file-id }}
+    value: ${{ steps.upload.outputs.item-id }}
 
 runs:
   using: composite

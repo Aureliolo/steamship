@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use crate::branch;
 use crate::calendar;
+use crate::redact::{self, Redactor};
 use crate::upload;
 use crate::webapi::{self, Branch, Build, Overview};
 
@@ -115,16 +116,31 @@ fn build_line(build: &Build, branches: &[Branch]) -> String {
     parts.join(", ")
 }
 
-/// What `--json` prints when Steam did not answer about `app`: the code from
-/// [`webapi::Error::code`], or `no-build-live` when `why` says that is the reason, and the
-/// message a person would read.
+/// The `error` of a failed run's `--json` line: a `code` word and the `message` a person would
+/// read.
 #[must_use]
-pub fn error_json(app: u32, error: &webapi::Error, why: Option<&str>) -> Value {
+pub fn failure_json(code: &str, message: &str) -> Value {
+    json!({ "code": code, "message": message })
+}
+
+/// What `--json` prints when Steam did not answer about `app`.
+///
+/// The code is [`webapi::Error::code`], or `no-build-live` when `why` says that is the reason. The
+/// message is what a person would read, with the secrets of `redactor` replaced in the words Steam
+/// gave.
+#[must_use]
+pub fn error_json(
+    app: u32,
+    error: &webapi::Error,
+    why: Option<&str>,
+    redactor: Option<&Redactor>,
+) -> Value {
+    let said = error.said_with(&|steam| redact::answer(redactor, steam));
     let (code, message) = why.map_or_else(
-        || (error.code(), error.to_string()),
-        |why| ("no-build-live", format!("{error}: {why}")),
+        || (error.code(), said.clone()),
+        |why| ("no-build-live", format!("{said}: {why}")),
     );
-    json!({ "app": app, "error": { "code": code, "message": message } })
+    json!({ "app": app, "error": failure_json(code, &message) })
 }
 
 #[cfg(test)]
@@ -277,6 +293,7 @@ mod tests {
             1_000_030,
             &webapi::Error::Status(500, String::new()),
             Some("none live"),
+            Some(&Redactor::default()),
         );
         assert_eq!(
             held,
@@ -285,5 +302,28 @@ mod tests {
                 "message": "Steam answered HTTP 500: none live",
             }})
         );
+    }
+
+    #[test]
+    fn every_error_is_a_code_and_a_message() {
+        let errors = [
+            webapi::Error::NotAKey,
+            webapi::Error::Refused,
+            webapi::Error::Status(500, String::new()),
+            webapi::Error::Unreadable("the build list"),
+            webapi::Error::told("no"),
+        ];
+        let mut lines = vec![failure_json("x", "y")];
+        for error in &errors {
+            for why in [None, Some("none live")] {
+                let shown = error_json(480, error, why, Some(&Redactor::default()));
+                lines.extend(shown.pointer("/error").cloned());
+            }
+        }
+        for line in lines {
+            let mut keys: Vec<&String> = line.as_object().unwrap().keys().collect();
+            keys.sort();
+            assert_eq!(keys, ["code", "message"], "{line}");
+        }
     }
 }

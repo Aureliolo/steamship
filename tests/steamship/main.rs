@@ -397,6 +397,19 @@ fn summary_of(stdout: &str) -> serde_json::Value {
     serde_json::from_str(line).unwrap()
 }
 
+/// The value at the JSON pointer `path` in `line`, or null when there is none.
+fn at(line: &serde_json::Value, path: &str) -> serde_json::Value {
+    line.pointer(path).cloned().unwrap_or_default()
+}
+
+/// The text at the JSON pointer `path` in `line`, or nothing when it is not text.
+fn text_at(line: &serde_json::Value, path: &str) -> String {
+    line.pointer(path)
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_owned()
+}
+
 /// A home whose recorded steamcmd is a script that prints what it was started with and exits
 /// with `STEAMSHIP_FAKE_EXIT`, or 0. With `STEAMSHIP_FAKE_CHANGE` set it first changes itself, as
 /// an update would. With `STEAMSHIP_FAKE_SAVED` set it logs in with the login it saved.
@@ -629,6 +642,7 @@ fn a_newer_steamship_is_told_at_a_terminal_with_how_to_get_it() {
 
 #[test]
 fn a_newer_steamship_is_not_told_in_a_log() {
+    let _store = common::store::lock();
     let home = told_of_99();
     let (code, stdout, stderr) = steamship(&["logout"], Some(home.path()), &[("CI", "")]);
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");

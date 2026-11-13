@@ -18,6 +18,7 @@ use steamship::update::Installed;
 use steamship::{ci, conversation, dump};
 
 use super::exit::fail;
+use super::key::answer_redactor;
 use super::upload::redacted;
 
 /// How this steamship was installed, which is how it is upgraded.
@@ -93,8 +94,13 @@ pub(crate) fn ready() -> Result<(install::Held, PathBuf, Manifest), ExitCode> {
     Ok((held, home, manifest))
 }
 
+/// Says why steamcmd cannot be used and answers its exit code. The text names files in steamcmd's
+/// folder, so it goes through the redactor of this machine's login when one can be built.
 pub(crate) fn steamcmd_failed(error: &install::Error) -> ExitCode {
-    show::failure(&error.to_string(), "", None);
+    let text = error.to_string();
+    let shown =
+        answer_redactor().map_or_else(|| text.clone(), |redactor| redacted(&redactor, &text));
+    show::failure(&shown, "", None);
     if let Some(remedy) = error.remedy() {
         show::note(remedy);
         show::hint(installed().hint());
@@ -170,7 +176,7 @@ pub(crate) fn packed_login() -> Result<Option<ci::Login>, ExitCode> {
     let login = ci::Login::unpack(text).map_err(|error| fail(&error, REFUSED))?;
     // GitHub masks the secret, but not the account's name inside it, which steamcmd's logs name.
     if dump::in_actions(|name| env::var(name).ok()) {
-        show::plain(&format!("::add-mask::{}\n", login.account().name()));
+        show::workflow(&format!("::add-mask::{}\n", login.account().name()));
     }
     Ok(Some(login))
 }
@@ -195,17 +201,26 @@ pub(crate) fn login_refused(
     redactor: &Redactor,
     packed: Option<&ci::Login>,
 ) -> ExitCode {
+    login_refusal(reason, redactor, packed).0
+}
+
+/// As [`login_refused`], and also answers the text it printed.
+pub(crate) fn login_refusal(
+    reason: &str,
+    redactor: &Redactor,
+    packed: Option<&ci::Login>,
+) -> (ExitCode, String) {
     let (words, log_in_again) = conversation::saved_login_words(reason);
-    let words = redacted(redactor, &words);
+    let mut said = redacted(redactor, &words);
     match packed.and_then(ci::Login::packed_on) {
-        _ if !log_in_again => show::failure("not logged in", &words, None),
+        _ if !log_in_again => show::failure("not logged in", &said, None),
         None => {
             let again = Hint {
                 before: "log the build account in again with ",
                 command: "steamship login",
                 after: "",
             };
-            show::failure("not logged in", &words, Some(again));
+            show::failure("not logged in", &said, Some(again));
         }
         Some(day) => {
             let again = Hint {
@@ -213,14 +228,12 @@ pub(crate) fn login_refused(
                 command: "steamship login",
                 after: ", then run steamship ci to pack the new login",
             };
-            show::failure(
-                "not logged in",
-                &format!("{words}. The login in {} was packed on {day}", ci::VARIABLE),
-                Some(again),
-            );
+            said = format!("{said}. The login in {} was packed on {day}", ci::VARIABLE);
+            show::failure("not logged in", &said, Some(again));
         }
     }
-    ExitCode::from(if log_in_again { LOGIN } else { LIMITED })
+    let code = ExitCode::from(if log_in_again { LOGIN } else { LIMITED });
+    (code, format!("not logged in: {said}"))
 }
 
 /// The exit code for what Steam made of the saved login, or of the one handed over in `packed`.
@@ -271,7 +284,7 @@ pub(crate) fn dump_in_actions(
             &token,
         ));
     }
-    show::plain(&shown);
+    show::workflow(&shown);
 }
 
 #[cfg(test)]

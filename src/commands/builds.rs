@@ -6,7 +6,7 @@ use steamship::builds;
 use steamship::show::{self, Spinner};
 
 use super::game::app_named;
-use super::key::{offer_to_keep, web_api, web_api_failed, why_unanswered};
+use super::key::{offer_to_keep, print_unanswered, web_api, web_api_failed, why_unanswered};
 use super::ready::home;
 
 pub(crate) fn try_builds(app: &str, count: u32, json: bool) -> Result<ExitCode, ExitCode> {
@@ -27,10 +27,7 @@ pub(crate) fn try_builds(app: &str, count: u32, json: bool) -> Result<ExitCode, 
                 show::note(why);
             }
             if json {
-                show::plain(&format!(
-                    "{}\n",
-                    builds::error_json(app_id, &error, why.as_deref())
-                ));
+                print_unanswered(app_id, &error, why.as_deref());
             }
             return Err(code);
         }

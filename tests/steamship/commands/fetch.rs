@@ -7,9 +7,10 @@ use std::time::{Duration, Instant};
 use steamship::platform::Platform;
 use steamship::{fetch, steamcmd};
 
+use crate::common;
 use crate::{
-    faked_with, fetching, fetching_typed, packed_login, saved_login, steamship, steamship_in,
-    web_api, web_api_variables,
+    faked_with, fetching, fetching_typed, logout, packed_login, saved_login, steamship,
+    steamship_in, web_api, web_api_variables,
 };
 
 #[test]
@@ -365,7 +366,7 @@ const TYPED_FETCHES: &str = "#!/bin/sh\n\
 
 #[test]
 fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked() {
-    let home = faked_with(TYPED_FETCHES);
+    let home = common::store::Home::of(faked_with(TYPED_FETCHES), logout);
     saved_login(home.path());
     let password = [("STEAMSHIP_BRANCH_PASSWORD", "open-sesame")];
     let named = ["1000", "--branch", "friends"];
@@ -435,7 +436,7 @@ fn a_typed_password_is_kept_on_enter_or_when_asked_and_not_on_n() {
         (named.as_slice(), "open-sesame\nn\n", false),
         (keeping.as_slice(), "open-sesame\n", true),
     ] {
-        let home = faked_with(TYPED_FETCHES);
+        let home = common::store::Home::of(faked_with(TYPED_FETCHES), logout);
         saved_login(home.path());
         let (code, stdout, stderr) = fetching_typed(home.path(), args, &[], Some(typed));
         let said = format!("{stdout}{stderr}");

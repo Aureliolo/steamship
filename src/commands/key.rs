@@ -8,9 +8,10 @@ use std::process::ExitCode;
 use steamship::cli::{FAILED, REFUSED};
 use steamship::keychain;
 use steamship::platform::Platform;
+use steamship::redact::{self, Redactor};
 use steamship::show::{self, Hint, Spinner};
 use steamship::typing::{self, Echo};
-use steamship::webapi;
+use steamship::{builds, webapi};
 use zeroize::Zeroizing;
 
 use super::exit::fail;
@@ -180,13 +181,32 @@ pub(crate) fn offer_to_keep(home: &Path, api: &webapi::Api, from: KeyFrom) {
     }
 }
 
-/// Why Steam gave `error` about `app`, when the apps the key holds can say: asked only for the
-/// one error that needs them.
+/// Why Steam gave `error` about `app`, when the apps the key holds can say: asked only for the one
+/// error that needs them.
 pub(crate) fn why_unanswered(api: &webapi::Api, app: u32, error: &webapi::Error) -> Option<String> {
     if !matches!(error, webapi::Error::Status(500, _)) {
         return None;
     }
     webapi::no_build_yet(error, app, &api.apps().ok()?)
+}
+
+/// `error` as a person reads it, with only the words Steam gave redacted.
+pub(crate) fn answered(error: &webapi::Error) -> String {
+    let redactor = answer_redactor();
+    error.said_with(&|steam| redact::answer(redactor.as_ref(), steam))
+}
+
+/// The redactor for this machine's steamcmd login secrets, or none when its files cannot be read.
+/// Steam's words are shown only after it has run over them.
+pub(crate) fn answer_redactor() -> Option<Redactor> {
+    let home = Platform::THIS.home(|name| env::var_os(name)).ok()?;
+    Redactor::for_home(&home).ok()
+}
+
+/// Prints the `--json` line for Steam not answering about `app`, its words redacted.
+pub(crate) fn print_unanswered(app: u32, error: &webapi::Error, why: Option<&str>) {
+    let line = builds::error_json(app, error, why, answer_redactor().as_ref());
+    show::plain(&format!("{line}\n"));
 }
 
 /// Says why the Web API did not answer, and the exit code for it.
@@ -197,7 +217,7 @@ pub(crate) fn web_api_failed(spinner: Spinner, error: &webapi::Error) -> ExitCod
         webapi::Error::Status(status, _) => format!("HTTP {status}"),
         webapi::Error::Unreachable(_) => "no answer".to_owned(),
         webapi::Error::Unreadable(_) => "unreadable".to_owned(),
-        webapi::Error::Failed(_) => "failed".to_owned(),
+        webapi::Error::Failed { .. } => "failed".to_owned(),
     });
-    fail(error, FAILED)
+    fail(&answered(error), FAILED)
 }

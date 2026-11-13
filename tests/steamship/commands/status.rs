@@ -198,11 +198,11 @@ fn a_login_check_that_fails_without_a_reason_shows_steams_logs_in_actions() {
         "::group::steamcmd's console\n",
         "::group::steamcmd's connection_log.txt, from this run\n",
     ] {
-        assert!(stdout.contains(group), "{group:?} in {stdout}");
+        assert!(stderr.contains(group), "{group:?} in {stderr}");
     }
-    assert!(stdout.contains("Loading Steam API...OK"), "{stdout}");
-    assert!(stdout.contains("this run: connecting"), "{stdout}");
-    assert!(!stdout.contains("an older run"), "{stdout}");
+    assert!(stderr.contains("Loading Steam API...OK"), "{stderr}");
+    assert!(stderr.contains("this run: connecting"), "{stderr}");
+    assert!(!stderr.contains("an older run"), "{stderr}");
 
     // Outside Actions nothing is dumped, as for an upload.
     let (_, quiet, _) = steamship(
@@ -229,9 +229,9 @@ fn a_login_check_that_fails_names_no_account_in_actions_group() {
     );
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     assert!(
-        stdout.contains("::group::steamcmd's console\n")
-            && stdout.contains("Logging in user [redacted] [U:1:0]"),
-        "{stdout}"
+        stderr.contains("::group::steamcmd's console\n")
+            && stderr.contains("Logging in user [redacted] [U:1:0]"),
+        "{stderr}"
     );
     assert!(!format!("{stdout}{stderr}").contains("build_bot"));
 }
