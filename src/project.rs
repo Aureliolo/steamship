@@ -415,7 +415,7 @@ impl Project {
             self.branch, self.branch
         );
         match set_live {
-            Some(branch) if branch == self.branch => Ok(()),
+            Some(branch) if branch.eq_ignore_ascii_case(&self.branch) => Ok(()),
             Some(branch) => Err(format!(
                 "{} sets {branch} live, and {how}",
                 self.script.display()

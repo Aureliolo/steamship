@@ -68,6 +68,45 @@ fn a_branch_is_described_only_when_its_description_differs() {
 }
 
 #[test]
+fn a_branch_named_in_another_case_is_described_under_steams_name() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![
+        ("200 OK", DESCRIBED),
+        ("200 OK", UPDATED),
+        ("200 OK", DESCRIBED),
+    ]);
+    let set = web_api_variables(&host);
+
+    let (code, stdout, stderr) = steamship(
+        &["branch", "1000010", "Testing", "--description", "x"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("app 1000010: testing described as \"x\""),
+        "{stdout}"
+    );
+    drop(requests.recv_timeout(Duration::from_secs(10)).unwrap());
+    let setting = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        setting.ends_with("appid=1000010&betakey=testing&description=x"),
+        "{setting}"
+    );
+
+    let (refused, said, why) = steamship(
+        &["branch", "1000010", "test", "--description", "x"],
+        Some(home.path()),
+        &set,
+    );
+    assert_eq!(refused, Some(2_i32), "{said}{why}");
+    assert!(
+        why.contains("\u{2717} app 1000010 has no branch \"test\"."),
+        "a command's own refusal keeps its cross: {why}"
+    );
+}
+
+#[test]
 fn the_default_branch_is_described_in_steamworks_and_a_refusal_says_steams_reason() {
     let home = tempfile::tempdir().unwrap();
     // No stand-in for the first: the default branch is refused before Steam is asked.

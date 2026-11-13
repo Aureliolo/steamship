@@ -143,6 +143,24 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
 }
 
 #[test]
+fn a_branch_named_in_another_case_is_fetched_under_steams_name() {
+    let home = faked_with(FETCHES);
+    saved_login(home.path());
+    let system = fetch::system_name(Platform::THIS);
+
+    let (code, stdout, stderr) = fetching(home.path(), &["1000", "--branch", "Testing"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(args.contains(" -beta testing "), "{args}");
+    let shown = format!("{stdout}{stderr}");
+    assert!(
+        shown.contains("build 4242 of the testing branch")
+            && shown.contains(&format!("testing-{system}")),
+        "{shown}"
+    );
+}
+
+#[test]
 fn a_fetch_that_got_another_build_than_steam_shows_live_fails() {
     let home = faked_with(FETCHES);
     saved_login(home.path());

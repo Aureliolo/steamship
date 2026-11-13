@@ -2256,6 +2256,126 @@ fn a_games_first_upload_to_an_app_with_no_branch_yet_succeeds_and_says_how_to_de
     );
 }
 
+/// Whether a line of `stderr` opens with the cross of a failure and holds `text`.
+fn crossed(stderr: &str, text: &str) -> bool {
+    stderr
+        .lines()
+        .any(|line| line.trim_start().starts_with('\u{2717}') && line.contains(text))
+}
+
+#[test]
+fn a_game_whose_branch_steam_will_not_describe_is_uploaded_all_the_same() {
+    let (_temp, root, home) = settled_inn(&format!("released = true\n{BUILDING}"));
+    let (host, _requests) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(4242)),
+        ("500 Internal Server Error", ""),
+        ("500 Internal Server Error", ""),
+    ]);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["upload", "--json"],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(stdout.lines().count(), 1, "{stdout}");
+    assert!(
+        stdout.contains("\"outcome\":\"uploaded\"")
+            && stdout.contains("\"build_id\":4242")
+            && !stdout.contains("\"error\""),
+        "{stdout}"
+    );
+    assert!(stderr.contains("Steam answered HTTP 500"), "{stderr}");
+    assert!(!crossed(&stderr, "Steam answered HTTP 500"), "{stderr}");
+    assert!(
+        stderr.contains("steamship branch 1000050 testing --description \"0.3.1\""),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_branch_gone_once_the_build_is_live_is_a_note() {
+    let (_temp, root, home) = settled_inn(&format!("released = true\n{BUILDING}"));
+    let (host, _requests) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(4242)),
+        (
+            "200 OK",
+            r#"{"response": {"result": 1, "betas": {"public": {"BuildID": 7}}}}"#,
+        ),
+    ]);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["upload", "--json"],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("\"outcome\":\"uploaded\"") && !stdout.contains("\"error\""),
+        "{stdout}"
+    );
+    assert!(stderr.contains("has no branch \"testing\""), "{stderr}");
+    assert!(!crossed(&stderr, "has no branch \"testing\""), "{stderr}");
+    assert!(
+        stderr.contains("steamship branch 1000050 testing --description \"0.3.1\""),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_builds_list_steam_will_not_give_is_a_note() {
+    let (_temp, root, home) = settled_inn(BUILDING);
+    let (host, _requests) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(4242)),
+        ("200 OK", SET_LIVE),
+        ("200 OK", DESCRIBED),
+        ("200 OK", UPDATED),
+        ("500 Internal Server Error", ""),
+        ("500 Internal Server Error", ""),
+        ("500 Internal Server Error", ""),
+    ]);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["upload"],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("testing described as"), "{stdout}");
+    assert!(stderr.contains("Steam answered HTTP 500"), "{stderr}");
+    assert!(!crossed(&stderr, "Steam answered HTTP 500"), "{stderr}");
+    assert!(!stderr.contains("--description"), "{stderr}");
+}
+
+#[test]
+fn a_game_whose_script_names_its_branch_in_another_case_has_it_described() {
+    let (_temp, root, home) = settled_inn(BUILDING);
+    let script = root.join("steam").join("app_build.vdf");
+    let written = fs::read_to_string(&script).unwrap();
+    fs::write(
+        &script,
+        written.replace("\"SetLive\" \"testing\"", "\"SetLive\" \"Testing\""),
+    )
+    .unwrap();
+    pushed(&root, "The script names Testing");
+    let (code, stdout, stderr, asked) = uploaded_inn(&root, home.path());
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("testing described as \"0.3.1\""),
+        "{stdout}{stderr}"
+    );
+    assert!(
+        asked
+            .last()
+            .unwrap()
+            .ends_with("betakey=testing&description=0.3.1"),
+        "{asked:?}"
+    );
+}
+
 /// [`BUILT`] with the shell line `then` run last.
 fn built_then(then: &str) -> String {
     format!("{BUILT}{then}\n")

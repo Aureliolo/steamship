@@ -44,6 +44,16 @@ pub fn diverted() -> bool {
     DIVERTED.load(Ordering::Relaxed)
 }
 
+/// Whether [`failure`] is shown as a [`note`], after [`failures_as_notes`].
+static NOTES_ONLY: AtomicBool = AtomicBool::new(false);
+
+/// Shows each failure from now on as a note.
+///
+/// The command's outcome is said by then, and nothing that follows changes it.
+pub fn failures_as_notes() {
+    NOTES_ONLY.store(true, Ordering::Relaxed);
+}
+
 /// Whether each step's line ends with how long it took, as `--times` asks.
 static TIMED: AtomicBool = AtomicBool::new(false);
 
@@ -195,14 +205,18 @@ pub fn success(headline: &str, detail: &str) {
 }
 
 /// The command's outcome, when it is not. `hint`, if any, says what to do, with its `command`
-/// set apart.
+/// set apart. After [`failures_as_notes`], it is shown as a note.
 pub fn failure(headline: &str, reason: &str, hint: Option<Hint<'_>>) {
     let reason = if reason.is_empty() {
         String::new()
     } else {
         format!(": {reason}")
     };
-    anstream::eprintln!("  {RED}\u{2717}{RED:#} {BOLD}{headline}{BOLD:#}{reason}");
+    if NOTES_ONLY.load(Ordering::Relaxed) {
+        note(&format!("{headline}{reason}"));
+    } else {
+        anstream::eprintln!("  {RED}\u{2717}{RED:#} {BOLD}{headline}{BOLD:#}{reason}");
+    }
     if let Some(hint) = hint {
         hinted(hint);
     }

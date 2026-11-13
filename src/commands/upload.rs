@@ -142,25 +142,32 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     if uploaded != ExitCode::SUCCESS || shipping.preview {
         return Ok(uploaded);
     }
+    // The build is on Steam, so no step after this one can fail the run: a second run would
+    // upload the build again.
+    show::failures_as_notes();
     if let Some(branch) = &script.set_live {
         let description = game.description.as_deref().unwrap_or(&version);
-        if held_back.is_some() {
+        let describe_with = |before: &str| {
             show::hint(Hint {
-                before: &format!("once it is made, describe {branch} with "),
+                before,
                 command: &format!(
                     "steamship branch {} {branch} --description {description:?}",
                     script.app_id
                 ),
                 after: "",
             });
-        } else {
-            let described = either(try_branch(&app, branch, description));
-            if described != ExitCode::SUCCESS {
-                return Ok(described);
+        };
+        match held_back {
+            Some(_) => describe_with(&format!("once it is made, describe {branch} with ")),
+            None if try_branch(&app, branch, description) != Ok(ExitCode::SUCCESS) => {
+                describe_with(&format!("describe {branch} with "));
+                return Ok(ExitCode::SUCCESS);
             }
+            None => {}
         }
     }
-    Ok(either(try_builds(&app, 10, false)))
+    let _listed = try_builds(&app, 10, false);
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Refuses what nothing gives the Windows files of the build `found`, which no setting in

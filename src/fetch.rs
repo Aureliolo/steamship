@@ -194,7 +194,7 @@ fn named(given: &str, name: &str) -> bool {
     if branch::is_default(given) {
         branch::is_default(name)
     } else {
-        given == name
+        given.eq_ignore_ascii_case(name)
     }
 }
 
