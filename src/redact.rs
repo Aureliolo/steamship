@@ -20,7 +20,7 @@ pub const MARKER: &[u8] = b"[redacted]";
 /// What replaces the words Steam gave when the login files that name the secrets cannot be read.
 pub const WITHHELD: &str = "withheld, because steamcmd's login files could not be read. Make them readable by this account, then run the command again";
 
-/// `text`, words Steam gave, with every secret of `redactor` replaced.
+/// `text`, words Steam gave, with every secret of `redactor` replaced and the account's name kept.
 ///
 /// Without a redactor nothing of them can be known safe, so [`WITHHELD`] stands for them. Only
 /// Steam's words go through here, never steamship's own.
@@ -28,7 +28,7 @@ pub const WITHHELD: &str = "withheld, because steamcmd's login files could not b
 pub fn answer(redactor: Option<&Redactor>, text: &str) -> String {
     redactor.map_or_else(
         || WITHHELD.to_owned(),
-        |redactor| String::from_utf8_lossy(&redactor.redact(text.as_bytes())).into_owned(),
+        |redactor| String::from_utf8_lossy(&redactor.redact_secrets(text.as_bytes())).into_owned(),
     )
 }
 

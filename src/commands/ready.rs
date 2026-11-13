@@ -98,7 +98,8 @@ pub(crate) fn ready() -> Result<(install::Held, PathBuf, Manifest), ExitCode> {
 /// folder, so it goes through the redactor of this machine's login when one can be built.
 pub(crate) fn steamcmd_failed(error: &install::Error) -> ExitCode {
     let text = error.to_string();
-    let shown = answer_redactor().map_or_else(|| text.clone(), |redactor| redacted(&redactor, &text));
+    let shown =
+        answer_redactor().map_or_else(|| text.clone(), |redactor| redacted(&redactor, &text));
     show::failure(&shown, "", None);
     if let Some(remedy) = error.remedy() {
         show::note(remedy);

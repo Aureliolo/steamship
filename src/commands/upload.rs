@@ -362,7 +362,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         log,
         written,
         ..
-    } = match build_retrying(&steam, wording(request.preview)) {
+    } = match build_retrying(&steam, (doing, again)) {
         Ok(ran) => ran,
         Err(halt) => {
             if request.json {
@@ -375,7 +375,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         default,
         &outcome,
         info.as_deref().map(|info| (info, redactor.is_some())),
-        (prepared.app_id, spinner, wording(request.preview).0),
+        (prepared.app_id, spinner, doing),
     );
     let outcome = found_on_steam(outcome, &prepared, &description);
     let reporting = Reporting {
