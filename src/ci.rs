@@ -145,10 +145,10 @@ impl Login {
         let rest = text.trim().strip_prefix(PREFIX).ok_or(Error::Unreadable)?;
         let (number, rest) = rest.split_once(':').ok_or(Error::Unreadable)?;
         match update::number(number).ok_or(Error::Unreadable)? {
-            2 => Self::unpack_by_position(rest),
-            3 => Self::unpack_by_name(rest),
-            format if format > NEWEST => Err(Error::Newer { format }),
-            _ => Err(Error::Unreadable),
+            WRITTEN => Self::unpack_by_position(rest),
+            NEWEST => Self::unpack_by_name(rest),
+            0..WRITTEN => Err(Error::Unreadable),
+            format => Err(Error::Newer { format }),
         }
     }
 
