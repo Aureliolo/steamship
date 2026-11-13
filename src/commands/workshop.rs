@@ -17,13 +17,13 @@ use steamship::redact::Redactor;
 use steamship::show::{self, Spinner};
 use steamship::{ci, dump, release, scripts, steamcmd, workshop};
 
-use super::exit::fail;
+use super::exit::{fail, late};
 use super::game::{app_named, app_or_game, game, script_given, shipped_from};
 use super::ready::{
     dump_in_actions, home, login_refused, named, ready, restore, run_as, steamcmd_failed,
 };
 use super::released::{refused_unless, release_shown};
-use super::upload::output;
+use super::upload::{earlier_kept, output, redacted};
 
 /// `workshop` of the item its fields give, after the app or the game's own. With no field, a first
 /// word that is not a number is an item script, and a number or no word is the game's example mods.
@@ -249,13 +249,18 @@ fn try_workshop<'command>(
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
     let mut code = ExitCode::SUCCESS;
+    // Whether an item of the run is on Steam with its ID in no file, so that a second run would
+    // make another.
+    let mut again = false;
     for (each, item) in given.iter().zip(&items) {
-        code = upload_item(request, (&account, packed.as_ref(), &home), each, item)?;
+        let (done, unkept) = upload_item(request, (&account, packed.as_ref(), &home), each, item)?;
+        code = done;
+        again |= unkept;
         if code != ExitCode::SUCCESS {
             break;
         }
     }
-    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    install::verify(&held, &manifest).map_err(|error| late(steamcmd_failed(&error), again))?;
     Ok(code)
 }
 
@@ -266,13 +271,20 @@ fn upload_item(
     run: (&Account, Option<&ci::Login>, &Path),
     given: &Given<'_>,
     item: &workshop::Item,
-) -> Result<ExitCode, ExitCode> {
+) -> Result<(ExitCode, bool), ExitCode> {
     let (account, packed, home) = run;
     let copy = match given {
         Given::Script(script) => workshop::prepare(home, script, item.app_id),
         Given::Fields(fields, kept) => workshop::prepare_fields(home, fields, kept.name),
     }
     .map_err(|error| fail(&error, FAILED))?;
+    // A console left by an earlier run must never pass for this one's, so it goes first. One that
+    // stays is said, and stops nothing: the run's own outcome matters more.
+    let saved = copy.with_file_name("steamcmd.log");
+    let removed = match fs::remove_file(&saved) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Some(error),
+        Err(_) | Ok(()) => None,
+    };
     let before = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
     let steamcmd_logs = steamcmd::state_folder(home, Platform::THIS).join("logs");
     let marks = dump::Marks::take(&steamcmd_logs);
@@ -286,53 +298,96 @@ fn upload_item(
             return Err(fail(&error, FAILED));
         }
     };
-    let redactor = before.and(Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?);
-    let console = redactor.redact(&finished.output);
-    let saved = copy.with_file_name("steamcmd.log");
-    fs::write(&saved, &console)
-        .map_err(|error| fail(&format!("{}: {error}", saved.display()), FAILED))?;
+    // steamcmd may renew its token as it runs, so what is shown or saved of the run is redacted
+    // with the secrets from after it too. Without them nothing of its output is shown or kept.
+    let after = Redactor::for_home(home);
+    // The outcome is judged on the output as steamcmd wrote it, since redacting could turn an
+    // account named `Success` into a different result.
     let outcome = workshop::judge(
         finished.code,
-        &String::from_utf8_lossy(&console),
+        &String::from_utf8_lossy(&finished.output),
         workshop::published(&copy),
     );
-    let log = format!("log  {}", saved.display());
+    let (redactor, written, log) = match after {
+        Ok(after) => {
+            let redactor = before.and(after);
+            let (written, log) = save_console(&saved, &redactor.redact(&finished.output), removed);
+            (Some(redactor), written, log)
+        }
+        Err(error) => (
+            None,
+            false,
+            format!(
+                "log  none kept, since steamcmd's login could not be read again to redact them: \
+                 {error}"
+            ),
+        ),
+    };
+    let nothing_to_hide = Redactor::default();
+    let redactor_in_use = redactor.as_ref().unwrap_or(&nothing_to_hide);
     if request.json {
         show::plain(&format!(
             "{}\n",
             item_summary(Some((&outcome, &saved)), item, given)
         ));
     }
-    let code = match outcome {
+    let (code, unkept) = match outcome {
         workshop::Outcome::Published { published } => {
             spinner.done(&format!("uploaded in {took}"));
             output("published-file-id", published, "the item's ID");
-            item_published(given, item, published, &log)
+            let said = item_published(given, item, published, &log);
+            // A new item's line has no room for the log, which matters most when it was not kept.
+            if !written && item.published.is_none() {
+                show::note(&log);
+            }
+            said
         }
         workshop::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
-            login_refused(&reason, packed)
+            (
+                login_refused(&redacted(redactor_in_use, &reason), packed),
+                false,
+            )
         }
         workshop::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
-            for reason in &reasons {
-                show::failure(reason, "", None);
+            for reason in reasons.iter().filter(|_| redactor.is_some()) {
+                show::failure(&redacted(redactor_in_use, reason), "", None);
             }
             // Valve gives the real reason for a Workshop failure there, not on the console.
             show::note(&format!(
                 "{log}, and steamcmd's workshop log in {}",
                 steamcmd_logs.join("workshop_log.txt").display()
             ));
-            dump_in_actions(
-                &[("steamcmd's console".to_owned(), saved)],
-                &[],
-                &marks.added(&steamcmd_logs),
-                &redactor,
-            );
-            ExitCode::from(FAILED)
+            if let Some(redactor) = &redactor {
+                let console = written.then(|| ("steamcmd's console".to_owned(), saved));
+                dump_in_actions(
+                    &console.into_iter().collect::<Vec<_>>(),
+                    &[],
+                    &marks.added(&steamcmd_logs),
+                    redactor,
+                );
+            }
+            (ExitCode::from(FAILED), false)
         }
     };
-    Ok(code)
+    Ok((code, unkept))
+}
+
+/// Writes `console` at `saved`, and answers whether that worked with the `log` line that says
+/// where it is, or why it is not. `removed` is why the earlier console could not be removed.
+fn save_console(saved: &Path, console: &[u8], removed: Option<io::Error>) -> (bool, String) {
+    match fs::write(saved, console) {
+        Ok(()) => (true, format!("log  {}", saved.display())),
+        Err(error) => (
+            false,
+            format!(
+                "log  none, since {} could not be written: {error}{}",
+                saved.display(),
+                earlier_kept(removed)
+            ),
+        ),
+    }
 }
 
 /// What came of `item`, given as `given`, as `--json` prints it. An upload gives its outcome with
@@ -368,21 +423,34 @@ fn item_summary(
 
 /// Says that `item`, given as `given`, is up as `published`, and keeps a new one's ID where it
 /// was given by its fields.
-fn item_published(given: &Given<'_>, item: &workshop::Item, published: u64, log: &str) -> ExitCode {
+///
+/// Also whether the item's ID is in no file, so that a second run would make another.
+fn item_published(
+    given: &Given<'_>,
+    item: &workshop::Item,
+    published: u64,
+    log: &str,
+) -> (ExitCode, bool) {
     let said = format!("app {}: Workshop item {published}", item.app_id);
     match (given, item.published) {
         (_, Some(_)) => show::success(&said, log),
-        (Given::Script(script), None) => show::success(
-            &said,
-            &format!(
-                "a new item. Add \"publishedfileid\" \"{published}\" to {} so that later uploads \
-                 update it",
-                script.display()
-            ),
-        ),
-        (Given::Fields(_, kept), None) => return keep_item(kept, item.app_id, published),
+        (Given::Script(script), None) => {
+            show::success(
+                &said,
+                &format!(
+                    "a new item. Add \"publishedfileid\" \"{published}\" to {} so that later \
+                     uploads update it",
+                    script.display()
+                ),
+            );
+            return (ExitCode::SUCCESS, true);
+        }
+        (Given::Fields(_, kept), None) => {
+            let code = keep_item(kept, item.app_id, published);
+            return (code, code != ExitCode::SUCCESS);
+        }
     }
-    ExitCode::SUCCESS
+    (ExitCode::SUCCESS, false)
 }
 
 /// The `--items` file at `path` for `app_id`. No file is an empty record, and a record for another

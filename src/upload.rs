@@ -370,6 +370,20 @@ pub enum Outcome {
     Failed(Vec<String>),
 }
 
+impl Outcome {
+    /// Whether Steam holds a build of this upload that a second upload would make again: one that
+    /// was built, or one Steam refused to commit to the branch `set_live` names, as it kept the
+    /// build.
+    #[must_use]
+    pub fn kept_on_steam(&self, set_live: Option<&str>) -> bool {
+        match self {
+            Self::Built { .. } | Self::BuiltThenFailed { .. } => true,
+            Self::Failed(reasons) => commit_refused(reasons, set_live).is_some(),
+            Self::Previewed | Self::NotLoggedIn(_) => false,
+        }
+    }
+}
+
 /// Reads the result of a run for `app_id` from steamcmd's exit code, console and build log.
 ///
 /// Success is taken only from the log, since console output captured from steamcmd is known to
