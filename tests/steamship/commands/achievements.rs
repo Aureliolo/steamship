@@ -299,7 +299,7 @@ fn write_inn(game: &Path, unchanged: bool) -> (Option<i32>, String, String) {
         "--write",
         records,
         german,
-        "--out",
+        "--output",
         out,
     ];
     if unchanged {
@@ -677,7 +677,7 @@ fn inn_schema(icons: [&str; 3]) -> &'static str {
 }
 
 /// `steamship achievements` in `game`, an [`inn_mod`], with its `steam/achievements` folder as
-/// `--out`, and the Web API answering with `answers`: `--write`, `--imported` and its records
+/// `--output`, and the Web API answering with `answers`: `--write`, `--imported` and its records
 /// and catalogue when `imported`, or else `--check` and its records.
 fn inn_on_steam<Body>(
     game: &Path,
@@ -706,7 +706,7 @@ fn inn_at(game: &Path, imported: bool, host: &str) -> (Option<i32>, String, Stri
     } else {
         all.extend(["--check", records]);
     }
-    all.extend(["--out", out]);
+    all.extend(["--output", out]);
     steamship(&all, Some(game), &web_api_variables(host))
 }
 
@@ -1068,14 +1068,14 @@ fn a_receipts_flags_are_refused_where_they_mean_nothing() {
     let game = tempfile::tempdir().unwrap();
     for (args, refusal) in [
         (
-            ["--out", "steam/achievements", "--json"].as_slice(),
+            ["--output", "steam/achievements", "--json"].as_slice(),
             "the following required arguments were not provided",
         ),
         (
             [
                 "--write",
                 "a.json",
-                "--out",
+                "--output",
                 "o",
                 "--imported",
                 "--unchanged",
@@ -1108,7 +1108,7 @@ fn the_achievement_editors_files_are_refused_as_the_editor_would_refuse_them() {
             .collect();
         args.extend(named.iter().map(String::as_str));
         let out = out.to_string_lossy().into_owned();
-        args.extend(["--out", &out]);
+        args.extend(["--output", &out]);
         let (code, _, why) = steamship(
             &args,
             Some(game.path()),
@@ -1190,7 +1190,7 @@ fn the_achievement_editors_files_are_refused_as_the_editor_would_refuse_them() {
     let filed = write(&[&records]);
     assert!(
         filed.contains(&format!(
-            "{}: is a file, where --out names the folder the files are written into\n",
+            "{}: is a file, where --output names the folder the files are written into\n",
             out.display()
         )),
         "{filed}"
@@ -1210,7 +1210,7 @@ fn an_achievement_and_a_stat_of_one_api_name_are_refused_before_anything_is_writ
     let out = game.path().join("out");
     let named = [&records, &out].map(|path| path.to_string_lossy().into_owned());
     for args in [
-        ["--write", &named[0], "--out", &named[1]].as_slice(),
+        ["--write", &named[0], "--output", &named[1]].as_slice(),
         ["--check", &named[0]].as_slice(),
     ] {
         let (code, _, why) = steamship(
@@ -1254,7 +1254,7 @@ fn more_than_a_hundred_achievements_are_said_to_need_a_vetted_app() {
                 "480",
                 "--write",
                 &file.to_string_lossy(),
-                "--out",
+                "--output",
                 &out.to_string_lossy(),
             ],
             Some(folder.path()),
@@ -1366,7 +1366,7 @@ fn achievements_are_checked_and_written_under_the_contexts_their_file_names() {
             "--write",
             &sheet,
             &german,
-            "--out",
+            "--output",
             &out.to_string_lossy(),
         ],
         Some(home.path()),
@@ -2120,7 +2120,7 @@ fn a_games_own_records_are_what_achievements_reads_when_it_is_named_no_files() {
     assert_eq!(unwritten, Some(2_i32), "{stdout}{stderr}");
     assert_eq!(
         failure(&stderr),
-        "--write needs --out, the folder it writes into"
+        "--write needs --output, the folder it writes into"
     );
 
     let import = root.join("steam").join("achievements");

@@ -85,7 +85,7 @@ fn rich_presence_is_sent_whole_for_every_file_and_a_result_steam_refuses_is_a_fa
 }
 
 #[test]
-fn rich_presence_files_are_checked_before_steam_and_a_preview_sends_nothing() {
+fn rich_presence_files_are_checked_before_steam_and_a_dry_run_sends_nothing() {
     let home = tempfile::tempdir().unwrap();
     let files = tempfile::tempdir().unwrap();
     // No stand-in is given: asking Steam would be a failure to reach it, exit 1, not 0 or 2.
@@ -96,11 +96,15 @@ fn rich_presence_files_are_checked_before_steam_and_a_preview_sends_nothing() {
     let english = presence_file(files.path(), "english", "\t\t\"#menu\"\t\"At the menu\"\n");
 
     let (previewed, stdout, stderr) = steamship(
-        &["rich-presence", "480", &english, "--preview"],
+        &["rich-presence", "480", &english, "--dry-run"],
         Some(home.path()),
         &set,
     );
     assert_eq!(previewed, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.starts_with("steamship rich-presence, dry run\n"),
+        "{stdout}"
+    );
     assert!(stdout.contains("  english   1 token, from "), "{stdout}");
     assert!(stdout.contains("nothing was sent"), "{stdout}");
 
@@ -142,7 +146,7 @@ fn rich_presence_files_are_checked_before_steam_and_a_preview_sends_nothing() {
 #[test]
 fn a_games_rich_presence_is_read_beside_its_scripts() {
     let (_temp, root) = pushed_game(None);
-    let (code, stdout, stderr) = in_game(&root, &["rich-presence", "--preview"]);
+    let (code, stdout, stderr) = in_game(&root, &["rich-presence", "--dry-run"]);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     assert!(stdout.contains("  english   1 token, from "), "{stdout}");
     assert!(stdout.contains("nothing was sent"), "{stdout}");
@@ -170,7 +174,7 @@ fn a_games_rich_presence_is_sent_from_its_pushed_tree_and_one_without_any_is_ref
     );
 
     fs::remove_file(root.join("steam").join("rich_presence_english.vdf")).unwrap();
-    let (none, said, why) = in_game(&root, &["rich-presence", "--preview"]);
+    let (none, said, why) = in_game(&root, &["rich-presence", "--dry-run"]);
     assert_eq!(none, Some(2_i32), "{said}{why}");
     let refused = failure(&why);
     assert!(

@@ -204,7 +204,7 @@ fn by_fields(folder: &Path, items: &Path, extra: &[&str]) -> Vec<String> {
         folder.join("hat").to_str().unwrap(),
         "--title",
         "A green hat",
-        "--preview",
+        "--preview-image",
         folder.join("hat.png").to_str().unwrap(),
     ]
     .map(str::to_owned)
@@ -450,7 +450,7 @@ fn workshop_names_each_flag_a_script_cannot_go_with_and_each_one_an_items_fields
         ["--app", "480"],
         ["--items", "items.json"],
         ["--content", "hat"],
-        ["--preview", "hat.png"],
+        ["--preview-image", "hat.png"],
         ["--title", "A green hat"],
         ["--description", "Green."],
         ["--change-note", "1.0.0"],
@@ -461,7 +461,7 @@ fn workshop_names_each_flag_a_script_cannot_go_with_and_each_one_an_items_fields
     assert!(
         every.starts_with(
             "error: the argument '[SCRIPT]' cannot be used with:\n  --app <APP>\n  --items \
-             <FILE>\n  --content <FOLDER>\n  --preview <IMAGE>\n  --title <TITLE>\n  \
+             <FILE>\n  --content <FOLDER>\n  --preview-image <IMAGE>\n  --title <TITLE>\n  \
              --description <TEXT>\n  --change-note <TEXT>\n  --name <NAME>\n  --visibility \
              <VISIBILITY>\n\n"
         ),

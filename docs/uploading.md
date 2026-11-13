@@ -39,7 +39,7 @@ steamship init 480 --depot 481=build/windows --depot 482=build/linux
 
 It writes `steam/app_build.vdf` and a `depot_build_<ID>.vdf` for each depot. Each ships every
 file in its folder except debug symbols. Without `--depot`, the one depot is the app's ID plus one
-and ships `build/`. `--folder` puts the scripts somewhere other than `steam/`. When any of the
+and ships `build/`. `--output` puts the scripts somewhere other than `steam/`. When any of the
 scripts is already there, it writes none.
 
 In a [game's folder](games.md), the game's own app script sets the game's branch live. That is
@@ -59,7 +59,7 @@ script with any of these:
   [the default branch](#the-default-branch)).
 - `SetLive` naming a branch the app does not have, when a Web API key is set or kept. With
   neither, `check` says the branch was not checked.
-- `Preview` or `Local` set in the file. Use `--preview` instead.
+- `Preview` or `Local` set in the file. Use `--dry-run` instead.
 - A `ContentRoot` or `LocalPath` that does not exist or matches no files.
 - An `InstallScript` that is not a file in the content, or that the depot does not map.
 
@@ -149,7 +149,7 @@ steamship check steam/app_build.vdf --scripts-only
 
 ```sh
 # a rehearsal: builds everything and sends nothing to Steam
-steamship upload steam/app_build.vdf --version 1.4.0 --preview
+steamship upload steam/app_build.vdf --version 1.4.0 --dry-run
 # the upload
 steamship upload steam/app_build.vdf --version 1.4.0
 ```
@@ -220,8 +220,7 @@ steamship runs it for unattended.
 
 ### Rehearsals and timings
 
-`--preview` is Valve's dry run. It computes and logs the whole build. Nothing is uploaded or set
-live.
+`--dry-run` computes and logs the whole build. Nothing is uploaded or set live.
 
 `--times`, given to any command, ends each step's line with how long it took, such as
 `pinned and verified (0.2 s)`. Times are to the tenth of a second up to two minutes. A log then
@@ -245,7 +244,7 @@ Here the line is spread out:
 }
 ```
 
-- `outcome` is `uploaded`, `previewed`, `not-live`, `built-then-failed`, `failed` or
+- `outcome` is `uploaded`, `dry-run`, `not-live`, `built-then-failed`, `failed` or
   `not-logged-in`.
 - `not-live` is a build made but not set live as asked. Steam shows another build on the branch,
   the app cannot have the branch yet, or Steam did not set it live on default when asked.
@@ -291,14 +290,14 @@ Instead of Valve's script, give the item's fields. steamship writes the script i
 
 ```sh
 steamship workshop --app 1000070 --items steam/workshop_items.json --name example \
-  --content mods/example --preview art/example.png --title "Example mod" \
+  --content mods/example --preview-image art/example.png --title "Example mod" \
   --description "What the mod shows." --change-note "1.0.0" --visibility private
 ```
 
 `--app`, `--items`, `--name`, `--content` and `--title` are needed. `--description` and
 `--change-note` may be left out. They are checked as a script's are.
 
-`--preview` is needed to make an item, as a script's `previewfile` is. `--visibility` is
+`--preview-image` is needed to make an item, as a script's `previewfile` is. `--visibility` is
 `public`, `friends-only`, `private` or `unlisted`. It is needed to make an item, since steamship
 never chooses who sees one. For an item already made, either may be left out. Steam then keeps
 what it has.
@@ -469,7 +468,7 @@ need the publisher key of a group that holds the app, from Steamworks under User
 Manage Groups. The key comes from `STEAMSHIP_WEB_API_KEY`, or else from the one steamship keeps.
 At a terminal with neither, steamship asks for it. Once the command works, it offers to keep it.
 
-`steamship login` offers to keep one too. `steamship login --web-api-key` does only that, after
+`steamship login` offers to keep one too. `steamship login --web-api-key-only` does only that, after
 Steam has checked the key.
 
 A kept key is in the system's credential store: Windows Credential Manager, the macOS Keychain,
@@ -488,7 +487,7 @@ was not found, a refused connection or a timeout.
 ```sh
 steamship fetch 480
 steamship fetch 480 --branch testing --system linux
-steamship fetch 480 --build 12345678 --into play/spacewar --json
+steamship fetch 480 --build 12345678 --output play/spacewar --json
 ```
 
 `fetch` downloads the build live on a branch exactly as Steam serves it to players. It can then be
@@ -532,7 +531,7 @@ steamship fetch 480 --branch testing --keep-password
 
 The depots are the ones Steam installs on this system, or on the one `--system` names
 (`windows`, `linux` or `macos`). Each app, branch and system has its own folder under
-steamship's home, `fetched/<app>/<branch>-<system>`, or the one `--into` names. Nothing goes into
+steamship's home, `fetched/<app>/<branch>-<system>`, or the one `--output` names. Nothing goes into
 a Steam library and no window opens.
 
 Fetching again checks each of the build's files in the folder and downloads only those that
@@ -904,12 +903,12 @@ steamship achievements 480 --check mods/base/data/achievements.json game/locale/
 ### The achievement editor's import
 
 ```sh
-steamship achievements 480 --write mods/base/data/achievements.json game/locale/*.po --out steam/achievements
-steamship achievements 480 --write mods/base/data/achievements.json game/locale/*.po --out steam/achievements --unchanged
+steamship achievements 480 --write mods/base/data/achievements.json game/locale/*.po --output steam/achievements
+steamship achievements 480 --write mods/base/data/achievements.json game/locale/*.po --output steam/achievements --unchanged
 ```
 
 Steamworks' achievement editor takes a game's achievements as files dropped on it under Bulk
-Import/Export. No Web API sets them. `--write` writes those files into the `--out` folder, from the
+Import/Export. No Web API sets them. `--write` writes those files into the `--output` folder, from the
 same files `--check` reads, without asking Steam anything:
 
 - `480-achievements-definitions.csv`: each achievement's set, who may unlock it, and whether it is
@@ -1011,8 +1010,8 @@ to ask still fits before it goes up.
 ### Which icons Steam has
 
 ```sh
-steamship achievements 480 --write mods/base/data/achievements.json game/locale/*.po --out steam/achievements --imported
-steamship achievements 480 --check mods/base/data/achievements.json --out steam/achievements
+steamship achievements 480 --write mods/base/data/achievements.json game/locale/*.po --output steam/achievements --imported
+steamship achievements 480 --check mods/base/data/achievements.json --output steam/achievements
 ```
 
 Once the import is saved and published, `--imported` fetches each icon Steam serves, for an
@@ -1024,7 +1023,7 @@ channel, out of 255. An icon is not the file's when more than one pixel in a tho
 64 off. That catches a changed detail ten pixels square. Pixels the file has see-through are left
 out, since what Steam puts behind them is not known.
 
-When every icon is alike, `--imported` writes `steam-icons.json` into the `--out` folder and
+When every icon is alike, `--imported` writes `steam-icons.json` into the `--output` folder and
 nothing else. This receipt records each icon's file by its SHA-256 and the image Steam made of it
 by the name Steam serves it under.
 
@@ -1046,7 +1045,7 @@ but not yet published still shows the icons from before it.
 
 ### Checking against the receipt
 
-`--check` with that folder as `--out` then reads the receipt as well, without fetching the images.
+`--check` with that folder as `--output` then reads the receipt as well, without fetching the images.
 It names each of these icons:
 
 - One whose file changed since the import the receipt records.
@@ -1162,7 +1161,7 @@ steamship refuses a template in any of these cases:
 
 ```sh
 steamship rich-presence 480 steam/rich_presence_english.vdf steam/rich_presence_german.vdf
-steamship rich-presence 480 steam/rich_presence_*.vdf --preview
+steamship rich-presence 480 steam/rich_presence_*.vdf --dry-run
 ```
 
 `rich-presence` uploads the localisation files Steamworks takes under Community, Rich Presence,
@@ -1182,7 +1181,7 @@ with the same Web API key as `builds`. They are in Valve's own format, one per l
 ```
 
 Each file replaces all of its language's tokens on Steam. A token taken out of a file is gone from
-Steam after the next upload. Languages with no file are left as they are. `--preview` checks the
+Steam after the next upload. Languages with no file are left as they are. `--dry-run` checks the
 files and sends nothing.
 
 ### What a rich presence file may not hold

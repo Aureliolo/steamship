@@ -28,7 +28,7 @@ fn builds_with_no_key_set_or_kept_and_no_one_to_ask_says_how_to_keep_one_and_exi
     assert_eq!(failure(&stderr), "no Web API key");
     assert!(
         stderr.ends_with(
-            "run steamship login --web-api-key at a terminal to keep one, or set \
+            "run steamship login --web-api-key-only at a terminal to keep one, or set \
              STEAMSHIP_WEB_API_KEY\n"
         ),
         "{stderr}"

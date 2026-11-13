@@ -447,7 +447,7 @@ fn preview_and_local_in_the_script_are_refused() {
     assert_eq!(
         messages(&check(&app)),
         [
-            "\"Preview\" is set in the script. Pass --preview",
+            "\"Preview\" is set in the script. Pass --dry-run",
             "\"Local\" is set, which sends the build to a local content server, not to Steam. \
              Take it out of the script",
         ]
@@ -480,7 +480,7 @@ fn the_scripts_alone_still_refuse_preview_and_local() {
     assert_eq!(
         messages(&scripts_only(&app)),
         [
-            "\"Preview\" is set in the script. Pass --preview",
+            "\"Preview\" is set in the script. Pass --dry-run",
             "\"Local\" is set, which sends the build to a local content server, not to Steam. \
              Take it out of the script",
         ]

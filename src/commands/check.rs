@@ -244,7 +244,7 @@ pub(crate) fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> 
         let receipt = game.import.join(receipt::RECEIPT).is_file();
         let writing = Writing {
             write: None,
-            out: receipt.then(|| game.import.clone()),
+            output: receipt.then(|| game.import.clone()),
             unchanged: false,
             imported: false,
         };
@@ -483,7 +483,7 @@ const UNKNOWN_TICKS: &str = "upload asks Steam which redistributables the app ti
 
 /// Why an unchecked `SetLive` branch matters, and how to have it checked.
 const UNCHECKED_BRANCH: &str = "a branch the app does not have leaves the build uploaded but not \
-                                live. steamship login --web-api-key keeps a key to check it with";
+                                live. steamship login --web-api-key-only keeps a key to check it with";
 
 /// Whether the branch an app build script sets live can be set live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

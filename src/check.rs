@@ -142,7 +142,7 @@ fn check_loaded(app: &AppScript, content: bool, settings: Option<&Block>) -> Rep
     {
         problems.push(Problem::new(
             &app.path,
-            "\"Preview\" is set in the script. Pass --preview",
+            "\"Preview\" is set in the script. Pass --dry-run",
         ));
     }
     if app

@@ -169,7 +169,7 @@ pub enum Command {
         account: Option<String>,
         /// Keep only the publisher Web API key, after Steam accepts it. No login happens.
         #[arg(long)]
-        web_api_key: bool,
+        web_api_key_only: bool,
     },
     /// Show the login, steamcmd and whether Steam accepts the login.
     ///
@@ -197,7 +197,7 @@ pub enum Command {
     /// Steam Input action manifest the snapshot names is refused too. The snapshot is the demo's
     /// with `--demo`, or for a folder only the demo's depots ship.
     ///
-    /// The game's rich presence files are read too, as `rich-presence --preview` reads them. All
+    /// The game's rich presence files are read too, as `rich-presence --dry-run` reads them. All
     /// of this is offline.
     Check {
         /// The app build script, such as `steam/app_build.vdf`, or a build's folder, such as
@@ -231,7 +231,7 @@ pub enum Command {
     /// else the one `project.godot` gives.
     ///
     /// A game whose `steamship.toml` sets `green` ships only a commit on that branch of origin,
-    /// unless `--allow-ungreen` is given. `--preview` skips that check.
+    /// unless `--allow-ungreen` is given. `--dry-run` skips that check.
     ///
     /// While the app is unreleased, the build goes live on the default branch too. A game whose
     /// `steamship.toml` sets `released = true` never gets a build live on default. Once the build
@@ -286,7 +286,7 @@ pub enum Command {
     /// login. It downloads for this system, or the one `--system` names.
     ///
     /// Each app, branch and system has its own folder under steamship's home, or the one
-    /// `--into` names. Nothing is installed in a Steam library. A fetch into a folder already
+    /// `--output` names. Nothing is installed in a Steam library. A fetch into a folder already
     /// holding a build of the branch checks each of the build's files there. It downloads only
     /// those that differ, and leaves files the build does not have in place. A folder holding
     /// another branch is refused. The folder and its build are printed once steamcmd's record of
@@ -314,7 +314,7 @@ pub enum Command {
     /// changed.
     ///
     /// With `--write`, it writes the files for the achievement editor's Bulk Import/Export into
-    /// the `--out` folder instead, from the same kind of files. Nothing is asked of Steam. The
+    /// the `--output` folder instead, from the same kind of files. Nothing is asked of Steam. The
     /// files hold the definitions, every name and description in each language, the sets' names,
     /// and each icon named for its achievement.
     ///
@@ -324,13 +324,13 @@ pub enum Command {
     ///
     /// Once the files are imported and published, `--imported` compares each icon Steam serves
     /// with its file, pixel by pixel. When all match, it writes the receipt `steam-icons.json`
-    /// into the `--out` folder. `--check` with that `--out` then also names icons changed in the
+    /// into the `--output` folder. `--check` with that `--output` then also names icons changed in the
     /// files since, and icons Steam made anew from an unchanged file. It names icons the receipt
     /// has no import of too. It fetches no images for this.
     ///
     /// In a game's folder, `--check` and `--write` with no files read the game's own. These are
     /// the games-kit records in `mods/base/data` holding achievements, stats or sets, and every
-    /// catalogue in `game/locale`. The `--out` folder is `steam/achievements`. `--check` compares
+    /// catalogue in `game/locale`. The `--output` folder is `steam/achievements`. `--check` compares
     /// the icons with its receipt once there is one. `--imported` alone writes that receipt.
     #[command(group(clap::ArgGroup::new("files").args(["check", "write"]).multiple(true)))]
     Achievements {
@@ -465,7 +465,7 @@ pub enum Command {
         files: Vec<PathBuf>,
         /// Check the files and show what would be sent, without sending anything.
         #[arg(long)]
-        preview: bool,
+        dry_run: bool,
     },
     /// Write a game's store, Workshop and rich presence text in every language it speaks.
     ///
@@ -554,7 +554,7 @@ pub enum Command {
     /// Write starter build scripts for an app.
     ///
     /// Writes a commented app build script, and a depot build script for each depot, into
-    /// `--folder`. They are in Valve's own format, for `check` and `upload` to read. Without
+    /// `--output`. They are in Valve's own format, for `check` and `upload` to read. Without
     /// `--depot`, there is one depot. Its ID is the app's ID plus one. It ships `build/`. Nothing already
     /// there is overwritten.
     Init {
@@ -562,12 +562,12 @@ pub enum Command {
         #[arg(value_parser = app_id)]
         app: u32,
         /// A depot and the folder its files ship from, such as 1001=build/windows. The folder is
-        /// relative to where `init` runs, not to `--folder`. Give it once for each depot.
+        /// relative to where `init` runs, not to `--output`. Give it once for each depot.
         #[arg(long = "depot", value_name = "ID=FOLDER", value_parser = init::depot)]
         depots: Vec<init::Depot>,
         /// The folder the scripts are written into.
         #[arg(long, default_value = "steam")]
-        folder: PathBuf,
+        output: PathBuf,
     },
     /// Install or verify the pinned steamcmd.
     ///
@@ -691,7 +691,7 @@ pub struct Writing {
     /// left alone. With `--check`, the folder whose `steam-icons.json` the icons are checked
     /// against.
     #[arg(long, value_name = "FOLDER", requires = "files")]
-    pub out: Option<PathBuf>,
+    pub output: Option<PathBuf>,
     /// Write nothing, and exit 2 naming each file in the folder that differs from what `--write`
     /// would write there, is missing, or is left over. `steam-icons.json` is none of these.
     #[arg(long, requires = "write")]
@@ -723,12 +723,12 @@ pub struct Upload {
     pub version: Option<String>,
     /// Compute and log the whole build without uploading anything, as Valve's dry run.
     #[arg(long)]
-    pub preview: bool,
+    pub dry_run: bool,
     /// Also set the build live on the default branch, while Steam shows the app unreleased. This
     /// goes through Steam's partner Web API, with the publisher key as `builds` finds it. Once
     /// the app is released, the build goes up without this. Set its default branch live in
     /// Steamworks then. In a game's folder, an upload does this without the flag.
-    #[arg(long, conflicts_with = "preview")]
+    #[arg(long, conflicts_with = "dry_run")]
     pub default: bool,
     /// In a game's folder, ship the demo, a separate app, instead of the full game. It is built
     /// with the demo's `build` command. Its depots are kept apart from the full game's and ship
@@ -770,7 +770,7 @@ pub struct Fetch {
     pub system: Option<Platform>,
     /// The folder to fetch the build into. It holds this one branch and system alone.
     #[arg(long, value_name = "FOLDER")]
-    pub into: Option<PathBuf>,
+    pub output: Option<PathBuf>,
     /// The build account, if not the one the last login remembered.
     #[arg(long, env = ACCOUNT)]
     pub account: Option<String>,
@@ -833,7 +833,7 @@ pub struct Rollback {
 pub struct Workshop {
     /// The item script, such as `workshop/item.vdf`.
     #[arg(conflicts_with_all = [
-        "app", "items", "content", "preview", "title", "description", "change_note", "name",
+        "app", "items", "content", "preview_image", "title", "description", "change_note", "name",
         "visibility",
     ])]
     pub script: Option<PathBuf>,
@@ -884,7 +884,7 @@ pub struct WorkshopItem {
     pub content: PathBuf,
     /// The item's preview image, 1 MB at most.
     #[arg(long, value_name = "IMAGE", requires = "app")]
-    pub preview: Option<PathBuf>,
+    pub preview_image: Option<PathBuf>,
     /// The item's title, 128 bytes at most.
     #[arg(long, required = false, requires = "app")]
     pub title: String,
@@ -913,6 +913,64 @@ mod tests {
     #[test]
     fn the_command_line_is_one_clap_accepts() {
         Cli::command().debug_assert();
+    }
+
+    /// Every long flag and alias of `command` and of each subcommand under it.
+    fn long_flags(command: &clap::Command, found: &mut Vec<String>) {
+        for argument in command.get_arguments() {
+            found.extend(argument.get_long().map(str::to_owned));
+            found.extend(
+                argument
+                    .get_all_aliases()
+                    .into_iter()
+                    .flatten()
+                    .map(str::to_owned),
+            );
+        }
+        for subcommand in command.get_subcommands() {
+            long_flags(subcommand, found);
+        }
+    }
+
+    #[test]
+    fn no_command_takes_a_1_0_flag_name() {
+        let mut found = Vec::new();
+        long_flags(&Cli::command(), &mut found);
+        for old in ["preview", "out", "into", "folder", "web-api-key"] {
+            assert!(!found.iter().any(|flag| flag == old), "--{old} is taken");
+        }
+    }
+
+    #[test]
+    fn a_dry_run_is_one_switch_on_every_command_that_sends() {
+        let upload = Cli::try_parse_from(["steamship", "upload", "--dry-run"]).unwrap();
+        assert!(matches!(
+            upload.command,
+            Command::Upload(Upload { dry_run: true, .. })
+        ));
+        let presence =
+            Cli::try_parse_from(["steamship", "rich-presence", "480", "f.vdf", "--dry-run"])
+                .unwrap();
+        assert!(matches!(
+            presence.command,
+            Command::RichPresence { dry_run: true, .. }
+        ));
+    }
+
+    #[test]
+    fn every_folder_or_file_a_command_writes_to_is_output() {
+        for line in [
+            &["achievements", "480", "--write", "a.json", "--output", "o"][..],
+            &["fetch", "480", "--output", "o"],
+            &["init", "480", "--output", "o"],
+            &["ci", "--output", "f"],
+            &["drm-wrap", "480", "g.exe", "--output", "f"],
+        ] {
+            let mut args = vec!["steamship"];
+            args.extend(line);
+            let parsed = Cli::try_parse_from(&args);
+            assert!(parsed.is_ok(), "{line:?}: {:?}", parsed.err());
+        }
     }
 
     #[test]

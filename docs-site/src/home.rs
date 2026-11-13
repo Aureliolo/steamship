@@ -159,7 +159,7 @@ steamship status
 # offline, no login
 steamship check steam/app_build.vdf
 # a rehearsal: builds everything and sends nothing to Steam
-steamship upload steam/app_build.vdf --version 1.4.0 --preview
+steamship upload steam/app_build.vdf --version 1.4.0 --dry-run
 # the real thing
 steamship upload steam/app_build.vdf --version 1.4.0";
 

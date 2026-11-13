@@ -149,7 +149,7 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
     );
     assert!(
         warned.contains(
-            "leaves the build uploaded but not live. steamship login --web-api-key keeps"
+            "leaves the build uploaded but not live. steamship login --web-api-key-only keeps"
         ),
         "{warned}"
     );
@@ -404,7 +404,7 @@ fn a_game_check_compares_what_the_game_holds_with_steam_and_lists_its_builds() {
         "steamship check\n",
         "steamship achievements\n",
         "steamship leaderboards\n",
-        "steamship rich-presence, preview\n",
+        "steamship rich-presence, dry run\n",
         "steamship builds\n",
     ] {
         assert!(stdout.contains(section), "{section} in {stdout}{stderr}");
@@ -938,7 +938,7 @@ fn the_command_says_what_it_mapped_and_exits_0() {
              app       \u{2713} 1000, 2 depots, 4 files, checked\n  \
              branch    testing, not checked: no Web API key at hand\n    \
              a branch the app does not have leaves the build uploaded but not live. steamship \
-             login --web-api-key keeps a key to check it with\n  \
+             login --web-api-key-only keeps a key to check it with\n  \
              depot     1001, 2 files\n  \
              depot     1002, 2 files\n  \
              \u{2713} nothing refused\n",
@@ -961,7 +961,7 @@ fn the_command_checks_the_scripts_alone_before_the_build_and_says_the_content_wa
              app       \u{2713} 1000, 2 depots, scripts checked\n  \
              branch    testing, not checked: no Web API key at hand\n    \
              a branch the app does not have leaves the build uploaded but not live. steamship \
-             login --web-api-key keeps a key to check it with\n  \
+             login --web-api-key-only keeps a key to check it with\n  \
              content   not checked (--scripts-only)\n  \
              \u{2713} nothing refused\n",
             app.display()
@@ -1006,5 +1006,5 @@ fn the_command_lists_every_refusal_and_exits_2() {
             .all(|line| line.starts_with("  \u{2717} refused: ")),
         "{stderr}"
     );
-    assert!(stderr.contains("\"Preview\" is set in the script. Pass --preview"));
+    assert!(stderr.contains("\"Preview\" is set in the script. Pass --dry-run"));
 }
