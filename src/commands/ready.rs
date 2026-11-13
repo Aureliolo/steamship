@@ -18,6 +18,7 @@ use steamship::update::Installed;
 use steamship::{ci, conversation, dump};
 
 use super::exit::fail;
+use super::key::answer_redactor;
 use super::upload::redacted;
 
 /// How this steamship was installed, which is how it is upgraded.
@@ -93,8 +94,12 @@ pub(crate) fn ready() -> Result<(install::Held, PathBuf, Manifest), ExitCode> {
     Ok((held, home, manifest))
 }
 
+/// Says why steamcmd cannot be used and answers its exit code. The text names files in steamcmd's
+/// folder, so it goes through the redactor of this machine's login when one can be built.
 pub(crate) fn steamcmd_failed(error: &install::Error) -> ExitCode {
-    show::failure(&error.to_string(), "", None);
+    let text = error.to_string();
+    let shown = answer_redactor().map_or_else(|| text.clone(), |redactor| redacted(&redactor, &text));
+    show::failure(&shown, "", None);
     if let Some(remedy) = error.remedy() {
         show::note(remedy);
         show::hint(installed().hint());

@@ -1471,6 +1471,10 @@ fn a_secret_in_the_fault_steamcmd_leaves_after_an_item_is_hidden_in_the_json_mes
         !stdout.contains("a_saved_login_token_0123456789"),
         "{stdout}"
     );
+    assert!(
+        !stderr.contains("a_saved_login_token_0123456789") && stderr.contains("[redacted] is new"),
+        "{stderr}"
+    );
     let message = text_at(&one_line(&stdout), "/error/message");
     assert!(message.contains("[redacted] is new"), "{message}");
 }

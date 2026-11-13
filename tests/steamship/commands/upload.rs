@@ -1154,6 +1154,25 @@ fn a_build_up_before_steamcmd_altered_itself_says_so_as_json() {
 }
 
 #[test]
+fn a_secret_in_the_fault_steamcmd_leaves_after_a_build_is_hidden_on_both_streams() {
+    let home = faked_with(&built_then(
+        "printf '#!' > \"$(dirname \"$0\")/a_saved_login_token_0123456789\"",
+    ));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) =
+        upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(
+        !format!("{stdout}{stderr}").contains("a_saved_login_token_0123456789"),
+        "a secret was printed"
+    );
+    assert!(stderr.contains("[redacted] is new"), "{stderr}");
+    let message = text_at(&summary_of(&stdout), "/error/message");
+    assert!(message.contains("[redacted] is new"), "{message}");
+}
+
+#[test]
 fn a_build_steam_would_not_set_live_before_steamcmd_altered_itself_names_both_as_json() {
     let home = faked_with(&BUILT_THEN_FAILED.replace("exit 6\n", "echo >> \"$0\"\nexit 6\n"));
     let (_project, script) = project(true);
