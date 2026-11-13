@@ -1175,6 +1175,30 @@ fn a_console_that_cannot_be_saved_still_keeps_the_item_made_and_exits_0() {
     );
 }
 
+#[test]
+fn an_item_console_that_cannot_be_removed_is_said_on_the_log_line() {
+    let home = publishing_then("");
+    let blocked = home.path().join("workshop/480/example/steamcmd.log");
+    fs::create_dir_all(&blocked).unwrap();
+    fs::write(blocked.join("kept"), "in the way").unwrap();
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    let shown = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(0_i32), "{shown}");
+    assert!(shown.contains("log  none, since"), "{shown}");
+    assert!(
+        shown.contains(". The earlier console could not be removed: "),
+        "{shown}"
+    );
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn a_login_unreadable_after_an_item_was_made_still_keeps_it() {

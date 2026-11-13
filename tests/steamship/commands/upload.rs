@@ -1309,7 +1309,7 @@ fn a_refused_build_names_every_reason_and_where_the_logs_are_and_exits_1() {
         stderr,
         format!(
             "  \u{2717} Failed to initialize build on server (Access Denied)\n    \
-             log  {}, and steamcmd's own in {}\n",
+             log  {}, and steamcmd's own log in {}\n",
             output.join("steamcmd.log").display(),
             output.join("app_build_1000.log").display()
         )
@@ -2275,7 +2275,11 @@ fn a_steamcmd_altered_after_the_run_exits_5_once_a_build_is_up_and_4_otherwise()
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     assert!(stdout.contains("BuildID 4242"), "{stdout}");
     assert!(
-        stderr.contains("Steam holds a build of app 1000. Do not upload it again"),
+        stderr.contains("Steam holds a build of app 1000, so a second upload would make another"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("list it with steamship builds 1000"),
         "{stderr}"
     );
     let fresh = faked_with(&format!(
@@ -2339,7 +2343,7 @@ fn a_console_that_cannot_be_saved_leaves_every_exit_code_as_it_was() {
     for said in [
         "app_build_1000.log",
         "could not be written to",
-        "The earlier one could not be removed",
+        "The earlier console could not be removed",
     ] {
         assert!(shown.contains(said), "{said:?} in {shown}");
     }
@@ -2355,6 +2359,17 @@ fn a_console_that_cannot_be_saved_leaves_every_exit_code_as_it_was() {
         );
         assert_eq!(failed, Some(expected), "{variable}: {said}{errors}");
     }
+}
+
+#[test]
+fn a_console_that_cannot_be_saved_says_nothing_of_an_earlier_one_when_there_was_none() {
+    let home = leaking_with("mkdir -p \"$output/steamcmd.log\"");
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    let shown = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(0_i32), "{shown}");
+    assert!(shown.contains("could not be written to"), "{shown}");
+    assert!(!shown.contains("could not be removed"), "{shown}");
 }
 
 #[test]
@@ -2406,7 +2421,7 @@ fn an_earlier_console_held_open_is_not_shown_as_this_runs() {
     drop(held);
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     assert!(
-        stderr.contains("The earlier one could not be removed"),
+        stderr.contains("The earlier console could not be removed"),
         "{stderr}"
     );
     assert!(!stdout.contains("::group::steamcmd's console"), "{stdout}");

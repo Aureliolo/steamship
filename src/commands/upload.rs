@@ -407,8 +407,8 @@ const fn wording(preview: bool) -> (&'static str, &'static str) {
     }
 }
 
-/// Checks steamcmd's files again after the run. A fault exits 5 when Steam holds a build a second
-/// upload would make again, and says so.
+/// Checks steamcmd's files again after the run. A failed check exits 5 when Steam holds a build
+/// that a second upload would make again, and says so.
 fn checked_after(
     held: &install::Held,
     manifest: &Manifest,
@@ -421,10 +421,15 @@ fn checked_after(
     let kept = outcome.kept_on_steam(prepared.set_live.as_deref());
     let failed = late(steamcmd_failed(&error), kept);
     if kept {
+        let app = prepared.app_id;
         show::note(&format!(
-            "Steam holds a build of app {}. Do not upload it again",
-            prepared.app_id
+            "Steam holds a build of app {app}, so a second upload would make another"
         ));
+        show::hint(Hint {
+            before: "list it with ",
+            command: &format!("steamship builds {app}"),
+            after: "",
+        });
     }
     Err(failed)
 }
@@ -550,8 +555,8 @@ struct Ran {
     retry: Option<upload::Retry>,
     spinner: Spinner,
     took: String,
-    /// The redactor read again after the run, or none when it could not be, and nothing of
-    /// steamcmd's may be shown.
+    /// The redactor built again after the run. None when that failed, and then none of steamcmd's
+    /// output may be shown.
     redactor: Option<Redactor>,
     /// What steamcmd printed of the app's info, when it was asked to.
     info: Option<String>,
@@ -713,14 +718,14 @@ fn console_line(
     let own = steam.prepared.log();
     let Some(error) = failed else {
         let line = format!(
-            "log  {}, and steamcmd's own in {}",
+            "log  {}, and steamcmd's own log in {}",
             steam.saved.display(),
             own.display()
         );
         return (true, line);
     };
     let line = format!(
-        "log  steamcmd's own in {}. Its console could not be written to {}: {error}{}",
+        "log  steamcmd's own log is in {}. Its console could not be written to {}: {error}{}",
         own.display(),
         steam.saved.display(),
         earlier_kept(removed)
@@ -731,17 +736,23 @@ fn console_line(
 /// The words that say the earlier console could not be removed, or none when it could.
 pub(crate) fn earlier_kept(removed: Option<io::Error>) -> String {
     removed.map_or_else(String::new, |why| {
-        format!(". The earlier one could not be removed: {why}")
+        format!(". The earlier console could not be removed: {why}")
     })
+}
+
+/// The `log` line for a run whose login could not be read again, as upload and workshop say it.
+pub(crate) fn login_unread(error: &io::Error) -> String {
+    format!(
+        "log  none kept, since steamcmd's login could not be read again to hide its secrets: \
+         {error}"
+    )
 }
 
 /// The `log` line for a run whose login could not be read again, so that none of its logs may be
 /// kept. `removed` is why the logs of the build's folder could not all go.
 fn logs_removed(steam: &Steam<'_>, error: &io::Error, removed: Option<io::Error>) -> String {
     let output = steam.prepared.output.display();
-    let kept = format!(
-        "log  none kept, since steamcmd's login could not be read again to redact them: {error}"
-    );
+    let kept = login_unread(error);
     removed.map_or_else(
         || format!("{kept}. The logs in {output} were removed"),
         |why| format!("{kept}. {why}. Remove the logs in {output}"),
@@ -812,10 +823,9 @@ fn found_on_steam(
     }
 }
 
-/// What an upload's ending is said with: the spinner still turning, how long steamcmd took,
-/// the line that says where its logs are, whether a line of steamcmd's may be shown, and the
-/// redactor that shows it, the login handed over if any, the Web API to set the build live on the
-/// default branch with, when asked to.
+/// What the end of an upload is said with: the spinner, steamcmd's duration, the `log` line,
+/// whether steamcmd's lines may be shown and the redactor for them, the login handed over, and the
+/// Web API for setting the build live.
 struct Reporting<'upload> {
     spinner: Spinner,
     took: &'upload str,

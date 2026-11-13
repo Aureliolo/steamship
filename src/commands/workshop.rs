@@ -23,7 +23,7 @@ use super::ready::{
     dump_in_actions, home, login_refused, named, ready, restore, run_as, steamcmd_failed,
 };
 use super::released::{refused_unless, release_shown};
-use super::upload::{earlier_kept, output, redacted};
+use super::upload::{earlier_kept, login_unread, output, redacted};
 
 /// `workshop` of the item its fields give, after the app or the game's own. With no field, a first
 /// word that is not a number is an item script, and a number or no word is the game's example mods.
@@ -314,14 +314,7 @@ fn upload_item(
             let (written, log) = save_console(&saved, &redactor.redact(&finished.output), removed);
             (Some(redactor), written, log)
         }
-        Err(error) => (
-            None,
-            false,
-            format!(
-                "log  none kept, since steamcmd's login could not be read again to redact them: \
-                 {error}"
-            ),
-        ),
+        Err(error) => (None, false, login_unread(&error)),
     };
     let nothing_to_hide = Redactor::default();
     let redactor_in_use = redactor.as_ref().unwrap_or(&nothing_to_hide);
@@ -424,7 +417,7 @@ fn item_summary(
 /// Says that `item`, given as `given`, is up as `published`, and keeps a new one's ID where it
 /// was given by its fields.
 ///
-/// Also whether the item's ID is in no file, so that a second run would make another.
+/// Returns whether the item's ID is in no file, which means a second run would make another item.
 fn item_published(
     given: &Given<'_>,
     item: &workshop::Item,
