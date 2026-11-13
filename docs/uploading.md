@@ -290,16 +290,20 @@ is given, since every run would make another item.
 
 ### Items without a script
 
-Instead of Valve's script, give the item's fields. steamship writes the script itself:
+Instead of Valve's script, give the item's fields after its app. steamship writes the script
+itself:
 
 ```sh
-steamship workshop --app 1000070 --items steam/workshop_items.json --name example \
+steamship workshop 1000070 --items steam/workshop_items.json --name example \
   --content mods/example --preview-image art/example.png --title "Example mod" \
   --description "What the mod shows." --change-note "1.0.0" --visibility private
 ```
 
-`--app`, `--items`, `--name`, `--content` and `--title` are needed. `--description` and
-`--change-note` may be left out. They are checked as a script's are.
+`--items`, `--name`, `--content` and `--title` are needed. `--description` and `--change-note` may
+be left out. They are checked as a script's are.
+
+With none of these fields, the first word is an item script, or the game's own app for its example
+mods.
 
 `--preview-image` is needed to make an item, as a script's `previewfile` is. `--visibility` is
 `public`, `friends-only`, `private` or `unlisted`. It is needed to make an item, since steamship

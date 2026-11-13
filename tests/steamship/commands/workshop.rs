@@ -189,12 +189,11 @@ fn a_failed_workshop_upload_names_why_and_where_the_log_is_and_exits_1() {
     assert!(stderr.contains("log  "), "{stderr}");
 }
 
-/// `workshop` for the item at `folder`, as `workshop_item` lays it out, given by its fields and
-/// kept in `items` as `example`, with `extra` after them.
+/// `workshop` for the item at `folder`, as `workshop_item` lays it out, given by its fields for
+/// app 480 and kept in `items` as `example`, with `extra` after them.
 fn by_fields(folder: &Path, items: &Path, extra: &[&str]) -> Vec<String> {
     let mut args: Vec<String> = [
         "workshop",
-        "--app",
         "480",
         "--items",
         items.to_str().unwrap(),
@@ -431,7 +430,7 @@ fn an_item_given_by_its_fields_is_refused_before_steam_when_it_cannot_be_kept_or
 }
 
 #[test]
-fn workshop_names_each_flag_a_script_cannot_go_with_and_each_one_an_items_fields_lack() {
+fn workshop_names_each_field_an_item_lacks_and_each_flag_an_item_script_cannot_go_with() {
     let home = tempfile::tempdir().unwrap();
     let said = |args: &[&str]| {
         let (code, stdout, stderr) = steamship(
@@ -446,62 +445,176 @@ fn workshop_names_each_flag_a_script_cannot_go_with_and_each_one_an_items_fields
         );
         stderr
     };
-    let fields = [
-        ["--app", "480"],
-        ["--items", "items.json"],
+    let lacking = "error: the following required arguments were not provided:\n";
+    let lacks = |stderr: &str, flags: &[&str]| {
+        let listed: Vec<&str> = stderr
+            .strip_prefix(lacking)
+            .unwrap_or_else(|| panic!("{stderr}"))
+            .lines()
+            .take_while(|line| line.starts_with("  --"))
+            .map(str::trim)
+            .collect();
+        let mut wanted = flags.to_vec();
+        wanted.sort_unstable();
+        let mut found = listed;
+        found.sort_unstable();
+        assert_eq!(found, wanted, "{stderr}");
+    };
+    let all = ["--items <FILE>", "--name <NAME>", "--content <FOLDER>"];
+
+    lacks(&said(&["480", "--title", "T"]), &all);
+    lacks(&said(&["item.vdf", "--title", "T"]), &all);
+    lacks(
+        &said(&[
+            "480",
+            "--items",
+            "i.json",
+            "--content",
+            "hat",
+            "--title",
+            "T",
+        ]),
+        &["--name <NAME>"],
+    );
+    lacks(
+        &said(&["480", "--items", "i.json"]),
+        &["--name <NAME>", "--content <FOLDER>", "--title <TITLE>"],
+    );
+    for field in [
         ["--content", "hat"],
         ["--preview-image", "hat.png"],
-        ["--title", "A green hat"],
         ["--description", "Green."],
         ["--change-note", "1.0.0"],
-    ];
-    let also = [["--name", "example"], ["--visibility", "private"]];
-
-    let every = said(&[["item.vdf"].as_slice(), &fields.concat(), &also.concat()].concat());
-    assert!(
-        every.starts_with(
-            "error: the argument '[SCRIPT]' cannot be used with:\n  --app <APP>\n  --items \
-             <FILE>\n  --content <FOLDER>\n  --preview-image <IMAGE>\n  --title <TITLE>\n  \
-             --description <TEXT>\n  --change-note <TEXT>\n  --name <NAME>\n  --visibility \
-             <VISIBILITY>\n\n"
-        ),
-        "{every}"
-    );
-    let one = said(&["item.vdf", "--app", "480"]);
-    assert!(
-        one.starts_with("error: the argument '[SCRIPT]' cannot be used with '--app <APP>'\n\n"),
-        "{one}"
-    );
-
-    let lacking = "error: the following required arguments were not provided:\n";
-    let few = said(&["--app", "480", "--name", "example"]);
-    assert!(
-        few.starts_with(&format!(
-            "{lacking}  --items <FILE>\n  --content <FOLDER>\n  --title <TITLE>\n\n"
-        )),
-        "{few}"
-    );
-    let unnamed = said(&[
-        "--app",
-        "480",
-        "--items",
-        "items.json",
-        "--content",
-        "hat",
-        "--title",
-        "A green hat",
-    ]);
-    assert!(
-        unnamed.starts_with(&format!("{lacking}  --name <NAME>\n\n")),
-        "{unnamed}"
-    );
-    for field in &fields[1..] {
-        let alone = said(field);
+    ] {
+        let alone = said(&["480", field[0], field[1]]);
         assert!(
-            alone.starts_with(lacking) && alone.contains("\n  --app <APP>\n\n"),
+            alone.starts_with(lacking) && alone.contains("\n  --items <FILE>\n"),
             "{field:?}: {alone}"
         );
     }
+
+    let (_temp, script) = workshop_item("");
+    let word = script.to_str().unwrap();
+    for (flag, value) in [("--name", "example"), ("--visibility", "private")] {
+        let (code, _, beside) = steamship(&["workshop", word, flag, value], Some(home.path()), &[]);
+        assert_eq!(code, Some(2_i32), "{beside}");
+        assert_eq!(
+            failure(&beside),
+            format!(
+                "{flag} does not go with an item script, and {word} is read as one. Without a \
+                 first word, {flag} applies to the game's own mods"
+            ),
+            "{beside}"
+        );
+    }
+}
+
+#[test]
+fn a_word_with_no_field_is_an_item_script_or_the_games_app() {
+    let home = tempfile::tempdir().unwrap();
+    let note = "with none of an item's fields, the first word is an item script. Leave it out for \
+                the game's own mods";
+
+    let exits_2 = |run: (Option<i32>, String, String)| {
+        assert_eq!(run.0, Some(2_i32), "{}{}", run.1, run.2);
+        (run.1, run.2)
+    };
+
+    let (_, misspelt) = exits_2(steamship(
+        &["workshop", "item.vfd", "--account", "build_bot"],
+        Some(home.path()),
+        &[],
+    ));
+    assert!(
+        failure(&misspelt).starts_with("refused: item.vfd: "),
+        "{misspelt}"
+    );
+    assert!(misspelt.contains(note), "{misspelt}");
+
+    let (_temp, script) = workshop_item("");
+    let text = fs::read_to_string(&script).unwrap();
+    let cut = script.with_file_name("cut.vdf");
+    let (head, _) = text.split_once('{').unwrap();
+    fs::write(&cut, format!("{head}{{")).unwrap();
+    let (_, damaged) = exits_2(steamship(
+        &["workshop", cut.to_str().unwrap(), "--account", "build_bot"],
+        Some(home.path()),
+        &[],
+    ));
+    assert!(
+        failure(&damaged).starts_with(&format!("refused: {}: ", cut.display())),
+        "{damaged}"
+    );
+    assert!(damaged.contains(note), "{damaged}");
+
+    let (_game, root) = pushed_game(None);
+    let (_, strange) = exits_2(in_game(&root, &["workshop", "480"]));
+    let refusal = failure(&strange);
+    assert!(
+        refusal.starts_with("app 480 is not this game's: ")
+            && refusal.ends_with(
+                " names app 1000050. Give 1000050, or the path of a script that names 480"
+            ),
+        "{strange}"
+    );
+    let (own_said, own_why) = exits_2(in_game(&root, &["workshop", "1000050"]));
+    assert!(
+        own_said.contains("as origin's main has it"),
+        "{own_said}{own_why}"
+    );
+    assert!(!own_why.contains("is not this game's"), "{own_why}");
+}
+
+#[test]
+fn fields_take_the_app_first_or_the_games_own() {
+    let home = tempfile::tempdir().unwrap();
+    let (temp, script) = workshop_item("");
+    let folder = script.parent().unwrap();
+    let items = temp.path().join("workshop_items.json");
+    let args = by_fields(folder, &items, &["--account", "build_bot"]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("  app       480\n"), "{stdout}{stderr}");
+
+    let (_game, root) = pushed_game(None);
+    let (own_code, own_said, own_why) = in_game(&root, &own_args(&args));
+    assert_eq!(own_code, Some(2_i32), "{own_said}{own_why}");
+    assert!(
+        own_said.contains("  app       1000050\n"),
+        "{own_said}{own_why}"
+    );
+
+    let beside: Vec<&str> = args
+        .iter()
+        .enumerate()
+        .map(|(at, arg)| {
+            if at == 1 {
+                script.to_str().unwrap()
+            } else {
+                arg
+            }
+        })
+        .collect();
+    let (beside_code, _, beside_why) = steamship(&beside, Some(home.path()), &[]);
+    assert_eq!(beside_code, Some(2_i32), "{beside_why}");
+    assert!(
+        failure(&beside_why).contains("there is no \"AppBuild\" block"),
+        "{beside_why}"
+    );
+    assert!(
+        beside_why.contains("the first word names the app, by its ID or its app build script"),
+        "{beside_why}"
+    );
+}
+
+/// `args` without the app after `workshop`.
+fn own_args<'args>(args: &[&'args str]) -> Vec<&'args str> {
+    args.iter()
+        .enumerate()
+        .filter(|&(at, _)| at != 1)
+        .map(|(_, arg)| *arg)
+        .collect()
 }
 
 #[test]

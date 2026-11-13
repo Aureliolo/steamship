@@ -18,32 +18,64 @@ use steamship::show::{self, Spinner};
 use steamship::{ci, dump, release, scripts, steamcmd, workshop};
 
 use super::exit::{either, fail};
-use super::game::{app_named, game, script_named, shipped_from};
+use super::game::{app_named, app_or_game, game, script_given, shipped_from};
 use super::ready::{
     dump_in_actions, home, login_refused, named, ready, restore, run_as, steamcmd_failed,
 };
 use super::released::{refused_unless, release_shown};
 use super::upload::output;
 
-/// `workshop` of the script given, or of the item its fields give, or of the game's example mods
-/// when there is neither.
+/// `workshop` of the item its fields give, after the app or the game's own. With no field, a first
+/// word that is no number is an item script, and anything else the game's example mods.
 pub(crate) fn workshop_in(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
-    match (&request.script, &request.item) {
-        (Some(script), _) => try_workshop(request, || {
-            show::field("script", &script.display().to_string());
-            Ok(Given::Script(script))
-        }),
-        // clap takes `--app` only with `--name`. No name reads as the empty one, which is refused.
-        (None, Some(item)) => try_workshop(request, || {
+    // clap takes `--items` only with `--name`. No name reads as the empty one, which is refused.
+    if let Some(item) = &request.item {
+        return try_workshop(request, || {
+            let app = app_or_game(request.app.clone(), false)?;
             let name = request.name.as_deref().unwrap_or_default();
-            given_fields(item, name, request.visibility)
-        }),
-        (None, None) => try_game_workshop(request),
+            given_fields(&app, item, name, request.visibility)
+        });
     }
+    match request.app.as_deref() {
+        Some(word) if word.parse::<u32>().is_err() => {
+            try_workshop(request, || given_script(word, request))
+        }
+        _ => try_game_workshop(request),
+    }
+}
+
+/// The item script `word` names, refused when a flag of the game's own mods stands beside it.
+fn given_script<'command>(
+    word: &'command str,
+    request: &cli::Workshop,
+) -> Result<Given<'command>, ExitCode> {
+    let beside = [
+        ("--name", request.name.is_some()),
+        ("--visibility", request.visibility.is_some()),
+    ];
+    let refused: Vec<ExitCode> = beside
+        .into_iter()
+        .filter(|&(_, given)| given)
+        .map(|(flag, _)| {
+            fail(
+                &format!(
+                    "{flag} does not go with an item script, and {word} is read as one. Without \
+                     a first word, {flag} applies to the game's own mods"
+                ),
+                REFUSED,
+            )
+        })
+        .collect();
+    if let Some(&code) = refused.first() {
+        return Err(code);
+    }
+    show::field("script", word);
+    Ok(Given::Script(Path::new(word)))
 }
 
 /// `workshop` in a game: each example mod, or the one `--name` names, from a pushed tree.
 fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
+    let script = script_given(request.app.as_deref(), false)?;
     let game = game()?;
     let mods = game.mods().map_err(|why| fail(&why, REFUSED))?;
     let chosen: Vec<project::Mod> = match &request.name {
@@ -68,7 +100,7 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
         show::divert();
     }
     shipped_from(&game)?;
-    let app = script_named(&game);
+    let app = script.display().to_string();
     // A file that cannot be read is named by the upload itself. Until then no item counts as made.
     let made = fs::read_to_string(&game.items)
         .ok()
@@ -81,7 +113,6 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
             .visibility
             .filter(|_| !made.contains_key(&each.name));
         let item = cli::WorkshopItem {
-            app: app.clone(),
             items: game.items.clone(),
             content: each.folder,
             preview_image: Some(each.preview),
@@ -90,7 +121,7 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
             change_note: Some(format!("Version {}", each.version)),
         };
         let uploaded = either(try_workshop(request, || {
-            given_fields(&item, &each.name, visibility)
+            given_fields(&app, &item, &each.name, visibility)
         }));
         if uploaded != ExitCode::SUCCESS {
             return Ok(uploaded);
@@ -304,16 +335,17 @@ fn item_published(given: &Given<'_>, item: &workshop::Item, published: u64, log:
     ExitCode::SUCCESS
 }
 
-/// The item `item` gives by its fields, kept as `name` and seen as `visibility` says, with the
+/// The item `item` gives by its fields for `app`, kept as `name` and seen as `visibility` says, with the
 /// `--items` file it is kept in, as read.
 fn given_fields<'command>(
+    app: &str,
     item: &'command cli::WorkshopItem,
     name: &'command str,
     visibility: Option<workshop::Visibility>,
 ) -> Result<Given<'command>, ExitCode> {
     let refused = |why: &dyn Display| fail(why, REFUSED);
     let path = item.items.as_path();
-    let app_id = app_named(&item.app)?;
+    let app_id = app_named(app)?;
     workshop::named(name).map_err(|why| refused(&why))?;
     show::field("items", &path.display().to_string());
     let record = match fs::read_to_string(path) {
@@ -390,6 +422,10 @@ fn checked_item(given: &Given<'_>, new: bool) -> Result<workshop::Item, ExitCode
             for problem in &problems {
                 show::failure("refused", &problem.to_string(), None);
             }
+            show::note(
+                "with none of an item's fields, the first word is an item script. Leave it out \
+                 for the game's own mods",
+            );
             ExitCode::from(REFUSED)
         })?,
         Given::Fields(fields, _) => workshop::check_fields(fields).map_err(|problems| {
