@@ -48,7 +48,7 @@ mod commands {
 
 use commands::achievements::achievements_in;
 use commands::assets::run_assets;
-use commands::branch::try_branch;
+use commands::branch::branch_in;
 use commands::builds::try_builds;
 use commands::check::check_in;
 use commands::ci::{Setup, try_ci};
@@ -67,7 +67,7 @@ use commands::presence::rich_presence_in;
 use commands::promote::promote_in;
 use commands::ready::{installed, named};
 use commands::rollback::try_rollback;
-use commands::settings::{Snapshot, settings_in};
+use commands::settings::settings_in;
 use commands::status::try_status;
 use commands::text::text_in;
 use commands::upload::upload_in;
@@ -130,19 +130,19 @@ fn run(command: Command) -> ExitCode {
     match command {
         Command::Completions { shell } => run_completions(shell),
         Command::Check {
-            script,
+            app,
             scripts_only,
             demo,
-        } => check_in(script.as_deref(), scripts_only, demo),
+        } => check_in(app.as_deref(), scripts_only, demo),
         Command::Assets { folder } => run_assets(&folder),
         Command::Ci {
-            script,
+            app,
             repo,
             account,
             secret,
             output,
         } => either(try_ci(&Setup {
-            script: script.as_deref(),
+            app: app.as_deref(),
             repo: repo.as_deref(),
             account: named(account.as_deref()),
             secret: &secret,
@@ -163,11 +163,19 @@ fn run(command: Command) -> ExitCode {
         Command::Fetch(request) => either(try_fetch(&request)),
         Command::Achievements {
             app,
+            files,
             check,
             save,
             writing,
             json,
-        } => either(achievements_in(app, check, save.as_deref(), writing, json)),
+        } => either(achievements_in(
+            app.as_deref(),
+            files,
+            check,
+            save.as_deref(),
+            writing,
+            json,
+        )),
         Command::DrmWrap {
             app,
             executable,
@@ -175,32 +183,20 @@ fn run(command: Command) -> ExitCode {
             compatibility,
             account,
         } => either(try_drm_wrap(
-            &app,
+            app,
             &executable,
             output.as_deref(),
             drm::Mode::chosen(compatibility),
             named(account.as_deref()),
         )),
-        Command::Settings {
-            app,
-            demo,
-            save,
-            check,
-            account,
-        } => either(settings_in(
-            app,
-            demo,
-            save.map(Snapshot::given),
-            check.map(Snapshot::given),
-            named(account.as_deref()),
-        )),
+        Command::Settings(request) => either(settings_in(&request)),
         Command::Leaderboards(request) => either(leaderboards_in(request)),
         Command::RichPresence {
             app,
             demo,
             files,
             dry_run,
-        } => either(rich_presence_in(app, demo, files, dry_run)),
+        } => either(rich_presence_in(app.as_deref(), demo, files, dry_run)),
         Command::Text(request) => either(text_in(request)),
         Command::Languages { json } => run_languages(json),
         Command::Itself(cli::Itself::Check) => either(try_self_check()),
@@ -210,7 +206,7 @@ fn run(command: Command) -> ExitCode {
             app,
             branch,
             description,
-        } => either(try_branch(&app, &branch, &description)),
+        } => either(branch_in(app, &branch, &description)),
         Command::Workshop(request) => either(workshop_in(&request)),
         Command::Login {
             web_api_key_only: true,

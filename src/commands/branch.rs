@@ -7,9 +7,18 @@ use steamship::show::{self, Spinner};
 use steamship::{branch, upload};
 
 use super::exit::fail;
-use super::game::app_named;
+use super::game::{app_named, app_or_game};
 use super::key::{offer_to_keep, web_api, web_api_failed, why_unanswered};
 use super::ready::home;
+
+/// `branch` of the app given, or else of the game's own.
+pub(crate) fn branch_in(
+    app: Option<String>,
+    branch: &str,
+    description: &str,
+) -> Result<ExitCode, ExitCode> {
+    try_branch(&app_or_game(app, false)?, branch, description)
+}
 
 pub(crate) fn try_branch(app: &str, branch: &str, description: &str) -> Result<ExitCode, ExitCode> {
     show::title("branch");

@@ -9,7 +9,7 @@ use steamship::cli::{FAILED, LOGIN, REFUSED};
 use steamship::platform::Platform;
 use steamship::show::{self, Hint, Spinner};
 use steamship::typing::{self, Echo};
-use steamship::{ci, conversation, run};
+use steamship::{ci, conversation, run, scripts};
 
 use super::check::checked;
 use super::exit::fail;
@@ -17,7 +17,7 @@ use super::ready::{account_shown, home, verdict};
 use super::status::check_saved_login;
 
 pub(crate) struct Setup<'command> {
-    pub script: Option<&'command Path>,
+    pub app: Option<&'command str>,
     pub repo: Option<&'command str>,
     pub account: Option<&'command str>,
     pub secret: &'command str,
@@ -38,7 +38,7 @@ pub(crate) fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
         ));
     }
     let root = repository_root(Path::new("."));
-    let script = ci_script(setup.script, root.as_deref())?;
+    let script = ci_script(setup.app, root.as_deref())?;
     // CI is set up before it has built anything, and a checkout seldom holds the build, so the
     // content is left to the check each upload makes.
     drop(checked(&script, true)?);
@@ -128,21 +128,25 @@ fn repository_root(folder: &Path) -> Option<PathBuf> {
 }
 
 /// The app build script named, or the one found in the repository, asked for when there are
-/// several and a person to ask.
-fn ci_script(named: Option<&Path>, root: Option<&Path>) -> Result<PathBuf, ExitCode> {
-    if let Some(script) = named {
-        show::field("script", &script.display().to_string());
-        return Ok(script.to_path_buf());
+/// several and a person to ask. An app's ID picks the script found that names that app.
+fn ci_script(named: Option<&str>, root: Option<&Path>) -> Result<PathBuf, ExitCode> {
+    let wanted = named.and_then(|word| word.parse::<u32>().ok());
+    if let Some(script) = named.filter(|_| wanted.is_none()) {
+        show::field("script", script);
+        return Ok(PathBuf::from(script));
     }
     let root = root.ok_or_else(|| {
         fail(
-            &"this folder is in no Git repository. Run steamship ci in the game's, or name the \
-              script with --script",
+            &"this folder is in no Git repository. Run steamship ci in the game's. Name the \
+              script as the first word",
             REFUSED,
         )
     })?;
-    let found = ci::app_scripts(root)
+    let mut found = ci::app_scripts(root)
         .map_err(|error| fail(&format!("{}: {error}", root.display()), FAILED))?;
+    if let Some(app) = wanted {
+        found.retain(|script| scripts::app_named(script) == Some(app));
+    }
     let shown = |path: &Path| {
         path.strip_prefix(root)
             .unwrap_or(path)
@@ -152,8 +156,9 @@ fn ci_script(named: Option<&Path>, root: Option<&Path>) -> Result<PathBuf, ExitC
     match found.as_slice() {
         [] => Err(fail(
             &format!(
-                "no app build script in {}. Name one with --script",
-                root.display()
+                "no app build script in {}{}. Name the script as the first word",
+                root.display(),
+                wanted.map_or_else(String::new, |app| format!(" names app {app}"))
             ),
             REFUSED,
         )),
@@ -184,7 +189,7 @@ fn ci_script(named: Option<&Path>, root: Option<&Path>) -> Result<PathBuf, ExitC
             let listed: Vec<String> = several.iter().map(|script| shown(script)).collect();
             Err(fail(
                 &format!(
-                    "several app build scripts, {}. Name one with --script",
+                    "several app build scripts, {}. Name the script as the first word",
                     listed.join(", ")
                 ),
                 REFUSED,

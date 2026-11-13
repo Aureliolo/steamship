@@ -2062,6 +2062,24 @@ fn a_game_writes_its_achievement_import_from_its_own_records_and_catalogues() {
 }
 
 #[test]
+fn a_games_folder_with_files_and_no_app_is_told_to_name_the_app() {
+    let (_temp, root) = pushed_game(None);
+    fs::remove_file(root.join("mods/base/data/achievements.json")).unwrap();
+    let (code, stdout, stderr) = in_game(&root, &["achievements", "extra.json", "--check"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains(
+            "the first word names the app, by its ID or its app build script. Files come after it"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        !stderr.contains("the game holds no achievement records"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn a_game_with_no_achievement_records_has_no_import_due_unless_one_is_left() {
     let (_temp, root) = pushed_game(None);
     fs::remove_file(root.join("mods/base/data/achievements.json")).unwrap();

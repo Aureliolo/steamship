@@ -238,6 +238,9 @@ steamship upload --demo            # the pushed commit, built as the demo, uploa
 steamship builds --demo --json     # the demo's branches and last builds
 ```
 
+`settings --demo` reads and writes the demo's own snapshot. To name another file, give the demo's ID
+as the first word, as in `settings 1001 kept.vdf --check`.
+
 Steamworks names a new demo's install folder after the game, followed by a space and Demo. The
 first `settings --save --demo` refuses that name. Rename the folder to letters and digits alone,
 such as `SpacewarDemo`, under Installation, General Installation. Then save the settings again.

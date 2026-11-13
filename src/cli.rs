@@ -183,7 +183,7 @@ pub enum Command {
     /// Check the build scripts, without logging in.
     ///
     /// Reads an app build script and every depot script it names, and refuses anything that
-    /// would upload the wrong thing. Without a script, in a game's folder, it checks the game's
+    /// would upload the wrong thing. Without an app, in a game's folder, it checks the game's
     /// scripts. It then compares the game's achievements, leaderboards, rich presence and
     /// branches on Steam with the game's files, and names every difference.
     ///
@@ -200,9 +200,9 @@ pub enum Command {
     /// The game's rich presence files are read too, as `rich-presence --dry-run` reads them. All
     /// of this is offline.
     Check {
-        /// The app build script, such as `steam/app_build.vdf`, or a build's folder, such as
-        /// `export/windows`. In a game's folder, the game's own script.
-        script: Option<PathBuf>,
+        /// The app, by its ID or its app build script, such as `steam/app_build.vdf`, or a
+        /// build's folder, such as `export/windows`. In a game's folder, the game's own.
+        app: Option<String>,
         /// Check the scripts alone, not the content they map, as before the build exists.
         /// `upload` still checks both.
         #[arg(long)]
@@ -218,7 +218,7 @@ pub enum Command {
     /// Runs `check`, then the build, without showing steamcmd's console. It prints the build's ID
     /// and the branch it was set live on.
     ///
-    /// Without a script, in a game's folder, it ships the game. That is refused while the game's
+    /// Without an app, in a game's folder, it ships the game. That is refused while the game's
     /// tree holds anything uncommitted or origin's default branch is at another commit. The game's
     /// script must set the game's branch live: `testing`, or the branch `steamship.toml` names.
     ///
@@ -332,7 +332,7 @@ pub enum Command {
     /// the games-kit records in `mods/base/data` holding achievements, stats or sets, and every
     /// catalogue in `game/locale`. The `--output` folder is `steam/achievements`. `--check` compares
     /// the icons with its receipt once there is one. `--imported` alone writes that receipt.
-    #[command(group(clap::ArgGroup::new("files").args(["check", "write"]).multiple(true)))]
+    #[command(group(clap::ArgGroup::new("file_switches").args(["check", "write"]).multiple(true)))]
     Achievements {
         /// The app, by its ID or its app build script. In a game's folder, the game's own.
         app: Option<String>,
@@ -343,14 +343,22 @@ pub enum Command {
         /// read by the API name in `steam`. Each
         /// achievement and stat is in one file only. A `.csv` file is a localisation in the
         /// columns Steamworks' achievement editor exports. A `.po` file is a gettext catalogue.
-        /// Either must translate every achievement.
-        #[arg(long, value_name = "FILE", num_args = 0..)]
-        check: Option<Vec<PathBuf>>,
+        /// Either must translate every achievement. Files follow the app, and `--check` or
+        /// `--write` says what to do with them.
+        #[arg(value_name = "FILES", requires = "file_switches")]
+        files: Vec<PathBuf>,
+        /// Compare the achievements Steam holds with the files.
+        #[arg(long, overrides_with = "check")]
+        check: bool,
         /// Write the achievements and stats Steam holds to this JSON file, as `--check` reads
         /// it. Refused, exiting 2, when an achievement has no name in English, which a file must
         /// give. Refused too when the file is there and holds more than `--save` writes, such as
         /// an `icon` or a `sets` list.
-        #[arg(long, value_name = "FILE", conflicts_with_all = ["files", "imported", "json"])]
+        #[arg(
+            long,
+            value_name = "FILE",
+            conflicts_with_all = ["file_switches", "files", "imported", "json"]
+        )]
         save: Option<PathBuf>,
         #[command(flatten)]
         writing: Writing,
@@ -380,10 +388,10 @@ pub enum Command {
     /// login. The wrapped executable replaces the one given, or goes to `--output`. Nothing is
     /// replaced unless the wrap succeeded. Valve's tool wraps only an executable that already
     /// imports `GetModuleHandleA`, and Godot's do not.
-    #[command(name = "drm-wrap")]
+    #[command(name = "drm-wrap", allow_missing_positional = true)]
     DrmWrap {
-        /// The app, by its ID or its app build script.
-        app: String,
+        /// The app, by its ID or its app build script. In a game's folder, the game's own.
+        app: Option<String>,
         /// The Windows executable, such as `build/windows/game.exe`.
         executable: PathBuf,
         /// Write the wrapped executable here instead of replacing the one given.
@@ -403,25 +411,7 @@ pub enum Command {
     /// and runtime, its depots' systems, and Steam Cloud. `--save` keeps them in a file
     /// beside the build scripts, in Valve's own format. `--check` exits 2 naming every setting
     /// that differs from that file. Nothing on Steam is changed.
-    Settings {
-        /// The app, by its ID or its app build script. In a game's folder, the game's own.
-        app: Option<String>,
-        /// In a game's folder, its demo's, with the demo's own snapshot beside its build scripts.
-        #[arg(long, conflicts_with = "app")]
-        demo: bool,
-        /// Write the settings to this file, replacing it, to check against later. In a game's
-        /// folder, `settings.vdf` beside its build scripts. Refused, exiting 2, for an install
-        /// folder of anything but letters and digits.
-        #[arg(long, value_name = "FILE", num_args = 0..=1, conflicts_with = "check")]
-        save: Option<Option<PathBuf>>,
-        /// Compare the settings with this file, as `--save` wrote it. In a game's folder, its
-        /// `settings.vdf`. An install folder of anything but letters and digits is a difference.
-        #[arg(long, value_name = "FILE", num_args = 0..=1)]
-        check: Option<Option<PathBuf>>,
-        /// The build account, if not the one the last login remembered.
-        #[arg(long, env = ACCOUNT)]
-        account: Option<String>,
-    },
+    Settings(Settings),
     /// Show, save, check, create or delete an app's leaderboards.
     ///
     /// Lists the leaderboards Steam holds for the app, through Steam's partner Web API with the
@@ -460,8 +450,8 @@ pub enum Command {
         /// In a game's folder, send the full game's files to its demo.
         #[arg(long, conflicts_with = "app")]
         demo: bool,
-        /// The rich presence files, such as `steam/rich_presence_english.vdf`. In a game's folder,
-        /// every one beside its build scripts.
+        /// The rich presence files, such as `steam/rich_presence_english.vdf`, which follow the
+        /// app. In a game's folder, every one beside its build scripts.
         files: Vec<PathBuf>,
         /// Check the files and show what would be sent, without sending anything.
         #[arg(long)]
@@ -513,9 +503,10 @@ pub enum Command {
     /// Steam shows this text where players choose a beta branch, in the game's Betas properties.
     /// It is set through Steam's partner Web API, with the publisher key as `builds` finds it.
     /// The default branch's description is set in Steamworks only.
+    #[command(allow_missing_positional = true)]
     Branch {
-        /// The app, by its ID or its app build script.
-        app: String,
+        /// The app, by its ID or its app build script. In a game's folder, the game's own.
+        app: Option<String>,
         /// The beta branch.
         branch: String,
         /// Its new description, such as the version live on it.
@@ -530,9 +521,8 @@ pub enum Command {
     /// cannot find and an option did not give. The secret holds the token steamcmd saved, never a
     /// password.
     Ci {
-        /// The app build script, if not the one found in the repository.
-        #[arg(long)]
-        script: Option<PathBuf>,
+        /// The app, by its ID or its app build script, if not the one found in the repository.
+        app: Option<String>,
         /// The GitHub repository as owner/name, if not the one `origin` points at.
         #[arg(long)]
         repo: Option<String>,
@@ -602,21 +592,61 @@ pub enum Command {
     },
 }
 
+/// The settings `settings` shows, saves or checks, and against which file.
+#[derive(Debug, Clone, Args)]
+#[command(group(clap::ArgGroup::new("file_switches").args(["check", "save"])))]
+pub struct Settings {
+    /// The app, by its ID or its app build script. In a game's folder, the game's own.
+    pub app: Option<String>,
+    /// The snapshot file, which follows the app. In a game's folder, `settings.vdf` beside its
+    /// build scripts.
+    #[arg(value_name = "FILE", requires = "file_switches")]
+    pub file: Option<PathBuf>,
+    /// In a game's folder, its demo's, with the demo's own snapshot beside its build scripts. To
+    /// name a file, give the demo's ID first.
+    #[arg(long, conflicts_with = "app")]
+    pub demo: bool,
+    /// Write the settings to the snapshot file, replacing it, to check against later. Refused,
+    /// exiting 2, for an install folder of anything but letters and digits.
+    #[arg(long, conflicts_with = "check")]
+    pub save: bool,
+    /// Compare the settings with the snapshot file, as `--save` wrote it. An install folder of
+    /// anything but letters and digits is a difference.
+    #[arg(long)]
+    pub check: bool,
+    /// The build account, if not the one the last login remembered.
+    #[arg(long, env = ACCOUNT)]
+    pub account: Option<String>,
+}
+
 /// The leaderboards `leaderboards` lists, checks, makes or deletes.
 #[derive(Debug, Clone, Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is a switch of its own on the command line, which clap reads into a field"
+)]
+#[command(group(
+    clap::ArgGroup::new("file_switches")
+        .args(["check", "create", "delete_missing"])
+        .multiple(true)
+))]
 pub struct Leaderboards {
     /// The app, by its ID or its app build script. In a game's folder, the game's own.
     pub app: Option<String>,
     /// JSON files of the leaderboards the app should have, each with its `name`, `sort`,
     /// `display`, `trusted_writes`, `friends_only` and `period`. A file may instead be a list of
     /// games-kit records, the JSON records a game keeps its content in. Those typed `leaderboard`
-    /// are read by the name in `steam`. Each leaderboard is in one file only.
-    #[arg(long, value_name = "FILE", num_args = 0..)]
-    pub check: Option<Vec<PathBuf>>,
+    /// are read by the name in `steam`. Each leaderboard is in one file only. Files follow the
+    /// app, and `--check`, `--create` or `--delete-missing` says what to do with them.
+    #[arg(value_name = "FILES", requires = "file_switches")]
+    pub files: Vec<PathBuf>,
+    /// Compare the leaderboards Steam holds with the files.
+    #[arg(long, overrides_with = "check")]
+    pub check: bool,
     /// Write the leaderboards Steam holds to this JSON file, as `--check` reads it. Refused,
     /// exiting 2, when a leaderboard has no display type, which a file cannot give. Refused too
     /// when the file is there and holds more than `--save` writes, such as a `period`.
-    #[arg(long, value_name = "FILE", conflicts_with_all = ["check", "create", "delete_missing"])]
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["file_switches", "files"])]
     pub save: Option<PathBuf>,
     /// Make the leaderboards in the files that Steam lacks, before checking.
     #[arg(long)]
@@ -674,23 +704,18 @@ pub enum Itself {
 /// What `achievements` writes for Steamworks' achievement editor, from what, and where.
 #[derive(Debug, Args)]
 pub struct Writing {
-    /// Write the achievement editor's files from these, read as `--check` reads them. In a
+    /// Write the achievement editor's files from the files, read as `--check` reads them. In a
     /// game's folder, with no files, write from the game's own into `steam/achievements`.
     ///
     /// The uploading page of the docs lists the fields an achievement and a set may give. It also
     /// says how a catalogue's texts are found: <https://aureliolo.github.io/steamship/uploading.html>.
-    #[arg(
-        long,
-        value_name = "FILE",
-        num_args = 0..,
-        conflicts_with_all = ["check", "json"]
-    )]
-    pub write: Option<Vec<PathBuf>>,
+    #[arg(long, overrides_with = "write", conflicts_with_all = ["check", "json"])]
+    pub write: bool,
     /// The folder `--write` writes into, made if missing. Files of the kinds it writes for the app
     /// that it would no longer write are removed. Other files, `steam-icons.json` among them, are
     /// left alone. With `--check`, the folder whose `steam-icons.json` the icons are checked
     /// against.
-    #[arg(long, value_name = "FOLDER", requires = "files")]
+    #[arg(long, value_name = "FOLDER", requires = "file_switches")]
     pub output: Option<PathBuf>,
     /// Write nothing, and exit 2 naming each file in the folder that differs from what `--write`
     /// would write there, is missing, or is left over. `steam-icons.json` is none of these.
@@ -714,8 +739,9 @@ pub struct Writing {
     reason = "each is a switch of its own on the command line, which clap reads into a field"
 )]
 pub struct Upload {
-    /// The app build script, such as `steam/app_build.vdf`. In a game's folder, the game's own.
-    pub script: Option<PathBuf>,
+    /// The app, by its ID or its app build script, such as `steam/app_build.vdf`. In a game's
+    /// folder, the game's own.
+    pub app: Option<String>,
     /// The version being shipped. With the commit, it becomes the build's description. In a
     /// game's folder, the newest release `CHANGES.md` heads, or else `project.godot`'s version. A
     /// version of all zeros, such as 0.0.0, is refused.
@@ -734,7 +760,7 @@ pub struct Upload {
     /// with the demo's `build` command. Its depots are kept apart from the full game's and ship
     /// only the Godot exports made with the demo's feature. It is checked against the demo's own
     /// settings snapshot, which must show it typed Demo with the full game as its base game.
-    #[arg(long, conflicts_with = "script")]
+    #[arg(long, conflicts_with = "app")]
     pub demo: bool,
     /// The build account, if not the one the last login remembered.
     #[arg(long, env = ACCOUNT)]
@@ -817,9 +843,10 @@ pub struct Promote {
 
 /// The branch `rollback` sets back, and for which app.
 #[derive(Debug, Args)]
+#[command(allow_missing_positional = true)]
 pub struct Rollback {
-    /// The app, by its ID or its app build script.
-    pub app: String,
+    /// The app, by its ID or its app build script. In a game's folder, the game's own.
+    pub app: Option<String>,
     /// The branch to set back.
     pub branch: String,
     /// The build account that asks Steam whether the app is released, for the default branch, if
@@ -907,6 +934,7 @@ mod tests {
     use std::path::Path;
 
     use clap::CommandFactory as _;
+    use clap::error::{Error, ErrorKind};
 
     use super::*;
 
@@ -971,6 +999,180 @@ mod tests {
             let parsed = Cli::try_parse_from(&args);
             assert!(parsed.is_ok(), "{line:?}: {:?}", parsed.err());
         }
+    }
+
+    fn parsed(line: &[&str]) -> Command {
+        let mut args = vec!["steamship"];
+        args.extend(line);
+        Cli::try_parse_from(&args)
+            .unwrap_or_else(|error| panic!("{line:?}: {error}"))
+            .command
+    }
+
+    fn refused(line: &[&str]) -> Error {
+        let mut args = vec!["steamship"];
+        args.extend(line);
+        Cli::try_parse_from(&args).expect_err(&format!("{line:?} parsed"))
+    }
+
+    #[test]
+    fn the_app_after_a_switch_is_still_the_app() {
+        for line in [
+            &["achievements", "--check", "480"][..],
+            &["achievements", "--write", "480", "--output", "o"],
+        ] {
+            let Command::Achievements { app, files, .. } = parsed(line) else {
+                panic!("{line:?}");
+            };
+            assert_eq!((app.as_deref(), files.len()), (Some("480"), 0), "{line:?}");
+        }
+        let Command::Leaderboards(boards) = parsed(&["leaderboards", "--check", "480"]) else {
+            panic!("leaderboards");
+        };
+        assert_eq!(
+            (boards.app.as_deref(), boards.files.len()),
+            (Some("480"), 0)
+        );
+        for line in [
+            &["settings", "--check", "480"][..],
+            &["settings", "--save", "480"],
+        ] {
+            let Command::Settings(settings) = parsed(line) else {
+                panic!("{line:?}");
+            };
+            assert_eq!(
+                (settings.app.as_deref(), settings.file),
+                (Some("480"), None),
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn files_follow_the_app_on_either_side_of_the_switch() {
+        for line in [
+            &["achievements", "480", "a.json", "de.po", "--check"][..],
+            &["achievements", "480", "--check", "a.json", "de.po"],
+        ] {
+            let Command::Achievements {
+                app, files, check, ..
+            } = parsed(line)
+            else {
+                panic!("{line:?}");
+            };
+            assert_eq!(app.as_deref(), Some("480"), "{line:?}");
+            assert_eq!(
+                files,
+                [PathBuf::from("a.json"), PathBuf::from("de.po")],
+                "{line:?}"
+            );
+            assert!(check, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn files_need_the_switch_that_takes_them() {
+        for line in [
+            &["achievements", "480", "a.json"][..],
+            &["leaderboards", "480", "a.json"],
+            &["settings", "480", "kept.vdf"],
+            &["achievements", "--output", "o"],
+        ] {
+            assert_eq!(
+                refused(line).kind(),
+                ErrorKind::MissingRequiredArgument,
+                "{line:?}"
+            );
+        }
+        let Command::Leaderboards(request) = parsed(&["leaderboards", "480", "a.json", "--create"])
+        else {
+            panic!("leaderboards");
+        };
+        assert_eq!(request.files, [PathBuf::from("a.json")]);
+        assert!(request.create);
+    }
+
+    #[test]
+    fn save_goes_with_no_file_switch_and_no_files() {
+        for line in [
+            &["achievements", "480", "--check", "--save", "a.json"][..],
+            &["achievements", "480", "--write", "--save", "a.json"],
+            &["achievements", "480", "a.json", "--save", "b.json"],
+            &["leaderboards", "480", "--check", "--save", "b.json"],
+        ] {
+            assert_eq!(
+                refused(line).kind(),
+                ErrorKind::ArgumentConflict,
+                "{line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn settings_demo_takes_no_file() {
+        let Command::Settings(settings) = parsed(&["settings", "--demo", "--check"]) else {
+            panic!("settings");
+        };
+        assert!(
+            settings.demo && settings.check && settings.app.is_none() && settings.file.is_none()
+        );
+        let error = refused(&["settings", "--demo", "kept.vdf", "--check"]);
+        assert_eq!(error.kind(), ErrorKind::ArgumentConflict);
+        let said = error.to_string();
+        assert!(
+            said.contains("'--demo'") && said.contains("[APP]"),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn one_word_is_the_branch_or_the_executable() {
+        let Command::Rollback(alone) = parsed(&["rollback", "testing"]) else {
+            panic!("rollback");
+        };
+        assert_eq!((alone.app, alone.branch.as_str()), (None, "testing"));
+        let Command::Rollback(both) = parsed(&["rollback", "480", "testing"]) else {
+            panic!("rollback");
+        };
+        assert_eq!(
+            (both.app.as_deref(), both.branch.as_str()),
+            (Some("480"), "testing")
+        );
+        let Command::Branch { app, branch, .. } = parsed(&["branch", "beta", "--description", "d"])
+        else {
+            panic!("branch");
+        };
+        assert_eq!((app, branch.as_str()), (None, "beta"));
+        let Command::DrmWrap {
+            app: wrapped_app,
+            executable,
+            ..
+        } = parsed(&["drm-wrap", "game.exe"])
+        else {
+            panic!("drm-wrap");
+        };
+        assert_eq!((wrapped_app, executable), (None, PathBuf::from("game.exe")));
+        assert_eq!(
+            refused(&["rollback"]).kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[test]
+    fn ci_takes_its_script_as_the_first_word() {
+        let Command::Ci { app, output, .. } =
+            parsed(&["ci", "steam/app_build.vdf", "--output", "f"])
+        else {
+            panic!("ci");
+        };
+        assert_eq!(
+            (app.as_deref(), output),
+            (Some("steam/app_build.vdf"), Some(PathBuf::from("f")))
+        );
+        assert_eq!(
+            refused(&["ci", "--script", "steam/app_build.vdf"]).kind(),
+            ErrorKind::UnknownArgument
+        );
     }
 
     #[test]

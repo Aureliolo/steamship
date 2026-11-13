@@ -187,3 +187,25 @@ fn a_games_rich_presence_is_sent_from_its_pushed_tree_and_one_without_any_is_ref
     );
     assert!(said.starts_with("steamship rich-presence\n"), "{said}");
 }
+
+#[test]
+fn a_file_given_first_is_refused_as_no_app_with_the_order_to_give() {
+    let home = tempfile::tempdir().unwrap();
+    let files = tempfile::tempdir().unwrap();
+    let english = presence_file(files.path(), "english", "\t\t\"#menu\"\t\"At the menu\"\n");
+    let (code, stdout, stderr) = steamship(
+        &["rich-presence", &english, "--dry-run"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("there is no \"AppBuild\" block")
+            && stderr.contains(
+                "the first word names the app, by its ID or its app build script. Files come \
+                 after it"
+            ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("there is no game"), "{stderr}");
+}

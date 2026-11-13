@@ -8,7 +8,7 @@ use steamship::show::{self, Spinner};
 use steamship::{branch, ledger};
 
 use super::exit::fail;
-use super::game::app_named;
+use super::game::{app_named, app_or_game};
 use super::key::{offer_to_keep, web_api, web_api_failed};
 use super::ready::{home, named};
 use super::released::{DEFAULT_RELEASED, refused_once_released};
@@ -16,7 +16,8 @@ use super::released::{DEFAULT_RELEASED, refused_once_released};
 /// Sets `branch` of `app` back to the build the record shows live on it before the current one.
 pub(crate) fn try_rollback(request: &cli::Rollback) -> Result<ExitCode, ExitCode> {
     show::title("rollback");
-    let app_id = app_named(&request.app)?;
+    let app = app_or_game(request.app.clone(), false)?;
+    let app_id = app_named(&app)?;
     let home = home()?;
     let entries = ledger::load(&home, app_id).map_err(|why| fail(&why, FAILED))?;
     let default = branch::is_default(&request.branch);

@@ -12,7 +12,7 @@ use steamship::{builds, leaderboards, webapi};
 
 use super::achievements::written_over;
 use super::exit::fail;
-use super::game::{app_given_or, app_named, game};
+use super::game::{app_named, game_for};
 use super::key::{offer_to_keep, web_api, web_api_failed};
 use super::ready::{home, named};
 use super::released::refused_once_released;
@@ -40,6 +40,7 @@ pub(crate) enum Listing<'command> {
 pub(crate) fn leaderboards_in(request: cli::Leaderboards) -> Result<ExitCode, ExitCode> {
     let cli::Leaderboards {
         app,
+        mut files,
         check,
         save,
         create,
@@ -57,10 +58,8 @@ pub(crate) fn leaderboards_in(request: cli::Leaderboards) -> Result<ExitCode, Ex
         delete_missing,
         account: named(account.as_deref()),
     };
-    let own =
-        check.as_ref().is_none_or(Vec::is_empty) && (check.is_some() || create || delete_missing);
-    let game = (app.is_none() || own).then(game).transpose()?;
-    let mut files = check.unwrap_or_default();
+    let own = files.is_empty() && (check || create || delete_missing);
+    let (app, game) = game_for(app.as_deref(), own, false)?;
     if let Some(game) = game.as_ref().filter(|_| own) {
         files = game
             .records(project::LEADERBOARDS)
@@ -72,7 +71,7 @@ pub(crate) fn leaderboards_in(request: cli::Leaderboards) -> Result<ExitCode, Ex
             ));
         }
     }
-    try_leaderboards(&app_given_or(app, game.as_ref()), &files, listing, changes)
+    try_leaderboards(&app, &files, listing, changes)
 }
 
 fn leaderboards_file(path: &Path, app: u32) -> Result<leaderboards::Listed, ExitCode> {

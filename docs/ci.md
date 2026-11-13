@@ -35,8 +35,8 @@ The action runs on Linux, Windows and macOS runners. Renovate raises its pin by 
 
 ### What `ci` asks for
 
-`ci` asks for anything it cannot find. `--script`, `--repo`, `--account` and `--secret` give the
-answers up front.
+`ci` asks for anything it cannot find. The script is its first word, by its path or its app's ID.
+`--repo`, `--account` and `--secret` give the other answers up front.
 
 The secret holds the token steamcmd saved, the account's name and the day `ci` saved it. It never
 holds a password or a Steam Guard secret. `ci` shows none of it. It is a few kilobytes. It leaves

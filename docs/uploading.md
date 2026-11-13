@@ -66,6 +66,10 @@ script with any of these:
 Keys steamship does not know are passed to steamcmd unchanged. `upload` runs the same check
 first. A script it would refuse is never sent.
 
+On every command, the app is the first word, by its ID or by the app build script that names it.
+Files follow it, and a switch such as `--check` or `--write` says what to do with them. A switch
+takes no file of its own. A file named in digits alone is written `./480`.
+
 ### What the content may not hold
 
 `check` also refuses a build whose content holds any of these:
