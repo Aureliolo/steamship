@@ -22,7 +22,7 @@ use std::slice;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use windows_sys::Win32::Foundation::{
     ERROR_NOT_FOUND, ERROR_SHARING_VIOLATION, ERROR_SUCCESS, GENERIC_ALL, GENERIC_WRITE, HANDLE,
@@ -1316,18 +1316,43 @@ pub fn keep_secret(item: &keychain::Item, secret: &[u8]) -> Result<(), keychain:
     // SAFETY: every pointer in `credential` is valid for the call, which copies what it keeps
     // and writes through none of them.
     if unsafe { CredWriteW(&raw const credential, 0) } == 0_i32 {
-        Err(store_failed(&io::Error::last_os_error()))
-    } else {
+        return Err(store_failed(&io::Error::last_os_error()));
+    }
+    // Until it reads back, a delete finds nothing and the key turns up after `logout`.
+    if settles(item, |kept| kept == Some(secret))? {
         Ok(())
+    } else {
+        Err(keychain::Error::Failed(format!(
+            "it took {} but never showed it",
+            target_name(item)
+        )))
     }
 }
 
 /// Removes `item`, and says whether it was kept.
 ///
+/// A delete that finds nothing is taken at its word: every secret steamship keeps reads back
+/// before [`keep_secret`] returns.
+///
 /// # Errors
 ///
-/// When the Credential Manager refuses.
+/// When the Credential Manager refuses, or still shows `item` once it was removed.
 pub fn forget_secret(item: &keychain::Item) -> Result<bool, keychain::Error> {
+    if !delete(item)? {
+        return Ok(false);
+    }
+    if settles(item, |kept| kept.is_none())? {
+        Ok(true)
+    } else {
+        Err(keychain::Error::Failed(format!(
+            "it removed {} but still shows it",
+            target_name(item)
+        )))
+    }
+}
+
+/// Deletes the credential `item`, and says whether there was one.
+fn delete(item: &keychain::Item) -> Result<bool, keychain::Error> {
     let target = target(item);
     // SAFETY: `target` is NUL-terminated and outlives the call.
     if unsafe { CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0) } == 0_i32 {
@@ -1339,6 +1364,28 @@ pub fn forget_secret(item: &keychain::Item) -> Result<bool, keychain::Error> {
         };
     }
     Ok(true)
+}
+
+/// How long the Credential Manager is given to show a change it has taken. A key it kept has
+/// been seen to read back only 220 ms after `CredWriteW` returned.
+const SETTLE: Duration = Duration::from_secs(2);
+
+/// Waits until what `item` reads back satisfies `settled`, for at most [`SETTLE`], and says
+/// whether it did.
+fn settles(
+    item: &keychain::Item,
+    settled: impl Fn(Option<&[u8]>) -> bool,
+) -> Result<bool, keychain::Error> {
+    let deadline = Instant::now().checked_add(SETTLE);
+    loop {
+        if settled(kept_secret(item)?.as_deref().map(Vec::as_slice)) {
+            return Ok(true);
+        }
+        if deadline.is_none_or(|deadline| Instant::now() >= deadline) {
+            return Ok(false);
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// Leaves `folder` to the current user alone, and says whether it had to change anything.
