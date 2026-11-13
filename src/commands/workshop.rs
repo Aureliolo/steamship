@@ -17,7 +17,7 @@ use steamship::redact::Redactor;
 use steamship::show::{self, Spinner};
 use steamship::{ci, dump, release, scripts, steamcmd, workshop};
 
-use super::exit::{either, fail};
+use super::exit::fail;
 use super::game::{app_named, app_or_game, game, script_given, shipped_from};
 use super::ready::{
     dump_in_actions, home, login_refused, named, ready, restore, run_as, steamcmd_failed,
@@ -33,7 +33,7 @@ pub(crate) fn workshop_in(request: &cli::Workshop) -> Result<ExitCode, ExitCode>
         return try_workshop(request, || {
             let app = app_or_game(request.app.clone(), false)?;
             let name = request.name.as_deref().unwrap_or_default();
-            given_fields(&app, item, name, request.visibility)
+            Ok(vec![given_fields(&app, item, name, request.visibility)?])
         });
     }
     match request.app.as_deref() {
@@ -48,7 +48,7 @@ pub(crate) fn workshop_in(request: &cli::Workshop) -> Result<ExitCode, ExitCode>
 fn given_script<'command>(
     word: &'command str,
     request: &cli::Workshop,
-) -> Result<Given<'command>, ExitCode> {
+) -> Result<Vec<Given<'command>>, ExitCode> {
     let beside = [
         ("--name", request.name.is_some()),
         ("--visibility", request.visibility.is_some()),
@@ -70,10 +70,11 @@ fn given_script<'command>(
         return Err(code);
     }
     show::field("script", word);
-    Ok(Given::Script(Path::new(word)))
+    Ok(vec![Given::Script(Path::new(word))])
 }
 
-/// `workshop` in a game: each example mod, or the one `--name` names, from a pushed tree.
+/// `workshop` in a game: each example mod, or the one `--name` names, from a pushed tree. A dry run
+/// needs no pushed tree, like `rich-presence`'s.
 fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     let script = script_given(request.app.as_deref(), false)?;
     let game = game()?;
@@ -99,35 +100,40 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
     if request.json {
         show::divert();
     }
-    shipped_from(&game)?;
+    if !request.dry_run {
+        shipped_from(&game)?;
+    }
     let app = script.display().to_string();
     // A file that cannot be read is named by the upload itself. Until then no item counts as made.
     let made = fs::read_to_string(&game.items)
         .ok()
         .and_then(|text| workshop::Record::read(&text).ok())
         .map_or_default(|record| record.items);
-    for each in chosen {
-        // Visibility is chosen once, for an item being made: a published item keeps whatever it
-        // was given on Steam since.
-        let visibility = request
-            .visibility
-            .filter(|_| !made.contains_key(&each.name));
-        let item = cli::WorkshopItem {
-            items: game.items.clone(),
-            content: each.folder,
-            preview_image: Some(each.preview),
-            title: each.title,
-            description: Some(each.description),
-            change_note: Some(format!("Version {}", each.version)),
-        };
-        let uploaded = either(try_workshop(request, || {
-            given_fields(&app, &item, &each.name, visibility)
-        }));
-        if uploaded != ExitCode::SUCCESS {
-            return Ok(uploaded);
-        }
-    }
-    Ok(ExitCode::SUCCESS)
+    let each_item: Vec<(cli::WorkshopItem, String, Option<workshop::Visibility>)> = chosen
+        .into_iter()
+        .map(|each| {
+            // Visibility is chosen once, for an item being made: a published item keeps whatever
+            // it was given on Steam since.
+            let visibility = request
+                .visibility
+                .filter(|_| !made.contains_key(&each.name));
+            let item = cli::WorkshopItem {
+                items: game.items.clone(),
+                content: each.folder,
+                preview_image: Some(each.preview),
+                title: each.title,
+                description: Some(each.description),
+                change_note: Some(format!("Version {}", each.version)),
+            };
+            (item, each.name, visibility)
+        })
+        .collect();
+    try_workshop(request, || {
+        each_item
+            .iter()
+            .map(|(item, name, visibility)| given_fields(&app, item, name, *visibility))
+            .collect()
+    })
 }
 
 /// Whether a Workshop item for `app`, whose game's settings `file` holds its items until launch,
@@ -186,12 +192,10 @@ fn held_until_launch(
     })
 }
 
-/// Where an item given by its fields keeps its ID: the `--items` file at `path`, as `record`
-/// holds it, under `name`.
+/// Where an item given by its fields keeps its ID: under `name` in the `--items` file at `path`.
 struct Kept<'command> {
     path: &'command Path,
     name: &'command str,
-    record: workshop::Record,
 }
 
 /// How the item to upload was given.
@@ -200,35 +204,80 @@ enum Given<'command> {
     Fields(Box<workshop::Fields>, Kept<'command>),
 }
 
-/// `workshop` for one item, the one `given` reads once the title is shown. `request` gives the
-/// account and whether the item may be new, goes up before launch and is summed up as JSON.
+/// `workshop` for the items of one run. Every item is checked before the account is asked for, and
+/// a dry run ends there. The items share one app, so the account, the release question and the home
+/// are asked once.
 fn try_workshop<'command>(
     request: &cli::Workshop,
-    given: impl FnOnce() -> Result<Given<'command>, ExitCode>,
+    given: impl FnOnce() -> Result<Vec<Given<'command>>, ExitCode>,
 ) -> Result<ExitCode, ExitCode> {
     if request.json {
         show::divert();
     }
     show::title("workshop");
     let given = given()?;
+    let items = given
+        .iter()
+        .map(|each| checked_item(each, request.new))
+        .collect::<Result<Vec<_>, _>>()?;
+    if request.dry_run {
+        if request.json {
+            for (each, item) in given.iter().zip(&items) {
+                show::plain(&format!("{}\n", item_summary(None, item, each)));
+            }
+        }
+        if let Some(first) = items.first() {
+            show::success(
+                &format!(
+                    "app {}: {} checked, nothing uploaded",
+                    first.app_id,
+                    show::counted(items.len(), "item")
+                ),
+                "",
+            );
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+    let Some(app_id) = items.first().map(|item| item.app_id) else {
+        return Ok(ExitCode::SUCCESS);
+    };
     let named = named(request.account.as_deref());
     let (packed, account) = run_as(named)?;
-    let item = checked_item(&given, request.new)?;
     if !request.for_launch {
-        held_until_launch(item.app_id, &account, packed.as_ref())?;
+        held_until_launch(app_id, &account, packed.as_ref())?;
     }
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
-    let copy = match &given {
-        Given::Script(script) => workshop::prepare(&home, script, item.app_id),
-        Given::Fields(fields, kept) => workshop::prepare_fields(&home, fields, kept.name),
+    let mut code = ExitCode::SUCCESS;
+    for (each, item) in given.iter().zip(&items) {
+        code = upload_item(request, (&account, packed.as_ref(), &home), each, item)?;
+        if code != ExitCode::SUCCESS {
+            break;
+        }
+    }
+    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    Ok(code)
+}
+
+/// Uploads `item`, given as `given`, and says what came of it. `run` holds the account, the login
+/// handed over and the home the run readied.
+fn upload_item(
+    request: &cli::Workshop,
+    run: (&Account, Option<&ci::Login>, &Path),
+    given: &Given<'_>,
+    item: &workshop::Item,
+) -> Result<ExitCode, ExitCode> {
+    let (account, packed, home) = run;
+    let copy = match given {
+        Given::Script(script) => workshop::prepare(home, script, item.app_id),
+        Given::Fields(fields, kept) => workshop::prepare_fields(home, fields, kept.name),
     }
     .map_err(|error| fail(&error, FAILED))?;
-    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
-    let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
+    let before = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
+    let steamcmd_logs = steamcmd::state_folder(home, Platform::THIS).join("logs");
     let marks = dump::Marks::take(&steamcmd_logs);
     let spinner = Spinner::start("steam", "uploading", true);
-    let finished = steamcmd::workshop(&account, &copy).run(&home);
+    let finished = steamcmd::workshop(account, &copy).run(home);
     let took = show::took(spinner.elapsed());
     let finished = match finished {
         Ok(finished) => finished,
@@ -237,7 +286,7 @@ fn try_workshop<'command>(
             return Err(fail(&error, FAILED));
         }
     };
-    let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
+    let redactor = before.and(Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?);
     let console = redactor.redact(&finished.output);
     let saved = copy.with_file_name("steamcmd.log");
     fs::write(&saved, &console)
@@ -251,18 +300,18 @@ fn try_workshop<'command>(
     if request.json {
         show::plain(&format!(
             "{}\n",
-            item_summary(&outcome, &item, &given, &saved)
+            item_summary(Some((&outcome, &saved)), item, given)
         ));
     }
     let code = match outcome {
         workshop::Outcome::Published { published } => {
             spinner.done(&format!("uploaded in {took}"));
             output("published-file-id", published, "the item's ID");
-            item_published(&given, &item, published, &log)
+            item_published(given, item, published, &log)
         }
         workshop::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
-            login_refused(&reason, packed.as_ref())
+            login_refused(&reason, packed)
         }
         workshop::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
@@ -283,26 +332,27 @@ fn try_workshop<'command>(
             ExitCode::from(FAILED)
         }
     };
-    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     Ok(code)
 }
 
-/// What came of uploading `item`, given as `given`, as `--json` prints it, with `log`, where
-/// steamcmd's console was saved.
+/// What came of `item`, given as `given`, as `--json` prints it. An upload gives its outcome with
+/// `log`, where steamcmd's console was saved. A dry run gives `None`, and the ID the item already
+/// has.
 fn item_summary(
-    outcome: &workshop::Outcome,
+    uploaded: Option<(&workshop::Outcome, &Path)>,
     item: &workshop::Item,
     given: &Given<'_>,
-    log: &Path,
 ) -> serde_json::Value {
-    let (said, published) = match outcome {
-        workshop::Outcome::Published { published } if item.published.is_none() => {
+    let (said, published) = match uploaded.map(|(outcome, _)| outcome) {
+        None => ("dry-run", item.published),
+        Some(workshop::Outcome::Published { published }) if item.published.is_none() => {
             ("made", Some(*published))
         }
-        workshop::Outcome::Published { published } => ("updated", Some(*published)),
-        workshop::Outcome::NotLoggedIn(_) => ("not-logged-in", item.published),
-        workshop::Outcome::Failed(_) => ("failed", item.published),
+        Some(workshop::Outcome::Published { published }) => ("updated", Some(*published)),
+        Some(workshop::Outcome::NotLoggedIn(_)) => ("not-logged-in", item.published),
+        Some(workshop::Outcome::Failed(_)) => ("failed", item.published),
     };
+    let log = uploaded.map(|(_, log)| log.to_string_lossy());
     let name = match given {
         Given::Script(_) => None,
         Given::Fields(_, kept) => Some(kept.name),
@@ -312,7 +362,7 @@ fn item_summary(
         "app": item.app_id,
         "item": published,
         "name": name,
-        "log": log.to_string_lossy(),
+        "log": log,
     })
 }
 
@@ -335,8 +385,31 @@ fn item_published(given: &Given<'_>, item: &workshop::Item, published: u64, log:
     ExitCode::SUCCESS
 }
 
-/// The item `item` gives by its fields for `app`, kept as `name` and seen as `visibility` says, with the
-/// `--items` file it is kept in, as read.
+/// The `--items` file at `path` for `app_id`. No file is an empty record, and a record for another
+/// app is refused.
+fn record_in(path: &Path, app_id: u32) -> Result<workshop::Record, String> {
+    let record = match fs::read_to_string(path) {
+        Ok(text) => {
+            workshop::Record::read(&text).map_err(|why| format!("{}: {why}", path.display()))?
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => workshop::Record {
+            app_id,
+            items: BTreeMap::new(),
+        },
+        Err(error) => return Err(format!("{}: {error}", path.display())),
+    };
+    if record.app_id != app_id {
+        return Err(format!(
+            "{}: is for app {}, not app {app_id}",
+            path.display(),
+            record.app_id
+        ));
+    }
+    Ok(record)
+}
+
+/// The item `item` gives by its fields for `app`, kept as `name` and seen as `visibility` says.
+/// Its ID is the one the `--items` file holds under `name`.
 fn given_fields<'command>(
     app: &str,
     item: &'command cli::WorkshopItem,
@@ -348,22 +421,7 @@ fn given_fields<'command>(
     let app_id = app_named(app)?;
     workshop::named(name).map_err(|why| refused(&why))?;
     show::field("items", &path.display().to_string());
-    let record = match fs::read_to_string(path) {
-        Ok(text) => workshop::Record::read(&text)
-            .map_err(|why| refused(&format!("{}: {why}", path.display())))?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => workshop::Record {
-            app_id,
-            items: BTreeMap::new(),
-        },
-        Err(error) => return Err(refused(&format!("{}: {error}", path.display()))),
-    };
-    if record.app_id != app_id {
-        return Err(refused(&format!(
-            "{}: is for app {}, not app {app_id}",
-            path.display(),
-            record.app_id
-        )));
-    }
+    let record = record_in(path, app_id).map_err(|why| refused(&why))?;
     let fields = workshop::Fields {
         app_id,
         published: record.items.get(name).copied(),
@@ -374,19 +432,21 @@ fn given_fields<'command>(
         change_note: item.change_note.clone(),
         visibility,
     };
-    Ok(Given::Fields(Box::new(fields), Kept { path, name, record }))
+    Ok(Given::Fields(Box::new(fields), Kept { path, name }))
 }
 
 /// Writes `published`, the item just made for `app_id`, into the `--items` file under its name,
-/// and says so. When the file cannot be written, it says what to add to it by hand.
+/// and says so. The file is read again first, so an item an earlier one of the run kept stays.
+/// When the file cannot be read or written, it says what to add to it by hand.
 fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
-    let mut record = kept.record.clone();
-    let _: Option<u64> = record.items.insert(kept.name.to_owned(), published);
-    let written = kept
-        .path
-        .parent()
-        .map_or(Ok(()), fs::create_dir_all)
-        .and_then(|()| fs::write(kept.path, record.text()));
+    let written = record_in(kept.path, app_id).and_then(|mut record| {
+        let _: Option<u64> = record.items.insert(kept.name.to_owned(), published);
+        kept.path
+            .parent()
+            .map_or(Ok(()), fs::create_dir_all)
+            .and_then(|()| fs::write(kept.path, record.text()))
+            .map_err(|error| format!("{}: {error}", kept.path.display()))
+    });
     match written {
         Ok(()) => {
             show::success(
@@ -403,9 +463,8 @@ fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
             show::failure(
                 &format!("app {app_id}: Workshop item {published} was made"),
                 &format!(
-                    "{}: {error}. Add \"{}\": {published} to its \"items\", or the next upload \
-                     makes another",
-                    kept.path.display(),
+                    "{error}. Add \"{}\": {published} to its \"items\", or the next upload makes \
+                     another",
                     kept.name
                 ),
                 None,

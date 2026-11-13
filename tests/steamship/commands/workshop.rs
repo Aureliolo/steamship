@@ -1,7 +1,7 @@
 //! `steamship workshop`.
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use steamship::platform::Platform;
 use steamship::steamcmd;
@@ -847,5 +847,206 @@ fn a_game_holding_its_workshop_items_until_launch_sends_them_for_launch_or_once_
     assert!(
         said.contains("released, as Steam shows it (released)"),
         "{said}"
+    );
+}
+
+/// A steamcmd that adds a line to `starts` in the home each time it starts, and publishes the
+/// Workshop item it is sent.
+const COUNTING: &str = "#!/bin/sh\n\
+    echo start >> \"$HOME/starts\"\n\
+    printf '%s\\r\\n' 'Success.'\n";
+
+/// How many times the steamcmd of `home` started.
+fn starts(home: &Path) -> usize {
+    fs::read_to_string(home.join("starts")).map_or(0, |text| text.lines().count())
+}
+
+/// Tidal Mill Inn with a second example mod, `fresh`, pushed with `toml` for its `steamship.toml`
+/// and `items` for its `steam/workshop_items.json`.
+fn two_mods(toml: Option<&str>, items: Option<&str>) -> (tempfile::TempDir, PathBuf) {
+    let (temp, root) = pushed_game(toml);
+    let fresh = root.join("modding").join("fresh");
+    fs::create_dir_all(&fresh).unwrap();
+    fs::write(
+        fresh.join("manifest.json"),
+        r#"{"name": "Fresh Harbour", "version": "1.0.0", "description": "A mod not yet made."}"#,
+    )
+    .unwrap();
+    fs::write(fresh.join("preview.png"), icon_png(256, 40)).unwrap();
+    if let Some(items) = items {
+        fs::write(root.join("steam").join("workshop_items.json"), items).unwrap();
+    }
+    pushed(&root, "A second example mod");
+    (temp, root)
+}
+
+#[test]
+fn a_dry_run_checks_the_item_and_starts_no_steamcmd() {
+    let home = faked_with(COUNTING);
+    let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap(), "--dry-run"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  item      \u{2713} app 480, item 5674, 1 file, checked\n")
+            && stdout.contains("\u{2713} app 480: 1 item checked, nothing uploaded\n"),
+        "{stdout}"
+    );
+    assert_eq!(starts(home.path()), 0, "{stdout}");
+}
+
+#[test]
+fn a_dry_run_refuses_what_an_upload_would() {
+    let home = tempfile::tempdir().unwrap();
+    let (_temp, script) = workshop_item("");
+    fs::remove_dir_all(script.parent().unwrap().join("hat")).unwrap();
+    let run = |extra: &[&str]| {
+        let (code, stdout, stderr) = steamship(
+            &[&["workshop", script.to_str().unwrap()], extra].concat(),
+            Some(home.path()),
+            &[],
+        );
+        assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+        failure(&stderr).to_owned()
+    };
+    let dry = run(&["--dry-run"]);
+    assert!(dry.starts_with("refused: "), "{dry}");
+    assert_eq!(dry, run(&["--account", "build_bot"]));
+}
+
+#[test]
+fn a_dry_run_in_ci_still_refuses_a_new_item_without_new() {
+    let home = tempfile::tempdir().unwrap();
+    let (_temp, script) = workshop_item("");
+    let run = |extra: &[&str]| {
+        steamship(
+            &[&["workshop", script.to_str().unwrap(), "--dry-run"], extra].concat(),
+            Some(home.path()),
+            &[("CI", "true")],
+        )
+    };
+    let (code, stdout, stderr) = run(&[]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).contains("so every CI run would make a new Workshop item"),
+        "{stderr}"
+    );
+    let (allowed, said, why) = run(&["--new"]);
+    assert_eq!(allowed, Some(0_i32), "{said}{why}");
+}
+
+#[test]
+fn a_dry_run_of_a_games_mods_needs_no_pushed_tree_or_account() {
+    let (_temp, root) = two_mods(None, None);
+    fs::write(root.join("modding").join("example").join("new.txt"), "x").unwrap();
+    let (code, stdout, stderr) =
+        in_game(&root, &["workshop", "--dry-run", "--visibility", "private"]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert_eq!(stdout.matches(", checked\n").count(), 2, "{stdout}");
+    assert!(
+        stdout.contains("\u{2713} app 1000050: 2 items checked, nothing uploaded\n"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_dry_run_of_a_game_held_until_launch_asks_steam_nothing() {
+    let (_temp, root) = two_mods(
+        Some("[workshop]\nheld_until_launch = true\n"),
+        Some(r#"{"app": 1000050, "items": {"example": 5674, "fresh": 5675}}"#),
+    );
+    let home = faked_with(COUNTING);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--dry-run"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(!stdout.contains("as Steam shows it"), "{stdout}");
+    assert_eq!(starts(home.path()), 0, "{stdout}");
+}
+
+#[test]
+fn a_dry_run_prints_its_outcome_as_json() {
+    let home = faked_with(COUNTING);
+    let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap(), "--dry-run", "--json"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(
+        stdout,
+        "{\"app\":480,\"item\":5674,\"log\":null,\"name\":null,\"outcome\":\"dry-run\"}\n"
+    );
+}
+
+#[test]
+fn a_second_mod_that_is_refused_stops_the_run_before_the_first_goes_up() {
+    let (_temp, root) = two_mods(
+        None,
+        Some(r#"{"app": 1000050, "items": {"example": 5674}}"#),
+    );
+    let home = faked_with(COUNTING);
+    saved_login(home.path());
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--visibility", "private"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1"), ("CI", "true")],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr)
+            .contains("has no item fresh, so every CI run would make a new Workshop item"),
+        "{stderr}"
+    );
+    assert_eq!(starts(home.path()), 0, "{stdout}{stderr}");
+}
+
+#[test]
+fn a_games_mods_ask_for_the_release_once() {
+    let (_temp, root) = two_mods(
+        Some("[workshop]\nheld_until_launch = true\n"),
+        Some(r#"{"app": 1000050, "items": {"example": 5674, "fresh": 5675}}"#),
+    );
+    let released = "\\t\\t\"ReleaseState\"\\t\\t\"released\"\\n";
+    let counted = workshop_released_as(released).replacen(
+        "#!/bin/sh\n",
+        "#!/bin/sh\necho start >> \"$HOME/starts\"\n",
+        1,
+    );
+    let home = faked_with(&counted);
+    saved_login(home.path());
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert_eq!(starts(home.path()), 3, "{stdout}{stderr}");
+}
+
+#[test]
+fn two_new_mods_of_one_run_are_both_kept() {
+    let (_temp, root) = two_mods(None, None);
+    let home = publishing("Success.", 0);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--visibility", "private"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let kept = fs::read_to_string(root.join("steam").join("workshop_items.json")).unwrap();
+    assert!(
+        kept.contains("\"example\": 777") && kept.contains("\"fresh\": 777"),
+        "{kept}"
     );
 }
