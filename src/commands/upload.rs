@@ -142,10 +142,10 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     if uploaded != ExitCode::SUCCESS || shipping.preview {
         return Ok(uploaded);
     }
-    // The build is on Steam, so no step after this one can fail the run: a second run would
-    // upload the build again.
-    show::failures_as_notes();
+    // The build is on Steam. A later failure must not fail the run, or a second run would upload
+    // it again.
     if let Some(branch) = &script.set_live {
+        show::failures_as_notes(&format!("could not describe {branch}: "));
         let description = game.description.as_deref().unwrap_or(&version);
         let describe_with = |before: &str| {
             show::hint(Hint {
@@ -166,6 +166,10 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
             None => {}
         }
     }
+    show::failures_as_notes(&format!(
+        "could not list the builds of app {}: ",
+        script.app_id
+    ));
     let _listed = try_builds(&app, 10, false);
     Ok(ExitCode::SUCCESS)
 }

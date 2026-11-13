@@ -2286,7 +2286,10 @@ fn a_game_whose_branch_steam_will_not_describe_is_uploaded_all_the_same() {
             && !stdout.contains("\"error\""),
         "{stdout}"
     );
-    assert!(stderr.contains("Steam answered HTTP 500"), "{stderr}");
+    assert!(
+        stderr.contains("could not describe testing: Steam answered HTTP 500"),
+        "{stderr}"
+    );
     assert!(!crossed(&stderr, "Steam answered HTTP 500"), "{stderr}");
     assert!(
         stderr.contains("steamship branch 1000050 testing --description \"0.3.1\""),
@@ -2316,7 +2319,10 @@ fn a_branch_gone_once_the_build_is_live_is_a_note() {
         stdout.contains("\"outcome\":\"uploaded\"") && !stdout.contains("\"error\""),
         "{stdout}"
     );
-    assert!(stderr.contains("has no branch \"testing\""), "{stderr}");
+    assert!(
+        stderr.contains("could not describe testing: app 1000050 has no branch \"testing\""),
+        "{stderr}"
+    );
     assert!(!crossed(&stderr, "has no branch \"testing\""), "{stderr}");
     assert!(
         stderr.contains("steamship branch 1000050 testing --description \"0.3.1\""),
@@ -2345,7 +2351,10 @@ fn a_builds_list_steam_will_not_give_is_a_note() {
     );
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     assert!(stdout.contains("testing described as"), "{stdout}");
-    assert!(stderr.contains("Steam answered HTTP 500"), "{stderr}");
+    assert!(
+        stderr.contains("could not list the builds of app 1000050: Steam answered HTTP 500"),
+        "{stderr}"
+    );
     assert!(!crossed(&stderr, "Steam answered HTTP 500"), "{stderr}");
     assert!(!stderr.contains("--description"), "{stderr}");
 }
