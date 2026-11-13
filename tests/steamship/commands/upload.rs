@@ -1019,11 +1019,15 @@ fn upload_runs_check_first_and_exits_2_on_a_refusal() {
 /// `STEAMSHIP_FAKE_LOGGED_OUT` set it reports instead that it has no login, and with
 /// `STEAMSHIP_FAKE_FAIL` set that the server refused the build.
 fn leaking() -> tempfile::TempDir {
-    let home = faked_with(
-        "#!/bin/sh\n\
+    leaking_with("")
+}
+
+/// [`leaking`] whose steamcmd also runs `first`, a shell line, once it knows where to write.
+fn leaking_with(first: &str) -> tempfile::TempDir {
+    let head = "#!/bin/sh\n\
          for arg in \"$@\"; do [ \"$previous\" = +run_app_build ] && script=\"$arg\"; previous=\"$arg\"; done\n\
-         output=$(sed -n 's/^[[:space:]]*\"BuildOutput\"[[:space:]]*\"\\(.*\\)\"$/\\1/p' \"$script\")\n\
-         cat \"$HOME/Steam/config/config.vdf\" \"$HOME\"/Steam/userdata/*/config/localconfig.vdf\n\
+         output=$(sed -n 's/^[[:space:]]*\"BuildOutput\"[[:space:]]*\"\\(.*\\)\"$/\\1/p' \"$script\")\n";
+    let tail = "cat \"$HOME/Steam/config/config.vdf\" \"$HOME\"/Steam/userdata/*/config/localconfig.vdf\n\
          if [ -n \"$STEAMSHIP_FAKE_LOGGED_OUT\" ]; then\n\
            echo 'Cached credentials not found.'\n\
            echo 'FAILED (No cached credentials and @NoPromptForPassword is set)'\n\
@@ -1038,8 +1042,8 @@ fn leaking() -> tempfile::TempDir {
          grep -q '\"Preview\"[[:space:]]*\"1\"' \"$script\" && finished='build preview.'\n\
          { cat \"$HOME/Steam/config/config.vdf\"; \
            echo \"Successfully finished AppID 1000 $finished\"; } \
-           > \"$output/app_build_1000.log\"\n",
-    );
+           > \"$output/app_build_1000.log\"\n";
+    let home = faked_with(&format!("{head}{first}\n{tail}"));
     let [token, local] = SECRETS;
     let put = |relative: &str, contents: String| {
         let path = home.path().join(relative);
@@ -1305,7 +1309,7 @@ fn a_refused_build_names_every_reason_and_where_the_logs_are_and_exits_1() {
         stderr,
         format!(
             "  \u{2717} Failed to initialize build on server (Access Denied)\n    \
-             log  {}, and steamcmd's own in {}\n",
+             log  {}, and steamcmd's own log in {}\n",
             output.join("steamcmd.log").display(),
             output.join("app_build_1000.log").display()
         )
@@ -2250,4 +2254,345 @@ fn a_games_first_upload_to_an_app_with_no_branch_yet_succeeds_and_says_how_to_de
             .any(|request| request.contains("UpdateAppBranchDescription")),
         "a branch Steam does not have yet is not described: {asked:?}"
     );
+}
+
+/// [`BUILT`] with the shell line `then` run last.
+fn built_then(then: &str) -> String {
+    format!("{BUILT}{then}\n")
+}
+
+#[test]
+fn a_steamcmd_altered_after_the_run_exits_5_once_a_build_is_up_and_4_otherwise() {
+    let altering = "echo >> \"$0\"";
+    let up = faked_with(&built_then(altering));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        up.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("BuildID 4242"), "{stdout}");
+    assert!(
+        stderr.contains("Steam holds a build of app 1000, so a second upload would make another"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("list it with steamship builds 1000"),
+        "{stderr}"
+    );
+    let fresh = faked_with(&format!(
+        "#!/bin/sh\necho 'Logging in user build_bot to Steam Public...OK'\n{altering}\nexit 1\n"
+    ));
+    let (earlier, said, errors) = upload(
+        &script,
+        fresh.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(earlier, Some(4_i32), "{said}{errors}");
+    assert!(!errors.contains("Steam holds"), "{errors}");
+}
+
+#[test]
+fn a_build_steam_kept_unnamed_before_steamcmd_altered_itself_exits_5() {
+    let home = faked_with(&COMMIT_REFUSED.replace("exit 6\n", "echo >> \"$0\"\nexit 6\n"));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(stderr.contains("steamship builds 1000"), "{stderr}");
+}
+
+#[test]
+fn a_dry_run_whose_steamcmd_altered_itself_exits_4() {
+    let home = leaking_with("echo >> \"$0\"");
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--dry-run"],
+        &[],
+    );
+    assert_eq!(code, Some(4_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("dry run finished"), "{stdout}");
+    assert!(!format!("{stdout}{stderr}").contains("Steam holds"));
+}
+
+/// The folder a [`leaking`] home's upload writes to.
+fn output_of(home: &Path) -> PathBuf {
+    home.join("apps").join("1000").join("output")
+}
+
+#[test]
+fn a_console_that_cannot_be_saved_leaves_every_exit_code_as_it_was() {
+    let home = leaking();
+    let blocked = output_of(home.path()).join("steamcmd.log");
+    fs::create_dir_all(&blocked).unwrap();
+    fs::write(blocked.join("kept"), "in the way").unwrap();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    let shown = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(0_i32), "{shown}");
+    assert!(shown.contains("BuildID 4242"), "{shown}");
+    for said in [
+        "app_build_1000.log",
+        "could not be written to",
+        "The earlier console could not be removed",
+    ] {
+        assert!(shown.contains(said), "{said:?} in {shown}");
+    }
+    for (variable, expected) in [
+        ("STEAMSHIP_FAKE_FAIL", 1_i32),
+        ("STEAMSHIP_FAKE_LOGGED_OUT", 3_i32),
+    ] {
+        let (failed, said, errors) = upload(
+            &script,
+            home.path(),
+            &["--version", "1.4.0"],
+            &[(variable, "1")],
+        );
+        assert_eq!(failed, Some(expected), "{variable}: {said}{errors}");
+    }
+}
+
+#[test]
+fn a_console_that_cannot_be_saved_says_nothing_of_an_earlier_one_when_there_was_none() {
+    let home = leaking_with("mkdir -p \"$output/steamcmd.log\"");
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    let shown = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(0_i32), "{shown}");
+    assert!(shown.contains("could not be written to"), "{shown}");
+    assert!(!shown.contains("could not be removed"), "{shown}");
+}
+
+#[test]
+fn a_failed_save_in_actions_shows_no_earlier_console() {
+    let home = leaking_with("mkdir -p \"$output/steamcmd.log\"");
+    fs::create_dir_all(output_of(home.path())).unwrap();
+    fs::write(
+        output_of(home.path()).join("steamcmd.log"),
+        "an earlier console",
+    )
+    .unwrap();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_FAKE_FAIL", "1"), ("GITHUB_ACTIONS", "true")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(stderr.contains("could not be written to"), "{stderr}");
+    assert!(stdout.contains("::group::app_build_1000.log"), "{stdout}");
+    assert!(!stdout.contains("::group::steamcmd's console"), "{stdout}");
+    assert!(!stdout.contains("an earlier console"), "{stdout}");
+}
+
+#[cfg(windows)]
+#[test]
+fn an_earlier_console_held_open_is_not_shown_as_this_runs() {
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    let home = leaking();
+    let console = output_of(home.path()).join("steamcmd.log");
+    fs::create_dir_all(output_of(home.path())).unwrap();
+    fs::write(&console, "an earlier console").unwrap();
+    // Shared for reading only, so that it can neither be removed nor written.
+    let held = OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&console)
+        .unwrap();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_FAKE_FAIL", "1"), ("GITHUB_ACTIONS", "true")],
+    );
+    drop(held);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("The earlier console could not be removed"),
+        "{stderr}"
+    );
+    assert!(!stdout.contains("::group::steamcmd's console"), "{stdout}");
+    assert!(!stdout.contains("an earlier console"), "{stdout}");
+}
+
+/// The shell line that leaves the login unreadable on every system: `config.vdf` becomes a folder.
+const UNREADABLE: &str =
+    "rm -f \"$HOME/Steam/config/config.vdf\"; mkdir -p \"$HOME/Steam/config/config.vdf\"";
+
+#[test]
+fn a_refused_login_never_shows_a_secret_of_its_reason_when_the_login_is_unreadable_after() {
+    let secret = "Expired Login Auth Code";
+    let home = faked_with(&format!(
+        "#!/bin/sh\n\
+         mkdir -p \"$HOME/apps/1000/output\"\n\
+         echo \"Logging in user 'build_bot' to Steam Public...FAILED ({secret})\"\n\
+         {UNREADABLE}\n\
+         exit 5\n"
+    ));
+    let local = home
+        .path()
+        .join("Steam/userdata/12345/config/localconfig.vdf");
+    fs::create_dir_all(local.parent().unwrap()).unwrap();
+    fs::write(
+        local,
+        format!("\"UserLocalConfigStore\" {{ \"WebStorage\" {{ \"cookie\" \"{secret}\" }} }}\n"),
+    )
+    .unwrap();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert!(!stdout.contains(secret) && !stderr.contains(secret));
+}
+
+#[test]
+fn a_login_unreadable_after_the_run_still_sets_default_live_and_shows_none_of_steamcmds_lines() {
+    let home = faked_with(&format!("{}{UNREADABLE}\n", released_as("unavailable")));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let (host, _requests) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(4242)),
+        ("200 OK", SET_LIVE),
+    ]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("\"default\":true"), "{stdout}");
+    assert!(
+        stderr.contains("app 1000: BuildID 4242, set live on testing and default"),
+        "{stderr}"
+    );
+    let shown = format!("{stdout}{stderr}");
+    for line in ["unavailable", "Logging in user", "AppID : 1000"] {
+        assert!(!shown.contains(line), "{line:?} in {shown}");
+    }
+}
+
+/// A steamcmd that ends leaving its login file unreadable, so that the redactor cannot be read
+/// again.
+#[cfg(target_os = "linux")]
+fn unreadable_after(fake: &str) -> String {
+    fake.replace(
+        "exit 6\n",
+        "chmod 000 \"$HOME/Steam/config/config.vdf\"\nexit 6\n",
+    )
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_login_unreadable_after_the_run_shows_no_line_of_steamcmds_and_keeps_the_outcome() {
+    let cases = [
+        (
+            built_then("chmod 000 \"$HOME/Steam/config/config.vdf\""),
+            0_i32,
+            "BuildID 4242",
+        ),
+        (
+            unreadable_after(BUILT_THEN_FAILED),
+            5_i32,
+            "steamship promote 1000 --build 777 --branch testing",
+        ),
+    ];
+    for (fake, expected, said) in cases {
+        let home = faked_with(&fake);
+        let (_project, script) = project(true);
+        let (code, stdout, stderr) = upload(
+            &script,
+            home.path(),
+            &["--version", "1.4.0"],
+            &[("STEAMSHIP_LOGIN", &packed_login())],
+        );
+        let shown = format!("{stdout}{stderr}");
+        assert_eq!(code, Some(expected), "{shown}");
+        assert!(shown.contains(said), "{said:?} in {shown}");
+        let output = output_of(home.path());
+        let left = fs::read_dir(&output).map_or(0, |entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|kind| kind == "log"))
+                .count()
+        });
+        assert_eq!(left, 0, "no log is left in {}", output.display());
+        assert!(shown.contains("none kept"), "{shown}");
+        assert!(shown.contains(&output.display().to_string()), "{shown}");
+        for line in ["Logging in user", "forged", "Failed to set build live"] {
+            assert!(!shown.contains(line), "{line:?} in {shown}");
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_refused_login_names_its_reason_and_never_the_account_once_the_login_is_unreadable() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         mkdir -p \"$HOME/apps/1000/output\"\n\
+         echo \"Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)\"\n\
+         chmod 000 \"$HOME/Steam/config/config.vdf\"\n\
+         exit 5\n",
+    );
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    let shown = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(3_i32), "{shown}");
+    assert!(
+        shown.contains("Steam refused the saved login (Expired Login Auth Code)"),
+        "{shown}"
+    );
+    assert!(!stdout.contains("build_bot"), "{stdout}");
+    assert!(!stderr.contains("build_bot"), "{stderr}");
+    assert!(!output_of(home.path()).join("steamcmd.log").exists());
+}
+
+#[test]
+fn a_reason_that_holds_a_secret_is_printed_redacted() {
+    let home = leaking();
+    let secret = "Failed to initialize build on server";
+    fs::write(
+        home.path()
+            .join("Steam/userdata/12345/config/localconfig.vdf"),
+        format!("\"UserLocalConfigStore\" {{ \"WebStorage\" {{ \"cookie\" \"{secret}\" }} }}\n"),
+    )
+    .unwrap();
+    let (_project, script) = project(true);
+    for json in [false, true] {
+        let mut extra = vec!["--version", "1.4.0"];
+        extra.extend(json.then_some("--json"));
+        let (code, stdout, stderr) = upload(
+            &script,
+            home.path(),
+            &extra,
+            &[("STEAMSHIP_FAKE_FAIL", "1")],
+        );
+        assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+        assert!(stderr.contains("[redacted] (Access Denied)"), "{stderr}");
+        assert!(!stdout.contains(secret) && !stderr.contains(secret));
+    }
 }

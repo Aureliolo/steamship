@@ -1050,3 +1050,234 @@ fn two_new_mods_of_one_run_are_both_kept() {
         "{kept}"
     );
 }
+
+/// The shell lines of a steamcmd that finds its item script in `script`, and gives the item
+/// the ID 777 in it when it had none.
+const MAKING: &str = "while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
+    grep -q publishedfileid \"$script\" || \
+    printf '\"workshopitem\"\\n{\\n\"appid\" \"480\"\\n\"publishedfileid\" \"777\"\\n}\\n' > \"$script\"\n";
+
+/// A home whose steamcmd makes the item as [`MAKING`] does, says `Success.`, and then runs `then`.
+fn publishing_then(then: &str) -> tempfile::TempDir {
+    let home = faked_with(&format!(
+        "#!/bin/sh\n{MAKING}printf '%s\\r\\n' 'Success.'\n{then}\n"
+    ));
+    saved_login(home.path());
+    home
+}
+
+#[test]
+fn an_item_made_from_a_script_before_steamcmd_altered_itself_exits_5() {
+    let home = publishing_then("echo >> \"$0\"");
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("Workshop item 777"), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "Add \"publishedfileid\" \"777\" to {} so that later uploads update it",
+            script.display()
+        )),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn a_steamcmd_altered_after_an_item_was_updated_exits_4() {
+    let home = publishing_then("echo >> \"$0\"");
+    let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(4_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("Workshop item 5674"), "{stdout}");
+}
+
+#[test]
+fn a_steamcmd_altered_after_an_item_was_made_and_kept_exits_4() {
+    let home = publishing_then("echo >> \"$0\"");
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(4_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("Workshop item 777"), "{stdout}");
+    assert!(
+        fs::read_to_string(&items)
+            .unwrap()
+            .contains("\"example\": 777"),
+        "the item is kept"
+    );
+}
+
+#[test]
+fn a_second_item_that_fails_leaves_the_first_made_and_kept() {
+    let (_temp, root) = two_mods(None, None);
+    let home = faked_with(&format!(
+        "#!/bin/sh\n{MAKING}\
+         if [ -e \"$HOME/second\" ]; then\n\
+           printf '%s\\r\\n' 'ERROR! Failed to update workshop item (Access Denied).'\n\
+           exit 8\n\
+         fi\n\
+         touch \"$HOME/second\"\n\
+         printf '%s\\r\\n' 'Success.'\n"
+    ));
+    saved_login(home.path());
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--visibility", "private"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("Workshop item 777"), "{stdout}");
+    let kept = fs::read_to_string(root.join("steam").join("workshop_items.json")).unwrap();
+    assert!(kept.contains(": 777"), "{kept}");
+}
+
+#[test]
+fn a_console_that_cannot_be_saved_still_keeps_the_item_made_and_exits_0() {
+    let home = faked_with(&format!(
+        "#!/bin/sh\n{MAKING}\
+         mkdir \"$(dirname \"$script\")/steamcmd.log\"\n\
+         printf '%s\\r\\n' 'Success.'\n"
+    ));
+    saved_login(home.path());
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    let shown = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(0_i32), "{shown}");
+    assert!(shown.contains("log  none, since"), "{shown}");
+    assert!(!shown.contains("could not be removed"), "{shown}");
+    assert!(
+        fs::read_to_string(&items)
+            .unwrap()
+            .contains("\"example\": 777"),
+        "the item is kept"
+    );
+}
+
+#[test]
+fn an_item_console_that_cannot_be_removed_is_said_on_the_log_line() {
+    let home = publishing_then("");
+    let blocked = home.path().join("workshop/480/example/steamcmd.log");
+    fs::create_dir_all(&blocked).unwrap();
+    fs::write(blocked.join("kept"), "in the way").unwrap();
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    let shown = format!("{stdout}{stderr}");
+    assert_eq!(code, Some(0_i32), "{shown}");
+    assert!(shown.contains("log  none, since"), "{shown}");
+    assert!(
+        shown.contains(". The earlier console could not be removed: "),
+        "{shown}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_login_unreadable_after_an_item_was_made_still_keeps_it() {
+    let home = publishing_then("chmod 000 \"$HOME/Steam/config/config.vdf\"");
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        fs::read_to_string(&items)
+            .unwrap()
+            .contains("\"example\": 777"),
+        "the item is kept"
+    );
+    assert!(
+        !home
+            .path()
+            .join("workshop/480/example/steamcmd.log")
+            .exists(),
+        "no console is saved"
+    );
+}
+
+#[test]
+fn a_workshop_reason_that_holds_a_secret_is_printed_redacted() {
+    let home = publishing("ERROR! Failed to update workshop item (Access Denied).", 8);
+    let secret = "Failed to update workshop item";
+    let local = home
+        .path()
+        .join("Steam/userdata/12345/config/localconfig.vdf");
+    fs::create_dir_all(local.parent().unwrap()).unwrap();
+    fs::write(
+        local,
+        format!("\"UserLocalConfigStore\" {{ \"WebStorage\" {{ \"cookie\" \"{secret}\" }} }}\n"),
+    )
+    .unwrap();
+    let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
+    for json in [false, true] {
+        let mut args = vec!["workshop", script.to_str().unwrap()];
+        args.extend(json.then_some("--json"));
+        let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+        assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+        assert!(stderr.contains("[redacted] (Access Denied)."), "{stderr}");
+        assert!(!stdout.contains(secret) && !stderr.contains(secret));
+    }
+}
+
+#[test]
+fn a_refused_workshop_login_never_shows_a_secret_of_its_reason_when_the_login_is_unreadable_after()
+{
+    let secret = "Expired Login Auth Code";
+    let home = faked_with(&format!(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'build_bot' to Steam Public...FAILED ({secret})\"\n\
+         rm -f \"$HOME/Steam/config/config.vdf\"; mkdir -p \"$HOME/Steam/config/config.vdf\"\n\
+         exit 5\n"
+    ));
+    saved_login(home.path());
+    let local = home
+        .path()
+        .join("Steam/userdata/12345/config/localconfig.vdf");
+    fs::create_dir_all(local.parent().unwrap()).unwrap();
+    fs::write(
+        local,
+        format!("\"UserLocalConfigStore\" {{ \"WebStorage\" {{ \"cookie\" \"{secret}\" }} }}\n"),
+    )
+    .unwrap();
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert!(!stdout.contains(secret) && !stderr.contains(secret));
+}

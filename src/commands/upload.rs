@@ -13,7 +13,7 @@ use steamship::install;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
 use steamship::project;
-use steamship::redact::Redactor;
+use steamship::redact::{self, Redactor};
 use steamship::show::{self, Hint, Spinner};
 use steamship::{
     branch, check, ci, download, dump, green, keychain, ledger, redist, release, run, settings,
@@ -25,7 +25,7 @@ use super::builds::try_builds;
 use super::check::{
     Branch, apart, built, checked, compared, exports_apart, redistributables_shown, snapshot_sound,
 };
-use super::exit::{either, fail, first_failure};
+use super::exit::{either, fail, first_failure, late};
 use super::game::{game_as, game_script, script_given, script_named, shipped_from};
 use super::key::{KeyFrom, key_at_hand, key_variable, offer_to_keep, web_api};
 use super::ready::{
@@ -339,11 +339,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         preview: request.preview,
         info_of: in_run.then_some(prepared.app_id),
     };
-    let (doing, again) = if request.preview {
-        ("computing the build", "computing the build again")
-    } else {
-        ("uploading", "uploading again")
-    };
+    let (doing, again) = wording(request.preview);
     let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
     let marks = dump::Marks::take(&steamcmd_logs);
     let Ran {
@@ -351,13 +347,16 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         spinner,
         took,
         redactor,
+        before,
         info,
+        log,
+        written,
         ..
     } = build_retrying(&steam, doing, again)?;
     let (default, spinner) = shown_unreleased(
         default,
         &outcome,
-        info.as_deref(),
+        info.as_deref().map(|info| (info, redactor.is_some())),
         (prepared.app_id, spinner, doing),
     );
     let outcome = found_on_steam(outcome, &prepared, &description);
@@ -365,7 +364,9 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         spinner,
         took: &took,
         prepared: &prepared,
-        saved: &saved,
+        log: &log,
+        shown: redactor.is_some(),
+        redactor: redactor.as_ref().unwrap_or(&before),
         packed: packed.as_ref(),
         default: default.as_ref().map(|(api, _)| api),
     };
@@ -384,11 +385,53 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
     if matches!(
         outcome,
         upload::Outcome::Failed(_) | upload::Outcome::BuiltThenFailed { .. }
-    ) {
-        dump_failed(saved, &prepared, &marks.added(&steamcmd_logs), &redactor);
+    ) && let Some(redactor) = &redactor
+    {
+        dump_failed(
+            written.then_some(saved),
+            &prepared,
+            &marks.added(&steamcmd_logs),
+            redactor,
+        );
     }
-    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    checked_after(&held, &manifest, &outcome, &prepared)?;
     Ok((code, prepared.held_back))
+}
+
+/// What the spinner says while a run of steamcmd goes on, and when it is run again.
+const fn wording(preview: bool) -> (&'static str, &'static str) {
+    if preview {
+        ("computing the build", "computing the build again")
+    } else {
+        ("uploading", "uploading again")
+    }
+}
+
+/// Checks steamcmd's files again after the run. A failed check exits 5 when Steam holds a build
+/// that a second upload would make again, and says so.
+fn checked_after(
+    held: &install::Held,
+    manifest: &Manifest,
+    outcome: &upload::Outcome,
+    prepared: &upload::Prepared,
+) -> Result<(), ExitCode> {
+    let Err(error) = install::verify(held, manifest) else {
+        return Ok(());
+    };
+    let kept = outcome.kept_on_steam(prepared.set_live.as_deref());
+    let failed = late(steamcmd_failed(&error), kept);
+    if kept {
+        let app = prepared.app_id;
+        show::note(&format!(
+            "Steam holds a build of app {app}, so a second upload would make another"
+        ));
+        show::hint(Hint {
+            before: "list it with ",
+            command: &format!("steamship builds {app}"),
+            after: "",
+        });
+    }
+    Err(failed)
 }
 
 /// The key an upload `asked` for the default branch too sets it live with, and whether the build's
@@ -426,14 +469,15 @@ fn default_key(
 
 /// The `default` key to set the default branch live with, kept, when the build's own steamcmd run
 /// printed the app's `info`, only while that shows `app` unreleased, said while the build's
-/// `spinner`, `doing` so, waits. Nothing is said for a build that never reached Steam.
+/// `spinner`, `doing` so, waits. Nothing is said for a build that never reached Steam. `info` holds
+/// whether a line of it may be shown, and none of it is when it may not.
 fn shown_unreleased<Key>(
     default: Option<Key>,
     outcome: &upload::Outcome,
-    info: Option<&str>,
+    info: Option<(&str, bool)>,
     (app, spinner, doing): (u32, Spinner, &str),
 ) -> (Option<Key>, Spinner) {
-    let Some(info) = info else {
+    let Some((info, may_show)) = info else {
         return (default, spinner);
     };
     let Some(key) = default else {
@@ -456,11 +500,24 @@ fn shown_unreleased<Key>(
         }
         Err(why) => (
             Err(format!(
-                "{why}. The build goes up without being set live on default. While the app is \
-                 unreleased, steamship promote {app} --build {build_id} --branch default does that"
+                "{}. The build goes up without being set live on default. While the app is \
+                 unreleased, steamship promote {app} --build {build_id} --branch default does that",
+                if may_show {
+                    why.to_string()
+                } else {
+                    "steamcmd's app info could not be read".to_owned()
+                }
             )),
             "not shown".to_owned(),
         ),
+    };
+    // A line of steamcmd's could hold a secret that nothing could be built to hide.
+    let said = if may_show {
+        said
+    } else {
+        said.split_once(" (")
+            .map_or(said.as_str(), |(head, _)| head)
+            .to_owned()
     };
     let spinner = spinner.around(
         || match &judged {
@@ -476,18 +533,19 @@ fn shown_unreleased<Key>(
     (judged.is_ok().then_some(key), spinner)
 }
 
-/// The logs of a failed upload, steamcmd's console saved at `saved` among them, as
+/// The logs of a failed upload, steamcmd's console among them when it was saved at `saved`, as
 /// [`dump_in_actions`] shows them with what steamcmd `added` to its own.
 fn dump_failed(
-    saved: PathBuf,
+    saved: Option<PathBuf>,
     prepared: &upload::Prepared,
     added: &[(String, Vec<u8>)],
     redactor: &Redactor,
 ) {
-    let mut files = vec![
-        ("steamcmd's console".to_owned(), saved),
-        (format!("app_build_{}.log", prepared.app_id), prepared.log()),
-    ];
+    let mut files: Vec<(String, PathBuf)> = saved
+        .map(|saved| ("steamcmd's console".to_owned(), saved))
+        .into_iter()
+        .collect();
+    files.push((format!("app_build_{}.log", prepared.app_id), prepared.log()));
     files.extend(depot_logs(&prepared.output));
     dump_in_actions(&files, &[], added, redactor);
 }
@@ -511,9 +569,17 @@ struct Ran {
     retry: Option<upload::Retry>,
     spinner: Spinner,
     took: String,
-    redactor: Redactor,
+    /// The redactor built again after the run. None when that failed, and then none of steamcmd's
+    /// output may be shown.
+    redactor: Option<Redactor>,
+    /// The redactor from before the run: all that a refused login's text can hold.
+    before: Redactor,
     /// What steamcmd printed of the app's info, when it was asked to.
     info: Option<String>,
+    /// Where the run's console and steamcmd's logs are, or which could not be kept.
+    log: String,
+    /// Whether this run's console was saved.
+    written: bool,
 }
 
 /// Runs steamcmd's build, saying it is `doing` so, and runs it `again` while it fails in a way
@@ -586,6 +652,12 @@ fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, Ex
 /// `doing` so, and reads what it came to.
 fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, ExitCode> {
     upload::clear_log(steam.prepared).map_err(|error| fail(&error, FAILED))?;
+    // A console left by an earlier run must never pass for this one's, so it goes first. One that
+    // stays is said, and stops nothing: the run's own outcome matters more.
+    let removed = match fs::remove_file(steam.saved) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => Some(error),
+        Err(_) | Ok(()) => None,
+    };
     let before = Redactor::for_home(steam.home).map_err(|error| fail(&error, FAILED))?;
     let spinner = Spinner::start("steam", doing, true);
     let finished = steamcmd::upload(steam.account, &steam.prepared.script, info_of).run(steam.home);
@@ -597,15 +669,13 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
             return Err(fail(&error, FAILED));
         }
     };
-    let redactor =
-        before.and(Redactor::for_home(steam.home).map_err(|error| fail(&error, FAILED))?);
-    let console = redactor.redact(&finished.output);
-    fs::write(steam.saved, &console)
-        .map_err(|error| fail(&format!("{}: {error}", steam.saved.display()), FAILED))?;
-    let log = fs::read(steam.prepared.log())
-        .ok()
-        .map(|log| redactor.redact(&log));
-    let mut console = String::from_utf8_lossy(&console).into_owned();
+    // steamcmd may renew its token as it runs, so what is shown or saved of the run is redacted
+    // with the secrets from after it too. Without them nothing of its output is shown or kept.
+    let after = Redactor::for_home(steam.home);
+    let log = fs::read(steam.prepared.log()).ok();
+    // The outcome is judged on the output as steamcmd wrote it: redacting could turn an account
+    // named `build` into a failure, or cut a BuildID.
+    let mut console = String::from_utf8_lossy(&finished.output).into_owned();
     // The info is read apart, as text anyone can write into an app's settings could pass for a
     // line of the build.
     let info = info_of.map(|app| {
@@ -624,14 +694,80 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
     } else {
         None
     };
+    let (redactor, written, line) = match after {
+        Ok(after) => {
+            let redactor = before.clone().and(after);
+            let saved = fs::write(steam.saved, redactor.redact(&finished.output));
+            let (written, line) = console_line(steam, saved.err(), removed);
+            (Some(redactor), written, line)
+        }
+        Err(error) => {
+            let removed_logs = redact::remove_logs(&steam.prepared.output);
+            (None, false, logs_removed(steam, &error, removed_logs.err()))
+        }
+    };
     Ok(Ran {
         outcome,
         retry,
         spinner,
         took,
         redactor,
+        before,
         info,
+        log: line,
+        written,
     })
+}
+
+/// Whether steamcmd's console was saved, and the `log` line that says where its logs are. `failed`
+/// is why the console could not be written, and `removed` why the earlier one could not go.
+fn console_line(
+    steam: &Steam<'_>,
+    failed: Option<io::Error>,
+    removed: Option<io::Error>,
+) -> (bool, String) {
+    let own = steam.prepared.log();
+    let Some(error) = failed else {
+        let line = format!(
+            "log  {}, and steamcmd's own log in {}",
+            steam.saved.display(),
+            own.display()
+        );
+        return (true, line);
+    };
+    let line = format!(
+        "log  steamcmd's own log is in {}. Its console could not be written to {}: {error}{}",
+        own.display(),
+        steam.saved.display(),
+        earlier_kept(removed)
+    );
+    (false, line)
+}
+
+/// The words that say the earlier console could not be removed, or none when it could.
+pub(crate) fn earlier_kept(removed: Option<io::Error>) -> String {
+    removed.map_or_else(String::new, |why| {
+        format!(". The earlier console could not be removed: {why}")
+    })
+}
+
+/// The `log` line for a run whose login could not be read again, as upload and workshop say it.
+pub(crate) fn login_unread(error: &io::Error) -> String {
+    format!(
+        "log  none kept, since steamcmd's login could not be read again to hide its secrets: \
+         {error}"
+    )
+}
+
+/// The `log` line for a run whose login could not be read again, so that none of its logs may be
+/// kept. `removed` is why the logs of the build's folder could not all go.
+fn logs_removed(steam: &Steam<'_>, error: &io::Error, removed: Option<io::Error>) -> String {
+    let output = steam.prepared.output.display();
+    let kept = login_unread(error);
+    removed.map_or_else(
+        || format!("{kept}. The logs in {output} were removed"),
+        |why| format!("{kept}. {why}. Remove the logs in {output}"),
+    )
 }
 
 /// Asks Steam, when a key is at hand, whether `build_id` is what is live on `branch` now. False
@@ -698,14 +834,16 @@ fn found_on_steam(
     }
 }
 
-/// What an upload's ending is said with: the spinner still turning, how long steamcmd took,
-/// where its console was saved, the login handed over if any, the Web API to set the build live
-/// on the default branch with, when asked to.
+/// What the end of an upload is said with: the spinner, steamcmd's duration, the `log` line,
+/// whether steamcmd's lines may be shown and the redactor for them, the login handed over, and the
+/// Web API for setting the build live.
 struct Reporting<'upload> {
     spinner: Spinner,
     took: &'upload str,
     prepared: &'upload upload::Prepared,
-    saved: &'upload Path,
+    log: &'upload str,
+    shown: bool,
+    redactor: &'upload Redactor,
     packed: Option<&'upload ci::Login>,
     default: Option<&'upload webapi::Api>,
 }
@@ -725,33 +863,30 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
         spinner,
         took,
         prepared,
-        saved,
+        log: logs,
+        shown,
+        redactor,
         packed,
         default,
     } = reporting;
     let app = prepared.app_id;
-    let logs = format!(
-        "log  {}, and steamcmd's own in {}",
-        saved.display(),
-        prepared.log().display()
-    );
     let code = match outcome {
         upload::Outcome::Built { build_id } => {
             spinner.done(&format!("uploaded in {took}"));
             hand_on(*build_id);
             if let Some(branch) = &prepared.held_back {
-                return first_on_default(app, *build_id, branch, default, &logs);
+                return first_on_default(app, *build_id, branch, default, logs);
             }
-            return set_live(app, *build_id, prepared.set_live.as_deref(), default, &logs);
+            return set_live(app, *build_id, prepared.set_live.as_deref(), default, logs);
         }
         upload::Outcome::Previewed => {
             spinner.done(&format!("dry run finished in {took}"));
-            show::success("nothing was uploaded, as asked", &logs);
+            show::success("nothing was uploaded, as asked", logs);
             ExitCode::SUCCESS
         }
         upload::Outcome::NotLoggedIn(line) => {
             spinner.failed(&format!("refused after {took}"));
-            login_refused(line, packed)
+            login_refused(&redacted(redactor, line), packed)
         }
         upload::Outcome::BuiltThenFailed { build_id, reasons } => {
             spinner.failed(&format!("failed after {took}"));
@@ -760,8 +895,8 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
                 "",
                 None,
             );
-            for reason in reasons {
-                show::failure(reason, "", None);
+            for reason in reasons.iter().filter(|_| shown) {
+                show::failure(&redacted(redactor, reason), "", None);
             }
             if let Some(why) = upload::commit_refused(reasons, prepared.set_live.as_deref()) {
                 show::note(&why);
@@ -780,14 +915,14 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
                     after: "",
                 });
             }
-            show::note(&logs);
+            show::note(logs);
             hand_on(*build_id);
             ExitCode::from(UNFINISHED)
         }
         upload::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
-            for reason in reasons {
-                show::failure(reason, "", None);
+            for reason in reasons.iter().filter(|_| shown) {
+                show::failure(&redacted(redactor, reason), "", None);
             }
             let kept = upload::commit_refused(reasons, prepared.set_live.as_deref());
             if let Some(why) = &kept {
@@ -799,11 +934,16 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
                     after: "",
                 });
             }
-            show::note(&logs);
+            show::note(logs);
             ExitCode::from(if kept.is_some() { UNFINISHED } else { FAILED })
         }
     };
     (code, Live::default())
+}
+
+/// `text` with every secret `redactor` knows replaced.
+pub(crate) fn redacted(redactor: &Redactor, text: &str) -> String {
+    String::from_utf8_lossy(&redactor.redact(text.as_bytes())).into_owned()
 }
 
 /// Says where `build_id`, just uploaded for `app`, is live: on `branch`, which the script set it
