@@ -128,7 +128,7 @@ pub fn refused_login(console: &str) -> Option<String> {
     })
 }
 
-/// Whether `reason` is Steam limiting login attempts, which a new login only deepens.
+/// Whether `reason` is Steam limiting login attempts. A new login adds attempts.
 #[must_use]
 pub fn limited(reason: &str) -> bool {
     ["Account Login Denied Throttle", "Rate Limit Exceeded"]

@@ -81,12 +81,13 @@ fn not_logged_in(reason: &str) -> ExitCode {
 
 /// [`not_logged_in`], exiting with `code`.
 fn not_logged_in_with(reason: &str, code: u8) -> ExitCode {
-    let again = Hint {
+    // A new login adds attempts while Steam is limiting them, and `reason` already says to wait.
+    let again = (code != LIMITED).then_some(Hint {
         before: "run ",
         command: "steamship login",
         after: " to try again",
-    };
-    show::failure("not logged in", reason, Some(again));
+    });
+    show::failure("not logged in", reason, again);
     ExitCode::from(code)
 }
 

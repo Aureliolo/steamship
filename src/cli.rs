@@ -22,11 +22,11 @@ pub const FAILED: u8 = 1;
 pub const REFUSED: u8 = 2;
 /// steamcmd has no login it can use. Run `login` again.
 pub const LOGIN: u8 = 3;
-/// steamcmd is not the pinned one, or could not be installed.
+/// steamcmd's install is missing, altered or failed.
 pub const STEAMCMD: u8 = 4;
-/// A build or Workshop item was made, then a step failed. A second run would make another.
+/// A build or Workshop item was made but is not live or not kept. A second run would make another.
 pub const UNFINISHED: u8 = 5;
-/// Steam is limiting login attempts. The login is kept.
+/// Steam is limiting login attempts.
 pub const LIMITED: u8 = 6;
 
 /// What a shell sees when a signal reaches steamship, which is no code of the table.
@@ -37,7 +37,7 @@ pub const EXIT_CODES: [(u8, &str); 7] = [
     (0, "Done"),
     (
         FAILED,
-        "The command failed and printed why. A second run makes nothing twice. An upload also prints its logs' paths",
+        "The command failed and printed why. Nothing new is on Steam. An upload also prints its logs' paths",
     ),
     (
         REFUSED,
@@ -45,19 +45,19 @@ pub const EXIT_CODES: [(u8, &str); 7] = [
     ),
     (
         LOGIN,
-        "Not logged in, or the token expired. Run `steamship login`",
+        "Not logged in, or Steam refused the saved login. Run `steamship login`",
     ),
     (
         STEAMCMD,
-        "steamcmd is not the pinned one, or could not be installed. Nothing was made that a second run would make again",
+        "steamcmd's install is missing, altered or failed. Nothing was made",
     ),
     (
         UNFINISHED,
-        "A build or Workshop item was made, then a step failed. A second run would make another. The output says what is left to do",
+        "A build or Workshop item was made but is not live or not kept. A second run would make another. The output says what to do",
     ),
     (
         LIMITED,
-        "Steam is limiting login attempts. The login is kept. Wait, then run again",
+        "Steam is limiting login attempts. Wait, then run again",
     ),
 ];
 
@@ -1215,11 +1215,7 @@ mod tests {
             codes,
             [0, FAILED, REFUSED, LOGIN, STEAMCMD, UNFINISHED, LIMITED]
         );
-        assert_eq!(
-            codes,
-            [0, 1, 2, 3, 4, 5, 6],
-            "the codes scripts already test for"
-        );
+        assert_eq!(codes, [0, 1, 2, 3, 4, 5, 6], "each code keeps its number");
     }
 
     /// Not names of variables, though they are in capitals in a file that reads some.

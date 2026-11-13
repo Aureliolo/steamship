@@ -167,7 +167,7 @@ fn login_with_a_wrong_password_says_steam_refused_it_and_exits_1() {
 }
 
 #[test]
-fn a_typed_login_steam_limits_exits_6() {
+fn a_typed_login_that_steam_limits_exits_6() {
     let home = faked_with(
         "#!/bin/sh\n\
          echo 'Cached credentials not found.'\n\
@@ -182,6 +182,12 @@ fn a_typed_login_steam_limits_exits_6() {
     assert_eq!(
         failure(&stderr),
         "not logged in: Steam is limiting login attempts. Wait, then try again"
+    );
+    assert!(
+        stderr
+            .trim_end()
+            .ends_with("Steam is limiting login attempts. Wait, then try again"),
+        "exit 6 gives no hint to log in again: {stderr}"
     );
     assert!(!home.path().join("account").exists());
 }

@@ -1250,7 +1250,7 @@ fn an_upload_without_a_login_says_to_log_in_and_exits_3() {
 }
 
 #[test]
-fn an_upload_steam_limits_exits_6_and_a_refused_login_3() {
+fn an_upload_exits_6_when_steam_limits_logins_and_3_when_it_refuses_the_login() {
     let (_project, script) = project(true);
     for (reason, expected) in [("Rate Limit Exceeded", 6_i32), ("Invalid Password", 3_i32)] {
         let home = faked_with(&format!(
