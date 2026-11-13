@@ -385,6 +385,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         log: &log,
         shown: redactor.is_some(),
         redactor: redactor.as_ref().unwrap_or(&before),
+        answers: redactor.as_ref(),
         packed: packed.as_ref(),
         default: default.as_ref().map(|(api, _)| api),
     };
@@ -972,7 +973,7 @@ fn logs_removed(steam: &Steam<'_>, error: &io::Error, removed: Option<io::Error>
 /// Asks Steam, when a key is at hand, whether `build_id` is what is live on `branch` now. False
 /// only when Steam shows another build there, or no such branch. Asked a few times, since a
 /// build just set live may not show at once. A Steam that cannot be asked holds nothing up.
-fn confirmed_live(app: u32, branch: &str, build_id: u64, redactor: &Redactor) -> bool {
+fn confirmed_live(app: u32, branch: &str, build_id: u64, answers: Option<&Redactor>) -> bool {
     const APART: Duration = Duration::from_secs(2);
     let Ok(Some(api)) = key_at_hand() else {
         return true;
@@ -997,7 +998,7 @@ fn confirmed_live(app: u32, branch: &str, build_id: u64, redactor: &Redactor) ->
         }
         Err(error) => {
             spinner.failed("not confirmed");
-            show::aside(&redacted(redactor, &error.to_string()));
+            show::aside(&steams_words(&error, answers));
             true
         }
     }
@@ -1035,7 +1036,8 @@ fn found_on_steam(
 
 /// What the end of an upload is said with: the spinner, steamcmd's duration, the `log` line,
 /// whether steamcmd's lines may be shown and the redactor for them, the login handed over, and the
-/// Web API for setting the build live.
+/// Web API for setting the build live. `answers` is the redactor of the login after the run, none
+/// when it could not be read, and the Web API's words are shown only through it.
 struct Reporting<'upload> {
     spinner: Spinner,
     took: &'upload str,
@@ -1043,6 +1045,7 @@ struct Reporting<'upload> {
     log: &'upload str,
     shown: bool,
     redactor: &'upload Redactor,
+    answers: Option<&'upload Redactor>,
     packed: Option<&'upload ci::Login>,
     default: Option<&'upload webapi::Api>,
 }
@@ -1089,6 +1092,7 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> Reported {
         log: logs,
         shown,
         redactor,
+        answers,
         packed,
         default,
     } = reporting;
@@ -1105,10 +1109,10 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> Reported {
                         prepared.set_live.as_deref(),
                         default,
                         logs,
-                        redactor,
+                        answers,
                     )
                 },
-                |branch| first_on_default(app, *build_id, branch, default, logs, redactor),
+                |branch| first_on_default(app, *build_id, branch, default, logs, answers),
             );
             return live;
         }
@@ -1203,6 +1207,12 @@ fn refused(
     (ExitCode::from(code), Failure::of_reasons(word, lines, logs))
 }
 
+/// `error` as a person reads it, with the words Steam gave redacted, or withheld when no redactor
+/// could be built.
+fn steams_words(error: &webapi::Error, answers: Option<&Redactor>) -> String {
+    error.said_with(&|steam| redact::answer(answers, steam))
+}
+
 /// `text` with every secret `redactor` knows replaced, for what steamship prints after judging it.
 /// The account's name stays: it can be a word of steamship's own sentences.
 pub(crate) fn redacted(redactor: &Redactor, text: &str) -> String {
@@ -1218,10 +1228,10 @@ fn set_live(
     branch: Option<&str>,
     default: Option<&webapi::Api>,
     logs: &str,
-    redactor: &Redactor,
+    answers: Option<&Redactor>,
 ) -> Reported {
     if let Some(branch) = branch
-        && !confirmed_live(app, branch, build_id, redactor)
+        && !confirmed_live(app, branch, build_id, answers)
     {
         let headline = format!(
             "app {app}: BuildID {build_id} uploaded, but Steam does not show it live on {branch}"
@@ -1243,7 +1253,7 @@ fn set_live(
         default: false,
     };
     if let Some(api) = default {
-        if let Err(why) = live_on_default(api, app, build_id, branch, redactor) {
+        if let Err(why) = live_on_default(api, app, build_id, branch, answers) {
             show::note(logs);
             return Reported::unfinished(live, &why, "");
         }
@@ -1272,7 +1282,7 @@ fn first_on_default(
     branch: &str,
     default: Option<&webapi::Api>,
     logs: &str,
-    redactor: &Redactor,
+    answers: Option<&Redactor>,
 ) -> Reported {
     let make = format!(
         "make {branch} in Steamworks under SteamPipe, Builds, and set the build live there with "
@@ -1301,7 +1311,7 @@ fn first_on_default(
         show::note(logs);
         return Reported::unfinished(Live::default(), &headline, &reason);
     };
-    let reported = set_live(app, build_id, None, Some(api), logs, redactor);
+    let reported = set_live(app, build_id, None, Some(api), logs, answers);
     if reported.live.default {
         show::note(&format!(
             "not set live on {branch}: Steam gives app {app} no branch but default until a build \
@@ -1324,7 +1334,7 @@ fn live_on_default(
     app: u32,
     build_id: u64,
     branch: Option<&str>,
-    redactor: &Redactor,
+    answers: Option<&Redactor>,
 ) -> Result<(), String> {
     let spinner = Spinner::start("default", "setting it live", false);
     let Err(error) = api.set_live(app, build_id, branch::DEFAULT_KEY) else {
@@ -1336,7 +1346,7 @@ fn live_on_default(
     let headline = format!(
         "app {app}: BuildID {build_id} uploaded{also}, but Steam did not set it live on default"
     );
-    let reason = redacted(redactor, &error.to_string());
+    let reason = steams_words(&error, answers);
     show::failure(
         &headline,
         &reason,

@@ -228,6 +228,40 @@ fn with_unreadable_login_files_a_result_number_steamship_gives_is_still_shown() 
     );
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     assert_eq!(failure(&stderr), "Steam says: result 8", "{stderr}");
+
+    let (numbered, _numbered_requests) = web_api(vec![("200 OK\r\nX-eresult: 8", "{}")]);
+    let (eresult, said, why) = steamship(
+        &["promote", "1000010", "--build", "7", "--branch", "testing"],
+        Some(home.path()),
+        &web_api_variables(&numbered),
+    );
+    assert_eq!(eresult, Some(1_i32), "{said}{why}");
+    assert_eq!(failure(&why), "Steam says: EResult 8", "{why}");
+}
+
+#[test]
+fn an_eresult_header_that_is_not_a_number_is_steams_text_and_is_redacted() {
+    let home = crate::faked();
+    saved_login(home.path());
+    let (host, _requests) = web_api(vec![(
+        "200 OK\r\nX-eresult: a_saved_login_token_0123456789",
+        "{}",
+    )]);
+    let (code, stdout, stderr) = steamship(
+        &["promote", "1000010", "--build", "7", "--branch", "testing"],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        !format!("{stdout}{stderr}").contains("a_saved_login_token_0123456789"),
+        "a secret was printed"
+    );
+    assert_eq!(
+        failure(&stderr),
+        "Steam says: EResult [redacted]",
+        "{stderr}"
+    );
 }
 
 #[test]

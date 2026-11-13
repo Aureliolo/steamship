@@ -1096,6 +1096,43 @@ fn a_retry_that_cannot_start_prints_the_line_of_the_run_before_it() {
 }
 
 #[test]
+fn a_token_steamcmd_renewed_is_not_printed_when_its_login_cannot_be_read_after_the_run() {
+    let renewed = "a_renewed_login_token_9876543210";
+    let home = faked_with(&format!(
+        "{}\nrm -f \"$HOME/Steam/config/config.vdf\"; mkdir -p \"$HOME/Steam/config/config.vdf\"\n",
+        released_as("prerelease")
+    ));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let answer = format!(r#"{{"response": {{"message": "{renewed}"}}}}"#);
+    let (host, _requests) = web_api(vec![
+        ("200 OK", BETAS.to_owned()),
+        ("500 Internal Server Error", answer.clone()),
+        ("500 Internal Server Error", answer),
+    ]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(
+        !format!("{stdout}{stderr}").contains(renewed),
+        "a secret was printed: {stdout}{stderr}"
+    );
+    let message = text_at(&summary_of(&stdout), "/error/message");
+    assert!(
+        message.contains("Steam did not set it live on default: Steam answered HTTP 500: withheld"),
+        "{message}"
+    );
+    assert!(
+        stderr.contains("Steam answered HTTP 500: withheld"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn a_secret_in_steams_answer_is_hidden_in_the_json_message() {
     let home = faked_with(&released_as("prerelease"));
     let [token, _] = SECRETS;
