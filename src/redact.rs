@@ -251,6 +251,16 @@ mod tests {
         remove_logs(&folder.path().join("missing")).unwrap();
     }
 
+    #[test]
+    fn a_folder_that_cannot_be_listed_is_an_error_that_names_it() {
+        let folder = tempfile::tempdir().unwrap();
+        let file = folder.path().join("not_a_folder");
+        fs::write(&file, "one").unwrap();
+        let error = remove_logs(&file).unwrap_err();
+        assert!(error.to_string().contains("not_a_folder"), "{error}");
+        assert!(file.is_file());
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_log_that_cannot_be_removed_is_an_error_that_names_it() {
