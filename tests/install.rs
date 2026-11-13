@@ -900,3 +900,18 @@ fn a_home_with_a_record_and_no_install_installs_again() {
     assert!(!staging.exists());
     assert!(!setup.home.join("steamcmd.old").exists());
 }
+
+#[test]
+fn a_record_that_cannot_be_removed_stops_the_install_before_it_changes_the_home() {
+    let setup = Setup::new();
+    drop(logged_in(&setup));
+    let record = setup.home.join("steamcmd.inventory");
+    fs::remove_file(&record).unwrap();
+    fs::create_dir_all(&record).unwrap();
+    let manifest = second(&setup, &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
+    let (path, said) = refusal(setup.install(&manifest, &Cell::new(0)));
+    assert_eq!(path, record);
+    assert!(said.ends_with(PATH_STEP), "{said}");
+    assert_eq!(token(&setup), b"token");
+    assert!(setup.root().join("steamcmd.bin").exists());
+}
