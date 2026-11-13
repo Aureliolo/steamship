@@ -985,6 +985,30 @@ fn an_upload_steam_limits_says_login_limited_as_json() {
 }
 
 #[test]
+fn a_packed_login_steam_refuses_says_when_it_was_packed_as_json() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)\"\n\
+         exit 5\n",
+    );
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--json"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/error/code"), "not-logged-in", "{line}");
+    assert_eq!(
+        text_at(&line, "/error/message"),
+        "not logged in: Steam refused the saved login (Expired Login Auth Code). The login in \
+         STEAMSHIP_LOGIN was packed on 2026-09-28"
+    );
+}
+
+#[test]
 fn a_build_up_before_steamcmd_altered_itself_says_so_as_json() {
     let up = faked_with(&built_then("echo >> \"$0\""));
     let (_project, script) = project(true);

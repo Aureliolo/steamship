@@ -195,17 +195,26 @@ pub(crate) fn login_refused(
     redactor: &Redactor,
     packed: Option<&ci::Login>,
 ) -> ExitCode {
+    login_refusal(reason, redactor, packed).0
+}
+
+/// As [`login_refused`], and also answers the text it printed.
+pub(crate) fn login_refusal(
+    reason: &str,
+    redactor: &Redactor,
+    packed: Option<&ci::Login>,
+) -> (ExitCode, String) {
     let (words, log_in_again) = conversation::saved_login_words(reason);
-    let words = redacted(redactor, &words);
+    let mut said = redacted(redactor, &words);
     match packed.and_then(ci::Login::packed_on) {
-        _ if !log_in_again => show::failure("not logged in", &words, None),
+        _ if !log_in_again => show::failure("not logged in", &said, None),
         None => {
             let again = Hint {
                 before: "log the build account in again with ",
                 command: "steamship login",
                 after: "",
             };
-            show::failure("not logged in", &words, Some(again));
+            show::failure("not logged in", &said, Some(again));
         }
         Some(day) => {
             let again = Hint {
@@ -213,14 +222,12 @@ pub(crate) fn login_refused(
                 command: "steamship login",
                 after: ", then run steamship ci to pack the new login",
             };
-            show::failure(
-                "not logged in",
-                &format!("{words}. The login in {} was packed on {day}", ci::VARIABLE),
-                Some(again),
-            );
+            said = format!("{said}. The login in {} was packed on {day}", ci::VARIABLE);
+            show::failure("not logged in", &said, Some(again));
         }
     }
-    ExitCode::from(if log_in_again { LOGIN } else { LIMITED })
+    let code = ExitCode::from(if log_in_again { LOGIN } else { LIMITED });
+    (code, format!("not logged in: {said}"))
 }
 
 /// The exit code for what Steam made of the saved login, or of the one handed over in `packed`.

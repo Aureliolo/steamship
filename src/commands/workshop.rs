@@ -20,7 +20,7 @@ use steamship::{ci, dump, release, scripts, steamcmd, workshop};
 use super::exit::{fail, late};
 use super::game::{app_named, app_or_game, game, script_given, shipped_from};
 use super::ready::{
-    dump_in_actions, home, login_refused, named, ready, restore, run_as, steamcmd_failed,
+    dump_in_actions, home, login_refusal, named, ready, restore, run_as, steamcmd_failed,
 };
 use super::released::{refused_unless, release_shown};
 use super::upload::{
@@ -416,8 +416,8 @@ fn upload_item(
         }
         workshop::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
-            let refused = login_refused(&reason, redactor_in_use, packed);
-            let failure = login_failure(refused, &redacted(redactor_in_use, &reason));
+            let (refused, message) = login_refusal(&reason, redactor_in_use, packed);
+            let failure = login_failure(refused, message);
             let (code, unkept) = after_failure(given, item, copied, &log, refused);
             (code, unkept, Some(failure))
         }

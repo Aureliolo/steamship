@@ -17,8 +17,8 @@ use steamship::project;
 use steamship::redact::{self, Redactor};
 use steamship::show::{self, Hint, Spinner};
 use steamship::{
-    branch, builds, check, ci, conversation, download, dump, green, keychain, ledger, redist,
-    release, run, settings, steamcmd, upload, webapi,
+    branch, builds, check, ci, download, dump, green, keychain, ledger, redist, release, run,
+    settings, steamcmd, upload, webapi,
 };
 
 use super::branch::try_branch;
@@ -30,7 +30,7 @@ use super::exit::{either, fail, first_failure, late};
 use super::game::{game_as, game_script, script_given, script_named, shipped_from};
 use super::key::{KeyFrom, key_at_hand, key_variable, offer_to_keep, web_api};
 use super::ready::{
-    dump_in_actions, login_refused, named, ready, restore, run_as, steamcmd_failed,
+    dump_in_actions, login_refusal, named, ready, restore, run_as, steamcmd_failed,
 };
 use super::released::{DEFAULT_RELEASED, app_info, default_unreleased, release_judged};
 use super::settings::try_settings;
@@ -489,17 +489,14 @@ impl Failure {
     }
 }
 
-/// The failure of a login Steam refused for `reason`, which [`login_refused`] answered `code` for.
-pub(crate) fn login_failure(code: ExitCode, reason: &str) -> Failure {
-    let (words, _) = conversation::saved_login_words(reason);
-    Failure {
-        code: if code == ExitCode::from(LIMITED) {
-            "login-limited"
-        } else {
-            "not-logged-in"
-        },
-        message: said("not logged in", &words),
-    }
+/// The failure of a login Steam refused, which [`login_refusal`] answered `code` and `message` for.
+pub(crate) fn login_failure(code: ExitCode, message: String) -> Failure {
+    let word = if code == ExitCode::from(LIMITED) {
+        "login-limited"
+    } else {
+        "not-logged-in"
+    };
+    Failure::new(word, message)
 }
 
 /// `headline` and `reason` as `show::failure` prints them, without its mark.
@@ -1123,8 +1120,8 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> Reported {
         }
         upload::Outcome::NotLoggedIn(line) => {
             spinner.failed(&format!("refused after {took}"));
-            let code = login_refused(line, redactor, packed);
-            (code, Some(login_failure(code, &redacted(redactor, line))))
+            let (code, message) = login_refusal(line, redactor, packed);
+            (code, Some(login_failure(code, message)))
         }
         upload::Outcome::BuiltThenFailed { build_id, reasons } => {
             spinner.failed(&format!("failed after {took}"));
