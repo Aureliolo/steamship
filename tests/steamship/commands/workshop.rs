@@ -362,7 +362,8 @@ fn an_item_made_by_a_run_that_then_failed_is_kept_and_exits_1() {
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     assert!(
         stderr.contains("Failed to update workshop item (Access Denied).")
-            && stdout.contains("Workshop item 777"),
+            && stderr.contains("app 480: Workshop item 777 was made before the run failed")
+            && stderr.contains("kept as example in "),
         "{stdout}{stderr}"
     );
     assert_eq!(
@@ -384,8 +385,8 @@ fn an_item_a_failed_run_made_from_a_script_exits_5_and_names_its_id() {
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     assert!(
         stderr.contains("Failed to update workshop item (Access Denied).")
-            && stdout.contains("Workshop item 777")
-            && stdout.contains("\"publishedfileid\" \"777\""),
+            && stderr.contains("app 480: Workshop item 777 was made before the run failed")
+            && stderr.contains("Add \"publishedfileid\" \"777\" to "),
         "{stdout}{stderr}"
     );
     assert_eq!(fs::read_to_string(&script).unwrap(), before);
@@ -444,8 +445,8 @@ fn an_item_made_from_a_script_before_steam_refused_the_login_exits_5_and_names_i
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     assert!(
         stderr.contains("not logged in")
-            && stdout.contains("Workshop item 777")
-            && stdout.contains("\"publishedfileid\" \"777\""),
+            && stderr.contains("app 480: Workshop item 777 was made before the run failed")
+            && stderr.contains("Add \"publishedfileid\" \"777\" to "),
         "{stdout}{stderr}"
     );
     assert_eq!(fs::read_to_string(&script).unwrap(), before);

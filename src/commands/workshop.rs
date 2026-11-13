@@ -328,7 +328,7 @@ fn upload_item(
     let (code, unkept) = match outcome {
         workshop::Outcome::Published { published } => {
             spinner.done(&format!("uploaded in {took}"));
-            let said = item_published(given, item, published, &log);
+            let said = item_published(given, item, published, &log, false);
             // A new item's line has no room for the log, which matters most when it was not kept.
             if !written && item.published.is_none() {
                 show::note(&log);
@@ -365,9 +365,8 @@ fn upload_item(
     Ok((code, unkept))
 }
 
-/// The exit of a failed run of `item`, given as `given`, whose own exit is `code`. An ID in the
-/// copy steamcmd was given (`copied`) that the item lacked means Steam made the item, so it is
-/// kept or named all the same, and the exit is 5 when no file holds it.
+/// The exit of a failed run. When Steam made the item during it (`copied` holds an ID that `item`
+/// lacked), the ID is kept or named as after a success, and the exit is 5 if no file holds it.
 fn after_failure(
     given: &Given<'_>,
     item: &workshop::Item,
@@ -378,7 +377,7 @@ fn after_failure(
     copied
         .filter(|_| item.published.is_none())
         .map_or((code, false), |published| {
-            let (_, unkept) = item_published(given, item, published, log);
+            let (_, unkept) = item_published(given, item, published, log, true);
             (late(code, unkept), unkept)
         })
 }
@@ -431,7 +430,8 @@ fn item_summary(
 }
 
 /// Says that `item`, given as `given`, is up as `published`, and keeps a new one's ID where it
-/// was given by its fields. An item a failed run made is kept or named all the same.
+/// was given by its fields. A failed run's new item is kept or named the same way, as notes
+/// since the run did not succeed.
 ///
 /// Returns whether the item's ID is in no file, which means a second run would make another item.
 fn item_published(
@@ -439,24 +439,27 @@ fn item_published(
     item: &workshop::Item,
     published: u64,
     log: &str,
+    failed: bool,
 ) -> (ExitCode, bool) {
     output("published-file-id", published, "the item's ID");
     let said = format!("app {}: Workshop item {published}", item.app_id);
     match (given, item.published) {
         (_, Some(_)) => show::success(&said, log),
         (Given::Script(script), None) => {
-            show::success(
-                &said,
-                &format!(
-                    "a new item. Add \"publishedfileid\" \"{published}\" to {} so that later \
-                     uploads update it",
-                    script.display()
-                ),
+            let add = format!(
+                "Add \"publishedfileid\" \"{published}\" to {} so that later uploads update it",
+                script.display()
             );
+            if failed {
+                show::note(&format!("{said} was made before the run failed"));
+                show::note(&add);
+            } else {
+                show::success(&said, &format!("a new item. {add}"));
+            }
             return (ExitCode::SUCCESS, true);
         }
         (Given::Fields(_, kept), None) => {
-            let code = keep_item(kept, item.app_id, published);
+            let code = keep_item(kept, item.app_id, published, failed);
             return (code, code != ExitCode::SUCCESS);
         }
     }
@@ -516,7 +519,7 @@ fn given_fields<'command>(
 /// Writes `published`, the item just made for `app_id`, into the `--items` file under its name,
 /// and says so. The file is read again first, so an item an earlier one of the run kept stays.
 /// When the file cannot be read or written, it says what to add to it by hand.
-fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
+fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64, failed: bool) -> ExitCode {
     let written = record_in(kept.path, app_id).and_then(|mut record| {
         let _: Option<u64> = record.items.insert(kept.name.to_owned(), published);
         kept.path
@@ -526,6 +529,17 @@ fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
             .map_err(|error| format!("{}: {error}", kept.path.display()))
     });
     match written {
+        Ok(()) if failed => {
+            show::note(&format!(
+                "app {app_id}: Workshop item {published} was made before the run failed"
+            ));
+            show::note(&format!(
+                "kept as {} in {}. Commit it so that later uploads update it",
+                kept.name,
+                kept.path.display()
+            ));
+            ExitCode::SUCCESS
+        }
         Ok(()) => {
             show::success(
                 &format!("app {app_id}: Workshop item {published}"),
