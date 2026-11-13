@@ -64,7 +64,10 @@ use windows_sys::Win32::System::JobObjects::{
 use windows_sys::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
-use windows_sys::Win32::System::StationsAndDesktops::{CloseDesktop, CreateDesktopW, HDESK};
+use windows_sys::Win32::System::StationsAndDesktops::{
+    CloseDesktop, CreateDesktopW, GetProcessWindowStation, GetUserObjectInformationW, HDESK,
+    UOI_NAME,
+};
 use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows_sys::Win32::System::Threading::{
     CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
@@ -282,21 +285,58 @@ const PIPED: PROCESS_CREATION_FLAGS = CREATION | CREATE_NO_WINDOW;
 
 /// The desktop a program runs on. Nobody switches to it, so nothing on it is ever seen, and
 /// Windows keeps the keyboard focus from crossing from one desktop to another.
+///
+/// Its name carries the station it is on. In the session of whoever is signed in, Windows looks a
+/// desktop named alone up on `WinSta0`, whatever station it was made on.
 #[derive(Debug)]
 struct Desktop {
     handle: HDESK,
     name: Vec<u16>,
 }
 
+/// The name of the window station this process is on, which goes in front of a desktop's name.
+fn station() -> io::Result<Vec<u16>> {
+    // SAFETY: takes no arguments. The handle belongs to the process and is never closed.
+    let station = unsafe { GetProcessWindowStation() };
+    let mut needed = 0_u32;
+    // SAFETY: no buffer with a length of 0 is how the needed size is asked for. The call then
+    // fails with ERROR_INSUFFICIENT_BUFFER, which is expected.
+    let _: BOOL = unsafe {
+        GetUserObjectInformationW(station, UOI_NAME, ptr::null_mut(), 0, &raw mut needed)
+    };
+    let length = usize::try_from(needed).map_err(io::Error::other)?;
+    let mut name = vec![0_u16; length.div_ceil(2)];
+    // SAFETY: `name` holds at least `needed` bytes and outlives the call.
+    if unsafe {
+        GetUserObjectInformationW(
+            station,
+            UOI_NAME,
+            name.as_mut_ptr().cast(),
+            needed,
+            &raw mut needed,
+        )
+    } == 0_i32
+    {
+        return Err(io::Error::last_os_error());
+    }
+    let end = name
+        .iter()
+        .position(|&unit| unit == 0)
+        .unwrap_or(name.len());
+    name.truncate(end);
+    Ok(name)
+}
+
 impl Desktop {
     fn create() -> io::Result<Self> {
+        let station = station()?;
         let number = DESKTOPS.fetch_add(1, Ordering::Relaxed);
-        let name = wide(OsStr::new(&format!("steamship-{}-{number}", process::id())));
-        // SAFETY: `name` is NUL-terminated and outlives the call. Null for the other arguments
+        let bare = wide(OsStr::new(&format!("steamship-{}-{number}", process::id())));
+        // SAFETY: `bare` is NUL-terminated and outlives the call. Null for the other arguments
         // means the default display settings and security.
         let handle = unsafe {
             CreateDesktopW(
-                name.as_ptr(),
+                bare.as_ptr(),
                 ptr::null(),
                 ptr::null(),
                 0,
@@ -307,6 +347,9 @@ impl Desktop {
         if handle.is_null() {
             Err(io::Error::last_os_error())
         } else {
+            let mut name = station;
+            name.push(0x5C);
+            name.extend_from_slice(&bare);
             Ok(Self { handle, name })
         }
     }
@@ -1639,10 +1682,15 @@ mod tests {
         CreateWellKnownSid, INHERITED_ACE, SECURITY_MAX_SID_SIZE, WinLocalSystemSid,
     };
     use windows_sys::Win32::System::StationsAndDesktops::EnumDesktopWindows;
+    use windows_sys::Win32::System::StationsAndDesktops::{
+        CreateWindowStationW, SetProcessWindowStation,
+    };
     use windows_sys::Win32::System::StationsAndDesktops::{DESKTOP_READOBJECTS, OpenDesktopW};
     use windows_sys::Win32::System::Threading::GetProcessId;
     use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindowVisible};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowThreadProcessId, IsWindowVisible, WINSTA_ALL_ACCESS,
+    };
 
     /// A library Windows installs with a signature of its own inside it, rather than in a
     /// catalogue, which is the kind steamcmd's files carry.
@@ -1900,10 +1948,75 @@ mod tests {
     #[test]
     fn a_desktop_goes_away_once_steamship_lets_go_of_it() {
         let desktop = Desktop::create().unwrap();
-        let name = desktop.name.clone();
+        let slash = desktop.name.iter().position(|&unit| unit == 0x5C).unwrap();
+        let (_, rest) = desktop.name.split_at(slash.saturating_add(1));
+        let name = rest.to_vec();
         assert!(desktop_exists(&name));
         drop(desktop);
         assert!(!desktop_exists(&name));
+    }
+
+    #[test]
+    fn a_desktop_is_named_with_the_station_it_is_on() {
+        let desktop = Desktop::create().unwrap();
+        let name = String::from_utf16_lossy(&desktop.name);
+        let slash = desktop.name.iter().position(|&unit| unit == 0x5C);
+        assert!(slash.is_some_and(|slash| slash > 0), "{name:?}");
+        let nul = desktop.name.iter().position(|&unit| unit == 0);
+        assert_eq!(nul, Some(desktop.name.len().saturating_sub(1)), "{name:?}");
+    }
+
+    #[test]
+    fn a_program_starts_on_its_desktop_when_steamship_is_on_a_station_without_input() {
+        let output = run::output(run::command(env::current_exe().unwrap()).args([
+            "--exact",
+            "windows::tests::a_run_and_a_terminal_from_a_station_without_input",
+            "--ignored",
+        ]))
+        .unwrap();
+        let said = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && said.contains("test result: ok. 1 passed"),
+            "{said}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    #[ignore = "a part of the test above, which runs it in a process of its own"]
+    fn a_run_and_a_terminal_from_a_station_without_input() {
+        // SAFETY: a null name and null security make an unnamed station with default security.
+        let station = unsafe {
+            CreateWindowStationW(
+                ptr::null(),
+                0,
+                WINSTA_ALL_ACCESS.cast_unsigned(),
+                ptr::null(),
+            )
+        };
+        assert!(!station.is_null(), "{}", io::Error::last_os_error());
+        // SAFETY: `station` was just made and stays open for as long as the process runs.
+        let moved = unsafe { SetProcessWindowStation(station) };
+        assert_ne!(moved, 0_i32, "{}", io::Error::last_os_error());
+        let whoami = Path::new(&env::var_os("SystemRoot").unwrap()).join(r"System32\whoami.exe");
+        let finished = run(
+            &whoami,
+            &[],
+            &[],
+            &env::temp_dir(),
+            Duration::from_secs(30),
+            &[],
+            None,
+        )
+        .unwrap();
+        let said = String::from_utf8_lossy(&finished.output);
+        assert_eq!(finished.code, Some(0_i32), "{said}");
+        assert!(said.contains('\\'), "{said}");
+        let (terminal, mut output, _input) =
+            Terminal::start(&whoami, &[], &[], &env::temp_dir()).unwrap();
+        let mut seen = Vec::new();
+        let _: usize = io::Read::read_to_end(&mut output, &mut seen).unwrap();
+        assert_eq!(terminal.wait().unwrap(), Some(0_i32));
     }
 
     #[test]
