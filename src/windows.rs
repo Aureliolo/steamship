@@ -65,8 +65,8 @@ use windows_sys::Win32::System::LibraryLoader::{
     GetProcAddress, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32, LoadLibraryExW,
 };
 use windows_sys::Win32::System::StationsAndDesktops::{
-    CloseDesktop, CreateDesktopW, GetProcessWindowStation, GetUserObjectInformationW, HDESK,
-    UOI_NAME,
+    CloseDesktop, CreateDesktopW, CreateWindowStationW, GetProcessWindowStation,
+    GetUserObjectInformationW, HDESK, HWINSTA, SetProcessWindowStation, UOI_NAME,
 };
 use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows_sys::Win32::System::Threading::{
@@ -78,6 +78,7 @@ use windows_sys::Win32::System::Threading::{
     STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, SetProcessAffinityMask, TerminateProcess,
     UpdateProcThreadAttribute, WaitForSingleObject,
 };
+use windows_sys::Win32::UI::WindowsAndMessaging::WINSTA_ALL_ACCESS;
 use zeroize::{Zeroize as _, Zeroizing};
 
 use crate::keychain;
@@ -283,21 +284,97 @@ const CREATION: PROCESS_CREATION_FLAGS =
 /// in place of the pseudo console, and nothing it wrote would arrive.
 const PIPED: PROCESS_CREATION_FLAGS = CREATION | CREATE_NO_WINDOW;
 
-/// The desktop a program runs on. Nobody switches to it, so nothing on it is ever seen, and
-/// Windows keeps the keyboard focus from crossing from one desktop to another.
+/// The desktop a program runs on. It is made on a station without input or display, so nothing
+/// on it is ever seen, and Windows keeps the keyboard focus from crossing from one station to
+/// another.
+///
+/// A desktop made on `WinSta0` would cost an entry in the Desktop Window Manager's table that
+/// outlives the desktop, and every run would add one until the whole screen stalls. The Desktop
+/// Window Manager keeps nothing for a desktop on a station without display.
 ///
 /// Its name carries the station it is on. In the session of whoever is signed in, Windows looks a
-/// desktop named alone up on `WinSta0`, whatever station it was made on.
+/// desktop named alone up on `WinSta0`.
 #[derive(Debug)]
 struct Desktop {
     handle: HDESK,
     name: Vec<u16>,
 }
 
-/// The name of the window station this process is on, which goes in front of a desktop's name.
-fn station() -> io::Result<Vec<u16>> {
-    // SAFETY: takes no arguments. The handle belongs to the process and is never closed.
-    let station = unsafe { GetProcessWindowStation() };
+/// The station without input that every desktop is made on, with its name.
+///
+/// Windows lets a user make only an unnamed station, which is the one the logon session keeps
+/// for programs without input. So every steamship running under one logon shares it. It is
+/// opened once and held for as long as the process runs, which keeps it from going away between
+/// runs.
+#[derive(Debug)]
+struct Station {
+    handle: HWINSTA,
+    name: Vec<u16>,
+}
+
+// SAFETY: the handle is the process's, valid on any thread, and never closed. Every use of it goes
+// through `STATION`'s lock.
+unsafe impl Send for Station {}
+
+/// The station, once opened. Its lock is also held for as long as the process is moved onto the
+/// station, since the move holds for every thread in the process.
+static STATION: Mutex<Option<Station>> = Mutex::new(None);
+
+impl Station {
+    fn open() -> io::Result<Self> {
+        // SAFETY: a null name and null security make or open the logon session's station
+        // without input, with default security.
+        let handle = unsafe {
+            CreateWindowStationW(
+                ptr::null(),
+                0,
+                WINSTA_ALL_ACCESS.cast_unsigned(),
+                ptr::null(),
+            )
+        };
+        if handle.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(Self {
+            handle,
+            name: station_name(handle)?,
+        })
+    }
+
+    /// Does `work` with the process moved onto the station, which is where `CreateDesktopW` and
+    /// `OpenDesktopW` look. A thread stays on the desktop it already runs on.
+    fn holding<T>(&self, work: impl FnOnce() -> io::Result<T>) -> io::Result<T> {
+        // SAFETY: takes no arguments. The handle belongs to the process and is never closed.
+        let own = unsafe { GetProcessWindowStation() };
+        if own.is_null() {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: the station's handle is open for as long as the process runs.
+        if unsafe { SetProcessWindowStation(self.handle) } == 0_i32 {
+            return Err(io::Error::last_os_error());
+        }
+        let done = work();
+        // SAFETY: `own` is the station the process was on a moment ago, still open.
+        let _: BOOL = unsafe { SetProcessWindowStation(own) };
+        done
+    }
+}
+
+/// Does `work` on the station, opened first if it is not yet.
+fn on_station<T>(work: impl FnOnce(&Station) -> io::Result<T>) -> io::Result<T> {
+    let mut held = STATION.lock().unwrap_or_else(PoisonError::into_inner);
+    let station = match &mut *held {
+        Some(station) => station,
+        None => held.insert(Station::open()?),
+    };
+    let done = station.holding(|| work(station));
+    // Let go only once the process is back on its own station.
+    drop(held);
+    done
+}
+
+/// The name of a window station, which goes in front of a desktop's name.
+fn station_name(station: HWINSTA) -> io::Result<Vec<u16>> {
     let mut needed = 0_u32;
     // SAFETY: no buffer with a length of 0 is how the needed size is asked for. The call then
     // fails with ERROR_INSUFFICIENT_BUFFER, which is expected.
@@ -329,29 +406,29 @@ fn station() -> io::Result<Vec<u16>> {
 
 impl Desktop {
     fn create() -> io::Result<Self> {
-        let station = station()?;
         let number = DESKTOPS.fetch_add(1, Ordering::Relaxed);
         let bare = wide(OsStr::new(&format!("steamship-{}-{number}", process::id())));
-        // SAFETY: `bare` is NUL-terminated and outlives the call. Null for the other arguments
-        // means the default display settings and security.
-        let handle = unsafe {
-            CreateDesktopW(
-                bare.as_ptr(),
-                ptr::null(),
-                ptr::null(),
-                0,
-                GENERIC_ALL,
-                ptr::null(),
-            )
-        };
-        if handle.is_null() {
-            Err(io::Error::last_os_error())
-        } else {
-            let mut name = station;
+        on_station(|station| {
+            // SAFETY: `bare` is NUL-terminated and outlives the call. Null for the other
+            // arguments means the default display settings and security.
+            let handle = unsafe {
+                CreateDesktopW(
+                    bare.as_ptr(),
+                    ptr::null(),
+                    ptr::null(),
+                    0,
+                    GENERIC_ALL,
+                    ptr::null(),
+                )
+            };
+            if handle.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let mut name = station.name.clone();
             name.push(0x5C);
             name.extend_from_slice(&bare);
             Ok(Self { handle, name })
-        }
+        })
     }
 }
 
@@ -1682,12 +1759,11 @@ mod tests {
         CreateWellKnownSid, INHERITED_ACE, SECURITY_MAX_SID_SIZE, WinLocalSystemSid,
     };
     use windows_sys::Win32::System::StationsAndDesktops::{
-        CreateWindowStationW, GetThreadDesktop, SetProcessWindowStation,
+        DESKTOP_READOBJECTS, GetThreadDesktop, OpenDesktopW, UOI_FLAGS, USEROBJECTFLAGS,
     };
-    use windows_sys::Win32::System::StationsAndDesktops::{DESKTOP_READOBJECTS, OpenDesktopW};
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::Shell::CommandLineToArgvW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::WINSTA_ALL_ACCESS;
+    use windows_sys::Win32::UI::WindowsAndMessaging::WSF_VISIBLE;
 
     /// A library Windows installs with a signature of its own inside it, rather than in a
     /// catalogue, which is the kind steamcmd's files carry.
@@ -1808,7 +1884,7 @@ mod tests {
     }
 
     /// The name of the window station or desktop behind `object`. It is read apart from
-    /// `station`, whose answer the test below holds it against.
+    /// `station_name`, whose answer the test below holds it against.
     fn name_of(object: HANDLE) -> String {
         let mut needed = 0_u32;
         // SAFETY: no buffer with a length of 0 asks for the size needed. The call then fails,
@@ -1961,16 +2037,47 @@ mod tests {
         );
     }
 
-    /// Whether a desktop called `name` exists.
+    /// Whether a desktop called `name` exists on the station desktops are made on.
     fn desktop_exists(name: &[u16]) -> bool {
-        // SAFETY: `name` is NUL-terminated and outlives the call.
-        let handle = unsafe { OpenDesktopW(name.as_ptr(), 0, 0, DESKTOP_READOBJECTS) };
-        if handle.is_null() {
-            return false;
-        }
-        // SAFETY: the handle was just opened, and is closed once, here.
-        let _: BOOL = unsafe { CloseDesktop(handle) };
-        true
+        on_station(|_| {
+            // SAFETY: `name` is NUL-terminated and outlives the call.
+            let handle = unsafe { OpenDesktopW(name.as_ptr(), 0, 0, DESKTOP_READOBJECTS) };
+            if handle.is_null() {
+                return Ok(false);
+            }
+            // SAFETY: the handle was just opened, and is closed once, here.
+            let _: BOOL = unsafe { CloseDesktop(handle) };
+            Ok(true)
+        })
+        .unwrap()
+    }
+
+    /// The Desktop Window Manager keeps an entry for every desktop ever made on a station with a
+    /// display, and the screen stalls once there are thousands.
+    #[test]
+    fn a_desktop_is_made_on_a_station_with_no_display() {
+        let desktop = Desktop::create().unwrap();
+        let name = String::from_utf16_lossy(&desktop.name);
+        assert!(!name.starts_with("WinSta0\\"), "{name:?}");
+        let flags = on_station(|station| {
+            let mut flags = USEROBJECTFLAGS::default();
+            // SAFETY: `flags` is as large as the size passed and outlives the call.
+            let read = unsafe {
+                GetUserObjectInformationW(
+                    station.handle,
+                    UOI_FLAGS,
+                    (&raw mut flags).cast(),
+                    size_of_u32::<USEROBJECTFLAGS>(),
+                    ptr::null_mut(),
+                )
+            };
+            if read == 0_i32 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(flags.dwFlags)
+        })
+        .unwrap();
+        assert_eq!(flags & WSF_VISIBLE.cast_unsigned(), 0, "{name:?}");
     }
 
     #[test]
