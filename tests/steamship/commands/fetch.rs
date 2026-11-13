@@ -97,7 +97,7 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
             "1000",
             "--system",
             "windows",
-            "--into",
+            "--output",
             &chosen.to_string_lossy(),
         ],
         &[],
@@ -121,7 +121,7 @@ fn the_build_live_on_a_branch_is_fetched_into_a_folder_of_its_own_and_named_with
             "1000",
             "--build",
             "4242",
-            "--into",
+            "--output",
             &chosen.to_string_lossy(),
         ],
         &[],
@@ -192,11 +192,11 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
             "app 1000 has no branch nightly: its branches are friends, default, testing".to_owned(),
         ),
         (
-            vec!["1000", "--into", other.to_str().unwrap()],
+            vec!["1000", "--output", other.to_str().unwrap()],
             format!("{}: holds files and no build of app 1000", other.display()),
         ),
         (
-            vec!["1000", "--into", on_testing.to_str().unwrap()],
+            vec!["1000", "--output", on_testing.to_str().unwrap()],
             format!(
                 "{}: holds app 1000's testing branch. Fetch default into a folder of its own",
                 on_testing.display()
@@ -238,7 +238,7 @@ fn a_fetch_is_refused_before_steamcmd_for_a_branch_it_cannot_fetch_or_a_folder_n
     fs::create_dir_all(unreadable.join("steamapps").join("appmanifest_1000.acf")).unwrap();
     let (code, _, stderr) = fetching(
         home.path(),
-        &["1000", "--into", &unreadable.to_string_lossy()],
+        &["1000", "--output", &unreadable.to_string_lossy()],
         &[],
     );
     assert_eq!(code, Some(1_i32), "{stderr}");

@@ -34,7 +34,7 @@ pub(crate) fn try_fetch(request: &cli::Fetch) -> Result<ExitCode, ExitCode> {
     let shown = branch::shown_name(&branch.name);
     let system = request.system.unwrap_or(Platform::THIS);
     let given = request
-        .into
+        .output
         .clone()
         .unwrap_or_else(|| fetch::folder(&home, app_id, &branch.name, system));
     show::field("branch", shown);

@@ -142,7 +142,7 @@ pub(crate) fn try_login(named: Option<&str>) -> Result<ExitCode, ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `login --web-api-key`: asks for the key, has Steam check it, and keeps it.
+/// `login --web-api-key-only`: asks for the key, has Steam check it, and keeps it.
 pub(crate) fn try_key_login() -> Result<ExitCode, ExitCode> {
     show::banner_on_terminal();
     show::title("login");
@@ -182,7 +182,7 @@ fn offer_key(home: &Path) {
         Ok(None) => {
             show::field(
                 "api key",
-                "skipped (steamship login --web-api-key keeps one)",
+                "skipped (steamship login --web-api-key-only keeps one)",
             );
             return;
         }

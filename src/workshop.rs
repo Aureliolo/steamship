@@ -331,12 +331,12 @@ pub fn check_fields(fields: &Fields) -> Result<Item, Vec<String>> {
     if let Some(problem) = fields
         .preview
         .as_deref()
-        .and_then(|preview| unpreviewable(preview, "--preview"))
+        .and_then(|preview| unpreviewable(preview, "--preview-image"))
     {
         problems.push(problem);
     }
     if fields.published.is_none() && fields.preview.is_none() {
-        problems.push(format!("a new item needs --preview{GREY}"));
+        problems.push(format!("a new item needs --preview-image{GREY}"));
     }
     if fields.published.is_none() && fields.visibility.is_none() {
         problems
@@ -844,7 +844,7 @@ mod tests {
         };
         assert_eq!(
             check_fields(&unpictured).unwrap_err(),
-            [format!("a new item needs --preview{GREY}")]
+            [format!("a new item needs --preview-image{GREY}")]
         );
         let updated = Fields {
             published: Some(5674),
@@ -874,7 +874,7 @@ mod tests {
             [
                 format!("--content {} holds no files", empty.display()),
                 format!(
-                    "--preview {} is larger than the 1 MB Steam takes",
+                    "--preview-image {} is larger than the 1 MB Steam takes",
                     big.display()
                 ),
                 "a new item needs --visibility, which steamship never chooses for it".to_owned(),

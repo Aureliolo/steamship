@@ -152,8 +152,8 @@ fn run(command: Command) -> ExitCode {
         Command::Init {
             app,
             depots,
-            folder,
-        } => run_init(app, depots, &folder),
+            output,
+        } => run_init(app, depots, &output),
         Command::Builds {
             app,
             demo,
@@ -199,8 +199,8 @@ fn run(command: Command) -> ExitCode {
             app,
             demo,
             files,
-            preview,
-        } => either(rich_presence_in(app, demo, files, preview)),
+            dry_run,
+        } => either(rich_presence_in(app, demo, files, dry_run)),
         Command::Text(request) => either(text_in(request)),
         Command::Languages { json } => run_languages(json),
         Command::Itself(cli::Itself::Check) => either(try_self_check()),
@@ -213,7 +213,8 @@ fn run(command: Command) -> ExitCode {
         } => either(try_branch(&app, &branch, &description)),
         Command::Workshop(request) => either(workshop_in(&request)),
         Command::Login {
-            web_api_key: true, ..
+            web_api_key_only: true,
+            ..
         } => either(try_key_login()),
         Command::Login { account, .. } => either(try_login(named(account.as_deref()))),
         Command::Logout => run_logout(),

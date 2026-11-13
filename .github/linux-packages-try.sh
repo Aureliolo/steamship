@@ -63,7 +63,7 @@ git -C /tmp/spacewar -c user.name=packages -c user.email=packages@localhost comm
 export STEAMSHIP_HOME=/tmp/steamship
 steamship install
 status=0
-steamship upload /tmp/spacewar/steam/app_build.vdf --version packages --account anonymous --preview \
+steamship upload /tmp/spacewar/steam/app_build.vdf --version packages --account anonymous --dry-run \
   2> /tmp/upload.txt || status=$?
 cat /tmp/upload.txt
 if [[ "${status}" -ne 1 ]] ||

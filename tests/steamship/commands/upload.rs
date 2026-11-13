@@ -41,7 +41,7 @@ fn an_upload_in_ci_logs_in_as_the_account_handed_over() {
     let (_project, script) = project(true);
     let script = script.to_str().unwrap();
     let (_, stdout, _) = steamship(
-        &["upload", script, "--version", "1.4.0", "--preview"],
+        &["upload", script, "--version", "1.4.0", "--dry-run"],
         Some(home.path()),
         &[("STEAMSHIP_LOGIN", &packed_login())],
     );
@@ -438,7 +438,7 @@ fn an_upload_to_an_app_with_no_branch_yet_goes_live_on_default_alone_and_says_ho
 }
 
 #[test]
-fn an_upload_asked_for_default_too_cannot_be_a_preview() {
+fn an_upload_asked_for_default_too_cannot_be_a_dry_run() {
     let home = tempfile::tempdir().unwrap();
     let (_project, script) = project(false);
     let (code, _, stderr) = steamship(
@@ -447,7 +447,7 @@ fn an_upload_asked_for_default_too_cannot_be_a_preview() {
             script.to_str().unwrap(),
             "--version",
             "1.4.0",
-            "--preview",
+            "--dry-run",
             "--default",
         ],
         Some(home.path()),
@@ -1250,24 +1250,26 @@ fn an_upload_without_a_login_says_to_log_in_and_exits_3() {
 }
 
 #[test]
-fn a_preview_says_nothing_was_uploaded() {
+fn a_dry_run_says_nothing_was_uploaded() {
     let home = leaking();
     let (_project, script) = project(true);
     let (code, stdout, stderr) = upload(
         &script,
         home.path(),
-        &["--version", "1.4.0", "--preview"],
+        &["--version", "1.4.0", "--dry-run", "--json"],
         &[],
     );
-    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""));
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("\"outcome\":\"dry-run\""), "{stdout}");
     assert!(
-        stdout.starts_with("steamship upload, preview\n"),
-        "{stdout}"
+        stderr.starts_with("steamship upload, dry run\n"),
+        "{stderr}"
     );
-    assert!(stdout.contains("\n  build     1.4.0 "), "{stdout}");
+    assert!(stderr.contains("\n  build     1.4.0 "), "{stderr}");
+    assert!(stderr.contains("dry run finished in"), "{stderr}");
     assert!(
-        stdout.contains("\u{2713} nothing was uploaded, as asked\n"),
-        "{stdout}"
+        stderr.contains("\u{2713} nothing was uploaded, as asked\n"),
+        "{stderr}"
     );
     let copy = fs::read_to_string(home.path().join("apps/1000/app_build.vdf")).unwrap();
     assert!(copy.contains("\t\"Preview\"\t\t\"1\"\n"), "{copy}");
@@ -1484,7 +1486,7 @@ fn a_game_naming_a_green_branch_is_refused_unless_origin_holds_its_commit_there(
         "{allowed_why}"
     );
 
-    let (preview_out, preview_why) = ran(&["upload", "--preview", "--version", "0.0.0"]);
+    let (preview_out, preview_why) = ran(&["upload", "--dry-run", "--version", "0.0.0"]);
     assert!(
         !format!("{preview_out}{preview_why}").contains("origin's green"),
         "a preview uploads nothing and is not held to green: {preview_out}{preview_why}"
@@ -1716,7 +1718,7 @@ fn an_upload_in_a_game_refuses_a_file_its_build_did_not_write() {
 #[test]
 fn an_upload_in_a_game_builds_it_then_checks_its_settings_with_steam() {
     let (_temp, root) = pushed_game(Some(BUILDING));
-    let (built, stdout, stderr) = in_game(&root, &["upload", "--preview"]);
+    let (built, stdout, stderr) = in_game(&root, &["upload", "--dry-run"]);
     assert!(
         stdout.contains("  build     \u{2713} built in "),
         "{stdout}{stderr}"
@@ -2094,13 +2096,14 @@ fn a_game_is_built_checked_uploaded_live_on_default_too_and_its_branch_described
     let (again, _again_asked) = web_api(vec![("200 OK", BETAS); 4]);
     let (previewed, shown_preview, preview_why) = steamship_in(
         &root,
-        &["upload", "--preview"],
+        &["upload", "--dry-run"],
         Some(home.path()),
         &web_api_variables(&again),
     );
     assert_eq!(previewed, Some(0_i32), "{shown_preview}{preview_why}");
     assert!(
-        shown_preview.contains("\u{2713} nothing was uploaded, as asked\n")
+        shown_preview.contains("dry run finished in")
+            && shown_preview.contains("\u{2713} nothing was uploaded, as asked\n")
             && !shown_preview.contains("steamship branch")
             && !shown_preview.contains("steamship builds"),
         "a preview ends with Valve's dry run: {shown_preview}"

@@ -335,7 +335,7 @@ fn login_on_a_terminal_hides_the_password_and_waits_for_approval_with_a_spinner(
     session.wait_for("exited 0");
     let seen = session.seen();
     assert!(
-        seen.contains("  api key   skipped (steamship login --web-api-key keeps one)\n"),
+        seen.contains("  api key   skipped (steamship login --web-api-key-only keeps one)\n"),
         "{seen}"
     );
     assert!(!seen.contains("Mobile app..."), "{seen}");
@@ -426,10 +426,10 @@ fn login_with_nowhere_to_look_for_an_account_exits_1() {
 }
 
 #[test]
-fn login_with_web_api_key_refuses_what_is_not_a_key_before_asking_steam() {
+fn login_with_web_api_key_only_refuses_what_is_not_a_key_before_asking_steam() {
     let home = tempfile::tempdir().unwrap();
     let (code, stdout, stderr) = steamship_typing(
-        &["login", "--web-api-key"],
+        &["login", "--web-api-key-only"],
         home.path(),
         &[],
         "not_a_key_1234\n",
@@ -449,7 +449,19 @@ fn login_with_web_api_key_refuses_what_is_not_a_key_before_asking_steam() {
 }
 
 #[test]
-fn login_with_web_api_key_keeps_a_key_steam_takes_and_logout_forgets_it() {
+fn the_key_as_a_value_is_refused_as_an_argument() {
+    let home = tempfile::tempdir().unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["login", "--web-api-key-only", "0123"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(stderr.contains("unexpected argument '0123'"), "{stderr}");
+}
+
+#[test]
+fn login_with_web_api_key_only_keeps_a_key_steam_takes_and_logout_forgets_it() {
     let home = forgetting_home();
     let (host, requests) = web_api(vec![("200 OK", APPS)]);
     let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY, &[]);
@@ -544,7 +556,7 @@ fn login_with_web_api_key_keeps_a_key_steam_takes_and_logout_forgets_it() {
 }
 
 #[test]
-fn login_with_web_api_key_keeps_nothing_steam_refuses() {
+fn login_with_web_api_key_only_keeps_nothing_steam_refuses() {
     let home = forgetting_home();
     let (host, _requests) = web_api(vec![("403 Forbidden", "")]);
     let (code, stdout, stderr) = login_with_key(home.path(), &host, KEY, &[]);

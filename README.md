@@ -47,13 +47,13 @@ Every way to install, and how to verify a download, is on the
 ```sh
 steamship login
 steamship check steam/app_build.vdf
-steamship upload steam/app_build.vdf --version 1.4.0 --preview
+steamship upload steam/app_build.vdf --version 1.4.0 --dry-run
 steamship upload steam/app_build.vdf --version 1.4.0
 ```
 
 `steam/app_build.vdf` and its depot scripts are Valve's own format. If you already upload with
 steamcmd, you already have them. If not, `steamship init <app id>` writes a starting set.
-`--preview` is Valve's dry run. It computes the whole build and uploads nothing.
+`--dry-run` is Valve's dry run. It computes the whole build and uploads nothing.
 
 `steamship ci` sets up the same upload from GitHub Actions.
 

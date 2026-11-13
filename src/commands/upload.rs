@@ -38,7 +38,7 @@ use super::settings::try_settings;
 pub(crate) fn upload_in(request: &cli::Upload) -> ExitCode {
     let shipping = Shipping {
         version: request.version.as_deref(),
-        preview: request.preview,
+        preview: request.dry_run,
         account: named(request.account.as_deref()),
         json: request.json,
         demo: request.demo,
@@ -293,7 +293,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         show::divert();
     }
     show::title(if request.preview {
-        "upload, preview"
+        "upload, dry run"
     } else {
         "upload"
     });
@@ -738,7 +738,7 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
             return set_live(app, *build_id, prepared.set_live.as_deref(), default, &logs);
         }
         upload::Outcome::Previewed => {
-            spinner.done(&format!("preview finished in {took}"));
+            spinner.done(&format!("dry run finished in {took}"));
             show::success("nothing was uploaded, as asked", &logs);
             ExitCode::SUCCESS
         }
@@ -943,7 +943,7 @@ fn summary(
             };
             (said, Some(*build_id))
         }
-        upload::Outcome::Previewed => ("previewed", None),
+        upload::Outcome::Previewed => ("dry-run", None),
         upload::Outcome::NotLoggedIn(_) => ("not-logged-in", None),
         upload::Outcome::BuiltThenFailed { build_id, .. } => ("built-then-failed", Some(*build_id)),
         upload::Outcome::Failed(_) => ("failed", None),

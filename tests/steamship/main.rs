@@ -835,7 +835,7 @@ fn logout(home: &Path) {
     drop(steamship(&["logout"], Some(home), &[]));
 }
 
-/// `steamship login --web-api-key` with the Web API at `host`, `typed` piped to its prompt, and
+/// `steamship login --web-api-key-only` with the Web API at `host`, `typed` piped to its prompt, and
 /// `variables` set besides.
 fn login_with_key(
     home: &Path,
@@ -844,7 +844,7 @@ fn login_with_key(
     variables: &[(&str, &str)],
 ) -> (Option<i32>, String, String) {
     steamship_typing(
-        &["login", "--web-api-key"],
+        &["login", "--web-api-key-only"],
         home,
         &[&[(STAND_IN, host)], variables].concat(),
         &format!("{typed}\n"),

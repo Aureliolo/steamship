@@ -44,7 +44,7 @@ pub(crate) fn run_init(app: u32, mut depots: Vec<init::Depot>, folder: &Path) ->
     if let Some((there, _)) = paths.iter().find(|(path, _)| path.exists()) {
         return fail(
             &format!(
-                "{} already exists and is kept. Give another --folder, or remove it",
+                "{} already exists and is kept. Give another --output, or remove it",
                 there.display()
             ),
             REFUSED,

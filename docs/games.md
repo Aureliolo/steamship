@@ -6,7 +6,7 @@ the nearest folder, from where steamship runs upwards, that holds a `steamship.t
 
 ```sh
 steamship check                 # the scripts, records and rich presence against Steam's
-steamship upload --preview      # Valve's dry run of the pushed commit, built and checked
+steamship upload --dry-run      # Valve's dry run of the pushed commit, built and checked
 steamship upload                # the same, uploaded and set live
 steamship workshop              # each example mod, as its Workshop item
 ```
@@ -121,7 +121,7 @@ The tree is refused while it holds anything its commit does not, untracked files
 refused too while origin's default branch is at another commit.
 
 With `green` set, the commit has to be on that branch of origin. The check runs before the build.
-When it refuses, it names the commit and where the branch is. `--preview` skips the check.
+When it refuses, it names the commit and where the branch is. `--dry-run` skips the check.
 `--allow-ungreen` uploads a commit that is not on the branch, such as a hotfix.
 
 The app build script has to set the game's branch live, and no other. The settings snapshot has
@@ -150,7 +150,7 @@ once that branch is made in Steamworks.
 
 ### Preview and check
 
-`--preview` stops after Valve's dry run, with nothing uploaded. `steamship check` with no script
+`--dry-run` stops after Valve's dry run, with nothing uploaded. `steamship check` with no script
 runs the comparisons alone, after checking the scripts and the branch they set live. It needs no
 login.
 
@@ -161,7 +161,7 @@ Each command run in a game takes from it whatever is not given:
 - `steamship settings --save` and `--check` with no file use the snapshot. Either refuses an
   install folder of anything but letters and digits.
 - `steamship rich-presence` with neither the app nor files sends every language's file, from a
-  pushed tree only. `--preview` checks them and sends nothing.
+  pushed tree only. `--dry-run` checks them and sends nothing.
 - `steamship builds`, `steamship promote` and `steamship fetch` take the game's app.
 
 ### Achievements and leaderboards
@@ -198,7 +198,7 @@ of the programs its launch options start, as after renaming the game.
 A folder that only the demo's depots ship is judged against the demo's snapshot. `--demo` asks
 for that whichever depots ship it.
 
-The check also reads the game's rich presence files as `rich-presence --preview` does. A push gate
+The check also reads the game's rich presence files as `rich-presence --dry-run` does. A push gate
 then refuses a line Steam cannot fill, without asking Steam.
 
 ## A demo
@@ -261,7 +261,7 @@ demo's script, so that it runs under the demo's app.
 
 ```sh
 steamship init 1000070 --depot 1000071=export/demo/windows \
-  --depot 1000072=export/demo/linux --folder steam/demo
+  --depot 1000072=export/demo/linux --output steam/demo
 ```
 
 ### Keeping the demo and the game apart

@@ -56,8 +56,7 @@ pub(crate) fn key_variable() -> Option<Zeroizing<String>> {
 }
 
 /// What a refused empty answer to the key prompt says.
-pub(crate) const NO_KEY_TYPED: &str =
-    "no Web API key was typed. Run `steamship login --web-api-key` and paste the publisher key";
+pub(crate) const NO_KEY_TYPED: &str = "no Web API key was typed. Run `steamship login --web-api-key-only` and paste the publisher key";
 
 /// Where Steamworks shows the key, said before it is asked for.
 pub(crate) const WHERE_KEY: &str = "the publisher Web API key is in Steamworks under Users & Permissions, \
@@ -93,7 +92,7 @@ pub(crate) fn web_api(home: &Path) -> Result<(webapi::Api, KeyFrom), ExitCode> {
     if !io::stdin().is_terminal() || show::diverted() {
         let keep = Hint {
             before: "run ",
-            command: "steamship login --web-api-key",
+            command: "steamship login --web-api-key-only",
             after: " at a terminal to keep one, or set STEAMSHIP_WEB_API_KEY",
         };
         show::failure("no Web API key", "", Some(keep));

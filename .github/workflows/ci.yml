@@ -116,7 +116,7 @@ jobs:
           export STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home"
           status=0
           cargo run --locked -- upload tests/fixtures/spacewar/steam/app_build.vdf \
-            --version ci --account anonymous --preview 2> "${RUNNER_TEMP}/upload.txt" || status=$?
+            --version ci --account anonymous --dry-run 2> "${RUNNER_TEMP}/upload.txt" || status=$?
           cat "${RUNNER_TEMP}/upload.txt"
           test "${status}" -eq 1
           grep -q '^  ✗ Failed to initialize build on server (Access Denied)$' "${RUNNER_TEMP}/upload.txt"
@@ -232,7 +232,7 @@ jobs:
           export STEAMSHIP_HOME="${RUNNER_TEMP}/ci home"
           status=0
           STEAMSHIP_LOGIN="$(cat "${login}")" cargo run --locked -- upload "${script}" \
-            --version ci --preview > "${RUNNER_TEMP}/ci.txt" 2>&1 || status=$?
+            --version ci --dry-run > "${RUNNER_TEMP}/ci.txt" 2>&1 || status=$?
           rm -f "${login}"
           cat "${RUNNER_TEMP}/ci.txt"
           test "${status}" -eq 1

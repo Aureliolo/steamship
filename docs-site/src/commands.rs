@@ -187,7 +187,7 @@ fn arguments(command: &Command) -> Vec<&Arg> {
         .collect()
 }
 
-/// An argument as it is typed: `<SCRIPT>`, `--version <VERSION>`, or `--preview`.
+/// An argument as it is typed: `<SCRIPT>`, `--version <VERSION>`, or `--dry-run`.
 fn shape(argument: &Arg) -> String {
     let value = argument
         .get_value_names()
@@ -294,7 +294,7 @@ mod tests {
             ),
             "{page}"
         );
-        assert!(page.contains("<dt><code>--preview</code></dt>"), "{page}");
+        assert!(page.contains("<dt><code>--dry-run</code></dt>"), "{page}");
         assert!(
             page.contains(
                 "<dt><code>&lt;SHELL&gt;</code> <span class=\"tag\">required</span></dt>"

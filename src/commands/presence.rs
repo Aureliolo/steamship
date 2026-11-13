@@ -20,7 +20,7 @@ pub(crate) fn rich_presence_in(
     app: Option<String>,
     demo: bool,
     mut files: Vec<PathBuf>,
-    preview: bool,
+    dry_run: bool,
 ) -> Result<ExitCode, ExitCode> {
     let game = (app.is_none() || files.is_empty())
         .then(|| game_as(demo))
@@ -38,11 +38,11 @@ pub(crate) fn rich_presence_in(
                 REFUSED,
             ));
         }
-        if !preview {
+        if !dry_run {
             shipped_from(game)?;
         }
     }
-    try_rich_presence(&app_given_or(app, game.as_ref()), &files, preview)
+    try_rich_presence(&app_given_or(app, game.as_ref()), &files, dry_run)
 }
 
 /// The rich presence files, each read and checked, refused before Steam is asked anything when
@@ -86,16 +86,16 @@ pub(crate) fn presence_read(files: &[PathBuf]) -> Result<Vec<presence::Language>
 pub(crate) fn try_rich_presence(
     app: &str,
     files: &[PathBuf],
-    preview: bool,
+    dry_run: bool,
 ) -> Result<ExitCode, ExitCode> {
-    show::title(if preview {
-        "rich-presence, preview"
+    show::title(if dry_run {
+        "rich-presence, dry run"
     } else {
         "rich-presence"
     });
     let app_id = app_named(app)?;
     let languages = presence_files(files)?;
-    if preview {
+    if dry_run {
         show::success("the files are sound, and nothing was sent, as asked", "");
         return Ok(ExitCode::SUCCESS);
     }

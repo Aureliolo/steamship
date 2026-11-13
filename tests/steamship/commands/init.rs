@@ -44,7 +44,7 @@ fn init_writes_scripts_check_takes_and_never_overwrites_them() {
     assert!(written.contains("\t\"SetLive\" \"testing\"\n"), "{written}");
     let (demo, demo_said, _) = steamship_in(
         folder.path(),
-        &["init", "490", "--folder", "steam/demo"],
+        &["init", "490", "--output", "steam/demo"],
         Some(&home),
         &[],
     );
@@ -68,7 +68,7 @@ fn init_writes_scripts_check_takes_and_never_overwrites_them() {
     assert_eq!(
         failure(&refused),
         format!(
-            "{} already exists and is kept. Give another --folder, or remove it",
+            "{} already exists and is kept. Give another --output, or remove it",
             Path::new("steam").join("app_build.vdf").display()
         )
     );
@@ -102,7 +102,7 @@ fn init_leaves_the_branch_to_choose_for_scripts_no_game_keeps() {
     let home = folder.path().join("home");
     let (code, stdout, stderr) = steamship_in(
         folder.path(),
-        &["init", "480", "--folder", "tools/steam"],
+        &["init", "480", "--output", "tools/steam"],
         Some(&home),
         &[],
     );

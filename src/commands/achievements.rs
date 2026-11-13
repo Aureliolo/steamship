@@ -87,8 +87,8 @@ pub(crate) fn achievements_in(
         if own_check {
             files = own(game, "--check")?;
             let receipt = game.import.join(receipt::RECEIPT);
-            writing.out = writing
-                .out
+            writing.output = writing
+                .output
                 .take()
                 .or_else(|| receipt.is_file().then(|| game.import.clone()));
         }
@@ -97,14 +97,14 @@ pub(crate) fn achievements_in(
                 return no_import_due(game);
             }
             writing.write = Some(own(game, "--write")?);
-            if writing.out.is_none() {
-                writing.out = Some(game.import.clone());
+            if writing.output.is_none() {
+                writing.output = Some(game.import.clone());
             }
         }
     }
-    if writing.write.is_some() && writing.out.is_none() {
+    if writing.write.is_some() && writing.output.is_none() {
         return Err(fail(
-            &"--write needs --out, the folder it writes into",
+            &"--write needs --output, the folder it writes into",
             REFUSED,
         ));
     }
@@ -308,7 +308,11 @@ pub(crate) fn try_achievements(
     writing: &Writing,
     json: bool,
 ) -> Result<ExitCode, ExitCode> {
-    if let Some(out) = writing.out.as_deref().filter(|_| writing.write.is_some()) {
+    if let Some(out) = writing
+        .output
+        .as_deref()
+        .filter(|_| writing.write.is_some())
+    {
         return try_achievements_write(app, out, writing);
     }
     if json {
@@ -320,7 +324,7 @@ pub(crate) fn try_achievements(
         written_over(path, &achievements::SAVED)?;
     }
     let listed = achievements_files(check, app_id, true)?;
-    let receipt = match (&listed, &writing.out) {
+    let receipt = match (&listed, &writing.output) {
         (Some(listed), Some(out)) => Some((receipt_in(out, app_id)?, achievement_icons(listed)?)),
         _ => None,
     };
@@ -628,7 +632,7 @@ fn written_before(out: &Path, app: u32) -> Result<Vec<String>, ExitCode> {
     if !found.is_dir() {
         return Err(fail(
             &format!(
-                "{}: is a file, where --out names the folder the files are written into",
+                "{}: is a file, where --output names the folder the files are written into",
                 out.display()
             ),
             REFUSED,
@@ -887,7 +891,7 @@ fn try_achievements_imported(
     show::field(
         "next",
         &format!(
-            "keep {} with the files. --check with --out then names each icon that changes",
+            "keep {} with the files. --check with --output then names each icon that changes",
             receipt::RECEIPT
         ),
     );
