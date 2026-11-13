@@ -42,6 +42,9 @@ The secret holds the token steamcmd saved, the account's name and the day `ci` s
 holds a password or a Steam Guard secret. `ci` shows none of it. It is a few kilobytes. It leaves
 out steamcmd's list of the servers it last reached, which steamcmd finds again.
 
+The secret starts with its format's number. An older steamship that meets a newer format asks
+you to upgrade steamship, or the action's pin.
+
 ### The default branch
 
 Until the game is released, `default: true` sets each build live on the default branch too, as
