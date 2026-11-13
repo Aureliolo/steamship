@@ -277,26 +277,6 @@ fn a_new_version_replaces_the_install_and_keeps_the_login() {
 }
 
 #[test]
-fn a_swap_cut_short_is_finished_with_the_login_intact() {
-    let setup = Setup::new();
-    let fetched = Cell::new(0);
-    let _: Outcome = setup.install(&steamcmd(&setup), &fetched).unwrap();
-    fs::create_dir_all(setup.root().join("config")).unwrap();
-    fs::write(setup.root().join("config/config.vdf"), b"token").unwrap();
-    // As if the process ended between moving the old install aside and moving the new one in.
-    fs::rename(setup.root(), setup.home.join("steamcmd.old")).unwrap();
-    let newer = setup.package("steamcmd_newer", &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
-    let _: Outcome = setup
-        .install(&Setup::manifest(2, vec![newer]), &fetched)
-        .unwrap();
-    assert_eq!(
-        fs::read(setup.root().join("config/config.vdf")).unwrap(),
-        b"token"
-    );
-    assert!(!setup.home.join("steamcmd.old").exists());
-}
-
-#[test]
 fn a_package_that_would_write_outside_is_refused() {
     let setup = Setup::new();
     let evil = setup.package("steamcmd_evil", &[("../outside.txt", Entry::File(b"x"))]);
@@ -612,4 +592,356 @@ fn leftovers_that_cannot_be_cleared_are_an_error() {
         matches!(&result, Err(Error::Io { path, .. }) if *path == staging),
         "{result:?}"
     );
+}
+
+/// What a refusal on a folder ends on.
+const FOLDER_STEP: &str = "That folder or something inside it is held open or cannot be written. \
+                           Fix or remove that path";
+/// What a refusal on any other path ends on.
+const PATH_STEP: &str = ". Fix or remove that path";
+
+/// Version 1 of the stand-in steamcmd, installed, with a login in it.
+fn logged_in(setup: &Setup) -> Manifest {
+    let first = steamcmd(setup);
+    let _: Outcome = setup.install(&first, &Cell::new(0)).unwrap();
+    fs::create_dir_all(setup.root().join("config")).unwrap();
+    fs::write(setup.root().join("config/config.vdf"), b"token").unwrap();
+    first
+}
+
+fn token(setup: &Setup) -> Vec<u8> {
+    fs::read(setup.root().join("config/config.vdf")).unwrap()
+}
+
+/// A second version of the stand-in steamcmd, in one package of `entries`.
+fn second(setup: &Setup, entries: &[(&str, Entry<'_>)]) -> Manifest {
+    Setup::manifest(2, vec![setup.package("steamcmd_second", entries)])
+}
+
+fn refusal(result: Result<Outcome, Error>) -> (PathBuf, String) {
+    match result {
+        Err(Error::Io { path, error }) => (path, error.to_string()),
+        other => panic!("expected the install to be refused, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_install_stopped_clearing_an_earlier_ones_leftovers_keeps_the_login() {
+    let setup = Setup::new();
+    let first = logged_in(&setup);
+    let leftovers = setup.home.join("steamcmd.old");
+    fs::create_dir_all(leftovers.join("stuck")).unwrap();
+    fs::write(leftovers.join("stuck/file"), b"x").unwrap();
+    let held = Kept::new(&leftovers.join("stuck/file"));
+    let manifest = second(&setup, &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
+    let mut stops = Vec::new();
+    for _ in 0_u8..2_u8 {
+        stops.push(refusal(setup.install(&manifest, &Cell::new(0))));
+        install::verify(&setup.held(), &first).unwrap();
+    }
+    drop(held);
+    for (path, said) in stops {
+        assert_eq!(path, leftovers);
+        assert!(said.ends_with(FOLDER_STEP), "{said}");
+    }
+    assert!(matches!(
+        setup.install(&manifest, &Cell::new(0)),
+        Ok(Outcome::Installed)
+    ));
+    assert_eq!(token(&setup), b"token");
+}
+
+#[test]
+fn an_install_stopped_by_a_held_file_of_the_old_version_keeps_the_login() {
+    let setup = Setup::new();
+    let first = logged_in(&setup);
+    let public = setup.root().join("public");
+    let held = Kept::new(&public.join("strings.txt"));
+    let manifest = second(&setup, &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
+    let mut stops = Vec::new();
+    for _ in 0_u8..2_u8 {
+        stops.push(refusal(setup.install(&manifest, &Cell::new(0))));
+        assert_eq!(token(&setup), b"token");
+    }
+    assert!(matches!(
+        install::state(&setup.home, &first),
+        Ok(State::Missing)
+    ));
+    drop(held);
+    for (path, said) in stops {
+        assert_eq!(path, public);
+        assert!(said.ends_with(FOLDER_STEP), "{said}");
+    }
+    assert!(matches!(
+        setup.install(&manifest, &Cell::new(0)),
+        Ok(Outcome::Installed)
+    ));
+    assert_eq!(token(&setup), b"token");
+    assert!(!public.exists());
+    install::verify(&setup.held(), &manifest).unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn an_install_stopped_by_an_open_file_of_the_new_version_keeps_the_login() {
+    use std::cell::RefCell;
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    let setup = Setup::new();
+    drop(logged_in(&setup));
+    let tool = setup.package("steamcmd_tool", &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
+    let data = setup.package("steamcmd_data", &[("data.txt", Entry::File(b"text"))]);
+    let manifest = Setup::manifest(2, vec![tool, data]);
+    let staged = setup.home.join("steamcmd.new/steamcmd.bin");
+    let open = RefCell::new(None);
+    let result = install::using(&setup.held(), &manifest, |package, into| {
+        let _: u64 = fs::copy(setup.packages.join(&package.file), into).unwrap();
+        if package.name == "steamcmd_data" {
+            let file = File::options()
+                .read(true)
+                .share_mode(1)
+                .open(&staged)
+                .unwrap();
+            *open.borrow_mut() = Some(file);
+        }
+        Ok(())
+    });
+    let (file, file_said) = refusal(result);
+    assert_eq!(file, staged);
+    assert!(file_said.ends_with(PATH_STEP), "{file_said}");
+    assert!(!file_said.contains("That folder"), "{file_said}");
+    let (path, said) = refusal(setup.install(&manifest, &Cell::new(0)));
+    assert_eq!(path, setup.home.join("steamcmd.new"));
+    assert!(said.ends_with(FOLDER_STEP), "{said}");
+    assert_eq!(token(&setup), b"token");
+    drop(open.borrow_mut().take());
+    assert!(matches!(
+        setup.install(&manifest, &Cell::new(0)),
+        Ok(Outcome::Installed)
+    ));
+    assert_eq!(token(&setup), b"token");
+}
+
+#[test]
+fn a_packages_own_config_file_over_the_login_is_refused_and_the_login_kept() {
+    let setup = Setup::new();
+    drop(logged_in(&setup));
+    let manifest = second(
+        &setup,
+        &[
+            ("steamcmd.bin", Entry::File(b"MZ v2")),
+            ("config", Entry::File(b"not a folder")),
+        ],
+    );
+    let (path, said) = refusal(setup.install(&manifest, &Cell::new(0)));
+    assert_eq!(path, setup.home.join("steamcmd.new/config"));
+    assert!(said.ends_with(PATH_STEP), "{said}");
+    assert!(!said.contains("held"), "{said}");
+    assert_eq!(token(&setup), b"token");
+}
+
+#[test]
+fn an_install_ended_with_the_old_version_moved_aside_is_finished_with_the_login_intact() {
+    let setup = Setup::new();
+    drop(logged_in(&setup));
+    let aside = setup.home.join("steamcmd.old");
+    fs::rename(setup.root(), &aside).unwrap();
+    fs::create_dir_all(setup.root()).unwrap();
+    fs::rename(aside.join("config"), setup.root().join("config")).unwrap();
+    fs::remove_file(setup.home.join("steamcmd.inventory")).unwrap();
+    let manifest = second(&setup, &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
+    assert!(matches!(
+        setup.install(&manifest, &Cell::new(0)),
+        Ok(Outcome::Installed)
+    ));
+    assert_eq!(token(&setup), b"token");
+    assert_eq!(
+        fs::read(setup.root().join("steamcmd.bin")).unwrap(),
+        b"MZ v2"
+    );
+    assert!(!aside.exists());
+    install::verify(&setup.held(), &manifest).unwrap();
+}
+
+#[test]
+fn an_install_ended_with_the_new_version_half_moved_in_is_finished_with_the_login_intact() {
+    let setup = Setup::new();
+    drop(logged_in(&setup));
+    let manifest = second(
+        &setup,
+        &[
+            ("steamcmd.bin", Entry::File(b"MZ v2")),
+            ("bin/tool.txt", Entry::File(b"tool")),
+        ],
+    );
+    let staging = setup.home.join("steamcmd.new");
+    fs::remove_dir_all(setup.root().join("public")).unwrap();
+    fs::remove_file(setup.root().join("steamcmd.bin")).unwrap();
+    fs::remove_file(setup.root().join("steamcmd.sh")).unwrap();
+    fs::create_dir_all(setup.root().join("bin")).unwrap();
+    fs::write(setup.root().join("bin/tool.txt"), b"tool").unwrap();
+    fs::create_dir_all(&staging).unwrap();
+    fs::write(staging.join("steamcmd.bin"), b"MZ v2").unwrap();
+    fs::remove_file(setup.home.join("steamcmd.inventory")).unwrap();
+    assert!(matches!(
+        setup.install(&manifest, &Cell::new(0)),
+        Ok(Outcome::Installed)
+    ));
+    assert_eq!(token(&setup), b"token");
+    assert_eq!(
+        fs::read(setup.root().join("steamcmd.bin")).unwrap(),
+        b"MZ v2"
+    );
+    assert!(!staging.exists());
+    install::verify(&setup.held(), &manifest).unwrap();
+}
+
+#[test]
+fn a_packages_own_config_folder_never_replaces_the_login() {
+    let setup = Setup::new();
+    drop(logged_in(&setup));
+    let entries = [
+        ("steamcmd.bin", Entry::File(b"MZ v2")),
+        ("config/config.vdf", Entry::File(b"the package's")),
+    ];
+    let manifest = second(&setup, &entries);
+    assert!(matches!(
+        setup.install(&manifest, &Cell::new(0)),
+        Ok(Outcome::Installed)
+    ));
+    assert_eq!(token(&setup), b"token");
+    let empty = Setup::new();
+    let fresh_manifest = second(&empty, &entries);
+    assert!(matches!(
+        empty.install(&fresh_manifest, &Cell::new(0)),
+        Ok(Outcome::Installed)
+    ));
+    assert!(!empty.root().join("config").exists());
+}
+
+#[test]
+fn a_packages_own_config_file_is_installed_and_checked() {
+    let setup = Setup::new();
+    let manifest = second(
+        &setup,
+        &[
+            ("steamcmd.bin", Entry::File(b"MZ v2")),
+            ("config", Entry::File(b"a file")),
+        ],
+    );
+    assert!(matches!(
+        setup.install(&manifest, &Cell::new(0)),
+        Ok(Outcome::Installed)
+    ));
+    install::verify(&setup.held(), &manifest).unwrap();
+    assert!(matches!(
+        setup.install(&manifest, &Cell::new(0)),
+        Ok(Outcome::Verified)
+    ));
+    assert_eq!(fs::read(setup.root().join("config")).unwrap(), b"a file");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_packages_own_config_link_is_installed_and_checked() {
+    let setup = Setup::new();
+    let manifest = second(
+        &setup,
+        &[
+            ("bin/tool.txt", Entry::File(b"tool")),
+            ("config", Entry::Link("bin")),
+        ],
+    );
+    assert!(matches!(
+        setup.install(&manifest, &Cell::new(0)),
+        Ok(Outcome::Installed)
+    ));
+    install::verify(&setup.held(), &manifest).unwrap();
+    assert!(matches!(
+        setup.install(&manifest, &Cell::new(0)),
+        Ok(Outcome::Verified)
+    ));
+    assert!(
+        fs::symlink_metadata(setup.root().join("config"))
+            .unwrap()
+            .is_symlink()
+    );
+}
+
+#[test]
+fn a_refused_package_leaves_the_installed_version_recorded_and_logged_in() {
+    let setup = Setup::new();
+    let first = logged_in(&setup);
+    let good = setup.package("steamcmd_good", &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
+    let evil = setup.package("steamcmd_evil", &[("../outside.txt", Entry::File(b"x"))]);
+    let result = setup.install(&Setup::manifest(2, vec![good, evil]), &Cell::new(0));
+    assert!(matches!(result, Err(Error::Package { .. })), "{result:?}");
+    install::verify(&setup.held(), &first).unwrap();
+    assert_eq!(token(&setup), b"token");
+}
+
+#[test]
+fn a_home_with_a_record_and_no_install_installs_again() {
+    let setup = Setup::new();
+    let first = logged_in(&setup);
+    let staging = setup.home.join("steamcmd.new");
+    fs::create_dir_all(&staging).unwrap();
+    fs::rename(setup.root().join("config"), staging.join("config")).unwrap();
+    fs::rename(setup.root(), setup.home.join("steamcmd.old")).unwrap();
+    assert!(matches!(
+        install::state(&setup.home, &first),
+        Ok(State::Missing)
+    ));
+    assert!(matches!(
+        setup.install(&first, &Cell::new(0)),
+        Ok(Outcome::Installed)
+    ));
+    install::verify(&setup.held(), &first).unwrap();
+    assert!(!staging.exists());
+    assert!(!setup.home.join("steamcmd.old").exists());
+}
+
+#[test]
+fn a_record_that_cannot_be_removed_stops_the_install_before_it_changes_the_home() {
+    let setup = Setup::new();
+    drop(logged_in(&setup));
+    let record = setup.home.join("steamcmd.inventory");
+    fs::remove_file(&record).unwrap();
+    fs::create_dir_all(&record).unwrap();
+    let manifest = second(&setup, &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
+    let (path, said) = refusal(setup.install(&manifest, &Cell::new(0)));
+    assert_eq!(path, record);
+    assert!(said.ends_with(PATH_STEP), "{said}");
+    assert_eq!(token(&setup), b"token");
+    assert_eq!(
+        fs::read(setup.root().join("steamcmd.bin")).unwrap(),
+        b"MZ steamcmd"
+    );
+}
+
+#[test]
+fn a_record_that_cannot_be_written_says_what_to_do_once_the_install_is_in_place() {
+    let setup = Setup::new();
+    drop(logged_in(&setup));
+    let part = setup.home.join("steamcmd.part");
+    fs::create_dir_all(&part).unwrap();
+    let manifest = second(&setup, &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
+    let (path, said) = refusal(setup.install(&manifest, &Cell::new(0)));
+    assert_eq!(path, part);
+    assert!(said.ends_with(PATH_STEP), "{said}");
+    assert_eq!(token(&setup), b"token");
+    assert_eq!(
+        fs::read(setup.root().join("steamcmd.bin")).unwrap(),
+        b"MZ v2"
+    );
+}
+
+#[test]
+fn an_install_folder_that_cannot_be_made_says_what_to_do() {
+    let setup = Setup::new();
+    fs::create_dir_all(&setup.home).unwrap();
+    fs::write(setup.root(), b"in the way").unwrap();
+    let (path, said) = refusal(setup.install(&steamcmd(&setup), &Cell::new(0)));
+    assert_eq!(path, setup.root());
+    assert!(said.ends_with(PATH_STEP), "{said}");
 }
