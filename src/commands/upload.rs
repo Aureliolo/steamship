@@ -419,7 +419,7 @@ const fn wording(preview: bool) -> (&'static str, &'static str) {
 }
 
 /// Checks steamcmd's files again after the run. A failed check exits 5 when Steam holds a build
-/// that a second upload would make again, and says so.
+/// that a second upload would duplicate, and says so.
 fn checked_after(
     held: &install::Held,
     manifest: &Manifest,

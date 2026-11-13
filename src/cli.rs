@@ -24,7 +24,7 @@ pub const REFUSED: u8 = 2;
 pub const LOGIN: u8 = 3;
 /// steamcmd's install is missing, altered or failed.
 pub const STEAMCMD: u8 = 4;
-/// A build or Workshop item was made but is not live or not kept. A second run would make another.
+/// Steam holds a build or Workshop item that a second run would duplicate.
 pub const UNFINISHED: u8 = 5;
 /// Steam is limiting login attempts.
 pub const LIMITED: u8 = 6;
@@ -37,7 +37,7 @@ pub const EXIT_CODES: [(u8, &str); 7] = [
     (0, "Done"),
     (
         FAILED,
-        "The command failed and printed why. Nothing new is on Steam. An upload also prints its logs' paths",
+        "The command failed and printed why. A second run makes no duplicate",
     ),
     (
         REFUSED,
@@ -49,11 +49,11 @@ pub const EXIT_CODES: [(u8, &str); 7] = [
     ),
     (
         STEAMCMD,
-        "steamcmd's install is missing, altered or failed. Nothing was made",
+        "steamcmd's install is missing, altered or failed. A second run makes no duplicate",
     ),
     (
         UNFINISHED,
-        "A build or Workshop item was made but is not live or not kept. A second run would make another. The output says what to do",
+        "Steam holds a build or Workshop item that a second run would duplicate. The output says what to do",
     ),
     (
         LIMITED,
@@ -1217,6 +1217,38 @@ mod tests {
             [0, FAILED, REFUSED, LOGIN, STEAMCMD, UNFINISHED, LIMITED]
         );
         assert_eq!(codes, [0, 1, 2, 3, 4, 5, 6], "each code keeps its number");
+    }
+
+    #[test]
+    fn exits_1_and_4_say_steam_holds_nothing_to_make_again_and_5_that_it_would() {
+        let row = |code: u8| {
+            EXIT_CODES
+                .iter()
+                .find(|&&(number, _)| number == code)
+                .unwrap()
+                .1
+        };
+        let nothing = "A second run makes no duplicate";
+        assert!(row(FAILED).contains(nothing));
+        assert!(row(STEAMCMD).contains(nothing));
+        assert_eq!(
+            row(FAILED),
+            "The command failed and printed why. A second run makes no duplicate"
+        );
+        assert_eq!(
+            row(UNFINISHED),
+            "Steam holds a build or Workshop item that a second run would duplicate. The output says what to do"
+        );
+        for (_, words) in EXIT_CODES {
+            for old in [
+                "Nothing new is on Steam",
+                "Nothing was made",
+                "not live or not kept",
+                "logs' paths",
+            ] {
+                assert!(!words.contains(old), "{words:?} still holds {old:?}");
+            }
+        }
     }
 
     /// Not names of variables, though they are in capitals in a file that reads some.

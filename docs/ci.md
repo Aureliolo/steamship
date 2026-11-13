@@ -99,10 +99,10 @@ the next run uploads.
 Exit 6 means Steam is limiting login attempts. Wait, then run again with the same login. A new
 login only adds attempts.
 
-## When a build is not live
+## When a second run would duplicate an upload
 
-Exit 5 means a build or Workshop item was made but is not live or not kept. The output says what
-to do. Do not upload again, which makes another.
+Exit 5 means Steam holds a build or Workshop item that a second run would duplicate. The output
+says what to do. Do not run the same upload again.
 
 ## Another CI
 
