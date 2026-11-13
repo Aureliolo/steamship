@@ -414,7 +414,8 @@ It comes once steamcmd has run for the first item and the run's last check is ma
 - `outcome` of an item is `made`, `updated`, `dry-run` or `null`. An item the run made is `made`
   with its `item_id` on a failed run too.
 - `item_id` is the item's ID, when there is one.
-- `log` is where steamcmd's console was saved, or `null` for a dry run.
+- `log` is where steamcmd's console was saved, or `null` for a dry run and where the console
+  could not be saved.
 - `name` is the item's name in the `--items` file, or `null` for a script.
 - `error` is there only when the run failed. Exit 5 is a new item that no file keeps, or a fault in
   steamcmd's files found after the run.

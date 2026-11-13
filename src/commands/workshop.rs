@@ -405,7 +405,8 @@ fn upload_item(
     };
     // A refusal logged nothing in, so the secrets from before the run are all its text can hold.
     let redactor_in_use = redactor.as_ref().unwrap_or(&before);
-    let line = item_summary(Some((&outcome, &saved)), copied, item, given);
+    let kept_log = written.then_some(&*saved);
+    let line = item_summary(Some((&outcome, kept_log)), copied, item, given);
     let (code, unkept, failure) = match outcome {
         workshop::Outcome::Published { published } => {
             spinner.done(&format!("uploaded in {took}"));
@@ -500,11 +501,11 @@ fn save_console(saved: &Path, console: &[u8], removed: Option<io::Error>) -> (bo
 
 /// What came of `item`, given as `given`, as one of the `items` of a run's `--json` line: `name`,
 /// `item_id`, `outcome` (`made`, `updated`, `dry-run` or null) and `log`. An upload gives its
-/// outcome with `log`, where steamcmd's console was saved. A dry run gives `None`, and the ID the
-/// item already has. `copied` is the ID steamcmd left in its copy of the script, which names the
-/// item a failed run made.
+/// outcome with `log`, where steamcmd's console was saved, if it was. A dry run gives `None`, and
+/// the ID the item already has. `copied` is the ID steamcmd left in its copy of the script, which
+/// names the item a failed run made.
 fn item_summary(
-    uploaded: Option<(&workshop::Outcome, &Path)>,
+    uploaded: Option<(&workshop::Outcome, Option<&Path>)>,
     copied: Option<u64>,
     item: &workshop::Item,
     given: &Given<'_>,
@@ -522,7 +523,7 @@ fn item_summary(
             }
         }
     };
-    let log = uploaded.map(|(_, log)| log.to_string_lossy());
+    let log = uploaded.and_then(|(_, log)| log.map(Path::to_string_lossy));
     serde_json::json!({
         "name": item_name(given),
         "item_id": published,
