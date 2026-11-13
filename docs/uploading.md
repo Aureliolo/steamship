@@ -297,7 +297,7 @@ A build that Steam holds but did not set live as asked is `uploaded` with `live`
   "description": "1.4.0 4f3c2a1e9b07",
   "error": {
     "code": "unfinished",
-    "message": "Steam holds a build of app 1000, so a second upload would make another\napp 1000: BuildID 4242 uploaded, but Steam does not show it live on testing"
+    "message": "Steam holds a build of app 1000, so a second upload would make another\n..."
   },
   "live": false,
   "outcome": "uploaded"
