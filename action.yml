@@ -1,46 +1,98 @@
 # The Marketplace refuses a name any GitHub account holds, and an organisation holds `steamship`.
 name: Upload to Steam with steamship
-description: Uploads a game build to Steam with Valve's steamcmd, logged in with the secret `steamship ci` set.
+description: Uploads a game build or a Workshop item to Steam with Valve's steamcmd, logged in with the secret `steamship ci` set.
 branding:
   icon: upload-cloud
   color: blue
 
 inputs:
-  script:
-    description: The app build script, such as steam/app_build.vdf, from the repository's root; or give workshop instead.
+  command:
+    description: upload for a build, or workshop for a Workshop item.
+    required: false
+    default: upload
+  app:
+    description: The app by its ID or its app build script, or for workshop an item script. Leave it out in a game's folder.
     required: false
     default: ""
-  version:
-    description: The version being shipped, which with the commit becomes the build's description; needed with script.
-    required: false
-    default: ""
-  workshop:
-    description: A Workshop item's workshopitem script, such as workshop/item.vdf, to upload instead of a build.
-    required: false
-    default: ""
-  new-item:
-    description: Make a new Workshop item when the script names no publishedfileid, which is otherwise refused in CI.
+  dry-run:
+    description: Valve's dry run for upload, which computes and logs the whole build and uploads nothing. For workshop, checks each item and uploads nothing.
     required: false
     default: "false"
+  account:
+    description: The build account, when it is not the one the login remembers.
+    required: false
+    default: ""
   login:
     description: The login `steamship ci` set as a secret, passed as secrets.STEAMSHIP_LOGIN.
     required: true
-  preview:
-    description: Valve's dry run, which computes and logs the whole build and uploads nothing.
-    required: false
-    default: "false"
-  default:
-    description: Also set the build live on the default branch while Steam shows the app unreleased, and leave it once released; needs web-api-key.
-    required: false
-    default: "false"
   web-api-key:
     description: The publisher Web API key, passed as a secret, with which steamship confirms the build live and sets it live on default.
+    required: false
+    default: ""
+  home:
+    description: A folder the workflow keeps between jobs, such as one a cache restores. The login, the account and the key are removed from it when the job ends. Leave it empty for a folder of the job's own.
+    required: false
+    default: ""
+  version:
+    description: "upload only: the version being shipped, which with the commit becomes the build's description."
+    required: false
+    default: ""
+  default:
+    description: "upload only: also set the build live on the default branch while Steam shows the app unreleased, and leave it once released. Needs web-api-key."
+    required: false
+    default: "false"
+  demo:
+    description: "upload only: ship the demo of a game's folder instead of the full game."
+    required: false
+    default: "false"
+  allow-ungreen:
+    description: "upload only: upload a commit that is not on the game's green branch, such as a hotfix."
+    required: false
+    default: "false"
+  new:
+    description: "workshop only: make a new item, which CI otherwise refuses."
+    required: false
+    default: "false"
+  for-launch:
+    description: "workshop only: upload an item while Steam still shows the game unreleased."
+    required: false
+    default: "false"
+  visibility:
+    description: "workshop only: public, friends-only, private or unlisted. Needed to make a new item."
+    required: false
+    default: ""
+  name:
+    description: "workshop only: the item's name in the items file."
+    required: false
+    default: ""
+  items:
+    description: "workshop only: the file that keeps the ID of each item made."
+    required: false
+    default: ""
+  content:
+    description: "workshop only: the folder uploaded as the item's content."
+    required: false
+    default: ""
+  preview-image:
+    description: "workshop only: the item's preview image, 1 MB at most."
+    required: false
+    default: ""
+  title:
+    description: "workshop only: the item's title, 128 bytes at most."
+    required: false
+    default: ""
+  description:
+    description: "workshop only: the item's description, 8000 bytes at most."
+    required: false
+    default: ""
+  change-note:
+    description: "workshop only: what changed in this upload, 8000 bytes at most."
     required: false
     default: ""
 
 outputs:
   build-id:
-    description: The BuildID Steam gave the upload; empty for a preview or a Workshop item.
+    description: The BuildID Steam gave the upload. Empty for a dry run or a Workshop item.
     value: ${{ steps.upload.outputs.build-id }}
   item-id:
     description: The ID of the Workshop item uploaded; empty for a build.
@@ -96,50 +148,45 @@ runs:
         # the job would search.
         echo "program=${program}" >> "${GITHUB_OUTPUT}"
 
-    # A home of the job's own, into which the login is put back and from which it goes with the
-    # job. steamship reads the secret from its environment, never from its command line.
+    # steamship reads the login and the key from its environment, never from its command line.
+    # The step's logic is in a script so that a test can run it.
     - name: Upload
       id: upload
       shell: bash
       env:
+        ACTION_PATH: ${{ github.action_path }}
         STEAMSHIP: ${{ steps.install.outputs.program }}
+        STEAMSHIP_HOME: ${{ inputs.home || format('{0}/steamship-home', runner.temp) }}
+        STEAMSHIP_ACCOUNT: ${{ inputs.account }}
         STEAMSHIP_LOGIN: ${{ inputs.login }}
-        STEAMSHIP_HOME: ${{ runner.temp }}/steamship-home
-        SCRIPT: ${{ inputs.script }}
-        VERSION: ${{ inputs.version }}
-        WORKSHOP: ${{ inputs.workshop }}
-        NEW_ITEM: ${{ inputs.new-item }}
-        PREVIEW: ${{ inputs.preview }}
-        DEFAULT: ${{ inputs.default }}
         STEAMSHIP_WEB_API_KEY: ${{ inputs.web-api-key }}
+        COMMAND: ${{ inputs.command }}
+        APP: ${{ inputs.app }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        VERSION: ${{ inputs.version }}
+        DEFAULT: ${{ inputs.default }}
+        DEMO: ${{ inputs.demo }}
+        ALLOW_UNGREEN: ${{ inputs.allow-ungreen }}
+        NEW: ${{ inputs.new }}
+        FOR_LAUNCH: ${{ inputs.for-launch }}
+        VISIBILITY: ${{ inputs.visibility }}
+        ITEM_NAME: ${{ inputs.name }}
+        ITEMS: ${{ inputs.items }}
+        CONTENT: ${{ inputs.content }}
+        PREVIEW_IMAGE: ${{ inputs.preview-image }}
+        TITLE: ${{ inputs.title }}
+        DESCRIPTION: ${{ inputs.description }}
+        CHANGE_NOTE: ${{ inputs.change-note }}
       # steamship takes the shell's place: a cancelled job signals the step's process alone, which
       # the shell does not pass on, so steamship would never stop steamcmd or show what it said.
-      run: |
-        set -euo pipefail
-        if [[ -n "${SCRIPT}" && -n "${WORKSHOP}" ]] || [[ -z "${SCRIPT}" && -z "${WORKSHOP}" ]]; then
-          echo "::error::Give either script, for a build, or workshop, for a Workshop item." >&2
-          exit 2
-        fi
-        if [[ -n "${WORKSHOP}" ]]; then
-          if [[ "${NEW_ITEM}" == true ]]; then
-            exec "${STEAMSHIP}" workshop "${WORKSHOP}" --new
-          else
-            exec "${STEAMSHIP}" workshop "${WORKSHOP}"
-          fi
-        elif [[ -z "${VERSION}" ]]; then
-          echo "::error::A build needs version, which with the commit becomes its description." >&2
-          exit 2
-        fi
-        upload=(upload "${SCRIPT}" --version "${VERSION}")
-        if [[ "${PREVIEW}" == true ]]; then
-          upload+=(--preview)
-        fi
-        if [[ "${DEFAULT}" == true ]]; then
-          upload+=(--default)
-        fi
-        exec "${STEAMSHIP}" "${upload[@]}"
+      run: exec bash "${ACTION_PATH}/.github/action-run.sh"
 
+    # The login, the account, the key and an install's working folders are removed whatever the
+    # outcome. The rest of the home stays for a workflow that keeps it.
     - name: Forget the login
       if: always()
       shell: bash
-      run: rm -rf "${RUNNER_TEMP}/steamship-home"
+      env:
+        STEAMSHIP: ${{ steps.install.outputs.program }}
+        STEAMSHIP_HOME: ${{ inputs.home || format('{0}/steamship-home', runner.temp) }}
+      run: '[[ -z "${STEAMSHIP}" ]] || "${STEAMSHIP}" logout'

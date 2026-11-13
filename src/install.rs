@@ -283,7 +283,8 @@ where
 {
     let previous = home.join(PREVIOUS);
     // A run that stopped between moving the old install aside and moving the new one in leaves
-    // only the old one, with the login in it: put it back before anything else.
+    // the old install in steamcmd.old and the login in steamcmd.new. Put the old one back before
+    // anything else.
     if !root.exists() && previous.exists() {
         fs::rename(&previous, root).map_err(at(root))?;
     }
@@ -327,6 +328,18 @@ where
     clear(&previous)?;
     inventory.write(&home.join(INVENTORY))?;
     clear(&downloads)
+}
+
+/// Removes the folders an install works in, `steamcmd.new` and `steamcmd.old`, and nothing else.
+/// Both are tried, and the first failure is the one given.
+///
+/// # Errors
+///
+/// When a folder cannot be removed.
+pub fn clear_working(home: &Path) -> Result<(), Error> {
+    let staging = clear(&home.join(STAGING));
+    let previous = clear(&home.join(PREVIOUS));
+    staging.and(previous)
 }
 
 fn clear(path: &Path) -> Result<(), Error> {
@@ -744,6 +757,26 @@ mod tests {
                 !stays_inside(Path::new(entry), target),
                 "{entry} -> {target}"
             );
+        }
+    }
+
+    #[test]
+    fn clearing_the_working_folders_leaves_the_install_and_its_record() {
+        let home = tempfile::tempdir().unwrap();
+        let kept = [FOLDER, INVENTORY];
+        let gone = [STAGING, PREVIOUS];
+        for name in kept.into_iter().chain(gone) {
+            let folder = home.path().join(name);
+            fs::create_dir_all(folder.join("inner")).unwrap();
+            fs::write(folder.join("inner/file"), "content").unwrap();
+        }
+        clear_working(home.path()).unwrap();
+        clear_working(home.path()).unwrap();
+        for name in kept {
+            assert!(home.path().join(name).join("inner/file").exists(), "{name}");
+        }
+        for name in gone {
+            assert!(!home.path().join(name).exists(), "{name}");
         }
     }
 }

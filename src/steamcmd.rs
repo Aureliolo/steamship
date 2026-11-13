@@ -134,27 +134,74 @@ fn state_folders(home: &Path) -> [PathBuf; 3] {
 ///
 /// When a folder that would hold one is there but cannot be read.
 pub fn login_files(home: &Path) -> io::Result<Vec<PathBuf>> {
-    let mut files = Vec::new();
+    let Listing { files, unreadable } = list_login_files(home);
+    unreadable.into_iter().next().map_or(Ok(files), Err)
+}
+
+/// What a search for login files found, and the places it could not search.
+#[derive(Debug, Default)]
+pub struct Listing {
+    /// The login files that are there, in every place that could be read.
+    pub files: Vec<PathBuf>,
+    /// Each place that is there but cannot be read, named.
+    pub unreadable: Vec<io::Error>,
+}
+
+/// [`login_files`], going on past a place it cannot read so that every file in the others is
+/// still found.
+#[must_use]
+pub fn list_login_files(home: &Path) -> Listing {
+    let mut listing = Listing::default();
     for folder in state_folders(home) {
-        // Whatever is there counts, a file that cannot be read included: skipping it would let
-        // the secrets in it through.
-        let config = folder.join("config").join("config.vdf");
-        if config.try_exists()? {
-            files.push(config);
+        files_in(&folder, &mut listing);
+    }
+    listing
+}
+
+/// The files of a login a stopped install left in `steamcmd.new` and `steamcmd.old`, as
+/// `login_files` counts them, going on past a place it cannot read.
+#[must_use]
+pub fn carried_login_files(home: &Path) -> Listing {
+    let mut listing = Listing::default();
+    for folder in [install::STAGING, install::PREVIOUS] {
+        files_in(&home.join(folder), &mut listing);
+    }
+    listing
+}
+
+/// Adds to `listing` the login's files in one state `folder`.
+fn files_in(folder: &Path, listing: &mut Listing) {
+    // Whatever is there counts, a file that cannot be read included: skipping it would let the
+    // secrets in it through.
+    let config = folder.join("config").join("config.vdf");
+    match config.try_exists() {
+        Ok(true) => listing.files.push(config),
+        Ok(false) => {}
+        Err(error) => listing.unreadable.push(named(&config)(error)),
+    }
+    let userdata = folder.join("userdata");
+    let users = match fs::read_dir(&userdata) {
+        Ok(users) => users,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return,
+        Err(error) => {
+            listing.unreadable.push(named(&userdata)(error));
+            return;
         }
-        let users = match fs::read_dir(folder.join("userdata")) {
-            Ok(users) => users,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(error),
-        };
-        for user in users {
-            let local = user?.path().join("config").join("localconfig.vdf");
-            if local.try_exists()? {
-                files.push(local);
+    };
+    for user in users {
+        let local = match user {
+            Ok(user) => user.path().join("config").join("localconfig.vdf"),
+            Err(error) => {
+                listing.unreadable.push(named(&userdata)(error));
+                continue;
             }
+        };
+        match local.try_exists() {
+            Ok(true) => listing.files.push(local),
+            Ok(false) => {}
+            Err(error) => listing.unreadable.push(named(&local)(error)),
         }
     }
-    Ok(files)
 }
 
 /// An error that names `file`, since the system's reason alone does not.
