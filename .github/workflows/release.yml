@@ -218,8 +218,8 @@ jobs:
   # The action as a workflow in a game's repository uses it, from this tag on each system: it
   # installs the release just published, checked by SHA-256 and attestation, and uploads with a
   # login handed over. The login is an anonymous one, which Steam refuses a build, so the upload
-  # fails; what this checks is that the action installs this release and runs it. That a login
-  # handed over reaches Steam's refusal is checked in CI, with steamship built from source.
+  # fails there, which the check reads in the home. That a login handed over reaches Steam's
+  # refusal is checked in CI, with steamship built from source.
   action:
     name: action (${{ matrix.platform }})
     if: github.repository == 'Aureliolo/steamship'
@@ -258,7 +258,7 @@ jobs:
         run: |
           set -euo pipefail
           config="$(printf '"InstallConfigStore"\n{\n}\n' | od -An -tx1 | tr -d ' \n')"
-          echo "packed=steamship-login-1:anonymous:${config}" >> "${GITHUB_OUTPUT}"
+          echo "packed=steamship-login-2:$(date -u +%F):anonymous:${config}" >> "${GITHUB_OUTPUT}"
 
       # `./` for the action at this tag, as for release-build.yml above: actionlint rejects the
       # `$/...` form zizmor asks for.
@@ -267,10 +267,11 @@ jobs:
         continue-on-error: true
         uses: ./ # zizmor: ignore[self-repository]
         with:
-          script: tests/fixtures/spacewar/steam/app_build.vdf
+          app: tests/fixtures/spacewar/steam/app_build.vdf
           version: ${{ github.ref_name }}
           login: ${{ steps.login.outputs.packed }}
-          preview: true
+          dry-run: true
+          home: ${{ runner.temp }}/action-home
 
       - name: Check the action installed this release and ran it
         env:
@@ -292,6 +293,8 @@ jobs:
             test "${code}" = 3
             grep -qF "console   Microsoft's ConPTY" <<< "${status}"
           fi
+          grep -rqF 'Failed to initialize build on server (Access Denied)' \
+            "${RUNNER_TEMP}/action-home/apps/480/output"
           test "${OUTCOME}" = failure
 
   # The formula, the Scoop manifest and the winget manifests for this release. winget gets them

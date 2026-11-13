@@ -610,3 +610,35 @@ fn a_credential_store_that_fails_is_named_and_nothing_goes_on_without_it() {
         "{stderr}"
     );
 }
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_key_that_cannot_be_forgotten_leaves_the_login_and_working_folders_gone() {
+    let home = tempfile::tempdir().unwrap();
+    let saved = home.path().join("steamcmd/config/config.vdf");
+    fs::create_dir_all(saved.parent().unwrap()).unwrap();
+    fs::write(&saved, "\"token\" \"a_saved_login_token_0123456789\"").unwrap();
+    let account = home.path().join("account");
+    fs::write(&account, "build_bot\n").unwrap();
+    let left = home.path().join("steamcmd.old/left");
+    fs::create_dir_all(left.parent().unwrap()).unwrap();
+    fs::write(&left, "left").unwrap();
+    let (_folder, address) = broken_bus();
+    let broken = [("DBUS_SESSION_BUS_ADDRESS", address.as_str())];
+    let (code, stdout, stderr) = steamship(&["logout"], Some(home.path()), &broken);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  login     \u{2713} forgotten\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("  account   \u{2713} forgotten\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("  api key   \u{2717} not forgotten\n"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("logged out"), "{stdout}");
+    assert!(!saved.exists() && !account.exists() && !left.exists());
+}

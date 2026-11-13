@@ -59,6 +59,10 @@ jobs:
       - name: Test the re-run selector
         run: bash .github/rerun-test.sh
 
+      # Against a fake steamship: the step would otherwise upload to Steam.
+      - name: Test the action's step
+        run: bash .github/action-run-test.sh
+
   zizmor:
     name: zizmor
     runs-on: ubuntu-26.04

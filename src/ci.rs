@@ -403,7 +403,7 @@ pub fn step(script: &str, pinned: &str, release: &str, secret: &str) -> String {
         "      - name: Upload to Steam\n        \
          uses: Aureliolo/steamship@{pinned} # {release}\n        \
          with:\n          \
-         script: {script}\n          \
+         app: {script}\n          \
          version: ${{{{ github.ref_name }}}}\n          \
          login: ${{{{ secrets.{secret} }}}}\n"
     )
@@ -817,7 +817,7 @@ mod tests {
             "      - name: Upload to Steam\n        \
              uses: Aureliolo/steamship@0123abcd # v0.4.0\n        \
              with:\n          \
-             script: steam/app_build.vdf\n          \
+             app: steam/app_build.vdf\n          \
              version: ${{ github.ref_name }}\n          \
              login: ${{ secrets.STEAMSHIP_LOGIN }}\n"
         );

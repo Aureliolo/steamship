@@ -20,7 +20,8 @@ the step to add to your workflow, after the step that builds your content:
 - name: Upload to Steam
   uses: Aureliolo/steamship@<commit> # vX.Y.Z
   with:
-    script: steam/app_build.vdf
+    command: upload
+    app: steam/app_build.vdf
     version: ${{ github.ref_name }}
     login: ${{ secrets.STEAMSHIP_LOGIN }}
 ```
@@ -28,10 +29,45 @@ the step to add to your workflow, after the step that builds your content:
 The action is listed on the GitHub Marketplace as
 [Upload to Steam with steamship](https://github.com/marketplace/actions/upload-to-steam-with-steamship).
 It installs the steamship release it is pinned to. It refuses that release unless its
-SHA-256 and its attestation check out. Then it uploads, and gives the BuildID as its `build-id`
-output. `preview: true` makes it Valve's dry run.
+SHA-256 and its attestation check out. Then it runs the command, and gives the BuildID as its
+`build-id` output. The outputs are set on a failed step too.
 
 The action runs on Linux, Windows and macOS runners. Renovate raises its pin by itself.
+
+### Inputs
+
+`command` is `upload`, the default, or `workshop`. Most other inputs are a flag of that command
+under the flag's name. `account`, `login`, `web-api-key` and `home` set an environment variable
+instead, and `app` is the command's first argument. In a game's folder, leave `app` and `version`
+out.
+
+| Input           | Command    | Flag or use                                                   |
+| --------------- | ---------- | ------------------------------------------------------------- |
+| `command`       | both       | `upload`, the default, or `workshop`                          |
+| `app`           | both       | The app, or for `workshop` an item script                     |
+| `dry-run`       | both       | `--dry-run`                                                   |
+| `account`       | both       | The build account, as `STEAMSHIP_ACCOUNT`                     |
+| `login`         | both       | The login from `steamship ci`, required, as `STEAMSHIP_LOGIN` |
+| `web-api-key`   | both       | The publisher key, as `STEAMSHIP_WEB_API_KEY`                 |
+| `home`          | both       | steamship's home folder, as `STEAMSHIP_HOME`                  |
+| `version`       | `upload`   | `--version`                                                   |
+| `default`       | `upload`   | `--default`                                                   |
+| `demo`          | `upload`   | `--demo`                                                      |
+| `allow-ungreen` | `upload`   | `--allow-ungreen`                                             |
+| `new`           | `workshop` | `--new`                                                       |
+| `for-launch`    | `workshop` | `--for-launch`                                                |
+| `visibility`    | `workshop` | `--visibility`                                                |
+| `name`          | `workshop` | `--name`                                                      |
+| `items`         | `workshop` | `--items`                                                     |
+| `content`       | `workshop` | `--content`                                                   |
+| `preview-image` | `workshop` | `--preview-image`                                             |
+| `title`         | `workshop` | `--title`                                                     |
+| `description`   | `workshop` | `--description`                                               |
+| `change-note`   | `workshop` | `--change-note`                                               |
+
+A boolean is `true` or `false`, and anything else is refused before steamship starts. So is an
+input the other command takes, such as `new` with `command: upload`, so that no input is ignored
+without a word. The step exits with steamship's own code.
 
 ### What `ci` asks for
 
@@ -62,19 +98,50 @@ without its executable bit, which `check` refuses.
 
 ### A Workshop item
 
-A Workshop item goes up the same way, with its `workshopitem` script in place of the build's:
+A Workshop item goes up with `command: workshop`, and its `workshopitem` script as `app`:
 
 ```yaml
 - name: Upload the Workshop item
   uses: Aureliolo/steamship@<commit> # vX.Y.Z
   with:
-    workshop: workshop/item.vdf
+    command: workshop
+    app: workshop/item.vdf
     login: ${{ secrets.STEAMSHIP_LOGIN }}
 ```
 
-The item's ID is its `item-id` output. A script with no `publishedfileid` is refused
-there, since every run would make another item. Make the item once and add its ID to the script.
-Or set `new-item: true` for the one run that makes it.
+The item's ID is its `item-id` output. A script with no `publishedfileid` is refused there, since
+every run would make another item. Make the item once and add its ID to the script. Or set
+`new: true` for the one run that makes it.
+
+### Keeping the home
+
+The action gives each job a home of its own. When the job ends, whatever the outcome,
+`steamship logout` removes the login, the account, the key and an install's working folders from
+it. A workflow that wants to keep the home's chunk cache and the record `rollback` reads sets
+`home:` and caches that folder. The [home folder's table](install.md#the-home-folder) says what
+each entry holds.
+
+```yaml
+- uses: actions/cache@<commit> # vX.Y.Z
+  with:
+    path: |
+      ${{ runner.temp }}/steamship/apps
+      !${{ runner.temp }}/steamship/apps/*/output/*.log
+      ${{ runner.temp }}/steamship/recorded-builds
+    key: steamship-${{ github.run_id }}
+    restore-keys: steamship-
+- name: Upload to Steam
+  uses: Aureliolo/steamship@<commit> # vX.Y.Z
+  with:
+    app: steam/app_build.vdf
+    version: ${{ github.ref_name }}
+    login: ${{ secrets.STEAMSHIP_LOGIN }}
+    home: ${{ runner.temp }}/steamship
+```
+
+A cache cannot be updated, so each run saves a new one under its own key and restores the newest.
+The cache leaves out the build logs, which a restored job has no use for. `logout` has removed the
+login, the account and an install's working folders by then, so the cache holds none of them.
 
 ### Steam's logs
 

@@ -304,7 +304,7 @@ fn ci_sets_the_secret_through_gh_and_shows_the_step_pinned_by_commit() {
             "\n      - name: Upload to Steam\n        \
              uses: Aureliolo/steamship@0123456789abcdef0123456789abcdef01234567 # v{version}\n        \
              with:\n          \
-             script: steam/app_build.vdf\n          \
+             app: steam/app_build.vdf\n          \
              version: ${{{{ github.ref_name }}}}\n          \
              login: ${{{{ secrets.STEAMSHIP_LOGIN }}}}\n"
         )),

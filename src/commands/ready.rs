@@ -257,8 +257,8 @@ pub(crate) fn verdict(
 
 /// Steam's logs of a failed run, as collapsed groups in a GitHub Actions job's log: `files` as
 /// they are, what was `captured` without being saved, then what steamcmd `added` to its own logs
-/// this run, all of it redacted. The action deletes steamship's home when the job ends, so this
-/// is the only look at them there is.
+/// this run, all of it redacted. The action's own home goes when the job ends, so this is the
+/// only look at them there is.
 pub(crate) fn dump_in_actions(
     files: &[(String, PathBuf)],
     captured: &[(String, Vec<u8>)],
