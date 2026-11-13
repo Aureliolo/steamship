@@ -9,7 +9,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use steamship::account::Account;
-use steamship::cli::{self, FAILED, REFUSED};
+use steamship::cli::{self, FAILED, REFUSED, UNFINISHED};
 use steamship::install;
 use steamship::platform::Platform;
 use steamship::project::{self, Project};
@@ -469,7 +469,7 @@ fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
                 ),
                 None,
             );
-            ExitCode::from(FAILED)
+            ExitCode::from(UNFINISHED)
         }
     }
 }

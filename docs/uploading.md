@@ -26,12 +26,14 @@ It then asks for the password and for a Steam Guard code or approval in the Stea
 What you type is passed directly to steamcmd, never logged or saved.
 
 steamcmd keeps a token. Later runs use it without a password. When it expires, an upload stops
-with exit code 3 and tells you to log in again.
+with exit code 3 and tells you to log in again. When Steam is limiting login attempts, the upload
+exits 6 instead. Wait, then run again. A new login only adds attempts.
 
 `steamship status` shows the home, the build account and steamcmd. It then logs in with the
 saved token as an upload would and says whether Steam takes it. It asks for nothing and prints
-neither the account's name nor any key. It exits 0 when an upload would log in and 3 when it
-would not. `steamship logout` forgets the token, the account and the Web API key.
+neither the account's name nor any key. It exits 0 when an upload would log in, 3 when it would
+not and 6 when Steam is limiting login attempts. `steamship logout` forgets the token, the
+account and the Web API key.
 
 ## Starting scripts
 
@@ -257,8 +259,15 @@ Here the line is spread out:
 - `live` says whether the build is live on that branch.
 - `default` says whether it is live on [the default branch](#the-default-branch).
 
-The exit code is the same as without `--json`. A run refused before steamcmd starts prints no
-JSON.
+The exit code is the same as without `--json`:
+
+- `uploaded` and `dry-run` exit 0.
+- `not-live` and `built-then-failed` exit 5. A build is up, and a second upload makes another.
+- `failed` exits 5 when Steam kept the build after refusing to set it live, and 1 when no build
+  was made.
+- `not-logged-in` exits 3, or 6 when Steam is limiting login attempts.
+
+A run refused before steamcmd starts prints no JSON.
 
 ## Workshop items
 
@@ -332,6 +341,9 @@ Then a run from any machine, CI among them, updates the items made before:
 }
 ```
 
+When steamship cannot read or write the items file, it says what to add by hand and exits 5.
+The item is made. The next run would make another.
+
 A new item is refused in CI unless `--new` is given, as for a script.
 
 ### Workshop logs and JSON
@@ -358,8 +370,13 @@ With `--json`, either form prints one line of JSON per item on standard output, 
 - `log` is where steamcmd's console was saved, or `null` for a dry run.
 - `name` is the item's name in the `--items` file, or `null` for a script.
 
-The exit code is the same as without `--json`. A run refused before steamcmd starts prints no
-JSON.
+The exit code is the same as without `--json`:
+
+- `made` and `updated` exit 0, or 5 when steamship cannot keep a new item in the items file.
+- `failed` exits 1.
+- `not-logged-in` exits 3, or 6 when Steam is limiting login attempts.
+
+A run refused before steamcmd starts prints no JSON.
 
 ## Builds and branches
 

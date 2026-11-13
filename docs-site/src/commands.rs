@@ -307,6 +307,7 @@ mod tests {
     #[test]
     fn exit_codes_and_the_environment_come_from_the_cli() {
         let page = html();
+        assert_eq!(EXIT_CODES.len(), 7);
         for (code, _) in EXIT_CODES {
             assert!(
                 page.contains(&format!("<tr><td><code>{code}</code></td>")),
@@ -331,7 +332,9 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("| 3 | Not logged in, or the token expired. Run `steamship login` |"),
+            text.contains(
+                "| 3 | Not logged in, or Steam refused the saved login. Run `steamship login` |"
+            ),
             "{text}"
         );
         assert!(text.contains("| `STEAMSHIP_HOME` |"), "{text}");

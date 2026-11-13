@@ -22,18 +22,22 @@ pub const FAILED: u8 = 1;
 pub const REFUSED: u8 = 2;
 /// steamcmd has no login it can use. Run `login` again.
 pub const LOGIN: u8 = 3;
-/// steamcmd is missing or has been altered.
+/// steamcmd's install is missing, altered or failed.
 pub const STEAMCMD: u8 = 4;
+/// A build or Workshop item was made but is not live or not kept. A second run would make another.
+pub const UNFINISHED: u8 = 5;
+/// Steam is limiting login attempts.
+pub const LIMITED: u8 = 6;
 
 /// What a shell sees when a signal reaches steamship, which is no code of the table.
 pub const SIGNAL_NOTE: &str = "On Linux and macOS, a SIGINT, SIGHUP or SIGTERM sent to steamship stops steamcmd. steamship prints its logs and ends as that signal would, so a shell sees 128 plus the signal's number: 130, 129 or 143. On Windows, steamcmd ends with steamship and its logs are not printed.";
 
 /// The codes steamship exits with itself, and what each means to whoever reads it.
-pub const EXIT_CODES: [(u8, &str); 5] = [
+pub const EXIT_CODES: [(u8, &str); 7] = [
     (0, "Done"),
     (
         FAILED,
-        "The command failed and printed why. An upload also prints its logs' paths",
+        "The command failed and printed why. Nothing new is on Steam. An upload also prints its logs' paths",
     ),
     (
         REFUSED,
@@ -41,9 +45,21 @@ pub const EXIT_CODES: [(u8, &str); 5] = [
     ),
     (
         LOGIN,
-        "Not logged in, or the token expired. Run `steamship login`",
+        "Not logged in, or Steam refused the saved login. Run `steamship login`",
     ),
-    (STEAMCMD, "steamcmd is missing or has been altered"),
+    (
+        STEAMCMD,
+        "steamcmd's install is missing, altered or failed. Nothing was made",
+    ),
+    (
+        UNFINISHED,
+        "A build or Workshop item was made but is not live or not kept. A second run would make another. The output says what to do",
+    ),
+    (
+        LIMITED,
+        "Steam is limiting login attempts. Wait, then run the same command again. Do not log in \
+         again",
+    ),
 ];
 
 /// The build account, when it is not the one `login` remembered.
@@ -1196,8 +1212,11 @@ mod tests {
     #[test]
     fn every_exit_code_is_listed_once_in_order() {
         let codes: Vec<u8> = EXIT_CODES.iter().map(|&(code, _)| code).collect();
-        assert_eq!(codes, [0, FAILED, REFUSED, LOGIN, STEAMCMD]);
-        assert_eq!(codes, [0, 1, 2, 3, 4], "the codes scripts already test for");
+        assert_eq!(
+            codes,
+            [0, FAILED, REFUSED, LOGIN, STEAMCMD, UNFINISHED, LIMITED]
+        );
+        assert_eq!(codes, [0, 1, 2, 3, 4, 5, 6], "each code keeps its number");
     }
 
     /// Not names of variables, though they are in capitals in a file that reads some.

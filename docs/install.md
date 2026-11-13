@@ -186,8 +186,8 @@ steamship runs Valve's own steamcmd and installs it itself. The first `login` or
 it from Valve's signed package manifest, at the version this steamship release pins. It checks
 every package's SHA-256. On Windows it checks Valve's code signature too.
 
-steamcmd is kept from updating itself. Its files are checked again after every run. A file that
-changed stops steamship with exit code 4.
+steamcmd is kept from updating itself. Its files are checked again after every run. A changed
+file or a failed install stops steamship with exit code 4.
 
 `steamship install` installs it ahead of time, as a CI job would. It also verifies an install
 that is already there.

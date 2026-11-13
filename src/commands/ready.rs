@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use steamship::account::Account;
-use steamship::cli::{FAILED, LOGIN, REFUSED, STEAMCMD};
+use steamship::cli::{FAILED, LIMITED, LOGIN, REFUSED, STEAMCMD};
 use steamship::install::{self, Outcome};
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
@@ -59,7 +59,7 @@ pub(crate) fn hold(home: &Path) -> Result<install::Held, ExitCode> {
             Err(_) => spinner.failed("not free"),
         }
     }
-    held.map_err(|error| steamcmd_failed(&error))
+    held.map_err(|error| fail(&error, FAILED))
 }
 
 /// The home, held until the returned [`install::Held`] is dropped, and the pinned steamcmd in it,
@@ -93,17 +93,12 @@ pub(crate) fn ready() -> Result<(install::Held, PathBuf, Manifest), ExitCode> {
 }
 
 pub(crate) fn steamcmd_failed(error: &install::Error) -> ExitCode {
-    let code = if matches!(error, install::Error::Altered { .. }) {
-        STEAMCMD
-    } else {
-        FAILED
-    };
     show::failure(&error.to_string(), "", None);
     if let Some(remedy) = error.remedy() {
         show::note(remedy);
         show::hint(installed().hint());
     }
-    ExitCode::from(code)
+    ExitCode::from(STEAMCMD)
 }
 
 /// Where the account came from, which is what `login` shows of it: its name is never printed,
@@ -218,7 +213,7 @@ pub(crate) fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCod
             );
         }
     }
-    ExitCode::from(LOGIN)
+    ExitCode::from(if log_in_again { LOGIN } else { LIMITED })
 }
 
 /// The exit code for what Steam made of the saved login, or of the one handed over in `packed`.
@@ -266,4 +261,43 @@ pub(crate) fn dump_in_actions(
         ));
     }
     show::plain(&shown);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io;
+
+    use steamship::download;
+
+    use super::*;
+
+    #[test]
+    fn every_fault_of_the_steamcmd_install_exits_4() {
+        let faults = [
+            install::Error::Altered {
+                root: PathBuf::from("steamcmd"),
+                changes: vec!["steamcmd.sh".to_owned()],
+            },
+            install::Error::Withdrawn {
+                version: 1,
+                system: "linux".to_owned(),
+                file: "steamcmd_linux.zip".to_owned(),
+            },
+            install::Error::Io {
+                path: PathBuf::from("steamcmd"),
+                error: io::Error::other("no space"),
+            },
+            install::Error::Package {
+                file: "steamcmd_linux.zip".to_owned(),
+                reason: "is not a zip".to_owned(),
+            },
+            install::Error::Download(download::Error::Gone {
+                url: "https://example.test/steamcmd_linux.zip".to_owned(),
+                status: 404,
+            }),
+        ];
+        for fault in &faults {
+            assert_eq!(steamcmd_failed(fault), ExitCode::from(4), "{fault}");
+        }
+    }
 }

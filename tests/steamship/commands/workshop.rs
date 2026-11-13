@@ -313,7 +313,7 @@ fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci
 
 #[cfg(unix)]
 #[test]
-fn an_item_made_whose_id_cannot_be_kept_says_what_to_keep_by_hand_and_exits_1() {
+fn an_item_made_whose_id_cannot_be_kept_says_what_to_keep_by_hand_and_exits_5() {
     use std::os::unix::fs::PermissionsExt as _;
 
     let home = publishing("Success.", 0);
@@ -328,7 +328,7 @@ fn an_item_made_whose_id_cannot_be_kept_says_what_to_keep_by_hand_and_exits_1() 
     );
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
-    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     assert!(
         stderr.contains(&format!(
             "\u{2717} app 480: Workshop item 777 was made: {}: ",

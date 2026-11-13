@@ -94,6 +94,16 @@ An upload in CI exits 3 when the token has expired, and says the day `ci` saved 
 `steamship status` in CI shows that day too. Run `steamship login` and `steamship ci` again, and
 the next run uploads.
 
+## When Steam limits logins
+
+Exit 6 means Steam is limiting login attempts. Wait, then run again with the same login. A new
+login only adds attempts.
+
+## When a build is not live
+
+Exit 5 means a build or Workshop item was made but is not live or not kept. The output says what
+to do. Do not upload again, which makes another.
+
 ## Another CI
 
 ```sh
