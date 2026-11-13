@@ -220,8 +220,7 @@ steamship runs it for unattended.
 
 ### Rehearsals and timings
 
-`--dry-run` is Valve's dry run. It computes and logs the whole build. Nothing is uploaded or set
-live.
+`--dry-run` computes and logs the whole build. Nothing is uploaded or set live.
 
 `--times`, given to any command, ends each step's line with how long it took, such as
 `pinned and verified (0.2 s)`. Times are to the tenth of a second up to two minutes. A log then

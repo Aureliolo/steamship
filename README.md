@@ -53,7 +53,7 @@ steamship upload steam/app_build.vdf --version 1.4.0
 
 `steam/app_build.vdf` and its depot scripts are Valve's own format. If you already upload with
 steamcmd, you already have them. If not, `steamship init <app id>` writes a starting set.
-`--dry-run` is Valve's dry run. It computes the whole build and uploads nothing.
+`--dry-run` computes the whole build with Valve's tool and uploads nothing.
 
 `steamship ci` sets up the same upload from GitHub Actions.
 

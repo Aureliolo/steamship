@@ -148,7 +148,7 @@ On the first upload of an app with no branch but default, the build goes live on
 steamship then names the commands that set it live on the game's branch and describe it. Run them
 once that branch is made in Steamworks.
 
-### Preview and check
+### Dry run and check
 
 `--dry-run` stops after Valve's dry run, with nothing uploaded. `steamship check` with no script
 runs the comparisons alone, after checking the scripts and the branch they set live. It needs no
