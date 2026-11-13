@@ -7,7 +7,7 @@ use std::io;
 use std::path::Path;
 
 /// Where `login` remembers the account, in the home.
-const REMEMBERED: &str = "account";
+pub const REMEMBERED: &str = "account";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Account(String);

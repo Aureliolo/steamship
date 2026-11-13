@@ -13,6 +13,43 @@ use crate::{
 };
 
 #[test]
+fn an_accounts_name_in_a_failed_fetch_changes_neither_its_exit_code_nor_steamships_words() {
+    for (name, said, exit, code, words) in [
+        (
+            "limit",
+            "Logging in user 'limit' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)",
+            5_i32,
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "steam",
+            "Logging in user 'steam' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)",
+            5_i32,
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "steamcmd",
+            "Logging in user 'steamcmd' [U:1:0] to Steam Public...OK",
+            137_i32,
+            1_i32,
+            "steamcmd exited 137 without saying why",
+        ),
+    ] {
+        let home = faked_with(&format!("#!/bin/sh\necho \"{said}\"\nexit {exit}\n"));
+        saved_login(home.path());
+        let (found, stdout, stderr) = fetching(
+            home.path(),
+            &["1000", "--branch", "testing", "--account", name],
+            &[],
+        );
+        assert_eq!(found, Some(code), "{name}: {stdout}{stderr}");
+        assert!(stderr.contains(words), "{name}: {stderr}");
+    }
+}
+
+#[test]
 fn a_build_that_is_not_a_number_says_what_a_build_id_is() {
     let folder = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();

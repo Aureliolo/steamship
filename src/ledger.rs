@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 /// The folder of the home holding one file per app.
-const FOLDER: &str = "recorded-builds";
+pub const FOLDER: &str = "recorded-builds";
 
 /// One build set live on one branch.
 #[derive(Debug, Clone, PartialEq, Eq)]

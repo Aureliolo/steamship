@@ -30,14 +30,18 @@ use crate::common;
 use crate::steamship_command;
 use crate::{
     BETAS, BUILDS, CUT_OFF, CUT_OFF_SAID, DEMO_TYPED, DESCRIBED, KEY, NEEDS_VC, SECRETS, SET_LIVE,
-    Session, UPDATED, assert_no_secret_in, failure, faked, faked_with, in_game, in_game_with,
+    Session, UPDATED, assert_no_secret_in, failure, faked_with, in_game, in_game_with,
     packed_login, project, pushed, pushed_game, released_as, saved_login, shipping_dll, steamship,
     steamship_in, summary_of, upload, web_api, web_api_variables, with_demo, written,
 };
 
 #[test]
 fn an_upload_in_ci_logs_in_as_the_account_handed_over() {
-    let home = faked();
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"$*\" > \"$HOME/args\"\n\
+         echo \"args: $*\"\n",
+    );
     let (_project, script) = project(true);
     let script = script.to_str().unwrap();
     let (_, stdout, _) = steamship(
@@ -45,9 +49,185 @@ fn an_upload_in_ci_logs_in_as_the_account_handed_over() {
         Some(home.path()),
         &[("STEAMSHIP_LOGIN", &packed_login())],
     );
+    let args = fs::read_to_string(home.path().join("args")).unwrap();
+    assert!(args.contains(" +login build_bot "), "{stdout}{args}");
     let console = fs::read_to_string(home.path().join("apps/1000/output/steamcmd.log")).unwrap();
-    assert!(console.contains(" +login build_bot "), "{stdout}{console}");
+    assert!(
+        console.contains(" +login [redacted] ") && !console.contains("build_bot"),
+        "{stdout}{console}"
+    );
     assert!(steamcmd::saved_login(home.path(), Platform::THIS).exists());
+}
+
+/// A steamcmd that logs in as the account it was given and prints `console`, a shell line, then
+/// builds app 1000 as `BuildID` 18273645, or only previews the build when told to.
+fn building_with(console: &str) -> String {
+    format!(
+        "#!/bin/sh\n\
+         for arg in \"$@\"; do [ \"$previous\" = +login ] && account=\"$arg\"; \
+         [ \"$previous\" = +run_app_build ] && script=\"$arg\"; previous=\"$arg\"; done\n\
+         output=$(sed -n 's/^[[:space:]]*\"BuildOutput\"[[:space:]]*\"\\(.*\\)\"$/\\1/p' \"$script\")\n\
+         mkdir -p \"$output\"\n\
+         {console}\n\
+         echo '[2026-09-28 20:24:13]: Building depot 1001...'\n\
+         finished='build (BuildID 18273645).'\n\
+         grep -q '\"Preview\"[[:space:]]*\"1\"' \"$script\" && finished='build preview.'\n\
+         echo \"Successfully finished AppID 1000 $finished\" > \"$output/app_build_1000.log\"\n"
+    )
+}
+
+/// The login line steamcmd prints for the account `building_with` was given.
+const LOGGING_IN: &str = "echo \"Logging in user '$account' [U:1:1] to Steam Public...OK\"";
+
+/// Whether `text` holds `name` as a whole word, in any case.
+fn holds_word(text: &str, name: &str) -> bool {
+    text.split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .any(|word| word.eq_ignore_ascii_case(name))
+}
+
+#[test]
+fn an_accounts_name_in_steamcmds_lines_changes_no_outcome() {
+    for name in ["build", "fully", "view", "273645"] {
+        for preview in [false, true] {
+            let home = faked_with(&building_with(LOGGING_IN));
+            let (_project, script) = project(true);
+            let mut args = vec![
+                "upload",
+                script.to_str().unwrap(),
+                "--account",
+                name,
+                "--version",
+                "1.4.0",
+            ];
+            if preview {
+                args.push("--dry-run");
+            }
+            let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+            assert_eq!(code, Some(0_i32), "{name}: {stdout}{stderr}");
+            if preview {
+                assert!(
+                    stderr.contains("nothing was uploaded, as asked")
+                        || stdout.contains("nothing was uploaded, as asked"),
+                    "{name}: {stdout}{stderr}"
+                );
+            } else {
+                assert!(stdout.contains("BuildID 18273645"), "{name}: {stdout}");
+            }
+            let output = home.path().join("apps/1000/output");
+            let console = fs::read_to_string(output.join("steamcmd.log")).unwrap();
+            assert!(
+                console.contains("Logging in user '[redacted]'")
+                    && console.contains("Building depot 1001...")
+                    && !holds_word(&console, name),
+                "{name}: {console}"
+            );
+            if name != "build" {
+                let log = fs::read_to_string(output.join("app_build_1000.log")).unwrap();
+                let finished = if preview {
+                    "build preview."
+                } else {
+                    "build (BuildID 18273645)."
+                };
+                assert_eq!(
+                    log,
+                    format!("Successfully finished AppID 1000 {finished}\n"),
+                    "{name}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn an_anonymous_runs_saved_console_keeps_the_word() {
+    let home = faked_with(&building_with(
+        "echo 'Connecting anonymously to Steam Public...OK'",
+    ));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = steamship(
+        &[
+            "upload",
+            script.to_str().unwrap(),
+            "--account",
+            "anonymous",
+            "--version",
+            "1.4.0",
+        ],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let console = fs::read_to_string(home.path().join("apps/1000/output/steamcmd.log")).unwrap();
+    assert!(
+        console.contains("Connecting anonymously to Steam Public...OK"),
+        "{console}"
+    );
+}
+
+#[test]
+fn a_name_in_another_case_is_redacted_too() {
+    let home = faked_with(&building_with(
+        "echo \"Logging in user 'Build_Bot' [U:1:1] to Steam Public...OK\"",
+    ));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let console = fs::read_to_string(home.path().join("apps/1000/output/steamcmd.log")).unwrap();
+    assert!(
+        console.contains("Logging in user '[redacted]'") && !console.contains("Build_Bot"),
+        "{console}"
+    );
+}
+
+#[test]
+fn nothing_an_upload_leaves_under_apps_names_the_account() {
+    let home = faked_with(&building_with(LOGGING_IN));
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let files = written(&home.path().join("apps/1000"), &[]);
+    for (path, contents) in &files {
+        assert!(
+            !String::from_utf8_lossy(contents).contains("build_bot"),
+            "{path} names the account"
+        );
+    }
+    let console = files
+        .iter()
+        .find(|(path, _)| path == "output/steamcmd.log")
+        .map(|(_, contents)| String::from_utf8_lossy(contents).into_owned())
+        .unwrap();
+    assert!(console.contains("[redacted]"), "{console}");
+}
+
+#[test]
+fn a_folder_named_like_a_log_is_left_out_of_the_rewrite() {
+    let home = faked_with(BUILT);
+    let folder = home.path().join("apps/1000/output/old.log");
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join("inside"), "build_bot").unwrap();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(!stdout.contains("may still hold the token"), "{stdout}");
+    assert!(folder.is_dir());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_log_that_cannot_be_rewritten_is_removed_and_the_upload_exits_as_it_would() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let home = faked_with(BUILT);
+    let old = home.path().join("apps/1000/output/old.log");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::write(&old, "build_bot").unwrap();
+    fs::set_permissions(&old, fs::Permissions::from_mode(0o444)).unwrap();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("BuildID 4242"), "{stdout}");
+    assert!(!old.exists());
 }
 
 /// A steamcmd that has Valve build the upload as `BuildID` 777, then fails setting it live: it
@@ -930,7 +1110,7 @@ fn an_upload_told_to_stop_stops_steamcmd_shows_what_it_said_and_ends_by_that_sig
         );
         assert!(
             stdout.contains("::group::steamcmd's console\n")
-                && stdout.contains("Logging in user build_bot to Steam Public...OK"),
+                && stdout.contains("Logging in user [redacted] to Steam Public...OK"),
             "{name}: {stdout}"
         );
         let gone = run::output(run::command("kill").args(["-0", &steamcmd])).unwrap();
@@ -1265,6 +1445,192 @@ fn an_upload_exits_6_when_steam_limits_logins_and_3_when_it_refuses_the_login() 
         let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
         assert_eq!(code, Some(expected), "{reason}: {stdout}{stderr}");
     }
+}
+
+/// A steamcmd that prints `said` as the account it was given, then exits 5.
+fn refusing_as_given(said: &str) -> String {
+    format!(
+        "#!/bin/sh\n\
+         for arg in \"$@\"; do [ \"$previous\" = +login ] && account=\"$arg\"; previous=\"$arg\"; done\n\
+         {said}\n\
+         exit 5\n"
+    )
+}
+
+#[test]
+fn an_accounts_name_in_a_refusal_changes_neither_its_exit_code_nor_its_message() {
+    let (_project, script) = project(true);
+    let cases = [
+        (
+            "limit",
+            "echo \"Logging in user '$account' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "steam",
+            "echo \"Logging in user '$account' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "cached",
+            "echo \"Logging in user '$account' [U:1:0] to Steam Public...\"\n\
+             echo 'FAILED (No cached credentials and @NoPromptForPassword is set)'",
+            3_i32,
+            "steamcmd holds no saved login for the build account",
+        ),
+    ];
+    for (name, said, expected, words) in cases {
+        let home = faked_with(&refusing_as_given(said));
+        let (code, stdout, stderr) = steamship(
+            &[
+                "upload",
+                script.to_str().unwrap(),
+                "--account",
+                name,
+                "--version",
+                "1.4.0",
+            ],
+            Some(home.path()),
+            &[],
+        );
+        assert_eq!(code, Some(expected), "{name}: {stdout}{stderr}");
+        assert_eq!(
+            failure(&stderr),
+            format!("not logged in: {words}"),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn an_account_named_like_steamships_words_leaves_its_sentences_whole_in_a_failed_upload() {
+    let (_project, script) = project(true);
+    let home = faked_with(&refusing_as_given(
+        "echo \"Logging in user '$account' [U:1:0] to Steam Public...OK\"",
+    ));
+    let (code, stdout, stderr) = steamship(
+        &[
+            "upload",
+            script.to_str().unwrap(),
+            "--account",
+            "steamcmd",
+            "--version",
+            "1.4.0",
+        ],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("steamcmd exited 5 without saying why"),
+        "{stderr}"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("user 'steamcmd'"));
+}
+
+#[test]
+fn an_account_named_like_a_word_of_steamcmds_errors_changes_no_reason_or_advice() {
+    let (_project, script) = project(true);
+    for (name, said, words) in [
+        (
+            "failed",
+            "echo 'ERROR! Failed to set build live on branch testing'",
+            "Failed to set build live on branch testing",
+        ),
+        (
+            "trusted",
+            "echo 'unable to load trusted SSL root certificates'",
+            "Install the system's certificate store (ca-certificates)",
+        ),
+    ] {
+        let home = faked_with(&refusing_as_given(said));
+        let (code, stdout, stderr) = steamship(
+            &[
+                "upload",
+                script.to_str().unwrap(),
+                "--account",
+                name,
+                "--version",
+                "1.4.0",
+            ],
+            Some(home.path()),
+            &[],
+        );
+        assert_eq!(code, Some(1_i32), "{name}: {stdout}{stderr}");
+        assert!(stderr.contains(words), "{name}: {stderr}");
+    }
+}
+
+#[test]
+fn a_redistributables_check_steam_refuses_leaves_no_log_naming_the_account() {
+    let home = faked_with(&refusing_as_given(
+        "echo \"Logging in user '$account' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"",
+    ));
+    let old = home.path().join("apps/1000/output/old.log");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::write(&old, "Logging in user 'build_bot'").unwrap();
+    let (_project, script) = shipping_dll(&["kernel32.dll", "vcruntime140.dll"], None);
+    let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
+    assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
+    assert_eq!(
+        fs::read_to_string(&old).unwrap(),
+        "Logging in user '[redacted]'"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_log_held_after_a_default_check_steam_refuses_is_named_in_a_note() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (_project, script) = project(true);
+    let home = faked_with(&refusing_as_given(
+        "echo \"Logging in user '$account' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"",
+    ));
+    let output = home.path().join("apps/1000/output");
+    let old = output.join("old.log");
+    fs::create_dir_all(&output).unwrap();
+    fs::write(&old, "Logging in user 'build_bot'").unwrap();
+    fs::set_permissions(&old, fs::Permissions::from_mode(0o444)).unwrap();
+    fs::set_permissions(&output, fs::Permissions::from_mode(0o555)).unwrap();
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default"],
+        &[],
+    );
+    fs::set_permissions(&output, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
+    let seen = format!("{stdout}{stderr}");
+    assert!(
+        seen.contains("These logs may still hold the token or the account's name")
+            && seen.contains("old.log"),
+        "{seen}"
+    );
+}
+
+#[test]
+fn a_default_check_steam_refuses_leaves_no_log_naming_the_account() {
+    let (_project, script) = project(true);
+    let home = faked_with(&refusing_as_given(
+        "echo \"Logging in user '$account' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"",
+    ));
+    let old = home.path().join("apps/1000/output/old.log");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::write(&old, "Logging in user 'build_bot'").unwrap();
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default"],
+        &[],
+    );
+    assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
+    assert_eq!(
+        fs::read_to_string(&old).unwrap(),
+        "Logging in user '[redacted]'"
+    );
 }
 
 #[test]

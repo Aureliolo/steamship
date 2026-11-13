@@ -285,7 +285,9 @@ fn upload_item(
         Err(error) if error.kind() != io::ErrorKind::NotFound => Some(error),
         Err(_) | Ok(()) => None,
     };
-    let before = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
+    let before = Redactor::for_home(home)
+        .map_err(|error| fail(&error, FAILED))?
+        .and_name(account.name());
     let steamcmd_logs = steamcmd::state_folder(home, Platform::THIS).join("logs");
     let marks = dump::Marks::take(&steamcmd_logs);
     let spinner = Spinner::start("steam", "uploading", true);
@@ -337,7 +339,7 @@ fn upload_item(
         }
         workshop::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
-            let refused = login_refused(&redacted(redactor_in_use, &reason), packed);
+            let refused = login_refused(&reason, redactor_in_use, packed);
             after_failure(given, item, copied, &log, refused)
         }
         workshop::Outcome::Failed(reasons) => {

@@ -166,8 +166,9 @@ only a pushed commit, built and checked first. [Shipping a game](games.md) has t
 The build's description is the version and the Git commit the app script's own repository is at.
 That holds whatever folder steamship runs in. A script in a worktree names that worktree's commit.
 
-Build output (logs, manifests, the chunk cache) goes to steamship's home for the app, never
-into your content. It is kept between runs so that later uploads are faster. A failure or an
+Build output (logs, manifests, the chunk cache) goes to `apps/<app>` in
+[steamship's home](install.md#the-home-folder), never into your content. It is kept between runs
+so that later uploads are faster. A failure or an
 expired token ends the run rather than waiting at a prompt.
 
 The run prints the BuildID and, when the script names one, the branch it was set live on. In a
@@ -408,7 +409,8 @@ steamship rollback 480 testing
 ```
 
 `rollback` sets a branch back to its previous build. Uploads [from a game](games.md) record the
-commit and build ID they set live on each branch, in steamship's home. So `rollback` works only on
+commit and build ID they set live on each branch, in the `recorded-builds` folder of
+[steamship's home](install.md#the-home-folder). So `rollback` works only on
 the machine that uploaded. A branch with no earlier recorded build is refused. The
 default branch can be rolled back only while the app is unreleased, as with `promote`.
 

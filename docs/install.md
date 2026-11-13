@@ -204,6 +204,37 @@ steamcmd, its login token and the build output live in steamship's home. That is
 folder unless `STEAMSHIP_HOME` names another. The token can do everything the build account may,
 so treat that folder like a password.
 
+The default is `%LOCALAPPDATA%\steamship` on Windows, `$XDG_DATA_HOME/steamship` on Linux (or
+`~/.local/share/steamship` when that is unset) and `~/Library/Application Support/steamship` on
+macOS. `steamship status` prints the folder in use.
+
+| Entry                                           | Holds                                                           |
+| ----------------------------------------------- | --------------------------------------------------------------- |
+| `steamcmd/` and `steamcmd.inventory`            | The pinned steamcmd and the record it is verified against       |
+| `steamcmd.new/`, `steamcmd.old/`, `downloads/`  | An install's working folders, removed when the install finishes |
+| `steamship.lock`                                | What two runs take turns on                                     |
+| `account`                                       | The build account `login` remembered                            |
+| `latest-release`                                | The update check's last answer                                  |
+| `Steam/` on Linux, `Library/` on macOS          | steamcmd's own state, which on Windows is inside `steamcmd/`    |
+| `apps/<app>/`                                   | Build output, with the chunk cache that makes uploads faster    |
+| `recorded-builds/<app>.json`                    | The builds uploads set live, which `rollback` reads             |
+| `workshop/<app>/<item>/`                        | The script steamcmd was given and its console                   |
+| `fetched/<app>/<branch>-<system>/`              | What `fetch` downloaded                                         |
+
+The token is `steamcmd/config/config.vdf` on Windows, `Steam/config/config.vdf` on Linux and
+`Library/Application Support/Steam/config/config.vdf` on macOS. The `logs/` folder beside `config/`
+holds the account's name. An install that stopped midway can leave the token's file in
+`steamcmd.new/`.
+
+Each log steamship saves or rewrites under `apps/<app>/output` shows `[redacted]` where the token
+or the account's name stood. When a log can be neither rewritten nor removed, the `log` line names
+the first such log. An upload Steam refuses before its build names it in a note instead. A log a
+run did not write, such as one from a run that was killed, is not covered.
+
+To cache between CI jobs, keep `apps` and `recorded-builds` from a job that ended well, without
+the logs `apps/*/output/*.log`. Never keep `account`, the folders that hold the token, or an
+install's working folders.
+
 Every steamship on the machine shares that home, whichever release each repository pins. Two runs
 that use steamcmd take turns. The second waits, and says so, until the first has checked steamcmd
 again after its run. A release that pins another steamcmd installs its own over the one there and

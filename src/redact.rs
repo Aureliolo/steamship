@@ -3,6 +3,10 @@
 //! steamcmd keeps the token that logs the account in, with no password, in its `config.vdf`,
 //! and more about the account in each `localconfig.vdf`. Every long value in those files is
 //! taken as a secret, and every copy of one is replaced before output leaves steamship.
+//!
+//! The build account's name is hidden too, but not as a secret: it can be shorter than the marker,
+//! and a name such as `view` or `273645` also stands inside the words and numbers of steamcmd's
+//! lines. So it is replaced only where it stands as a whole word, in any letter case.
 
 use std::fs;
 use std::io;
@@ -21,6 +25,8 @@ const SHORTEST: usize = 16;
 pub struct Redactor {
     /// Longest first, so that a secret holding another is replaced whole.
     secrets: Vec<Vec<u8>>,
+    /// The account's name, or empty when none is hidden.
+    name: Vec<u8>,
 }
 
 impl Redactor {
@@ -59,7 +65,22 @@ impl Redactor {
     pub fn and(self, other: Self) -> Self {
         let mut secrets = self.secrets;
         secrets.extend(other.secrets);
-        Self::sorted(secrets)
+        let name = if self.name.is_empty() {
+            other.name
+        } else {
+            self.name
+        };
+        Self {
+            name,
+            ..Self::sorted(secrets)
+        }
+    }
+
+    /// This redactor, hiding the account `name` as a whole word too. An empty name hides nothing.
+    #[must_use]
+    pub fn and_name(mut self, name: &str) -> Self {
+        self.name = name.as_bytes().to_vec();
+        self
     }
 
     fn sorted(mut secrets: Vec<Vec<u8>>) -> Self {
@@ -68,7 +89,10 @@ impl Redactor {
         secrets.retain(|secret| secret.len() > MARKER.len());
         secrets.sort_by(|left, right| right.len().cmp(&left.len()).then(left.cmp(right)));
         secrets.dedup();
-        Self { secrets }
+        Self {
+            secrets,
+            name: Vec::new(),
+        }
     }
 
     /// The secrets, longest first.
@@ -79,9 +103,18 @@ impl Redactor {
 
     /// `output` with every secret replaced by [`MARKER`]. Replacing runs until none is left, so
     /// that no secret survives by being put together from what surrounds a replacement. Each
-    /// pass shortens the output, so there are never more passes than it has bytes.
+    /// pass shortens the output, so there are never more passes than it has bytes. The account's
+    /// name follows in one pass that leaves each marker alone, since the marker itself holds
+    /// words a name can be. For saved consoles and logs, and Actions groups of steamcmd's output.
     #[must_use]
     pub fn redact(&self, output: &[u8]) -> Vec<u8> {
+        replace_word(&self.redact_secrets(output), &self.name)
+    }
+
+    /// `output` with every secret replaced by [`MARKER`], and the account's name left. For text
+    /// steamship judges and prints: a long token matches no English word, and a name can.
+    #[must_use]
+    pub fn redact_secrets(&self, output: &[u8]) -> Vec<u8> {
         let mut text = output.to_vec();
         for _ in 0..=output.len() {
             let Some(secret) = self
@@ -94,6 +127,33 @@ impl Redactor {
             text = replace(&text, secret);
         }
         text
+    }
+
+    /// Rewrites each log that `logs` lists in `folder` through [`Redactor::redact`], only where
+    /// that changes it. A log that cannot be read or rewritten is removed, and the other logs are
+    /// still redacted.
+    ///
+    /// # Errors
+    ///
+    /// When the folder cannot be listed, or a log can be neither rewritten nor removed. The error
+    /// names the first log that stayed.
+    pub fn redact_logs(&self, folder: &Path) -> io::Result<()> {
+        let mut first = None;
+        for log in logs(folder)? {
+            let rewritten = fs::read(&log).and_then(|text| {
+                let redacted = self.redact(&text);
+                if redacted == text {
+                    Ok(())
+                } else {
+                    fs::write(&log, redacted)
+                }
+            });
+            if rewritten.is_err() {
+                let error = fs::remove_file(&log).map_err(steamcmd::named(&log)).err();
+                first = first.or(error);
+            }
+        }
+        first.map_or(Ok(()), Err)
     }
 }
 
@@ -211,6 +271,45 @@ fn replace(text: &[u8], secret: &[u8]) -> Vec<u8> {
     replaced
 }
 
+/// Whether `byte` can be part of an account's name, so that it joins a word.
+const fn in_word(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
+
+/// `text` with each copy of `name`, in any case, that stands as a whole word replaced by
+/// [`MARKER`]. An account's name is ASCII, and Steam ignores its case.
+fn replace_word(text: &[u8], name: &[u8]) -> Vec<u8> {
+    if name.is_empty() {
+        return text.to_vec();
+    }
+    let mut replaced = Vec::with_capacity(text.len());
+    let mut before: Option<u8> = None;
+    let mut rest = text;
+    while let Some((&first, after_first)) = rest.split_first() {
+        if let Some(after) = rest.strip_prefix(MARKER) {
+            replaced.extend_from_slice(MARKER);
+            before = Some(b']');
+            rest = after;
+            continue;
+        }
+        let whole = rest.split_at_checked(name.len()).filter(|(window, after)| {
+            window.eq_ignore_ascii_case(name)
+                && before.is_none_or(|byte| !in_word(byte))
+                && after.first().is_none_or(|&byte| !in_word(byte))
+        });
+        if let Some((window, after)) = whole {
+            replaced.extend_from_slice(MARKER);
+            before = window.last().copied();
+            rest = after;
+        } else {
+            replaced.push(first);
+            before = Some(first);
+            rest = after_first;
+        }
+    }
+    replaced
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +392,130 @@ mod tests {
         let error = remove_logs(folder.path()).unwrap_err();
         assert!(error.to_string().contains("a.log"), "{error}");
         assert!(!folder.path().join("b.log").exists());
+    }
+
+    #[test]
+    fn an_accounts_name_is_replaced_whatever_its_length() {
+        let redactor = Redactor::default().and_name("build_bot");
+        let said = "Logging in user 'build_bot' [U:1:1] to Steam Public...OK";
+        assert_eq!(
+            String::from_utf8(redactor.redact(said.as_bytes())).unwrap(),
+            "Logging in user '[redacted]' [U:1:1] to Steam Public...OK"
+        );
+    }
+
+    #[test]
+    fn a_name_inside_the_marker_ends_and_an_empty_one_hides_nothing() {
+        let said = b"a redacted b";
+        let marked = Redactor::default().and_name("redacted").redact(said);
+        assert_eq!(String::from_utf8(marked).unwrap(), "a [redacted] b");
+        assert_eq!(Redactor::default().and_name("").redact(said), said);
+    }
+
+    #[test]
+    fn a_name_of_redacted_is_hidden_once_and_not_inside_a_marker() {
+        let redactor =
+            Redactor::from_texts(&[b"\"token\" \"a_long_token_value_0123456789\"".to_vec()])
+                .and_name("redacted");
+        let said = b"user redacted held a_long_token_value_0123456789";
+        assert_eq!(
+            String::from_utf8(redactor.redact(said)).unwrap(),
+            "user [redacted] held [redacted]"
+        );
+    }
+
+    #[test]
+    fn a_name_is_hidden_only_as_a_whole_word_in_any_case() {
+        let redactor = Redactor::default().and_name("view");
+        let said = "Preview view, VIEW_ONE, 273view, View.";
+        assert_eq!(
+            String::from_utf8(redactor.redact(said.as_bytes())).unwrap(),
+            "Preview [redacted], VIEW_ONE, 273view, [redacted]."
+        );
+    }
+
+    #[test]
+    fn every_log_of_a_folder_is_rewritten_and_no_other_file() {
+        let folder = tempfile::tempdir().unwrap();
+        fs::write(folder.path().join("a.log"), "user build_bot").unwrap();
+        fs::write(folder.path().join("B.LOG"), "BUILD_BOT in").unwrap();
+        fs::write(folder.path().join("depot.csm"), "build_bot").unwrap();
+        Redactor::default()
+            .and_name("build_bot")
+            .redact_logs(folder.path())
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(folder.path().join("a.log")).unwrap(),
+            "user [redacted]"
+        );
+        assert_eq!(
+            fs::read_to_string(folder.path().join("B.LOG")).unwrap(),
+            "[redacted] in"
+        );
+        assert_eq!(
+            fs::read(folder.path().join("depot.csm")).unwrap(),
+            b"build_bot"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_log_that_cannot_be_rewritten_is_removed() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let folder = tempfile::tempdir().unwrap();
+        let old = folder.path().join("old.log");
+        fs::write(&old, "build_bot").unwrap();
+        fs::set_permissions(&old, fs::Permissions::from_mode(0o444)).unwrap();
+        Redactor::default()
+            .and_name("build_bot")
+            .redact_logs(folder.path())
+            .unwrap();
+        assert!(!old.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_log_that_can_be_neither_rewritten_nor_removed_is_an_error_that_names_it() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let folder = tempfile::tempdir().unwrap();
+        let old = folder.path().join("old.log");
+        fs::write(&old, "build_bot").unwrap();
+        fs::set_permissions(&old, fs::Permissions::from_mode(0o444)).unwrap();
+        fs::set_permissions(folder.path(), fs::Permissions::from_mode(0o555)).unwrap();
+        let result = Redactor::default()
+            .and_name("build_bot")
+            .redact_logs(folder.path());
+        fs::set_permissions(folder.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let error = result.unwrap_err();
+        assert!(error.to_string().contains("old.log"), "{error}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_log_held_open_is_named_and_the_next_is_still_redacted() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+
+        let folder = tempfile::tempdir().unwrap();
+        let held = folder.path().join("a.log");
+        fs::write(&held, "build_bot").unwrap();
+        fs::write(folder.path().join("b.log"), "build_bot").unwrap();
+        // Shared for reading only, so that Windows refuses to write or delete it while it is open.
+        let _open = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&held)
+            .unwrap();
+        let error = Redactor::default()
+            .and_name("build_bot")
+            .redact_logs(folder.path())
+            .unwrap_err();
+        assert!(error.to_string().contains("a.log"), "{error}");
+        assert_eq!(
+            fs::read_to_string(folder.path().join("b.log")).unwrap(),
+            "[redacted]"
+        );
     }
 
     #[test]

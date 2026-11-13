@@ -213,6 +213,94 @@ fn by_fields(folder: &Path, items: &Path, extra: &[&str]) -> Vec<String> {
 }
 
 #[test]
+fn an_accounts_name_in_a_refusal_changes_neither_the_exit_code_nor_the_message() {
+    for (name, said, code, words) in [
+        (
+            "limit",
+            "Logging in user 'limit' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "steam",
+            "Logging in user 'steam' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "cached",
+            "Logging in user 'cached' [U:1:0] to Steam Public...FAILED (No cached credentials \
+             and @NoPromptForPassword is set)",
+            3_i32,
+            "steamcmd holds no saved login for the build account",
+        ),
+    ] {
+        let home = faked_with(&format!("#!/bin/sh\necho \"{said}\"\nexit 5\n"));
+        saved_login(home.path());
+        let (_temp, script) = workshop_item("");
+        let (found, stdout, stderr) = steamship(
+            &["workshop", script.to_str().unwrap(), "--account", name],
+            Some(home.path()),
+            &[],
+        );
+        assert_eq!(found, Some(code), "{name}: {stdout}{stderr}");
+        assert!(stderr.contains(words), "{name}: {stderr}");
+    }
+}
+
+#[test]
+fn an_account_named_like_steamships_words_leaves_its_sentences_whole_in_a_failed_item() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'steamcmd' [U:1:0] to Steam Public...OK\"\n\
+         exit 137\n",
+    );
+    saved_login(home.path());
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &[
+            "workshop",
+            script.to_str().unwrap(),
+            "--account",
+            "steamcmd",
+        ],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("steamcmd exited 137 without saying why"),
+        "{stderr}"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("user 'steamcmd'"));
+}
+
+#[test]
+fn an_items_saved_console_names_no_account() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
+         printf '\"workshopitem\"\\n{\\n\"appid\" \"480\"\\n\"publishedfileid\" \"777\"\\n}\\n' > \"$script\"\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+         echo 'Success.'\n",
+    );
+    saved_login(home.path());
+    let (temp, script) = workshop_item("");
+    let folder = script.parent().unwrap();
+    let items = temp.path().join("my game (x86)/steam/workshop_items.json");
+    let args = by_fields(folder, &items, &["--visibility", "private"]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let console =
+        fs::read_to_string(home.path().join("workshop/480/example/steamcmd.log")).unwrap();
+    assert!(
+        console.contains("Logging in user '[redacted]'") && !console.contains("build_bot"),
+        "{console}"
+    );
+}
+
+#[test]
 fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci() {
     let home = publishing("Success.", 0);
     let (temp, script) = workshop_item("");

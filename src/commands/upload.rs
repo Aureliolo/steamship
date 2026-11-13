@@ -202,6 +202,7 @@ fn ticked_on_steam(
         "asking which redistributables the app ticks",
     );
     if asked.is_err() {
+        hide_in_logs(home, account, app);
         install::verify(held, manifest).map_err(|error| steamcmd_failed(&error))?;
     }
     let (console, spinner) = asked?;
@@ -340,7 +341,8 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         request.default,
         (&held, &home, &manifest),
         (&account, prepared.app_id, packed.as_ref()),
-    )?;
+    )
+    .inspect_err(|_| hide_in_logs(&home, &account, prepared.app_id))?;
     let saved = prepared.output.join("steamcmd.log");
     let steam = Steam {
         account: &account,
@@ -350,7 +352,6 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         preview: request.preview,
         info_of: in_run.then_some(prepared.app_id),
     };
-    let (doing, again) = wording(request.preview);
     let steamcmd_logs = steamcmd::state_folder(&home, Platform::THIS).join("logs");
     let marks = dump::Marks::take(&steamcmd_logs);
     let Ran {
@@ -363,12 +364,12 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         log,
         written,
         ..
-    } = build_retrying(&steam, doing, again)?;
+    } = build_retrying(&steam, wording(request.preview))?;
     let (default, spinner) = shown_unreleased(
         default,
         &outcome,
         info.as_deref().map(|info| (info, redactor.is_some())),
-        (prepared.app_id, spinner, doing),
+        (prepared.app_id, spinner, wording(request.preview).0),
     );
     let outcome = found_on_steam(outcome, &prepared, &description);
     let reporting = Reporting {
@@ -596,7 +597,7 @@ struct Ran {
 /// Runs steamcmd's build, saying it is `doing` so, and runs it `again` while it fails in a way
 /// that may pass: once Steam's CDN serves a manifest it did not, and once more for no connection
 /// to Steam's build server.
-fn build_retrying(steam: &Steam<'_>, doing: &str, again: &str) -> Result<Ran, ExitCode> {
+fn build_retrying(steam: &Steam<'_>, (doing, again): (&str, &str)) -> Result<Ran, ExitCode> {
     let mut ran = build(steam, doing, steam.info_of)?;
     let info = ran.info.take();
     let mut tries = upload::Tries::default();
@@ -669,7 +670,10 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
         Err(error) if error.kind() != io::ErrorKind::NotFound => Some(error),
         Err(_) | Ok(()) => None,
     };
-    let before = Redactor::for_home(steam.home).map_err(|error| fail(&error, FAILED))?;
+    let name = steam.account.name();
+    let before = Redactor::for_home(steam.home)
+        .map_err(|error| fail(&error, FAILED))?
+        .and_name(name);
     let spinner = Spinner::start("steam", doing, true);
     let finished = steamcmd::upload(steam.account, &steam.prepared.script, info_of).run(steam.home);
     let took = show::took(spinner.elapsed());
@@ -709,7 +713,11 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
         Ok(after) => {
             let redactor = before.clone().and(after);
             let saved = fs::write(steam.saved, redactor.redact(&finished.output));
-            let (written, line) = console_line(steam, saved.err(), removed);
+            let (written, mut line) = console_line(steam, saved.err(), removed);
+            // The logs steamcmd wrote beside the console name the account too.
+            if let Err(error) = redactor.redact_logs(&steam.prepared.output) {
+                line = format!("{line}. {}", logs_unredacted(&error));
+            }
             (Some(redactor), written, line)
         }
         Err(error) => {
@@ -728,6 +736,27 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
         log: line,
         written,
     })
+}
+
+/// What is said when a log of the build's folder could neither be redacted nor removed.
+fn logs_unredacted(error: &io::Error) -> String {
+    format!(
+        "These logs may still hold the token or the account's name: {error}. Check them before \
+         you share them"
+    )
+}
+
+/// Hides the token and the account's name in the logs `app`'s earlier runs left in the home, for a
+/// run of steamcmd that refused before any build: the build's own redaction never runs then.
+fn hide_in_logs(home: &Path, account: &Account, app: u32) {
+    let output = home.join(upload::APPS).join(app.to_string()).join("output");
+    let done = Redactor::for_home(home).map_or_else(
+        |_| redact::remove_logs(&output),
+        |redactor| redactor.and_name(account.name()).redact_logs(&output),
+    );
+    if let Err(error) = done {
+        show::note(&logs_unredacted(&error));
+    }
 }
 
 /// Whether steamcmd's console was saved, and the `log` line that says where its logs are. `failed`
@@ -897,7 +926,7 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
         }
         upload::Outcome::NotLoggedIn(line) => {
             spinner.failed(&format!("refused after {took}"));
-            login_refused(&redacted(redactor, line), packed)
+            login_refused(line, redactor, packed)
         }
         upload::Outcome::BuiltThenFailed { build_id, reasons } => {
             spinner.failed(&format!("failed after {took}"));
@@ -952,9 +981,10 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
     (code, Live::default())
 }
 
-/// `text` with every secret `redactor` knows replaced.
+/// `text` with every secret `redactor` knows replaced, for what steamship prints after judging it.
+/// The account's name stays: it can be a word of steamship's own sentences.
 pub(crate) fn redacted(redactor: &Redactor, text: &str) -> String {
-    String::from_utf8_lossy(&redactor.redact(text.as_bytes())).into_owned()
+    String::from_utf8_lossy(&redactor.redact_secrets(text.as_bytes())).into_owned()
 }
 
 /// Says where `build_id`, just uploaded for `app`, is live: on `branch`, which the script set it

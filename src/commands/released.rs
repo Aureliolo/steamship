@@ -33,12 +33,15 @@ pub(crate) fn app_info(
         }
     };
     let redactor = before.and(Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?);
-    let console = String::from_utf8_lossy(&redactor.redact(&finished.output)).into_owned();
-    match conversation::judge_login(finished.code, &console) {
-        conversation::Login::Taken => Ok((console, spinner)),
+    // Judged as steamcmd wrote it, and read as a block of settings with its secrets taken out.
+    match conversation::judge_login(finished.code, &String::from_utf8_lossy(&finished.output)) {
+        conversation::Login::Taken => Ok((
+            String::from_utf8_lossy(&redactor.redact_secrets(&finished.output)).into_owned(),
+            spinner,
+        )),
         judged @ (conversation::Login::Refused(_) | conversation::Login::Failed(_)) => {
             spinner.failed("not logged in");
-            Err(verdict(judged, packed))
+            Err(verdict(judged, &redactor, packed))
         }
     }
 }

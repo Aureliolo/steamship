@@ -18,6 +18,7 @@ use steamship::update::Installed;
 use steamship::{ci, conversation, dump};
 
 use super::exit::fail;
+use super::upload::redacted;
 
 /// How this steamship was installed, which is how it is upgraded.
 pub(crate) fn installed() -> Installed {
@@ -188,8 +189,14 @@ pub(crate) fn restore(packed: Option<&ci::Login>, home: &Path) -> Result<(), Exi
 
 /// Says Steam refused the login, and how to log in again: for one handed over in
 /// `STEAMSHIP_LOGIN`, with the day it was packed, since the token in it may simply have expired.
-pub(crate) fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCode {
+/// `reason` is as steamcmd wrote it, and what is shown has the secrets of `redactor` taken out.
+pub(crate) fn login_refused(
+    reason: &str,
+    redactor: &Redactor,
+    packed: Option<&ci::Login>,
+) -> ExitCode {
     let (words, log_in_again) = conversation::saved_login_words(reason);
+    let words = redacted(redactor, &words);
     match packed.and_then(ci::Login::packed_on) {
         _ if !log_in_again => show::failure("not logged in", &words, None),
         None => {
@@ -218,13 +225,17 @@ pub(crate) fn login_refused(reason: &str, packed: Option<&ci::Login>) -> ExitCod
 
 /// The exit code for what Steam made of the saved login, or of the one handed over in `packed`.
 /// It says why when Steam did not take the login.
-pub(crate) fn verdict(judged: conversation::Login, packed: Option<&ci::Login>) -> ExitCode {
+pub(crate) fn verdict(
+    judged: conversation::Login,
+    redactor: &Redactor,
+    packed: Option<&ci::Login>,
+) -> ExitCode {
     match judged {
         conversation::Login::Taken => ExitCode::SUCCESS,
-        conversation::Login::Refused(reason) => login_refused(&reason, packed),
+        conversation::Login::Refused(reason) => login_refused(&reason, redactor, packed),
         conversation::Login::Failed(reasons) => {
             for reason in &reasons {
-                show::failure(reason, "", None);
+                show::failure(&redacted(redactor, reason), "", None);
             }
             ExitCode::from(FAILED)
         }
