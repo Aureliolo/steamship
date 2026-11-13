@@ -341,6 +341,51 @@ fn an_upload_with_a_key_at_hand_is_confirmed_live_on_its_branch_or_fails() {
 }
 
 #[test]
+fn a_secret_in_steams_answer_to_the_check_of_what_is_live_is_hidden() {
+    let home = faked_with(BUILT);
+    let [token, _] = SECRETS;
+    saved_login(home.path());
+    let config = home.path().join("Steam/config/config.vdf");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(
+        config,
+        format!(
+            "\"InstallConfigStore\" {{ \"Software\" {{ \"Valve\" {{ \"Steam\" {{ \
+             \"ConnectCache\" {{ \"3a1f0c2e\" \"{token}\" }} }} }} }} }}\n"
+        ),
+    )
+    .unwrap();
+    let (_project, script) = project(true);
+    let answer = format!(r#"{{"response": {{"message": "{token}"}}}}"#);
+    // The first answer is for the check of the branch before the upload, the second for the apps
+    // the key holds, which that check asks after a 500, and the third for the check of what is
+    // live after the upload.
+    let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", answer.clone()),
+        ("500 Internal Server Error", answer.clone()),
+        ("500 Internal Server Error", answer),
+    ]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        !format!("{stdout}{stderr}").contains(token),
+        "a secret was printed"
+    );
+    assert_eq!(
+        stdout
+            .matches("Steam answered HTTP 500: [redacted]")
+            .count(),
+        2,
+        "{stdout}"
+    );
+}
+
+#[test]
 fn an_upload_asked_for_default_too_is_set_live_there_while_steam_shows_the_app_unreleased() {
     let home = faked_with(&released_as("unavailable"));
     saved_login(home.path());

@@ -481,14 +481,6 @@ impl Failure {
         };
         Self { code, message }
     }
-
-    /// This failure with every secret `redactor` knows replaced in its message.
-    fn redacted(self, redactor: &Redactor) -> Self {
-        Self {
-            message: redacted(redactor, &self.message),
-            ..self
-        }
-    }
 }
 
 /// The failure of a login Steam refused, which [`login_refusal`] answered `code` and `message` for.
@@ -816,11 +808,10 @@ fn build_retrying(steam: &Steam<'_>, (doing, again): (&str, &str)) -> Result<Ran
                 ran.spinner.failed(&format!("{what} after {}", ran.took));
             }
         }
-        let before = ran.before.clone();
         let earlier = ran.outcome;
         ran = build(steam, again, None).map_err(|(code, failure)| Halt {
             code,
-            failure: failure.redacted(&before),
+            failure,
             earlier: Some(earlier),
         })?;
     }
@@ -981,7 +972,7 @@ fn logs_removed(steam: &Steam<'_>, error: &io::Error, removed: Option<io::Error>
 /// Asks Steam, when a key is at hand, whether `build_id` is what is live on `branch` now. False
 /// only when Steam shows another build there, or no such branch. Asked a few times, since a
 /// build just set live may not show at once. A Steam that cannot be asked holds nothing up.
-fn confirmed_live(app: u32, branch: &str, build_id: u64) -> bool {
+fn confirmed_live(app: u32, branch: &str, build_id: u64, redactor: &Redactor) -> bool {
     const APART: Duration = Duration::from_secs(2);
     let Ok(Some(api)) = key_at_hand() else {
         return true;
@@ -1006,7 +997,7 @@ fn confirmed_live(app: u32, branch: &str, build_id: u64) -> bool {
         }
         Err(error) => {
             spinner.failed("not confirmed");
-            show::aside(&error.to_string());
+            show::aside(&redacted(redactor, &error.to_string()));
             true
         }
     }
@@ -1119,10 +1110,7 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> Reported {
                 },
                 |branch| first_on_default(app, *build_id, branch, default, logs, redactor),
             );
-            return Reported {
-                failure: live.failure.map(|failure| failure.redacted(redactor)),
-                ..live
-            };
+            return live;
         }
         upload::Outcome::Previewed => {
             spinner.done(&format!("dry run finished in {took}"));
@@ -1233,7 +1221,7 @@ fn set_live(
     redactor: &Redactor,
 ) -> Reported {
     if let Some(branch) = branch
-        && !confirmed_live(app, branch, build_id)
+        && !confirmed_live(app, branch, build_id, redactor)
     {
         let headline = format!(
             "app {app}: BuildID {build_id} uploaded, but Steam does not show it live on {branch}"

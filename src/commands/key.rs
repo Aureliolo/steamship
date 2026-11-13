@@ -217,7 +217,7 @@ pub(crate) fn web_api_failed(spinner: Spinner, error: &webapi::Error) -> ExitCod
         webapi::Error::Status(status, _) => format!("HTTP {status}"),
         webapi::Error::Unreachable(_) => "no answer".to_owned(),
         webapi::Error::Unreadable(_) => "unreadable".to_owned(),
-        webapi::Error::Failed(_) => "failed".to_owned(),
+        webapi::Error::Failed { .. } => "failed".to_owned(),
     });
     fail(&answered(error), FAILED)
 }

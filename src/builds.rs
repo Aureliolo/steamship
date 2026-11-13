@@ -311,7 +311,7 @@ mod tests {
             webapi::Error::Refused,
             webapi::Error::Status(500, String::new()),
             webapi::Error::Unreadable("the build list"),
-            webapi::Error::Failed("no".to_owned()),
+            webapi::Error::told("no"),
         ];
         let mut lines = vec![failure_json("x", "y")];
         for error in &errors {

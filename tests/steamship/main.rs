@@ -642,6 +642,7 @@ fn a_newer_steamship_is_told_at_a_terminal_with_how_to_get_it() {
 
 #[test]
 fn a_newer_steamship_is_not_told_in_a_log() {
+    let _store = common::store::lock();
     let home = told_of_99();
     let (code, stdout, stderr) = steamship(&["logout"], Some(home.path()), &[("CI", "")]);
     assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");

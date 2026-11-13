@@ -218,6 +218,19 @@ fn with_unreadable_login_files_a_refused_key_still_says_how_and_steams_words_are
 }
 
 #[test]
+fn with_unreadable_login_files_a_result_number_steamship_gives_is_still_shown() {
+    let home = home_with_unreadable_login();
+    let (host, _requests) = web_api(vec![("200 OK", r#"{"response": {"result": 8}}"#)]);
+    let (code, stdout, stderr) = steamship(
+        &["promote", "1000010", "--build", "7", "--branch", "testing"],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(failure(&stderr), "Steam says: result 8", "{stderr}");
+}
+
+#[test]
 fn with_unreadable_login_files_the_key_check_still_says_a_refused_key_needs_the_publisher_key() {
     let home = home_with_unreadable_login();
     let (host, _requests) = web_api(vec![("403 Forbidden", "")]);
