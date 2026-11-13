@@ -1078,6 +1078,8 @@ fn a_secret_in_steams_answer_is_hidden_in_the_json_message() {
     );
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     assert!(!stdout.contains(token), "{stdout}");
+    assert!(!stderr.contains(token), "a secret reached standard error");
+    assert!(stderr.contains("[redacted]"), "{stderr}");
     let line = summary_of(&stdout);
     assert!(
         text_at(&line, "/error/message").contains("[redacted]"),

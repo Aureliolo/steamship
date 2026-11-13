@@ -1106,8 +1106,17 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> Reported {
             spinner.done(&format!("uploaded in {took}"));
             hand_on(*build_id);
             let live = prepared.held_back.as_ref().map_or_else(
-                || set_live(app, *build_id, prepared.set_live.as_deref(), default, logs),
-                |branch| first_on_default(app, *build_id, branch, default, logs),
+                || {
+                    set_live(
+                        app,
+                        *build_id,
+                        prepared.set_live.as_deref(),
+                        default,
+                        logs,
+                        redactor,
+                    )
+                },
+                |branch| first_on_default(app, *build_id, branch, default, logs, redactor),
             );
             return Reported {
                 failure: live.failure.map(|failure| failure.redacted(redactor)),
@@ -1219,6 +1228,7 @@ fn set_live(
     branch: Option<&str>,
     default: Option<&webapi::Api>,
     logs: &str,
+    redactor: &Redactor,
 ) -> Reported {
     if let Some(branch) = branch
         && !confirmed_live(app, branch, build_id)
@@ -1243,7 +1253,7 @@ fn set_live(
         default: false,
     };
     if let Some(api) = default {
-        if let Err(why) = live_on_default(api, app, build_id, branch) {
+        if let Err(why) = live_on_default(api, app, build_id, branch, redactor) {
             show::note(logs);
             return Reported::unfinished(live, &why, "");
         }
@@ -1272,6 +1282,7 @@ fn first_on_default(
     branch: &str,
     default: Option<&webapi::Api>,
     logs: &str,
+    redactor: &Redactor,
 ) -> Reported {
     let make = format!(
         "make {branch} in Steamworks under SteamPipe, Builds, and set the build live there with "
@@ -1300,7 +1311,7 @@ fn first_on_default(
         show::note(logs);
         return Reported::unfinished(Live::default(), &headline, &reason);
     };
-    let reported = set_live(app, build_id, None, Some(api), logs);
+    let reported = set_live(app, build_id, None, Some(api), logs, redactor);
     if reported.live.default {
         show::note(&format!(
             "not set live on {branch}: Steam gives app {app} no branch but default until a build \
@@ -1323,6 +1334,7 @@ fn live_on_default(
     app: u32,
     build_id: u64,
     branch: Option<&str>,
+    redactor: &Redactor,
 ) -> Result<(), String> {
     let spinner = Spinner::start("default", "setting it live", false);
     let Err(error) = api.set_live(app, build_id, branch::DEFAULT_KEY) else {
@@ -1334,7 +1346,7 @@ fn live_on_default(
     let headline = format!(
         "app {app}: BuildID {build_id} uploaded{also}, but Steam did not set it live on default"
     );
-    let reason = error.to_string();
+    let reason = redacted(redactor, &error.to_string());
     show::failure(
         &headline,
         &reason,

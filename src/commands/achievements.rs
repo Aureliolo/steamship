@@ -9,11 +9,11 @@ use std::process::ExitCode;
 use steamship::cli::{FAILED, REFUSED, Writing};
 use steamship::project::Project;
 use steamship::show::{self, Spinner};
-use steamship::{achievements, builds, editor, likeness, picture, po, receipt, saved, webapi};
+use steamship::{achievements, editor, likeness, picture, po, receipt, saved, webapi};
 
 use super::exit::{fail, refusals};
 use super::game::{app_named, game_achievements, game_for};
-use super::key::{offer_to_keep, web_api, web_api_failed};
+use super::key::{offer_to_keep, print_unanswered, web_api, web_api_failed};
 use super::ready::home;
 
 /// `achievements --write --unchanged` in `game`, which holds no achievement records: no import is
@@ -324,7 +324,7 @@ pub(crate) fn try_achievements(
         Err(error) => {
             let code = web_api_failed(spinner, &error);
             if json {
-                show::plain(&format!("{}\n", builds::error_json(app_id, &error, None)));
+                print_unanswered(app_id, &error, None);
             }
             return Err(code);
         }
@@ -495,7 +495,7 @@ fn list_achievements(
         Err(error) => {
             let code = web_api_failed(spinner, &error);
             if json {
-                show::plain(&format!("{}\n", builds::error_json(app, &error, None)));
+                print_unanswered(app, &error, None);
             }
             return Err(code);
         }

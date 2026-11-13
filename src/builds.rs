@@ -5,6 +5,7 @@ use serde_json::{Value, json};
 
 use crate::branch;
 use crate::calendar;
+use crate::redact::{self, Redactor};
 use crate::upload;
 use crate::webapi::{self, Branch, Build, Overview};
 
@@ -122,16 +123,22 @@ pub fn failure_json(code: &str, message: &str) -> Value {
     json!({ "code": code, "message": message })
 }
 
-/// What `--json` prints when Steam did not answer about `app`: the code from
-/// [`webapi::Error::code`], or `no-build-live` when `why` says that is the reason, and the
-/// message a person would read.
+/// What `--json` prints when Steam did not answer about `app`.
+///
+/// The code is [`webapi::Error::code`], or `no-build-live` when `why` says that is the reason. The
+/// message is what a person would read, with the secrets of `redactor` replaced.
 #[must_use]
-pub fn error_json(app: u32, error: &webapi::Error, why: Option<&str>) -> Value {
+pub fn error_json(
+    app: u32,
+    error: &webapi::Error,
+    why: Option<&str>,
+    redactor: Option<&Redactor>,
+) -> Value {
     let (code, message) = why.map_or_else(
         || (error.code(), error.to_string()),
         |why| ("no-build-live", format!("{error}: {why}")),
     );
-    json!({ "app": app, "error": failure_json(code, &message) })
+    json!({ "app": app, "error": failure_json(code, &redact::answer(redactor, &message)) })
 }
 
 #[cfg(test)]
@@ -284,6 +291,7 @@ mod tests {
             1_000_030,
             &webapi::Error::Status(500, String::new()),
             Some("none live"),
+            Some(&Redactor::default()),
         );
         assert_eq!(
             held,
@@ -306,7 +314,8 @@ mod tests {
         let mut lines = vec![failure_json("x", "y")];
         for error in &errors {
             for why in [None, Some("none live")] {
-                lines.extend(error_json(480, error, why).pointer("/error").cloned());
+                let shown = error_json(480, error, why, Some(&Redactor::default()));
+                lines.extend(shown.pointer("/error").cloned());
             }
         }
         for line in lines {

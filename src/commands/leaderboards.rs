@@ -8,12 +8,12 @@ use std::process::ExitCode;
 use steamship::cli::{self, FAILED, REFUSED};
 use steamship::project;
 use steamship::show::{self, Spinner};
-use steamship::{builds, leaderboards, webapi};
+use steamship::{leaderboards, webapi};
 
 use super::achievements::written_over;
 use super::exit::fail;
 use super::game::{app_named, game_for};
-use super::key::{offer_to_keep, web_api, web_api_failed};
+use super::key::{offer_to_keep, print_unanswered, web_api, web_api_failed};
 use super::ready::{home, named};
 use super::released::refused_once_released;
 
@@ -163,7 +163,7 @@ pub(crate) fn try_leaderboards(
         Err(error) => {
             let code = web_api_failed(asking, &error);
             if json {
-                show::plain(&format!("{}\n", builds::error_json(app_id, &error, None)));
+                print_unanswered(app_id, &error, None);
             }
             return Err(code);
         }

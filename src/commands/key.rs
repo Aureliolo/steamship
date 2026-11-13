@@ -8,9 +8,10 @@ use std::process::ExitCode;
 use steamship::cli::{FAILED, REFUSED};
 use steamship::keychain;
 use steamship::platform::Platform;
+use steamship::redact::{self, Redactor};
 use steamship::show::{self, Hint, Spinner};
 use steamship::typing::{self, Echo};
-use steamship::webapi;
+use steamship::{builds, webapi};
 use zeroize::Zeroizing;
 
 use super::exit::fail;
@@ -180,13 +181,27 @@ pub(crate) fn offer_to_keep(home: &Path, api: &webapi::Api, from: KeyFrom) {
     }
 }
 
-/// Why Steam gave `error` about `app`, when the apps the key holds can say: asked only for the
-/// one error that needs them.
+/// Why Steam gave `error` about `app`, when the apps the key holds can say, in words safe to show:
+/// asked only for the one error that needs them.
 pub(crate) fn why_unanswered(api: &webapi::Api, app: u32, error: &webapi::Error) -> Option<String> {
     if !matches!(error, webapi::Error::Status(500, _)) {
         return None;
     }
-    webapi::no_build_yet(error, app, &api.apps().ok()?)
+    let why = webapi::no_build_yet(error, app, &api.apps().ok()?)?;
+    Some(redact::answer(answer_redactor().as_ref(), &why))
+}
+
+/// The secrets of this machine's steamcmd login, none when its files cannot be read. Steam's
+/// words are shown only through them.
+pub(crate) fn answer_redactor() -> Option<Redactor> {
+    let home = Platform::THIS.home(|name| env::var_os(name)).ok()?;
+    Redactor::for_home(&home).ok()
+}
+
+/// Prints the `--json` line for Steam not answering about `app`, its words redacted.
+pub(crate) fn print_unanswered(app: u32, error: &webapi::Error, why: Option<&str>) {
+    let line = builds::error_json(app, error, why, answer_redactor().as_ref());
+    show::plain(&format!("{line}\n"));
 }
 
 /// Says why the Web API did not answer, and the exit code for it.
@@ -199,5 +214,8 @@ pub(crate) fn web_api_failed(spinner: Spinner, error: &webapi::Error) -> ExitCod
         webapi::Error::Unreadable(_) => "unreadable".to_owned(),
         webapi::Error::Failed(_) => "failed".to_owned(),
     });
-    fail(error, FAILED)
+    fail(
+        &redact::answer(answer_redactor().as_ref(), &error.to_string()),
+        FAILED,
+    )
 }

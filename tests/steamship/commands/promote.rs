@@ -1,5 +1,6 @@
 //! `steamship promote`.
 
+use std::fs;
 use std::time::Duration;
 
 use steamship::platform::Platform;
@@ -7,9 +8,47 @@ use steamship::steamcmd;
 use steamship::webapi::STAND_IN;
 
 use crate::{
-    KEY, SET_LIVE, failure, faked_with, packed_login, project, released_as, saved_login, steamship,
-    web_api, web_api_variables,
+    KEY, SECRETS, SET_LIVE, failure, faked_with, packed_login, project, released_as, saved_login,
+    steamship, web_api, web_api_variables,
 };
+
+#[test]
+fn a_secret_in_steams_answer_is_hidden_from_a_failed_promote() {
+    let home = faked_with(&released_as("prerelease"));
+    let [token, _] = SECRETS;
+    let config = home.path().join("Steam/config/config.vdf");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(
+        config,
+        format!(
+            "\"InstallConfigStore\" {{ \"Software\" {{ \"Valve\" {{ \"Steam\" {{ \
+             \"ConnectCache\" {{ \"3a1f0c2e\" \"{token}\" }} }} }} }} }}\n"
+        ),
+    )
+    .unwrap();
+    saved_login(home.path());
+    let (_project, script) = project(false);
+    let answer = format!(r#"{{"response": {{"message": "{token}"}}}}"#);
+    let (host, _requests) = web_api(vec![("500 Internal Server Error", answer)]);
+    let (code, stdout, stderr) = steamship(
+        &[
+            "promote",
+            script.to_str().unwrap(),
+            "--build",
+            "1234",
+            "--branch",
+            "public",
+        ],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}");
+    assert!(
+        !stdout.contains(token) && !stderr.contains(token),
+        "a secret was printed"
+    );
+    assert!(stderr.contains("[redacted]"), "{stderr}");
+}
 
 #[test]
 fn promote_sets_the_default_branch_live_only_while_steam_shows_the_app_unreleased() {
