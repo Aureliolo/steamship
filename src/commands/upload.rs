@@ -482,6 +482,11 @@ impl Failure {
         };
         Self { code, message }
     }
+
+    /// The `error` of a `--json` line.
+    pub(crate) fn json(&self) -> serde_json::Value {
+        builds::failure_json(self.code, &self.message)
+    }
 }
 
 /// The failure of a login Steam refused, which [`login_refusal`] answered `code` and `message` for.
@@ -542,7 +547,7 @@ pub(crate) fn error_of(
         return Some(builds::failure_json("unfinished", &message));
     }
     Some(match (first, later) {
-        (Some(first), _) => builds::failure_json(first.code, &first.message),
+        (Some(first), _) => first.json(),
         (None, later) => builds::failure_json("steamcmd-install", later.unwrap_or_default()),
     })
 }

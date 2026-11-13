@@ -67,6 +67,13 @@ pub(crate) fn hold(home: &Path) -> Result<install::Held, ExitCode> {
 /// The home, held until the returned [`install::Held`] is dropped, and the pinned steamcmd in it,
 /// installed or verified.
 pub(crate) fn ready() -> Result<(install::Held, PathBuf, Manifest), ExitCode> {
+    ready_telling(|_| {})
+}
+
+/// As [`ready`], and hands `told` the text it printed when steamcmd cannot be used.
+pub(crate) fn ready_telling(
+    told: impl FnOnce(&str),
+) -> Result<(install::Held, PathBuf, Manifest), ExitCode> {
     let home = home()?;
     let manifest = Manifest::pinned(Platform::THIS).map_err(|error| fail(&error, FAILED))?;
     let held = hold(&home)?;
@@ -88,7 +95,9 @@ pub(crate) fn ready() -> Result<(install::Held, PathBuf, Manifest), ExitCode> {
                 | install::Error::Io { .. }
                 | install::Error::Package { .. } => "not installed",
             });
-            return Err(steamcmd_failed(&error));
+            let (code, shown) = steamcmd_fault(&error);
+            told(&shown);
+            return Err(code);
         }
     }
     Ok((held, home, manifest))
@@ -97,6 +106,11 @@ pub(crate) fn ready() -> Result<(install::Held, PathBuf, Manifest), ExitCode> {
 /// Says why steamcmd cannot be used and answers its exit code. The text names files in steamcmd's
 /// folder, so it goes through the redactor of this machine's login when one can be built.
 pub(crate) fn steamcmd_failed(error: &install::Error) -> ExitCode {
+    steamcmd_fault(error).0
+}
+
+/// As [`steamcmd_failed`], and also answers the text it printed.
+pub(crate) fn steamcmd_fault(error: &install::Error) -> (ExitCode, String) {
     let text = error.to_string();
     let shown =
         answer_redactor().map_or_else(|| text.clone(), |redactor| redacted(&redactor, &text));
@@ -105,7 +119,7 @@ pub(crate) fn steamcmd_failed(error: &install::Error) -> ExitCode {
         show::note(remedy);
         show::hint(installed().hint());
     }
-    ExitCode::from(STEAMCMD)
+    (ExitCode::from(STEAMCMD), shown)
 }
 
 /// Where the account came from, which is what `login` shows of it: its name is never printed,

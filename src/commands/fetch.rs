@@ -19,9 +19,9 @@ use zeroize::Zeroizing;
 
 use super::exit::fail;
 use super::game::{app_named, app_or_game};
-use super::key::{offer_to_keep, web_api, web_api_failed, why_unanswered};
-use super::ready::{home, login_refused, named, ready, restore, run_as, steamcmd_failed};
-use super::upload::redacted;
+use super::key::{offer_to_keep, print_unanswered, web_api, web_api_failed, why_unanswered};
+use super::ready::{home, login_refusal, named, ready_telling, restore, run_as, steamcmd_fault};
+use super::upload::{Failure, login_failure, print_line, redacted};
 
 pub(crate) fn try_fetch(request: &cli::Fetch) -> Result<ExitCode, ExitCode> {
     if request.json {
@@ -60,22 +60,24 @@ pub(crate) fn try_fetch(request: &cli::Fetch) -> Result<ExitCode, ExitCode> {
         named: named(request.account.as_deref()),
         password: password.as_ref(),
         on_command_line: request.password.on_command_line,
+        json: request.json,
     })?;
     if let Some(password) = &password {
         keep_branch_password(&home, app_id, &branch.name, password, request.password.keep);
     }
     if held.build_id != branch.build_id || held.branch != shown {
-        return Err(fail(
-            &format!(
-                "steamcmd put build {} of the {} branch in {}, where Steam's Web API showed build \
-                 {} live on {shown}. If a build was set live meanwhile, fetch again",
-                held.build_id,
-                held.branch,
-                given.display(),
-                branch.build_id
-            ),
-            FAILED,
-        ));
+        let message = format!(
+            "steamcmd put build {} of the {} branch in {}, where Steam's Web API showed build \
+             {} live on {shown}. If a build was set live meanwhile, fetch again",
+            held.build_id,
+            held.branch,
+            given.display(),
+            branch.build_id
+        );
+        if request.json {
+            print_failure(app_id, &Failure::new("another-build", message.clone()));
+        }
+        return Err(fail(&message, FAILED));
     }
     show::success(
         &format!(
@@ -109,6 +111,9 @@ fn branch_to_fetch(
             let code = web_api_failed(spinner, &error);
             if let Some(why) = &why {
                 show::note(why);
+            }
+            if request.json {
+                print_unanswered(app, &error, why.as_deref());
             }
             return Err(code);
         }
@@ -303,12 +308,29 @@ struct Fetching<'command> {
     named: Option<&'command str>,
     password: Option<&'command GivenPassword>,
     on_command_line: bool,
+    /// Whether a failure is also printed as the `--json` line.
+    json: bool,
+}
+
+impl Fetching<'_> {
+    /// Prints `failure` as the `--json` line, when asked for one.
+    fn print(&self, failure: &Failure) {
+        if self.json {
+            print_failure(self.app, failure);
+        }
+    }
+}
+
+/// Prints the `--json` line of a fetch of `app` that failed.
+fn print_failure(app: u32, failure: &Failure) {
+    print_line(&serde_json::json!({ "app": app, "error": failure.json() }));
 }
 
 /// Has steamcmd download the build, and answers which one the folder then holds.
 fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
     let (packed, account) = run_as(fetching.named)?;
-    let (held, home, manifest) = ready()?;
+    let (held, home, manifest) =
+        ready_telling(|shown| fetching.print(&Failure::new("steamcmd-install", shown.to_owned())))?;
     restore(packed.as_ref(), &home)?;
     let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
     let secret = fetching
@@ -333,26 +355,30 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
         .into_iter()
         .find(|(name, _)| name == "content_log.txt")
         .map_or_default(|(_, added)| fetch::hidden(&String::from_utf8_lossy(&added), &secret));
-    install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    install::verify(&held, &manifest).map_err(|error| {
+        let (code, shown) = steamcmd_fault(&error);
+        fetching.print(&Failure::new("steamcmd-install", shown));
+        code
+    })?;
     match fetch::judge(finished.code, &console, &log, fetching.app) {
         fetch::Outcome::Fetched => spinner.done(&format!("downloaded in {took}")),
         fetch::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
-            return Err(login_refused(&reason, &redactor, packed.as_ref()));
+            let (code, message) = login_refusal(&reason, &redactor, packed.as_ref());
+            fetching.print(&login_failure(code, message));
+            return Err(code);
         }
         fetch::Outcome::PasswordRefused(reasons) => {
             spinner.failed(&format!("refused after {took}"));
-            for reason in &reasons {
-                show::failure(&redacted(&redactor, reason), "", None);
-            }
-            forget_refused_password(&home, fetching);
+            let mut lines = shown_reasons(&reasons, &redactor);
+            lines.push(forget_refused_password(&home, fetching));
+            fetching.print(&Failure::new("steamcmd-failed", lines.join("\n")));
             return Err(ExitCode::from(FAILED));
         }
         fetch::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
-            for reason in &reasons {
-                show::failure(&redacted(&redactor, reason), "", None);
-            }
+            let lines = shown_reasons(&reasons, &redactor);
+            fetching.print(&Failure::new("steamcmd-failed", lines.join("\n")));
             return Err(ExitCode::from(FAILED));
         }
     }
@@ -361,6 +387,18 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
         .map_err(|error| error.to_string())
         .and_then(|text| fetch::installed(&text))
         .map_err(|why| fail(&format!("{}: {why}", record.display()), FAILED))
+}
+
+/// Prints each of `reasons` as a failure, redacted, and answers them as printed.
+fn shown_reasons(reasons: &[String], redactor: &Redactor) -> Vec<String> {
+    reasons
+        .iter()
+        .map(|reason| {
+            let shown = redacted(redactor, reason);
+            show::failure(&shown, "", None);
+            shown
+        })
+        .collect()
 }
 
 /// Has steamcmd in `home` fetch as `account`, typing `secret`, the branch's password, into its
@@ -391,21 +429,32 @@ fn run_fetch(
     .run(home)
 }
 
-/// Forgets the branch's password Steam refused, when it was the one kept, so that the next fetch
-/// asks for the one the branch takes now.
-fn forget_refused_password(home: &Path, fetching: &Fetching<'_>) {
+/// Says what to do about the branch's password Steam refused, and answers the line it printed.
+/// When it was the one kept it is forgotten, so that the next fetch asks for the one the branch
+/// takes now.
+fn forget_refused_password(home: &Path, fetching: &Fetching<'_>) -> String {
     if !fetching
         .password
         .is_some_and(|password| password.from == PasswordFrom::Kept)
     {
-        return;
+        let note = "Fetch again with the password the branch takes now";
+        show::note(note);
+        return note.to_owned();
     }
     match keychain::forget_branch_password(home, fetching.app, &fetching.branch.name) {
-        Ok(_) => show::note(&format!(
-            "the password kept in {} is forgotten. Fetch again to give the one the branch takes \
-             now",
-            keychain::STORE
-        )),
-        Err(error) => show::failure(&error.to_string(), "", None),
+        Ok(_) => {
+            let note = format!(
+                "the password kept in {} is forgotten. Fetch again to give the one the branch \
+                 takes now",
+                keychain::STORE
+            );
+            show::note(&note);
+            note
+        }
+        Err(error) => {
+            let said = error.to_string();
+            show::failure(&said, "", None);
+            said
+        }
     }
 }

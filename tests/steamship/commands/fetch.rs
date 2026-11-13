@@ -5,12 +5,12 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use steamship::platform::Platform;
-use steamship::{fetch, steamcmd};
+use steamship::{fetch, install, steamcmd};
 
 use crate::common;
 use crate::{
-    faked_with, fetching, fetching_typed, logout, packed_login, saved_login, steamship,
-    steamship_in, web_api, web_api_variables,
+    APPS, at, faked_with, fetching, fetching_typed, logout, packed_login, saved_login, steamship,
+    steamship_in, summary_of, text_at, web_api, web_api_variables,
 };
 
 #[test]
@@ -236,11 +236,108 @@ fn a_fetch_that_got_another_build_than_steam_shows_live_fails() {
         &[("STEAMSHIP_FAKE_BUILD", "4243")],
     );
     assert_eq!(code, Some(1_i32), "{stderr}");
-    assert!(stdout.is_empty(), "{stdout}");
     assert!(
         stderr.contains("steamcmd put build 4243 of the testing branch in")
             && stderr.contains("where Steam's Web API showed build 4242 live on testing"),
         "{stderr}"
+    );
+    let printed = summary_of(&stdout);
+    assert_eq!(at(&printed, "/app"), 1000_u32, "{printed}");
+    assert_eq!(at(&printed, "/error/code"), "another-build", "{printed}");
+    let message = text_at(&printed, "/error/message");
+    assert!(
+        message.contains("steamcmd put build 4243 of the testing branch in")
+            && message.contains("where Steam's Web API showed build 4242 live on testing"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn a_fetch_steam_does_not_answer_prints_its_error_as_json() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, _requests) = web_api(vec![("500 Internal Server Error", ""), ("200 OK", APPS)]);
+    let (code, stdout, stderr) = steamship(
+        &["fetch", "480", "--json"],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let printed = summary_of(&stdout);
+    assert_eq!(at(&printed, "/app"), 480_u32, "{printed}");
+    assert_eq!(at(&printed, "/error/code"), "http-error", "{printed}");
+    assert!(
+        text_at(&printed, "/error/message").starts_with("Steam answered HTTP 500"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn a_fetch_refused_a_login_prints_not_logged_in_as_json() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)\"\n\
+         exit 5\n",
+    );
+    saved_login(home.path());
+    let (code, stdout, stderr) = fetching(home.path(), &["1000", "--json"], &[]);
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    let printed = summary_of(&stdout);
+    assert_eq!(at(&printed, "/app"), 1000_u32, "{printed}");
+    assert_eq!(at(&printed, "/error/code"), "not-logged-in", "{printed}");
+    assert!(
+        text_at(&printed, "/error/message").contains("Expired Login Auth Code"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn a_fetch_steam_refuses_prints_its_reasons_as_json() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+         echo \"ERROR! Failed to install app '1000' (No subscription)\"\n\
+         exit 8\n",
+    );
+    saved_login(home.path());
+    let (code, stdout, stderr) = fetching(home.path(), &["1000", "--json"], &[]);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let printed = summary_of(&stdout);
+    assert_eq!(at(&printed, "/error/code"), "steamcmd-failed", "{printed}");
+    assert!(
+        text_at(&printed, "/error/message")
+            .contains("Failed to install app '1000' (No subscription)"),
+        "{printed}"
+    );
+}
+
+#[test]
+fn a_fetch_refused_after_steam_answered_prints_nothing() {
+    let home = faked_with(FETCHES);
+    saved_login(home.path());
+    let (code, stdout, stderr) =
+        fetching(home.path(), &["1000", "--branch", "nightly", "--json"], &[]);
+    assert_eq!(code, Some(2_i32), "{stderr}");
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("app 1000 has no branch nightly"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn a_steamcmd_altered_before_the_download_is_steamcmd_install_as_json() {
+    let home = faked_with(FETCHES);
+    saved_login(home.path());
+    let program = home.path().join(install::FOLDER).join("steamcmd.sh");
+    fs::write(&program, "#!/bin/sh\necho changed\n").unwrap();
+    let (code, stdout, stderr) = fetching(home.path(), &["1000", "--json"], &[]);
+    assert_eq!(code, Some(4_i32), "{stdout}{stderr}");
+    let printed = summary_of(&stdout);
+    assert_eq!(at(&printed, "/app"), 1000_u32, "{printed}");
+    assert_eq!(at(&printed, "/error/code"), "steamcmd-install", "{printed}");
+    assert!(
+        text_at(&printed, "/error/message").contains("steamcmd.sh has changed"),
+        "{printed}"
     );
 }
 
@@ -419,6 +516,49 @@ fn the_password_of_a_branch_is_typed_into_steamcmds_console_and_kept_when_asked(
     assert!(stale_said.contains("is forgotten"), "{stale_said}");
     let (none, none_said) = fetching_said(home.path(), &named, &changed);
     assert_eq!(none, Some(2_i32), "nothing kept to use: {none_said}");
+}
+
+#[test]
+fn a_branch_password_steam_refuses_is_steamcmd_failed_as_json() {
+    let home = common::store::Home::of(faked_with(TYPED_FETCHES), logout);
+    saved_login(home.path());
+    let given = ["1000", "--branch", "friends", "--json"];
+    let wrong = [("STEAMSHIP_BRANCH_PASSWORD", "open-barley")];
+    let (code, stdout, stderr) = fetching(home.path(), &given, &wrong);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let printed = summary_of(&stdout);
+    assert_eq!(at(&printed, "/error/code"), "steamcmd-failed", "{printed}");
+    let message = text_at(&printed, "/error/message");
+    assert!(
+        message.contains("Steam refused the branch's password")
+            && message.ends_with("Fetch again with the password the branch takes now"),
+        "{printed}"
+    );
+    assert!(
+        !format!("{stdout}{stderr}").contains("open-barley"),
+        "{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn a_kept_branch_password_steam_refuses_is_forgotten_and_says_so_as_json() {
+    let home = common::store::Home::of(faked_with(TYPED_FETCHES), logout);
+    saved_login(home.path());
+    let given = ["1000", "--branch", "friends", "--json"];
+    let kept = ["1000", "--branch", "friends", "--keep-password"];
+    let right = [("STEAMSHIP_BRANCH_PASSWORD", "open-sesame")];
+    let (stored, stored_said) = fetching_said(home.path(), &kept, &right);
+    assert_eq!(stored, Some(0_i32), "{stored_said}");
+    let changed = [("STEAMSHIP_FAKE_PASSWORD", "open-millet")];
+    let (code, stdout, stderr) = fetching(home.path(), &given, &changed);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let printed = summary_of(&stdout);
+    assert_eq!(at(&printed, "/error/code"), "steamcmd-failed", "{printed}");
+    assert!(
+        text_at(&printed, "/error/message").contains("is forgotten"),
+        "{printed}"
+    );
+    assert!(!format!("{stdout}{stderr}").contains("open-sesame"));
 }
 
 /// [`fetching`], with everything it printed on either stream as one text.
