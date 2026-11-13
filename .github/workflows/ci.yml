@@ -228,7 +228,7 @@ jobs:
           script=tests/fixtures/spacewar/steam/app_build.vdf
           login="${RUNNER_TEMP}/login.txt"
           STEAMSHIP_HOME="${RUNNER_TEMP}/steamship home" \
-            cargo run --locked -- ci --script "${script}" --account anonymous --output "${login}"
+            cargo run --locked -- ci "${script}" --account anonymous --output "${login}"
           export STEAMSHIP_HOME="${RUNNER_TEMP}/ci home"
           status=0
           STEAMSHIP_LOGIN="$(cat "${login}")" cargo run --locked -- upload "${script}" \

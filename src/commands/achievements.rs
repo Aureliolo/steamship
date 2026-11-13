@@ -12,7 +12,7 @@ use steamship::show::{self, Spinner};
 use steamship::{achievements, builds, editor, likeness, picture, po, receipt, saved, webapi};
 
 use super::exit::{fail, refusals};
-use super::game::{app_given_or, app_named, game, game_achievements};
+use super::game::{app_named, game_achievements, game_for};
 use super::key::{offer_to_keep, web_api, web_api_failed};
 use super::ready::home;
 
@@ -57,21 +57,19 @@ fn no_import_due(game: &Project) -> Result<ExitCode, ExitCode> {
 
 /// `achievements` with whatever is not given taken from the game.
 pub(crate) fn achievements_in(
-    app: Option<String>,
-    check: Option<Vec<PathBuf>>,
+    app: Option<&str>,
+    mut files: Vec<PathBuf>,
+    check: bool,
     save: Option<&Path>,
     mut writing: Writing,
     json: bool,
 ) -> Result<ExitCode, ExitCode> {
-    let own_check = check.as_ref().is_some_and(Vec::is_empty);
-    let own_write = writing.write.as_ref().is_some_and(Vec::is_empty)
-        || (writing.imported && writing.write.is_none());
-    let game = (app.is_none() || own_check || own_write)
-        .then(game)
-        .transpose()?;
+    let own_check = check && files.is_empty();
+    let own_write = (writing.write && files.is_empty()) || (writing.imported && !writing.write);
+    let (app, game) = game_for(app, own_check || own_write, false)?;
     let own = |found: &Project, flag: &str| {
-        let files = game_achievements(found)?;
-        if files.is_empty() {
+        let records = game_achievements(found)?;
+        if records.is_empty() {
             return Err(fail(
                 &format!(
                     "{flag} names no files, and the game holds no achievement records for it to \
@@ -80,9 +78,8 @@ pub(crate) fn achievements_in(
                 REFUSED,
             ));
         }
-        Ok(files)
+        Ok(records)
     };
-    let mut files = check.unwrap_or_default();
     if let Some(game) = &game {
         if own_check {
             files = own(game, "--check")?;
@@ -96,25 +93,20 @@ pub(crate) fn achievements_in(
             if writing.unchanged && game_achievements(game)?.is_empty() {
                 return no_import_due(game);
             }
-            writing.write = Some(own(game, "--write")?);
+            files = own(game, "--write")?;
+            writing.write = true;
             if writing.output.is_none() {
                 writing.output = Some(game.import.clone());
             }
         }
     }
-    if writing.write.is_some() && writing.output.is_none() {
+    if writing.write && writing.output.is_none() {
         return Err(fail(
             &"--write needs --output, the folder it writes into",
             REFUSED,
         ));
     }
-    try_achievements(
-        &app_given_or(app, game.as_ref()),
-        &files,
-        save,
-        &writing,
-        json,
-    )
+    try_achievements(&app, &files, save, &writing, json)
 }
 
 /// The achievements file at `path`, read, and refused when it is not one or names another app
@@ -308,12 +300,8 @@ pub(crate) fn try_achievements(
     writing: &Writing,
     json: bool,
 ) -> Result<ExitCode, ExitCode> {
-    if let Some(out) = writing
-        .output
-        .as_deref()
-        .filter(|_| writing.write.is_some())
-    {
-        return try_achievements_write(app, out, writing);
+    if let Some(out) = writing.output.as_deref().filter(|_| writing.write) {
+        return try_achievements_write(app, out, writing, check);
     }
     if json {
         show::divert();
@@ -653,7 +641,12 @@ fn written_before(out: &Path, app: u32) -> Result<Vec<String>, ExitCode> {
     Ok(names)
 }
 
-fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<ExitCode, ExitCode> {
+fn try_achievements_write(
+    app: &str,
+    out: &Path,
+    writing: &Writing,
+    sources: &[PathBuf],
+) -> Result<ExitCode, ExitCode> {
     let unchanged = writing.unchanged;
     show::title(if unchanged {
         "achievements, unchanged"
@@ -663,7 +656,6 @@ fn try_achievements_write(app: &str, out: &Path, writing: &Writing) -> Result<Ex
         "achievements, write"
     });
     let app_id = app_named(app)?;
-    let sources = writing.write.as_deref().unwrap_or_default();
     let listed = achievements_files(sources, app_id, false)?.unwrap_or_default();
     let tables = editor::tables(app_id, &listed);
     let mut package: Vec<(String, Vec<u8>)> = tables

@@ -136,6 +136,34 @@ fn settings_are_shown_saved_and_checked_leaving_steams_bookkeeping_out() {
 }
 
 #[test]
+fn a_snapshot_is_named_after_the_app() {
+    let home = faked_with(&app_info("spacewar"));
+    saved_login(home.path());
+    let files = tempfile::tempdir().unwrap();
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let kept = files.path().join("kept.vdf");
+    let kept = kept.to_string_lossy().into_owned();
+    let (saved, said, why) = steamship(
+        &["settings", "1000", &kept, "--save"],
+        Some(home.path()),
+        &quiet,
+    );
+    assert_eq!(saved, Some(0_i32), "{said}{why}");
+    for line in [
+        ["settings", "1000", &kept, "--check"],
+        ["settings", "1000", "--check", &kept],
+    ] {
+        let (code, checked, stderr) = steamship(&line, Some(home.path()), &quiet);
+        assert_eq!(code, Some(0_i32), "{line:?}: {checked}{stderr}");
+        assert!(
+            checked.contains(&format!("  file      {kept}\n"))
+                && checked.contains("Steam's settings match the file"),
+            "{line:?}: {checked}"
+        );
+    }
+}
+
+#[test]
 fn settings_in_ci_are_asked_for_as_the_account_handed_over() {
     // No login saved and no account remembered: only what `steamship ci` packed.
     let home = faked_with(&app_info("spacewar"));

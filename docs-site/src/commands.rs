@@ -273,7 +273,7 @@ mod tests {
             "the group alone has no section"
         );
         assert!(
-            page.contains("<pre><code>steamship upload [OPTIONS] [SCRIPT]</code></pre>"),
+            page.contains("<pre><code>steamship upload [OPTIONS] [APP]</code></pre>"),
             "{page}"
         );
         assert!(

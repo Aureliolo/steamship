@@ -16,16 +16,20 @@ use steamship::{check, presets, receipt, redist, run, scripts, settings, upload,
 use super::achievements::try_achievements;
 use super::builds::try_builds;
 use super::exit::{either, fail, first_failure, refusals};
-use super::game::{game_achievements, game_as, game_script, script_named};
+use super::game::{game_achievements, game_as, game_script, script_given, script_named};
 use super::key::{key_at_hand, why_unanswered};
 use super::leaderboards::{Changes, Listing, try_leaderboards};
 use super::presence::{presence_read, try_rich_presence};
 use super::settings::settings_file;
 
-/// `check` of the build's folder or the script given, or of the game, or its demo, when there is
-/// neither.
-pub(crate) fn check_in(script: Option<&Path>, scripts_only: bool, demo: bool) -> ExitCode {
-    match script {
+/// `check` of the build's folder or the app's script given, or of the game, or its demo, when there
+/// is neither.
+pub(crate) fn check_in(app: Option<&str>, scripts_only: bool, demo: bool) -> ExitCode {
+    let script = match app.map(|word| script_given(Some(word), demo)).transpose() {
+        Ok(script) => script,
+        Err(code) => return code,
+    };
+    match script.as_deref() {
         Some(folder) if folder.is_dir() => run_check_folder(folder, scripts_only, demo),
         Some(script) if demo => fail(
             &format!(
@@ -243,7 +247,7 @@ pub(crate) fn compared(game: &Project, app: &str) -> Result<ExitCode, ExitCode> 
     } else {
         let receipt = game.import.join(receipt::RECEIPT).is_file();
         let writing = Writing {
-            write: None,
+            write: false,
             output: receipt.then(|| game.import.clone()),
             unchanged: false,
             imported: false,

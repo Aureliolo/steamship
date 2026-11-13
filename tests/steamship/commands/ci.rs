@@ -33,13 +33,7 @@ fn ci_with_the_script_named_goes_on_to_the_account() {
     let home = tempfile::tempdir().unwrap();
     let script = root.join("steam").join("app_build.vdf");
     let (code, stdout, stderr) = steamship(
-        &[
-            "ci",
-            "--script",
-            script.to_str().unwrap(),
-            "--output",
-            "unused",
-        ],
+        &["ci", script.to_str().unwrap(), "--output", "unused"],
         Some(home.path()),
         &[("STEAMSHIP_ACCOUNT", "")],
     );
@@ -65,7 +59,10 @@ fn ci_in_a_repository_without_an_app_build_script_says_so_and_exits_2() {
         failure(&stderr).starts_with("no app build script in "),
         "{stderr}"
     );
-    assert!(stderr.contains(". Name one with --script"), "{stderr}");
+    assert!(
+        stderr.contains(". Give the script or its app ID as the first word"),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -87,8 +84,8 @@ fn ci_outside_a_repository_asks_for_the_script_and_exits_2() {
     assert_eq!(code, Some(2_i32), "{stderr}");
     assert_eq!(
         failure(&stderr),
-        "this folder is in no Git repository. Run steamship ci in the game's, or name the script \
-         with --script"
+        "this folder is in no Git repository. Run steamship ci in the game's, or give the \
+         script or its app ID as the first word"
     );
 }
 
@@ -123,11 +120,10 @@ fn ci_checks_the_scripts_alone_before_the_build_exists_but_needs_a_github_origin
 fn ci_with_several_scripts_and_nobody_to_ask_names_them_and_exits_2() {
     let (project, _) = project(true);
     let root = project.path().join("gate (x86) 1a2b");
-    let _: u64 = fs::copy(
-        root.join("steam/app_build.vdf"),
-        root.join("steam/app_build_demo.vdf"),
-    )
-    .unwrap();
+    let demo = fs::read_to_string(root.join("steam/app_build.vdf"))
+        .unwrap()
+        .replace("\"1000\"", "\"1001\"");
+    fs::write(root.join("steam/app_build_demo.vdf"), demo).unwrap();
     let home = tempfile::tempdir().unwrap();
     let (code, _, stderr) = steamship_in(&root, &["ci"], Some(home.path()), &[]);
     assert_eq!(code, Some(2_i32), "{stderr}");
@@ -135,10 +131,24 @@ fn ci_with_several_scripts_and_nobody_to_ask_names_them_and_exits_2() {
     assert_eq!(
         failure(&stderr),
         format!(
-            "several app build scripts, {}, {}. Name one with --script",
+            "several app build scripts, {}, {}. Give the script or its app ID as the first word",
             steam.join("app_build.vdf").display(),
             steam.join("app_build_demo.vdf").display()
         )
+    );
+    let (picked, said, _) = steamship_in(
+        &root,
+        &["ci", "1001", "--output", "unused"],
+        Some(home.path()),
+        &[("STEAMSHIP_ACCOUNT", "")],
+    );
+    assert_eq!(picked, Some(2_i32), "{said}");
+    assert!(
+        said.contains(&format!(
+            "  script    {}, found\n",
+            steam.join("app_build_demo.vdf").display()
+        )),
+        "{said}"
     );
 }
 
@@ -201,7 +211,6 @@ fn ci_says_whether_its_account_was_named_or_remembered() {
     let run = |extra: &[&str]| {
         let mut arguments = vec![
             "ci",
-            "--script",
             script.to_str().unwrap(),
             "--output",
             output.to_str().unwrap(),
@@ -540,7 +549,7 @@ fn ci_run_outside_the_repository_reads_origin_where_the_script_is() {
     let script = root.join("steam").join("app_build.vdf");
     let (code, stdout, stderr) = steamship_in(
         outside.path(),
-        &["ci", "--script", script.to_str().unwrap()],
+        &["ci", script.to_str().unwrap()],
         Some(home.path()),
         &[("STEAMSHIP_ACCOUNT", "")],
     );

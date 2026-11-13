@@ -336,6 +336,30 @@ fn check_of_a_build_s_folder_in_a_game_reads_its_rich_presence_offline() {
 }
 
 #[test]
+fn an_app_id_must_be_the_one_the_games_script_names() {
+    let (_temp, root) = pushed_game(None);
+    for args in [["check", "480"].as_slice(), ["upload", "480"].as_slice()] {
+        let (code, stdout, stderr) = in_game(&root, args);
+        assert_eq!(code, Some(2_i32), "{args:?}: {stdout}{stderr}");
+        let refusal = failure(&stderr);
+        let script = refusal
+            .strip_prefix("app 480 is not this game's: ")
+            .and_then(|rest| {
+                rest.strip_suffix(
+                    " names app 1000050. Give 1000050, or the path of a script that names 480",
+                )
+            })
+            .unwrap_or_else(|| panic!("{args:?}: {refusal}"));
+        assert!(
+            Path::new(script).ends_with(Path::new("steam").join("app_build.vdf")),
+            "{args:?}: {refusal}"
+        );
+    }
+    let (code, stdout, stderr) = in_game(&root, &["check", "1000050", "--scripts-only"]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+}
+
+#[test]
 fn a_game_whose_script_names_app_0_is_refused_by_check_and_upload() {
     let (_temp, root) = pushed_game(None);
     fs::write(

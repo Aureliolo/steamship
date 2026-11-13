@@ -10,21 +10,19 @@ use steamship::presence;
 use steamship::show::{self, Spinner};
 
 use super::exit::fail;
-use super::game::{app_given_or, app_named, game_as, shipped_from};
+use super::game::{app_named, game_for, shipped_from};
 use super::key::{offer_to_keep, web_api, web_api_failed};
 use super::ready::home;
 
 /// `rich-presence` with whatever is not given taken from the game: every language's file, sent
-/// only from a pushed tree.
+/// only from a pushed tree. The files follow the app, so a file given first is read as the app.
 pub(crate) fn rich_presence_in(
-    app: Option<String>,
+    app: Option<&str>,
     demo: bool,
     mut files: Vec<PathBuf>,
     dry_run: bool,
 ) -> Result<ExitCode, ExitCode> {
-    let game = (app.is_none() || files.is_empty())
-        .then(|| game_as(demo))
-        .transpose()?;
+    let (app, game) = game_for(app, files.is_empty(), demo)?;
     if let Some(game) = game.as_ref().filter(|_| files.is_empty()) {
         files = game.presence().map_err(|why| fail(&why, REFUSED))?;
         if files.is_empty() {
@@ -42,7 +40,7 @@ pub(crate) fn rich_presence_in(
             shipped_from(game)?;
         }
     }
-    try_rich_presence(&app_given_or(app, game.as_ref()), &files, dry_run)
+    try_rich_presence(&app, &files, dry_run)
 }
 
 /// The rich presence files, each read and checked, refused before Steam is asked anything when

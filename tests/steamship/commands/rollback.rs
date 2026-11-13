@@ -1,11 +1,13 @@
 //! `steamship rollback`.
 
+use std::fs;
 use std::time::Duration;
 
 use steamship::ledger;
 
 use crate::{
-    SET_LIVE, failure, faked_with, released_as, saved_login, steamship, web_api, web_api_variables,
+    SET_LIVE, failure, faked_with, in_game_with, pushed_game, released_as, saved_login, steamship,
+    web_api, web_api_variables,
 };
 
 #[test]
@@ -140,5 +142,39 @@ fn rollback_sets_the_default_branch_back_only_while_steam_shows_the_app_unreleas
     assert!(
         failure(&stderr).starts_with("app 1000 is released, so "),
         "{stderr}"
+    );
+}
+
+#[test]
+fn a_games_folder_needs_no_app() {
+    let (_temp, root) = pushed_game(None);
+    let home = root.parent().unwrap().join("home");
+    fs::create_dir_all(&home).unwrap();
+    for build_id in [5_u64, 7] {
+        ledger::record(
+            &home,
+            ledger::Entry {
+                app: 1_000_050,
+                branch: "testing".to_owned(),
+                build_id,
+                commit: format!("{build_id:040x}"),
+                green: true,
+                rollback: false,
+            },
+        )
+        .unwrap();
+    }
+    let (host, requests) = web_api(vec![("200 OK", SET_LIVE)]);
+    let (code, stdout, stderr) =
+        in_game_with(&root, &["rollback", "testing"], &web_api_variables(&host));
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("app 1000050: testing is back on BuildID 5"),
+        "{stdout}"
+    );
+    let setting = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        setting.ends_with("appid=1000050&buildid=5&betakey=testing"),
+        "{setting}"
     );
 }

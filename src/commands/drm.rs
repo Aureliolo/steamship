@@ -13,18 +13,18 @@ use steamship::show::{self, Spinner};
 use steamship::{drm, magic, steamcmd};
 
 use super::exit::fail;
-use super::game::app_named;
+use super::game::{app_named, app_or_game};
 use super::ready::{login_refused, ready, restore, run_as, steamcmd_failed};
 
 pub(crate) fn try_drm_wrap(
-    app: &str,
+    app: Option<String>,
     executable: &Path,
     output: Option<&Path>,
     mode: drm::Mode,
     named: Option<&str>,
 ) -> Result<ExitCode, ExitCode> {
     show::title("drm-wrap");
-    let app_id = app_named(app)?;
+    let app_id = app_named(&app_or_game(app, false)?)?;
     let refused = |why: &dyn Display| fail(&format!("{}: {why}", executable.display()), REFUSED);
     match magic::looks_like_windows_program(executable) {
         Ok(true) => {}

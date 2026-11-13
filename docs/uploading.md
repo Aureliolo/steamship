@@ -3,6 +3,10 @@
 steamship uploads with your own `app_build` and `depot_build` scripts, the same ones the
 Steamworks SDK's ContentBuilder uses. If you already upload with steamcmd, you already have them.
 
+Commands that work on an app take it first, by its ID or its app build script. Files follow it, and
+a switch such as `--check` or `--write` says what to do with them. A file named in digits alone is
+written `./480`, so it is not read as an app.
+
 ## The build account
 
 Valve recommends a Steam account of its own for uploads. It should have only **Edit App

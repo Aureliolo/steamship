@@ -150,7 +150,7 @@ once that branch is made in Steamworks.
 
 ### Dry run and check
 
-`--dry-run` stops after Valve's dry run, with nothing uploaded. `steamship check` with no script
+`--dry-run` stops after Valve's dry run, with nothing uploaded. `steamship check` with no app
 runs the comparisons alone, after checking the scripts and the branch they set live. It needs no
 login.
 
@@ -237,6 +237,9 @@ steamship settings --save --demo   # the demo's snapshot, in steam/demo/settings
 steamship upload --demo            # the pushed commit, built as the demo, uploaded and set live
 steamship builds --demo --json     # the demo's branches and last builds
 ```
+
+`settings --demo` reads and writes the demo's own snapshot. To name another file, give the demo's ID
+instead of `--demo`, as in `settings 1000070 kept.vdf --check`.
 
 Steamworks names a new demo's install folder after the game, followed by a space and Demo. The
 first `settings --save --demo` refuses that name. Rename the folder to letters and digits alone,

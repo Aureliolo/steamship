@@ -2,53 +2,34 @@
 
 use std::fmt::Display;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
 use steamship::account::Account;
-use steamship::cli::{FAILED, REFUSED};
+use steamship::cli::{self, FAILED, REFUSED};
 use steamship::project::Project;
 use steamship::show;
 use steamship::{ci, install, settings, vdf};
 
 use super::exit::fail;
-use super::game::{app_given_or, app_named, game_as};
-use super::ready::{ready, restore, run_as, steamcmd_failed};
+use super::game::{app_named, game_for};
+use super::ready::{named, ready, restore, run_as, steamcmd_failed};
 use super::released::app_info;
 
-/// The snapshot `--save` or `--check` names: a file, or the game's own when it names none.
-pub(crate) enum Snapshot {
-    File(PathBuf),
-    Game,
-}
-
-impl Snapshot {
-    pub(crate) fn given(path: Option<PathBuf>) -> Self {
-        path.map_or(Self::Game, Self::File)
-    }
-}
-
-/// `settings` with whatever is not given taken from the game.
-pub(crate) fn settings_in(
-    app: Option<String>,
-    demo: bool,
-    save: Option<Snapshot>,
-    check: Option<Snapshot>,
-    account: Option<&str>,
-) -> Result<ExitCode, ExitCode> {
-    let own = matches!(save, Some(Snapshot::Game)) || matches!(check, Some(Snapshot::Game));
-    let game = (app.is_none() || own).then(|| game_as(demo)).transpose()?;
-    let path = |given: Snapshot| match given {
-        Snapshot::File(path) => Some(path),
-        Snapshot::Game => game.as_ref().map(Project::snapshot),
-    };
-    let save = save.and_then(path);
-    let check = check.and_then(path);
+/// `settings` with whatever is not given taken from the game: the snapshot is the file named, or
+/// else `settings.vdf` beside its build scripts.
+pub(crate) fn settings_in(request: &cli::Settings) -> Result<ExitCode, ExitCode> {
+    let own = (request.save || request.check) && request.file.is_none();
+    let (app, game) = game_for(request.app.as_deref(), own, request.demo)?;
+    let snapshot = request
+        .file
+        .clone()
+        .or_else(|| game.as_ref().map(Project::snapshot));
     try_settings(
-        &app_given_or(app, game.as_ref()),
-        save.as_deref(),
-        check.as_deref(),
-        account,
+        &app,
+        snapshot.as_deref().filter(|_| request.save),
+        snapshot.as_deref().filter(|_| request.check),
+        named(request.account.as_deref()),
     )
 }
 

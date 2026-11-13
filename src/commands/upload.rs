@@ -26,7 +26,7 @@ use super::check::{
     Branch, apart, built, checked, compared, exports_apart, redistributables_shown, snapshot_sound,
 };
 use super::exit::{either, fail, first_failure};
-use super::game::{game_as, game_script, script_named, shipped_from};
+use super::game::{game_as, game_script, script_given, script_named, shipped_from};
 use super::key::{KeyFrom, key_at_hand, key_variable, offer_to_keep, web_api};
 use super::ready::{
     dump_in_actions, login_refused, named, ready, restore, run_as, steamcmd_failed,
@@ -45,7 +45,14 @@ pub(crate) fn upload_in(request: &cli::Upload) -> ExitCode {
         green: green::Policy::from_flag(request.allow_ungreen),
     };
     let default = request.default;
-    match (request.script.as_deref(), shipping.version) {
+    let script = match request.app.as_deref() {
+        Some(app) => match script_given(Some(app), false) {
+            Ok(script) => Some(script),
+            Err(code) => return code,
+        },
+        None => None,
+    };
+    match (script.as_deref(), shipping.version) {
         (Some(script), Some(version)) => {
             run_upload(&Upload {
                 script,
