@@ -409,7 +409,7 @@ steamship rollback 480 testing
 ```
 
 `rollback` sets a branch back to its previous build. Uploads [from a game](games.md) record the
-commit and build ID they set live on each branch, in `recorded-builds` in
+commit and build ID they set live on each branch, in the `recorded-builds` folder of
 [steamship's home](install.md#the-home-folder). So `rollback` works only on
 the machine that uploaded. A branch with no earlier recorded build is refused. The
 default branch can be rolled back only while the app is unreleased, as with `promote`.

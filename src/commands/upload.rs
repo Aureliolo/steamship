@@ -981,7 +981,7 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
     (code, Live::default())
 }
 
-/// `text`, as steamship prints it after judging it, with every secret `redactor` knows replaced.
+/// `text` with every secret `redactor` knows replaced, for what steamship prints after judging it.
 /// The account's name stays: it can be a word of steamship's own sentences.
 pub(crate) fn redacted(redactor: &Redactor, text: &str) -> String {
     String::from_utf8_lossy(&redactor.redact_secrets(text.as_bytes())).into_owned()

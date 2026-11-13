@@ -6,7 +6,7 @@
 //!
 //! The build account's name is hidden too, but not as a secret: it can be shorter than the marker,
 //! and a name such as `view` or `273645` also stands inside the words and numbers of steamcmd's
-//! lines. So it is replaced only where it stands as a whole word, in any case.
+//! lines. So it is replaced only where it stands as a whole word, in any letter case.
 
 use std::fs;
 use std::io;
@@ -105,7 +105,7 @@ impl Redactor {
     /// that no secret survives by being put together from what surrounds a replacement. Each
     /// pass shortens the output, so there are never more passes than it has bytes. The account's
     /// name follows in one pass that leaves each marker alone, since the marker itself holds
-    /// words a name can be. For what steamship saves or shows whole.
+    /// words a name can be. For saved consoles and logs, and Actions groups of steamcmd's output.
     #[must_use]
     pub fn redact(&self, output: &[u8]) -> Vec<u8> {
         replace_word(&self.redact_secrets(output), &self.name)
@@ -130,8 +130,8 @@ impl Redactor {
     }
 
     /// Rewrites each log that `logs` lists in `folder` through [`Redactor::redact`], only where
-    /// that changes it. A log that cannot be read or rewritten is removed, and the rest are still
-    /// done.
+    /// that changes it. A log that cannot be read or rewritten is removed, and the other logs are
+    /// still redacted.
     ///
     /// # Errors
     ///
