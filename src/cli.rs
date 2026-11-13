@@ -243,18 +243,19 @@ pub enum Command {
     Upload(Upload),
     /// Upload a Workshop item, then print its ID.
     ///
-    /// Takes the item as a Valve `workshopitem` script, or as fields given with `--app` and the
-    /// other options. From the fields, steamship writes the script itself. It checks the item and
-    /// what it names, then has steamcmd upload it with the saved login.
+    /// Takes the item as a Valve `workshopitem` script, or as fields: the app first, then `--items`
+    /// and the other options. From the fields, steamship writes the script itself. It checks the item and what it names, then has steamcmd upload it with the
+    /// saved login.
     ///
     /// A script with no `publishedfileid` makes a new item. Its ID is printed for you to add to
     /// the script. Given by fields, an item whose name the `--items` file lacks is made new, and
     /// its ID is written into that file. Either way, later uploads update the same item. In CI, a
     /// new item needs `--new`, since every run would make another.
     ///
-    /// With neither, in a game's folder, it uploads each of the game's example mods, or only the
-    /// one `--name` names. An example mod is a folder in `modding/` holding a `manifest.json`.
-    /// This is refused unless the tree is pushed, as for `upload`. Each mod's title, description
+    /// With no fields and no first word, in a game's folder it uploads each example mod, or only
+    /// the one `--name` names. The game's own app as the first word does the same. An example mod
+    /// is a folder in `modding/` holding a `manifest.json`. This is refused unless the tree is
+    /// pushed, as for `upload`. Each mod's title, description
     /// and version come from its manifest. Its preview is the `preview.png` in its folder. Each
     /// item's ID is kept in `steam/workshop_items.json`.
     ///
@@ -860,12 +861,9 @@ pub struct Rollback {
 /// What `workshop` uploads, and how.
 #[derive(Debug, Args)]
 pub struct Workshop {
-    /// The item script, such as `workshop/item.vdf`.
-    #[arg(conflicts_with_all = [
-        "app", "items", "content", "preview_image", "title", "description", "change_note", "name",
-        "visibility",
-    ])]
-    pub script: Option<PathBuf>,
+    /// The app, by its ID or its app build script, when the item is given by fields. Otherwise an
+    /// item script such as `workshop/item.vdf`, or the game's own app.
+    pub app: Option<String>,
     #[command(flatten)]
     pub item: Option<WorkshopItem>,
     /// The item's name in the `--items` file, such as `example`. In a game's folder, the one
@@ -893,35 +891,37 @@ pub struct Workshop {
     pub json: bool,
 }
 
-/// The fields `--app` gives a Workshop item by, from which steamship writes its `workshopitem`
-/// script.
+/// The fields a Workshop item is given by, after its app, from which steamship writes its
+/// `workshopitem` script.
 ///
-/// One clap group, so a command line holds none of them or `--app`, `--items`, `--content` and
-/// `--title` at the least. `--app` asks for `--name` too.
+/// One clap group, so a command line holds none of them or `--items`, `--name`, `--content` and
+/// `--title` at the least.
 #[derive(Debug, Args)]
 pub struct WorkshopItem {
-    /// The app the item is for, by its ID or its app build script.
-    #[arg(long, required = false, requires_all = ["items", "name", "content", "title"])]
-    pub app: String,
     /// The file that keeps the ID of each item made, by the item's name, such as
     /// `steam/workshop_items.json`. Keep it with the game. A run on any machine then updates the
     /// item an earlier run made. steamship writes it and makes it if missing.
-    #[arg(long, value_name = "FILE", required = false, requires = "app")]
+    #[arg(
+        long,
+        value_name = "FILE",
+        required = false,
+        requires_all = ["name", "content", "title"]
+    )]
     pub items: PathBuf,
     /// The folder uploaded as the item's content.
-    #[arg(long, value_name = "FOLDER", required = false, requires = "app")]
+    #[arg(long, value_name = "FOLDER", required = false, requires = "items")]
     pub content: PathBuf,
     /// The item's preview image, 1 MB at most.
-    #[arg(long, value_name = "IMAGE", requires = "app")]
+    #[arg(long, value_name = "IMAGE", requires = "items")]
     pub preview_image: Option<PathBuf>,
     /// The item's title, 128 bytes at most.
-    #[arg(long, required = false, requires = "app")]
+    #[arg(long, required = false, requires = "items")]
     pub title: String,
     /// The item's description, 8000 bytes at most.
-    #[arg(long, value_name = "TEXT", requires = "app")]
+    #[arg(long, value_name = "TEXT", requires = "items")]
     pub description: Option<String>,
     /// What changed in this upload, 8000 bytes at most, shown in the item's change notes.
-    #[arg(long, value_name = "TEXT", requires = "app")]
+    #[arg(long, value_name = "TEXT", requires = "items")]
     pub change_note: Option<String>,
 }
 
@@ -968,6 +968,15 @@ mod tests {
         long_flags(&Cli::command(), &mut found);
         for old in ["preview", "out", "into", "folder", "web-api-key"] {
             assert!(!found.iter().any(|flag| flag == old), "--{old} is taken");
+        }
+    }
+
+    #[test]
+    fn no_command_names_the_app_by_a_flag() {
+        let mut found = Vec::new();
+        long_flags(&Cli::command(), &mut found);
+        for flag in ["app", "script"] {
+            assert!(!found.iter().any(|each| each == flag), "--{flag} is taken");
         }
     }
 
