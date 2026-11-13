@@ -715,7 +715,10 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
             let (written, mut line) = console_line(steam, saved.err(), removed);
             // The logs steamcmd wrote beside the console name the account too.
             if let Err(error) = redactor.redact_logs(&steam.prepared.output) {
-                line = format!("{line}. Not redacted: {error}");
+                line = format!(
+                    "{line}. These logs may still hold the token or the account's name: {error}. \
+                     Check them before you share them"
+                );
             }
             (Some(redactor), written, line)
         }

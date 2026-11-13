@@ -209,7 +209,7 @@ fn a_folder_named_like_a_log_is_left_out_of_the_rewrite() {
     let (_project, script) = project(true);
     let (code, stdout, stderr) = upload(&script, home.path(), &["--version", "1.4.0"], &[]);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
-    assert!(!stdout.contains("Not redacted"), "{stdout}");
+    assert!(!stdout.contains("may still hold the token"), "{stdout}");
     assert!(folder.is_dir());
 }
 

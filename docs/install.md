@@ -208,28 +208,29 @@ The default is `%LOCALAPPDATA%\steamship` on Windows, `$XDG_DATA_HOME/steamship`
 `~/.local/share/steamship` when that is unset) and `~/Library/Application Support/steamship` on
 macOS. `steamship status` prints the folder in use.
 
-| Entry                                           | Holds                                                         |
-| ----------------------------------------------- | ------------------------------------------------------------- |
-| `steamcmd/` and `steamcmd.inventory`            | The pinned steamcmd and the record it is verified against     |
-| `steamcmd.new/`, `steamcmd.old/`, `downloads/`  | An install's working folders, gone when it ends               |
-| `steamship.lock`                                | What two runs take turns on                                   |
-| `account`                                       | The build account `login` remembered                          |
-| `latest-release`                                | The update check's last answer                                |
-| `Steam/` on Linux, `Library/` on macOS          | steamcmd's own state, which on Windows is inside `steamcmd/`  |
-| `apps/<app>/`                                   | Build output, with the chunk cache that makes uploads faster  |
-| `recorded-builds/<app>.json`                    | The builds uploads set live, which `rollback` reads           |
-| `workshop/<app>/<item>/`                        | The script steamcmd was given and its console                 |
-| `fetched/<app>/<branch>-<system>/`              | What `fetch` downloaded                                       |
+| Entry                                           | Holds                                                           |
+| ----------------------------------------------- | --------------------------------------------------------------- |
+| `steamcmd/` and `steamcmd.inventory`            | The pinned steamcmd and the record it is verified against       |
+| `steamcmd.new/`, `steamcmd.old/`, `downloads/`  | An install's working folders, removed when the install finishes |
+| `steamship.lock`                                | What two runs take turns on                                     |
+| `account`                                       | The build account `login` remembered                            |
+| `latest-release`                                | The update check's last answer                                  |
+| `Steam/` on Linux, `Library/` on macOS          | steamcmd's own state, which on Windows is inside `steamcmd/`    |
+| `apps/<app>/`                                   | Build output, with the chunk cache that makes uploads faster    |
+| `recorded-builds/<app>.json`                    | The builds uploads set live, which `rollback` reads             |
+| `workshop/<app>/<item>/`                        | The script steamcmd was given and its console                   |
+| `fetched/<app>/<branch>-<system>/`              | What `fetch` downloaded                                         |
 
 The token is `steamcmd/config/config.vdf` on Windows, `Steam/config/config.vdf` on Linux and
 `Library/Application Support/Steam/config/config.vdf` on macOS. The `logs/` folder beside `config/`
-names the account. An install that stopped midway can leave the token's file in `steamcmd.new/`.
+holds the account's name. An install that stopped midway can leave the token's file in
+`steamcmd.new/`.
 
-Once an upload ends, no `.log` under `apps/<app>/output` holds the token or the account's name as a
-whole word. Each reads `[redacted]` there, or is gone. A run that was killed leaves steamcmd's own
-logs as steamcmd wrote them.
+When an upload ends, each `.log` under `apps/<app>/output` shows `[redacted]` where the token or
+the account name stood, or is gone. A run that was killed leaves steamcmd's own logs as steamcmd
+wrote them.
 
-To cache between CI jobs, keep `apps` and `recorded-builds`, from a job that ended well, but not
+To cache between CI jobs, keep `apps` and `recorded-builds` from a job that ended well, without
 the logs `apps/*/output/*.log`. Never keep `account`, the folders that hold the token, or an
 install's working folders.
 
