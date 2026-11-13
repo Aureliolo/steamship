@@ -1251,3 +1251,33 @@ fn a_workshop_reason_that_holds_a_secret_is_printed_redacted() {
         assert!(!stdout.contains(secret) && !stderr.contains(secret));
     }
 }
+
+#[test]
+fn a_refused_workshop_login_never_shows_a_secret_of_its_reason_when_the_login_is_unreadable_after()
+{
+    let secret = "Expired Login Auth Code";
+    let home = faked_with(&format!(
+        "#!/bin/sh\n\
+         echo \"Logging in user 'build_bot' to Steam Public...FAILED ({secret})\"\n\
+         rm -f \"$HOME/Steam/config/config.vdf\"; mkdir -p \"$HOME/Steam/config/config.vdf\"\n\
+         exit 5\n"
+    ));
+    saved_login(home.path());
+    let local = home
+        .path()
+        .join("Steam/userdata/12345/config/localconfig.vdf");
+    fs::create_dir_all(local.parent().unwrap()).unwrap();
+    fs::write(
+        local,
+        format!("\"UserLocalConfigStore\" {{ \"WebStorage\" {{ \"cookie\" \"{secret}\" }} }}\n"),
+    )
+    .unwrap();
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert!(!stdout.contains(secret) && !stderr.contains(secret));
+}

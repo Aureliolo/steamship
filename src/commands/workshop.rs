@@ -310,14 +310,14 @@ fn upload_item(
     );
     let (redactor, written, log) = match after {
         Ok(after) => {
-            let redactor = before.and(after);
+            let redactor = before.clone().and(after);
             let (written, log) = save_console(&saved, &redactor.redact(&finished.output), removed);
             (Some(redactor), written, log)
         }
         Err(error) => (None, false, login_unread(&error)),
     };
-    let nothing_to_hide = Redactor::default();
-    let redactor_in_use = redactor.as_ref().unwrap_or(&nothing_to_hide);
+    // A refusal logged nothing in, so the secrets from before the run are all its text can hold.
+    let redactor_in_use = redactor.as_ref().unwrap_or(&before);
     if request.json {
         show::plain(&format!(
             "{}\n",

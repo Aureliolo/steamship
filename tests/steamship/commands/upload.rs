@@ -2428,6 +2428,68 @@ fn an_earlier_console_held_open_is_not_shown_as_this_runs() {
     assert!(!stdout.contains("an earlier console"), "{stdout}");
 }
 
+/// The shell line that leaves the login unreadable on every system: `config.vdf` becomes a folder.
+const UNREADABLE: &str =
+    "rm -f \"$HOME/Steam/config/config.vdf\"; mkdir -p \"$HOME/Steam/config/config.vdf\"";
+
+#[test]
+fn a_refused_login_never_shows_a_secret_of_its_reason_when_the_login_is_unreadable_after() {
+    let secret = "Expired Login Auth Code";
+    let home = faked_with(&format!(
+        "#!/bin/sh\n\
+         mkdir -p \"$HOME/apps/1000/output\"\n\
+         echo \"Logging in user 'build_bot' to Steam Public...FAILED ({secret})\"\n\
+         {UNREADABLE}\n\
+         exit 5\n"
+    ));
+    let local = home
+        .path()
+        .join("Steam/userdata/12345/config/localconfig.vdf");
+    fs::create_dir_all(local.parent().unwrap()).unwrap();
+    fs::write(
+        local,
+        format!("\"UserLocalConfigStore\" {{ \"WebStorage\" {{ \"cookie\" \"{secret}\" }} }}\n"),
+    )
+    .unwrap();
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0"],
+        &[("STEAMSHIP_LOGIN", &packed_login())],
+    );
+    assert_eq!(code, Some(3_i32), "{stdout}{stderr}");
+    assert!(!stdout.contains(secret) && !stderr.contains(secret));
+}
+
+#[test]
+fn a_login_unreadable_after_the_run_still_sets_default_live_and_shows_none_of_steamcmds_lines() {
+    let home = faked_with(&format!("{}{UNREADABLE}\n", released_as("unavailable")));
+    saved_login(home.path());
+    let (_project, script) = project(true);
+    let (host, _requests) = web_api(vec![
+        ("200 OK", BETAS),
+        ("200 OK", testing_live(4242)),
+        ("200 OK", SET_LIVE),
+    ]);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default", "--json"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("\"default\":true"), "{stdout}");
+    assert!(
+        stderr.contains("app 1000: BuildID 4242, set live on testing and default"),
+        "{stderr}"
+    );
+    let shown = format!("{stdout}{stderr}");
+    for line in ["unavailable", "Logging in user", "AppID : 1000"] {
+        assert!(!shown.contains(line), "{line:?} in {shown}");
+    }
+}
+
 /// A steamcmd that ends leaving its login file unreadable, so that the redactor cannot be read
 /// again.
 #[cfg(target_os = "linux")]

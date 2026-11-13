@@ -347,6 +347,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         spinner,
         took,
         redactor,
+        before,
         info,
         log,
         written,
@@ -355,18 +356,17 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
     let (default, spinner) = shown_unreleased(
         default,
         &outcome,
-        info.as_deref(),
+        info.as_deref().map(|info| (info, redactor.is_some())),
         (prepared.app_id, spinner, doing),
     );
     let outcome = found_on_steam(outcome, &prepared, &description);
-    let nothing_to_hide = Redactor::default();
     let reporting = Reporting {
         spinner,
         took: &took,
         prepared: &prepared,
         log: &log,
         shown: redactor.is_some(),
-        redactor: redactor.as_ref().unwrap_or(&nothing_to_hide),
+        redactor: redactor.as_ref().unwrap_or(&before),
         packed: packed.as_ref(),
         default: default.as_ref().map(|(api, _)| api),
     };
@@ -469,14 +469,15 @@ fn default_key(
 
 /// The `default` key to set the default branch live with, kept, when the build's own steamcmd run
 /// printed the app's `info`, only while that shows `app` unreleased, said while the build's
-/// `spinner`, `doing` so, waits. Nothing is said for a build that never reached Steam.
+/// `spinner`, `doing` so, waits. Nothing is said for a build that never reached Steam. `info` holds
+/// whether a line of it may be shown, and none of it is when it may not.
 fn shown_unreleased<Key>(
     default: Option<Key>,
     outcome: &upload::Outcome,
-    info: Option<&str>,
+    info: Option<(&str, bool)>,
     (app, spinner, doing): (u32, Spinner, &str),
 ) -> (Option<Key>, Spinner) {
-    let Some(info) = info else {
+    let Some((info, may_show)) = info else {
         return (default, spinner);
     };
     let Some(key) = default else {
@@ -499,11 +500,24 @@ fn shown_unreleased<Key>(
         }
         Err(why) => (
             Err(format!(
-                "{why}. The build goes up without being set live on default. While the app is \
-                 unreleased, steamship promote {app} --build {build_id} --branch default does that"
+                "{}. The build goes up without being set live on default. While the app is \
+                 unreleased, steamship promote {app} --build {build_id} --branch default does that",
+                if may_show {
+                    why.to_string()
+                } else {
+                    "steamcmd's app info could not be read".to_owned()
+                }
             )),
             "not shown".to_owned(),
         ),
+    };
+    // A line of steamcmd's could hold a secret that nothing could be built to hide.
+    let said = if may_show {
+        said
+    } else {
+        said.split_once(" (")
+            .map_or(said.as_str(), |(head, _)| head)
+            .to_owned()
     };
     let spinner = spinner.around(
         || match &judged {
@@ -558,6 +572,8 @@ struct Ran {
     /// The redactor built again after the run. None when that failed, and then none of steamcmd's
     /// output may be shown.
     redactor: Option<Redactor>,
+    /// The redactor from before the run: all that a refused login's text can hold.
+    before: Redactor,
     /// What steamcmd printed of the app's info, when it was asked to.
     info: Option<String>,
     /// Where the run's console and steamcmd's logs are, or which could not be kept.
@@ -662,7 +678,7 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
     let mut console = String::from_utf8_lossy(&finished.output).into_owned();
     // The info is read apart, as text anyone can write into an app's settings could pass for a
     // line of the build.
-    let mut info = info_of.map(|app| {
+    let info = info_of.map(|app| {
         release::info_at(&console, app).map_or_default(|at| console.drain(at).collect::<String>())
     });
     let log = log.as_deref().map(String::from_utf8_lossy);
@@ -680,19 +696,13 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
     };
     let (redactor, written, line) = match after {
         Ok(after) => {
-            let redactor = before.and(after);
+            let redactor = before.clone().and(after);
             let saved = fs::write(steam.saved, redactor.redact(&finished.output));
             let (written, line) = console_line(steam, saved.err(), removed);
-            if let Some(text) = &mut info {
-                *text = redacted(&redactor, text);
-            }
             (Some(redactor), written, line)
         }
         Err(error) => {
             let removed_logs = redact::remove_logs(&steam.prepared.output);
-            if let Some(text) = &mut info {
-                text.clear();
-            }
             (None, false, logs_removed(steam, &error, removed_logs.err()))
         }
     };
@@ -702,6 +712,7 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
         spinner,
         took,
         redactor,
+        before,
         info,
         log: line,
         written,
