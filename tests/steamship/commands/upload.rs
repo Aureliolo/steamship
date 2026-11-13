@@ -532,12 +532,13 @@ fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_5() {
     assert_eq!(at(&json, "/error/code"), "unfinished", "{json}");
     let message = text_at(&json, "/error/message");
     assert!(
-        message
-            .starts_with("Steam holds a build of app 1000, so a second upload would make another")
-            && message.contains(
-                "app 1000: BuildID 4242 uploaded and live on testing, but Steam did not set it \
+        message.starts_with(
+            "Steam holds a build of app 1000, so a second upload would make another. List it with \
+             steamship builds 1000"
+        ) && message.contains(
+            "app 1000: BuildID 4242 uploaded and live on testing, but Steam did not set it \
                  live on default"
-            ),
+        ),
         "{message}"
     );
     for line in [

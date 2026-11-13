@@ -424,8 +424,8 @@ fn print_halted(halt: &Halt, prepared: &upload::Prepared, description: &str) {
     }
 }
 
-/// Prints an upload's line once the check after its run is made. `ended` holds the outcome and the
-/// run's exit code with what that check found, `reported` what the run said and `shown` hides the
+/// Prints an upload's line once the check after its run is made. `ended` holds the outcome, the
+/// run's exit code and what that check found. `reported` holds what the run said. `shown` hides the
 /// secrets in the fault.
 fn print_ended(
     ended: (&upload::Outcome, (ExitCode, &Checked)),
@@ -438,7 +438,8 @@ fn print_ended(
         Err((stopped, why)) => (*stopped, Some(redacted(shown, why))),
     };
     let holds = format!(
-        "Steam holds a build of app {}, so a second upload would make another",
+        "Steam holds a build of app {0}, so a second upload would make another. List it with \
+         steamship builds {0}",
         prepared.app_id
     );
     let error = error_of(exit, &holds, reported.failure.as_ref(), later.as_deref());
@@ -458,7 +459,7 @@ pub(crate) fn print_line(line: &serde_json::Value) {
 
 /// The first failure of a run, for the `error` of its `--json` line.
 pub(crate) struct Failure {
-    /// The word for the failure, when no exit 5 stands in for it.
+    /// The word for the failure. Under exit 5 `error_of` reports `unfinished` instead.
     code: &'static str,
     /// What a person reads, redacted.
     message: String,
@@ -471,7 +472,7 @@ impl Failure {
     }
 
     /// The failure the word `code` names, said as the `reasons` steamcmd gave that may be shown.
-    /// When none may be, the person read the `log` line's sentence instead.
+    /// When none may be, the sentence of the `log` line stands in.
     pub(crate) fn of_reasons(code: &'static str, reasons: &[String], log: &str) -> Self {
         let message = if reasons.is_empty() {
             log.strip_prefix("log  ").unwrap_or(log).to_owned()
@@ -509,8 +510,8 @@ pub(crate) fn said(headline: &str, reason: &str) -> String {
     }
 }
 
-/// A failure of steamship's own that stops steamcmd from running, printed, with its exit code.
-/// `redactor` hides the secrets in its text, when one could be built.
+/// Prints a failure of steamship's own that stops steamcmd from running, and answers the exit code
+/// and the failure. `redactor` hides the secrets in its text, when one could be built.
 pub(crate) fn not_run(error: &dyn Display, redactor: Option<&Redactor>) -> (ExitCode, Failure) {
     let code = fail(error, FAILED);
     let message = error.to_string();
@@ -568,7 +569,7 @@ const fn wording(preview: bool) -> (&'static str, &'static str, &'static str) {
 }
 
 /// Checks steamcmd's files again after the run. A failed check exits 5 when Steam holds a build
-/// that a second upload would duplicate, and says so. It answers the exit code with the fault's
+/// that a second upload would duplicate, and says so. It answers the exit code and the fault's
 /// text.
 fn checked_after(
     held: &install::Held,
@@ -1074,8 +1075,8 @@ struct Reported {
 }
 
 impl Reported {
-    /// A failure to set the build live where `live` shows it is, given as the `headline` and
-    /// `reason` printed. Exit 5, since Steam holds the build.
+    /// Exit 5 for a build Steam holds but did not set live everywhere it was asked to. `live`
+    /// shows where it is live. The failure's text is the `headline` and `reason` as printed.
     fn unfinished(live: Live, headline: &str, reason: &str) -> Self {
         Self {
             code: ExitCode::from(UNFINISHED),
@@ -1186,8 +1187,9 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> Reported {
     }
 }
 
-/// Says what a failed build left, given its `reasons` and those of them `lines` shown, and answers
-/// the exit code and the failure. Exit 5 is for a build Steam kept without setting it live.
+/// Says what a failed build left, and answers the exit code and the failure. `reasons` are
+/// steamcmd's, `lines` the ones that were shown. Exit 5 is for a build Steam kept without setting
+/// it live.
 fn refused(
     reasons: &[String],
     lines: &[String],
@@ -1326,7 +1328,7 @@ fn first_on_default(
     reported
 }
 
-/// Sets `build_id` of `app` live on the default branch through `api`. When Steam did not, says so
+/// Sets `build_id` of `app` live on the default branch through `api`. When Steam did not, prints it
 /// and answers the failure's text. The build is already live on `branch`, if the script sets one
 /// live.
 fn live_on_default(

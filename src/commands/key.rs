@@ -191,8 +191,8 @@ pub(crate) fn why_unanswered(api: &webapi::Api, app: u32, error: &webapi::Error)
     Some(redact::answer(answer_redactor().as_ref(), &why))
 }
 
-/// The secrets of this machine's steamcmd login, none when its files cannot be read. Steam's
-/// words are shown only through them.
+/// The redactor for this machine's steamcmd login secrets, or none when its files cannot be read.
+/// Steam's words are shown only after it has run over them.
 pub(crate) fn answer_redactor() -> Option<Redactor> {
     let home = Platform::THIS.home(|name| env::var_os(name)).ok()?;
     Redactor::for_home(&home).ok()

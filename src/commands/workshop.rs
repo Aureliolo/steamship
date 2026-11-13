@@ -311,7 +311,7 @@ struct Unkept {
 }
 
 impl Unkept {
-    /// What Steam holds and what to do, as the line of a run's JSON opens its `error`.
+    /// What Steam holds and what to do. It opens the `error` message of a run's JSON line.
     fn holding(&self) -> String {
         format!(
             "Steam holds Workshop item {} of app {}, which {} does not name. Add its ID there \
@@ -548,7 +548,7 @@ struct Saved {
     code: ExitCode,
     /// Set when no file holds the item's ID, which means a second run would make another item.
     unkept: Option<Unkept>,
-    /// The text of the failure printed when the ID could not be kept.
+    /// The failure printed when the ID could not be kept.
     failure: Option<String>,
 }
 

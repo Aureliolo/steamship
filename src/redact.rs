@@ -18,8 +18,7 @@ use crate::steamcmd;
 pub const MARKER: &[u8] = b"[redacted]";
 
 /// What replaces Steam's words when the login files that name the secrets cannot be read.
-pub const WITHHELD: &str =
-    "Steam's answer is not shown, since steamcmd's login files could not be read";
+pub const WITHHELD: &str = "Steam's answer is not shown, because steamcmd's login files could not be read. Make them readable by this account, then run the command again";
 
 /// `text`, the words of an answer from Steam, with every secret of `redactor` replaced. Without a
 /// redactor nothing of the text can be known safe, so [`WITHHELD`] stands for it.
