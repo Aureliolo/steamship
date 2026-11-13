@@ -481,6 +481,69 @@ fn an_item_a_failed_run_made_in_actions_hands_its_id_to_the_workflow() {
 }
 
 #[test]
+fn an_item_a_failed_run_made_from_a_script_is_named_in_the_json() {
+    let home = publishing(DENIED, 1);
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap(), "--json"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    let summary: serde_json::Value = serde_json::from_str(stdout.trim()).unwrap();
+    assert_eq!(summary.get("outcome"), Some(&serde_json::json!("failed")));
+    assert_eq!(summary.get("item"), Some(&serde_json::json!(777_u64)));
+}
+
+#[test]
+fn a_failed_update_of_an_item_with_an_id_is_no_made_item_whatever_steamcmd_wrote() {
+    let home = faked_with(&format!(
+        "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
+         printf '\"workshopitem\"\\n{{\\n\"appid\" \"480\"\\n\"publishedfileid\" \"999\"\\n}}\\n' > \"$script\"\n\
+         printf '%s\\r\\n' '{DENIED}'\n\
+         exit 1\n"
+    ));
+    saved_login(home.path());
+    let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
+    let outputs = home.path().join("github_output");
+    fs::write(&outputs, "").unwrap();
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[
+            ("GITHUB_ACTIONS", "true"),
+            ("GITHUB_OUTPUT", outputs.to_str().unwrap()),
+        ],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        !stdout.contains("Workshop item 999") && !stderr.contains("was made before the run failed"),
+        "{stdout}{stderr}"
+    );
+    assert_eq!(fs::read_to_string(&outputs).unwrap(), "");
+}
+
+#[test]
+fn an_item_a_failed_run_made_from_a_script_before_steamcmd_altered_itself_exits_5() {
+    let home = faked_with(&format!(
+        "#!/bin/sh\n{MAKING}printf '%s\\r\\n' '{DENIED}'\necho >> \"$0\"\nexit 1\n"
+    ));
+    saved_login(home.path());
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap()],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("app 480: Workshop item 777 was made before the run failed"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn an_item_given_by_its_fields_is_refused_before_steam_when_it_cannot_be_kept_or_made() {
     let home = tempfile::tempdir().unwrap();
     let (temp, script) = workshop_item("");

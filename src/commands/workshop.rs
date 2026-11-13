@@ -223,7 +223,7 @@ fn try_workshop<'command>(
     if request.dry_run {
         if request.json {
             for (each, item) in given.iter().zip(&items) {
-                show::plain(&format!("{}\n", item_summary(None, item, each)));
+                show::plain(&format!("{}\n", item_summary(None, None, item, each)));
             }
         }
         if let Some(first) = items.first() {
@@ -322,7 +322,7 @@ fn upload_item(
     if request.json {
         show::plain(&format!(
             "{}\n",
-            item_summary(Some((&outcome, &saved)), item, given)
+            item_summary(Some((&outcome, &saved)), copied, item, given)
         ));
     }
     let (code, unkept) = match outcome {
@@ -400,9 +400,11 @@ fn save_console(saved: &Path, console: &[u8], removed: Option<io::Error>) -> (bo
 
 /// What came of `item`, given as `given`, as `--json` prints it. An upload gives its outcome with
 /// `log`, where steamcmd's console was saved. A dry run gives `None`, and the ID the item already
-/// has.
+/// has. `copied` is the ID steamcmd left in its copy of the script, which names the item a failed
+/// run made.
 fn item_summary(
     uploaded: Option<(&workshop::Outcome, &Path)>,
+    copied: Option<u64>,
     item: &workshop::Item,
     given: &Given<'_>,
 ) -> serde_json::Value {
@@ -412,8 +414,8 @@ fn item_summary(
             ("made", Some(*published))
         }
         Some(workshop::Outcome::Published { published }) => ("updated", Some(*published)),
-        Some(workshop::Outcome::NotLoggedIn(_)) => ("not-logged-in", item.published),
-        Some(workshop::Outcome::Failed(_)) => ("failed", item.published),
+        Some(workshop::Outcome::NotLoggedIn(_)) => ("not-logged-in", item.published.or(copied)),
+        Some(workshop::Outcome::Failed(_)) => ("failed", item.published.or(copied)),
     };
     let log = uploaded.map(|(_, log)| log.to_string_lossy());
     let name = match given {
