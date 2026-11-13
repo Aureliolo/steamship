@@ -252,9 +252,10 @@ pub enum Command {
     /// its ID is written into that file. Either way, later uploads update the same item. In CI, a
     /// new item needs `--new`, since every run would make another.
     ///
-    /// With no fields, and either no first word or the game's own app as it, in a game's folder it
-    /// uploads each example mod, or only the one `--name` names. An example mod is a folder in
-    /// `modding/` holding a `manifest.json`. This is refused unless the tree is pushed, as for `upload`. Each mod's title, description
+    /// With no fields and no first word, in a game's folder it uploads each example mod, or only
+    /// the one `--name` names. The game's own app as the first word does the same. An example mod
+    /// is a folder in `modding/` holding a `manifest.json`. This is refused unless the tree is
+    /// pushed, as for `upload`. Each mod's title, description
     /// and version come from its manifest. Its preview is the `preview.png` in its folder. Each
     /// item's ID is kept in `steam/workshop_items.json`.
     ///
@@ -860,8 +861,8 @@ pub struct Rollback {
 /// What `workshop` uploads, and how.
 #[derive(Debug, Args)]
 pub struct Workshop {
-    /// With the item's fields, the app by its ID or its app build script. Without them, an item
-    /// script such as `workshop/item.vdf`, or the game's own app.
+    /// The app, by its ID or its app build script, when the item is given by fields. Otherwise an
+    /// item script such as `workshop/item.vdf`, or the game's own app.
     pub app: Option<String>,
     #[command(flatten)]
     pub item: Option<WorkshopItem>,

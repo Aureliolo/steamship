@@ -302,8 +302,8 @@ steamship workshop 1000070 --items steam/workshop_items.json --name example \
 `--items`, `--name`, `--content` and `--title` are needed. `--description` and `--change-note` may
 be left out. They are checked as a script's are.
 
-Without these fields, the first word is an item script. With no first word, or the game's own app
-as it, in a game's folder `workshop` uploads the example mods.
+Without these fields, the first word is an item script. With no first word, or the game's own app,
+in a game's folder `workshop` uploads the example mods.
 
 `--preview-image` is needed to make an item, as a script's `previewfile` is. `--visibility` is
 `public`, `friends-only`, `private` or `unlisted`. It is needed to make an item, since steamship

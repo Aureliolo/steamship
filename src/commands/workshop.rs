@@ -424,9 +424,9 @@ fn checked_item(given: &Given<'_>, new: bool) -> Result<workshop::Item, ExitCode
             }
             if !workshop::is_item_script(script) {
                 show::note(&format!(
-                    "{} is not an item script. Give the path of one, or the app's ID with \
-                     `--items`, `--name`, `--content` and `--title`. In a game's folder, leaving \
-                     the word out uploads the game's mods",
+                    "{} is not an item script. Give the path of one, or the app's ID first, then \
+                     `--items`, `--name`, `--content` and `--title`. In a game's folder, leave the \
+                     word out to upload the example mods",
                     script.display()
                 ));
             }

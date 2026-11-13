@@ -514,9 +514,9 @@ fn a_word_with_no_field_is_an_item_script_or_the_games_app() {
     let home = tempfile::tempdir().unwrap();
     let note = |word: &str| {
         format!(
-            "{word} is not an item script. Give the path of one, or the app's ID with `--items`, \
-             `--name`, `--content` and `--title`. In a game's folder, leaving the word out \
-             uploads the game's mods"
+            "{word} is not an item script. Give the path of one, or the app's ID first, then \
+             `--items`, `--name`, `--content` and `--title`. In a game's folder, leave the word \
+             out to upload the example mods"
         )
     };
 
