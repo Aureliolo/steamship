@@ -246,6 +246,12 @@ fn an_accounts_name_in_a_refusal_changes_neither_the_exit_code_nor_the_message()
             "Steam is limiting login attempts. Wait, then try again",
         ),
         (
+            "steam",
+            "Logging in user 'steam' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
             "cached",
             "Logging in user 'cached' [U:1:0] to Steam Public...FAILED (No cached credentials \
              and @NoPromptForPassword is set)",

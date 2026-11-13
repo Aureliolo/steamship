@@ -218,6 +218,54 @@ fn a_wrap_said_done_that_wrote_nothing_is_a_failure_and_replaces_nothing() {
 }
 
 #[test]
+fn an_accounts_name_in_a_wraps_refusal_changes_neither_its_exit_code_nor_steamships_words() {
+    let files = tempfile::tempdir().unwrap();
+    let game = files.path().join("game.exe");
+    for (name, script, code, words) in [
+        (
+            "limit",
+            "#!/bin/sh\n\
+             echo \"Logging in user 'limit' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"\n\
+             exit 5\n",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "steam",
+            "#!/bin/sh\n\
+             echo \"Logging in user 'steam' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"\n\
+             exit 5\n",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
+            "valve",
+            REFUSES_WRAP,
+            1_i32,
+            "Valve's DRM tool refused the executable: PE module implementation does not \
+             currently support adding imports",
+        ),
+    ] {
+        let home = faked_with(script);
+        saved_login(home.path());
+        fs::write(&game, "MZgodot").unwrap();
+        let (found, stdout, stderr) = steamship(
+            &[
+                "drm-wrap",
+                "1000",
+                &game.to_string_lossy(),
+                "--account",
+                name,
+            ],
+            Some(home.path()),
+            &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+        );
+        assert_eq!(found, Some(code), "{name}: {stdout}{stderr}");
+        assert!(stderr.contains(words), "{name}: {stderr}");
+    }
+}
+
+#[test]
 fn a_refused_wrap_says_why_and_a_file_that_is_no_windows_program_is_refused_first() {
     let home = faked_with(REFUSES_WRAP);
     saved_login(home.path());

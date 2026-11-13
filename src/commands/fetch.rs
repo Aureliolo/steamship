@@ -20,7 +20,9 @@ use zeroize::Zeroizing;
 use super::exit::fail;
 use super::game::{app_named, app_or_game};
 use super::key::{offer_to_keep, web_api, web_api_failed, why_unanswered};
-use super::ready::{home, login_refused, named, ready, restore, run_as, steamcmd_failed};
+use super::ready::{
+    home, login_refused, named, ready, reasons_shown, restore, run_as, steamcmd_failed,
+};
 use super::upload::redacted;
 
 pub(crate) fn try_fetch(request: &cli::Fetch) -> Result<ExitCode, ExitCode> {
@@ -338,6 +340,14 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
         .find(|(name, _)| name == "content_log.txt")
         .map_or_default(|(_, added)| fetch::hidden(&String::from_utf8_lossy(&added), &secret));
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
+    // The redacted console and log are judged too, so that steamship's own sentences in the
+    // reasons keep their words.
+    let shown = fetch::judge(
+        finished.code,
+        &redacted(&redactor, &console),
+        &redacted(&redactor, &log),
+        fetching.app,
+    );
     match fetch::judge(finished.code, &console, &log, fetching.app) {
         fetch::Outcome::Fetched => spinner.done(&format!("downloaded in {took}")),
         fetch::Outcome::NotLoggedIn(reason) => {
@@ -346,16 +356,28 @@ fn fetched(fetching: &Fetching<'_>) -> Result<fetch::Installed, ExitCode> {
         }
         fetch::Outcome::PasswordRefused(reasons) => {
             spinner.failed(&format!("refused after {took}"));
-            for reason in &reasons {
-                show::failure(&redacted(&redactor, reason), "", None);
+            let shown = match shown {
+                fetch::Outcome::PasswordRefused(shown) => Some(shown),
+                fetch::Outcome::Fetched
+                | fetch::Outcome::NotLoggedIn(_)
+                | fetch::Outcome::Failed(_) => None,
+            };
+            for reason in reasons_shown(&reasons, shown, &redactor) {
+                show::failure(&reason, "", None);
             }
             forget_refused_password(&home, fetching);
             return Err(ExitCode::from(FAILED));
         }
         fetch::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
-            for reason in &reasons {
-                show::failure(&redacted(&redactor, reason), "", None);
+            let shown = match shown {
+                fetch::Outcome::Failed(shown) => Some(shown),
+                fetch::Outcome::Fetched
+                | fetch::Outcome::NotLoggedIn(_)
+                | fetch::Outcome::PasswordRefused(_) => None,
+            };
+            for reason in reasons_shown(&reasons, shown, &redactor) {
+                show::failure(&reason, "", None);
             }
             return Err(ExitCode::from(FAILED));
         }

@@ -202,6 +202,7 @@ fn ticked_on_steam(
         "asking which redistributables the app ticks",
     );
     if asked.is_err() {
+        hide_in_logs(home, account, app);
         install::verify(held, manifest).map_err(|error| steamcmd_failed(&error))?;
     }
     let (console, spinner) = asked?;
@@ -340,7 +341,8 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         request.default,
         (&held, &home, &manifest),
         (&account, prepared.app_id, packed.as_ref()),
-    )?;
+    )
+    .inspect_err(|_| hide_in_logs(&home, &account, prepared.app_id))?;
     let saved = prepared.output.join("steamcmd.log");
     let steam = Steam {
         account: &account,
@@ -715,10 +717,7 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
             let (written, mut line) = console_line(steam, saved.err(), removed);
             // The logs steamcmd wrote beside the console name the account too.
             if let Err(error) = redactor.redact_logs(&steam.prepared.output) {
-                line = format!(
-                    "{line}. These logs may still hold the token or the account's name: {error}. \
-                     Check them before you share them"
-                );
+                line = format!("{line}. {}", logs_unredacted(&error));
             }
             (Some(redactor), written, line)
         }
@@ -738,6 +737,27 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
         log: line,
         written,
     })
+}
+
+/// What is said when a log of the build's folder could neither be redacted nor removed.
+fn logs_unredacted(error: &io::Error) -> String {
+    format!(
+        "These logs may still hold the token or the account's name: {error}. Check them before \
+         you share them"
+    )
+}
+
+/// Hides the token and the account's name in the logs `app`'s earlier runs left in the home, for a
+/// run of steamcmd that refused before any build: the build's own redaction never runs then.
+fn hide_in_logs(home: &Path, account: &Account, app: u32) {
+    let output = home.join(upload::APPS).join(app.to_string()).join("output");
+    let done = Redactor::for_home(home).map_or_else(
+        |_| redact::remove_logs(&output),
+        |redactor| redactor.and_name(account.name()).redact_logs(&output),
+    );
+    if let Err(error) = done {
+        show::note(&logs_unredacted(&error));
+    }
 }
 
 /// Whether steamcmd's console was saved, and the `log` line that says where its logs are. `failed`

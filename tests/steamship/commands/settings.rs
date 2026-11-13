@@ -62,6 +62,54 @@ fn app_info(executable: &str) -> String {
 }
 
 #[test]
+fn an_accounts_name_in_a_refusal_of_the_settings_changes_neither_the_exit_code_nor_the_words() {
+    for name in ["limit", "steam"] {
+        let home = faked_with(&format!(
+            "#!/bin/sh\n\
+             echo \"Logging in user '{name}' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"\n\
+             exit 5\n"
+        ));
+        saved_login(home.path());
+        let (code, stdout, stderr) = steamship(
+            &["settings", "1000", "--account", name],
+            Some(home.path()),
+            &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+        );
+        assert_eq!(code, Some(6_i32), "{name}: {stdout}{stderr}");
+        assert!(
+            stderr.contains("Steam is limiting login attempts. Wait, then try again"),
+            "{name}: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn a_token_in_the_settings_is_redacted_where_they_are_shown_and_saved() {
+    let token = "a_saved_login_token_0123456789";
+    let home = faked_with(&app_info(token));
+    saved_login(home.path());
+    let files = tempfile::tempdir().unwrap();
+    let kept = files.path().join("settings.vdf");
+    let quiet = [("STEAMSHIP_NO_UPDATE_CHECK", "1")];
+    let (code, stdout, stderr) = steamship(
+        &["settings", "1000", "--save", &kept.to_string_lossy()],
+        Some(home.path()),
+        &quiet,
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let saved = fs::read_to_string(&kept).unwrap();
+    assert!(
+        saved.contains("[redacted]") && !saved.contains(token),
+        "{saved}"
+    );
+    let (_, shown, _) = steamship(&["settings", "1000"], Some(home.path()), &quiet);
+    assert!(
+        shown.contains("[redacted]") && !shown.contains(token),
+        "{shown}"
+    );
+}
+
+#[test]
 fn settings_are_shown_saved_and_checked_leaving_steams_bookkeeping_out() {
     let home = faked_with(&app_info("spacewar"));
     saved_login(home.path());

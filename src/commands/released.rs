@@ -23,9 +23,8 @@ pub(crate) fn app_info(
     packed: Option<&ci::Login>,
     doing: &str,
 ) -> Result<(String, Spinner), ExitCode> {
-    let before = Redactor::for_home(home)
-        .map_err(|error| fail(&error, FAILED))?
-        .and_name(account.name());
+    let secrets_before = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
+    let before = secrets_before.clone().and_name(account.name());
     let spinner = Spinner::start("steam", doing, true);
     let finished = match steamcmd::app_info(account, app).run(home) {
         Ok(finished) => finished,
@@ -34,15 +33,24 @@ pub(crate) fn app_info(
             return Err(fail(&error, FAILED));
         }
     };
-    let redactor = before.and(Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?);
-    // Judged and read as steamcmd wrote it: an account named `limit` or `released` must change no
-    // outcome. Only what is shown is redacted.
-    let console = String::from_utf8_lossy(&finished.output).into_owned();
-    match conversation::judge_login(finished.code, &console) {
-        conversation::Login::Taken => Ok((console, spinner)),
+    let after = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
+    let secrets = secrets_before.and(after.clone());
+    let redactor = before.and(after);
+    // Judged as steamcmd wrote it: an account named `limit` or `released` must change no outcome.
+    // What is returned is read as a block of settings, so only the secrets are taken out of it. The
+    // account's name stands in the login line before it.
+    match conversation::judge_login(finished.code, &String::from_utf8_lossy(&finished.output)) {
+        conversation::Login::Taken => Ok((
+            String::from_utf8_lossy(&secrets.redact(&finished.output)).into_owned(),
+            spinner,
+        )),
         judged @ (conversation::Login::Refused(_) | conversation::Login::Failed(_)) => {
             spinner.failed("not logged in");
-            Err(verdict(judged, &redactor, packed))
+            let shown = conversation::judge_login(
+                finished.code,
+                &String::from_utf8_lossy(&redactor.redact(&finished.output)),
+            );
+            Err(verdict(judged, shown, &redactor, packed))
         }
     }
 }

@@ -1468,6 +1468,12 @@ fn an_accounts_name_in_a_refusal_changes_neither_its_exit_code_nor_its_message()
             "Steam is limiting login attempts. Wait, then try again",
         ),
         (
+            "steam",
+            "echo \"Logging in user '$account' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"",
+            6_i32,
+            "Steam is limiting login attempts. Wait, then try again",
+        ),
+        (
             "cached",
             "echo \"Logging in user '$account' [U:1:0] to Steam Public...\"\n\
              echo 'FAILED (No cached credentials and @NoPromptForPassword is set)'",
@@ -1496,6 +1502,28 @@ fn an_accounts_name_in_a_refusal_changes_neither_its_exit_code_nor_its_message()
             "{name}"
         );
     }
+}
+
+#[test]
+fn a_default_check_steam_refuses_leaves_no_log_naming_the_account() {
+    let (_project, script) = project(true);
+    let home = faked_with(&refusing_as_given(
+        "echo \"Logging in user '$account' [U:1:0] to Steam Public...FAILED (Rate Limit Exceeded)\"",
+    ));
+    let old = home.path().join("apps/1000/output/old.log");
+    fs::create_dir_all(old.parent().unwrap()).unwrap();
+    fs::write(&old, "Logging in user 'build_bot'").unwrap();
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--default"],
+        &[],
+    );
+    assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
+    assert_eq!(
+        fs::read_to_string(&old).unwrap(),
+        "Logging in user '[redacted]'"
+    );
 }
 
 #[test]
