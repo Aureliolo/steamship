@@ -3290,7 +3290,7 @@ fn block_console(home: &Path) {
 }
 
 #[test]
-fn a_console_that_cannot_be_saved_leaves_the_json_line_as_it_is() {
+fn a_console_that_cannot_be_saved_gives_the_same_json_line_with_no_error() {
     let (_project, script) = project(true);
     let [fresh, blocked] = [false, true].map(|blocked| {
         let home = leaking();
