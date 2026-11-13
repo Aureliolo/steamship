@@ -3282,6 +3282,70 @@ fn a_console_that_cannot_be_saved_leaves_every_exit_code_as_it_was() {
     }
 }
 
+/// Makes `steamcmd.log` in the home's output a folder holding a file, so that no console is saved.
+fn block_console(home: &Path) {
+    let blocked = output_of(home).join("steamcmd.log");
+    fs::create_dir_all(&blocked).unwrap();
+    fs::write(blocked.join("kept"), "in the way").unwrap();
+}
+
+#[test]
+fn a_console_that_cannot_be_saved_gives_the_same_json_line_with_no_error() {
+    let (_project, script) = project(true);
+    let [fresh, blocked] = [false, true].map(|blocked| {
+        let home = leaking();
+        if blocked {
+            block_console(home.path());
+        }
+        let (code, stdout, stderr) =
+            upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
+        assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+        summary_of(&stdout)
+    });
+    assert_eq!(fresh, blocked);
+    assert_eq!(fresh.get("error"), None, "{fresh}");
+}
+
+#[test]
+fn a_failed_upload_whose_console_cannot_be_saved_gives_its_own_error_as_json() {
+    let home = leaking();
+    block_console(home.path());
+    let (_project, script) = project(true);
+    for (variable, expected, word) in [
+        ("STEAMSHIP_FAKE_LOGGED_OUT", 3_i32, "not-logged-in"),
+        ("STEAMSHIP_FAKE_FAIL", 1_i32, "steamcmd-failed"),
+    ] {
+        let (code, stdout, stderr) = upload(
+            &script,
+            home.path(),
+            &["--version", "1.4.0", "--json"],
+            &[(variable, "1")],
+        );
+        assert_eq!(code, Some(expected), "{variable}: {stdout}{stderr}");
+        let line = summary_of(&stdout);
+        assert_eq!(at(&line, "/error/code"), word, "{line}");
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_failed_upload_whose_login_turned_unreadable_keeps_its_reasons_out_of_the_json() {
+    let home = leaking_with("chmod 000 \"$HOME/Steam/config/config.vdf\"");
+    let (_project, script) = project(true);
+    let (code, stdout, stderr) = upload(
+        &script,
+        home.path(),
+        &["--version", "1.4.0", "--json"],
+        &[("STEAMSHIP_FAKE_FAIL", "1")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let line = summary_of(&stdout);
+    assert_eq!(at(&line, "/error/code"), "steamcmd-failed", "{line}");
+    let message = text_at(&line, "/error/message");
+    assert!(message.contains("none kept"), "{message}");
+    assert!(!message.contains("Access Denied"), "{message}");
+}
+
 #[test]
 fn a_console_that_cannot_be_saved_says_nothing_of_an_earlier_one_when_there_was_none() {
     let home = leaking_with("mkdir -p \"$output/steamcmd.log\"");

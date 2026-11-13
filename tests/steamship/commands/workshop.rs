@@ -1730,6 +1730,73 @@ fn a_console_that_cannot_be_saved_still_keeps_the_item_made_and_exits_0() {
 }
 
 #[test]
+fn an_item_whose_console_was_not_saved_has_a_null_log() {
+    let home = faked_with(&format!(
+        "#!/bin/sh\n{MAKING}\
+         mkdir \"$(dirname \"$script\")/steamcmd.log\"\n\
+         printf '%s\\r\\n' 'Success.'\n"
+    ));
+    saved_login(home.path());
+    let (temp, script) = workshop_item("");
+    let items = temp.path().join("workshop_items.json");
+    let args = by_fields(
+        script.parent().unwrap(),
+        &items,
+        &["--visibility", "private", "--json"],
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("\"log\":null"), "{stdout}");
+    let line = one_line(&stdout);
+    assert_eq!(at(&line, "/items/0/outcome"), "made", "{line}");
+    assert_eq!(at(&line, "/items/0/item_id"), 777_i32, "{line}");
+    assert_eq!(line.get("error"), None, "{line}");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_failed_item_whose_login_turned_unreadable_has_a_null_log_and_no_reasons_in_the_message() {
+    let home = faked_with(&format!(
+        "#!/bin/sh\n\
+         printf '%s\\r\\n' '{DENIED}'\n\
+         chmod 000 \"$HOME/Steam/config/config.vdf\"\n\
+         exit 8\n"
+    ));
+    saved_login(home.path());
+    let (_temp, script) = workshop_item(r#""publishedfileid" "5674""#);
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap(), "--json"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    let line = one_line(&stdout);
+    assert_eq!(at(&line, "/error/code"), "steamcmd-failed", "{line}");
+    let message = text_at(&line, "/error/message");
+    assert!(message.contains("none kept"), "{message}");
+    assert!(!message.contains("Access Denied"), "{message}");
+    assert_eq!(at(&line, "/items/0/log"), serde_json::Value::Null, "{line}");
+}
+
+#[test]
+fn a_first_mod_whose_copy_cannot_be_made_starts_no_steamcmd_and_prints_nothing() {
+    let (_temp, root) = two_mods(None, None);
+    let home = faked_with(COUNTING);
+    saved_login(home.path());
+    block_copy(home.path(), "example");
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &["workshop", "--visibility", "private", "--json"],
+        Some(home.path()),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert_eq!(stdout, "");
+    assert_eq!(starts(home.path()), 0, "{stderr}");
+}
+
+#[test]
 fn an_item_console_that_cannot_be_removed_is_said_on_the_log_line() {
     let home = publishing_then("");
     let blocked = home.path().join("workshop/480/example/steamcmd.log");
