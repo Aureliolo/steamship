@@ -223,7 +223,7 @@ fn try_workshop<'command>(
     if request.dry_run {
         if request.json {
             for (each, item) in given.iter().zip(&items) {
-                show::plain(&format!("{}\n", item_summary(None, item, each)));
+                show::plain(&format!("{}\n", item_summary(None, None, item, each)));
             }
         }
         if let Some(first) = items.first() {
@@ -303,10 +303,11 @@ fn upload_item(
     let after = Redactor::for_home(home);
     // The outcome is judged on the output as steamcmd wrote it, since redacting could turn an
     // account named `Success` into a different result.
+    let copied = workshop::published(&copy);
     let outcome = workshop::judge(
         finished.code,
         &String::from_utf8_lossy(&finished.output),
-        workshop::published(&copy),
+        copied,
     );
     let (redactor, written, log) = match after {
         Ok(after) => {
@@ -321,14 +322,13 @@ fn upload_item(
     if request.json {
         show::plain(&format!(
             "{}\n",
-            item_summary(Some((&outcome, &saved)), item, given)
+            item_summary(Some((&outcome, &saved)), copied, item, given)
         ));
     }
     let (code, unkept) = match outcome {
         workshop::Outcome::Published { published } => {
             spinner.done(&format!("uploaded in {took}"));
-            output("published-file-id", published, "the item's ID");
-            let said = item_published(given, item, published, &log);
+            let said = item_published(given, item, published, &log, false);
             // A new item's line has no room for the log, which matters most when it was not kept.
             if !written && item.published.is_none() {
                 show::note(&log);
@@ -337,10 +337,8 @@ fn upload_item(
         }
         workshop::Outcome::NotLoggedIn(reason) => {
             spinner.failed(&format!("refused after {took}"));
-            (
-                login_refused(&redacted(redactor_in_use, &reason), packed),
-                false,
-            )
+            let refused = login_refused(&redacted(redactor_in_use, &reason), packed);
+            after_failure(given, item, copied, &log, refused)
         }
         workshop::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
@@ -361,10 +359,27 @@ fn upload_item(
                     redactor,
                 );
             }
-            (ExitCode::from(FAILED), false)
+            after_failure(given, item, copied, &log, ExitCode::from(FAILED))
         }
     };
     Ok((code, unkept))
+}
+
+/// The exit of a failed run. When Steam made the item during it (`copied` holds an ID that `item`
+/// lacked), the ID is kept or named as after a success, and the exit is 5 if no file holds it.
+fn after_failure(
+    given: &Given<'_>,
+    item: &workshop::Item,
+    copied: Option<u64>,
+    log: &str,
+    code: ExitCode,
+) -> (ExitCode, bool) {
+    copied
+        .filter(|_| item.published.is_none())
+        .map_or((code, false), |published| {
+            let (_, unkept) = item_published(given, item, published, log, true);
+            (late(code, unkept), unkept)
+        })
 }
 
 /// Writes `console` at `saved`, and answers whether that worked with the `log` line that says
@@ -385,9 +400,11 @@ fn save_console(saved: &Path, console: &[u8], removed: Option<io::Error>) -> (bo
 
 /// What came of `item`, given as `given`, as `--json` prints it. An upload gives its outcome with
 /// `log`, where steamcmd's console was saved. A dry run gives `None`, and the ID the item already
-/// has.
+/// has. `copied` is the ID steamcmd left in its copy of the script, which names the item a failed
+/// run made.
 fn item_summary(
     uploaded: Option<(&workshop::Outcome, &Path)>,
+    copied: Option<u64>,
     item: &workshop::Item,
     given: &Given<'_>,
 ) -> serde_json::Value {
@@ -397,8 +414,8 @@ fn item_summary(
             ("made", Some(*published))
         }
         Some(workshop::Outcome::Published { published }) => ("updated", Some(*published)),
-        Some(workshop::Outcome::NotLoggedIn(_)) => ("not-logged-in", item.published),
-        Some(workshop::Outcome::Failed(_)) => ("failed", item.published),
+        Some(workshop::Outcome::NotLoggedIn(_)) => ("not-logged-in", item.published.or(copied)),
+        Some(workshop::Outcome::Failed(_)) => ("failed", item.published.or(copied)),
     };
     let log = uploaded.map(|(_, log)| log.to_string_lossy());
     let name = match given {
@@ -415,7 +432,8 @@ fn item_summary(
 }
 
 /// Says that `item`, given as `given`, is up as `published`, and keeps a new one's ID where it
-/// was given by its fields.
+/// was given by its fields. A failed run's new item is kept or named the same way, as notes
+/// since the run did not succeed.
 ///
 /// Returns whether the item's ID is in no file, which means a second run would make another item.
 fn item_published(
@@ -423,23 +441,27 @@ fn item_published(
     item: &workshop::Item,
     published: u64,
     log: &str,
+    failed: bool,
 ) -> (ExitCode, bool) {
+    output("published-file-id", published, "the item's ID");
     let said = format!("app {}: Workshop item {published}", item.app_id);
     match (given, item.published) {
         (_, Some(_)) => show::success(&said, log),
         (Given::Script(script), None) => {
-            show::success(
-                &said,
-                &format!(
-                    "a new item. Add \"publishedfileid\" \"{published}\" to {} so that later \
-                     uploads update it",
-                    script.display()
-                ),
+            let add = format!(
+                "Add \"publishedfileid\" \"{published}\" to {} so that later uploads update it",
+                script.display()
             );
+            if failed {
+                show::note(&format!("{said} was made before the run failed"));
+                show::note(&add);
+            } else {
+                show::success(&said, &format!("a new item. {add}"));
+            }
             return (ExitCode::SUCCESS, true);
         }
         (Given::Fields(_, kept), None) => {
-            let code = keep_item(kept, item.app_id, published);
+            let code = keep_item(kept, item.app_id, published, failed);
             return (code, code != ExitCode::SUCCESS);
         }
     }
@@ -499,7 +521,7 @@ fn given_fields<'command>(
 /// Writes `published`, the item just made for `app_id`, into the `--items` file under its name,
 /// and says so. The file is read again first, so an item an earlier one of the run kept stays.
 /// When the file cannot be read or written, it says what to add to it by hand.
-fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
+fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64, failed: bool) -> ExitCode {
     let written = record_in(kept.path, app_id).and_then(|mut record| {
         let _: Option<u64> = record.items.insert(kept.name.to_owned(), published);
         kept.path
@@ -509,6 +531,17 @@ fn keep_item(kept: &Kept<'_>, app_id: u32, published: u64) -> ExitCode {
             .map_err(|error| format!("{}: {error}", kept.path.display()))
     });
     match written {
+        Ok(()) if failed => {
+            show::note(&format!(
+                "app {app_id}: Workshop item {published} was made before the run failed"
+            ));
+            show::note(&format!(
+                "kept as {} in {}. Commit it so that later uploads update it",
+                kept.name,
+                kept.path.display()
+            ));
+            ExitCode::SUCCESS
+        }
         Ok(()) => {
             show::success(
                 &format!("app {app_id}: Workshop item {published}"),
