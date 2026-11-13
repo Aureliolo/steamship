@@ -227,12 +227,12 @@ fn try_workshop<'command>(
         if request.json
             && let Some(first) = items.first()
         {
-            let lines = given
+            let lines: Vec<_> = given
                 .iter()
                 .zip(&items)
                 .map(|(each, item)| item_summary(None, None, item, each))
                 .collect();
-            print_line(&run_summary(first.app_id, lines, None));
+            print_line(&run_summary(first.app_id, &lines, None));
         }
         if let Some(first) = items.first() {
             show::success(
@@ -269,7 +269,7 @@ fn try_workshop<'command>(
                 // The line is due once steamcmd has run, which it has for any item after the first.
                 if request.json && index > 0 {
                     let error = error_of(exit, "", Some(&stopped), None);
-                    print_line(&run_summary(app_id, lines, error));
+                    print_line(&run_summary(app_id, &lines, error));
                 }
                 return Err(exit);
             }
@@ -295,9 +295,9 @@ fn try_workshop<'command>(
     if request.json {
         let holding = unkept.as_ref().map_or_else(String::new, Unkept::holding);
         let error = error_of(exit, &holding, failure.as_ref(), later);
-        print_line(&run_summary(app_id, lines, error));
+        print_line(&run_summary(app_id, &lines, error));
     }
-    after.map_err(|(exit, _)| exit)?;
+    after.map_err(|(stopped, _)| stopped)?;
     Ok(code)
 }
 
@@ -334,12 +334,12 @@ struct Went {
 /// went, and `error` when it failed.
 fn run_summary(
     app: u32,
-    items: Vec<serde_json::Value>,
+    items: &[serde_json::Value],
     error: Option<serde_json::Value>,
 ) -> serde_json::Value {
     let mut line = serde_json::json!({ "app": app, "items": items });
-    if let Some(error) = error {
-        line["error"] = error;
+    if let (Some(error), Some(fields)) = (error, line.as_object_mut()) {
+        drop(fields.insert("error".to_owned(), error));
     }
     line
 }
@@ -409,10 +409,9 @@ fn upload_item(
             if !written && item.published.is_none() {
                 show::note(&log);
             }
-            let failure = kept.failure.map(|message| Failure {
-                code: "unfinished",
-                message: redacted(redactor_in_use, &message),
-            });
+            let failure = kept
+                .failure
+                .map(|message| Failure::new("unfinished", redacted(redactor_in_use, &message)));
             (kept.code, kept.unkept, failure)
         }
         workshop::Outcome::NotLoggedIn(reason) => {
@@ -429,8 +428,8 @@ fn upload_item(
                 .filter(|_| redactor.is_some())
                 .map(|reason| redacted(redactor_in_use, reason))
                 .collect();
-            for line in &lines {
-                show::failure(line, "", None);
+            for reason in &lines {
+                show::failure(reason, "", None);
             }
             // Valve gives the real reason for a Workshop failure there, not on the console.
             show::note(&format!(
@@ -447,15 +446,7 @@ fn upload_item(
                 );
             }
             let (code, unkept) = after_failure(given, item, copied, &log, ExitCode::from(FAILED));
-            let message = if lines.is_empty() {
-                "steamcmd failed".to_owned()
-            } else {
-                lines.join("\n")
-            };
-            let failure = Failure {
-                code: "steamcmd-failed",
-                message,
-            };
+            let failure = Failure::of_reasons("steamcmd-failed", &lines);
             (code, unkept, Some(failure))
         }
     };

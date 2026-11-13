@@ -30,9 +30,9 @@ use crate::common;
 use crate::steamship_command;
 use crate::{
     BETAS, BUILDS, CUT_OFF, CUT_OFF_SAID, DEMO_TYPED, DESCRIBED, KEY, NEEDS_VC, SECRETS, SET_LIVE,
-    Session, UPDATED, assert_no_secret_in, failure, faked_with, in_game, in_game_with,
+    Session, UPDATED, assert_no_secret_in, at, failure, faked, faked_with, in_game, in_game_with,
     packed_login, project, pushed, pushed_game, released_as, saved_login, shipping_dll, steamship,
-    steamship_in, summary_of, upload, web_api, web_api_variables, with_demo, written,
+    steamship_in, summary_of, text_at, upload, web_api, web_api_variables, with_demo, written,
 };
 
 #[test]
@@ -524,13 +524,13 @@ fn an_upload_steam_did_not_set_live_on_default_says_how_to_and_exits_5() {
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
-    let line = summary_of(&stdout);
-    assert_eq!(line["default"], false, "{line}");
-    assert_eq!(line["live"], true, "{line}");
-    assert_eq!(line["outcome"], "uploaded", "{line}");
-    assert_eq!(line["build_id"], 4242, "{line}");
-    assert_eq!(line["error"]["code"], "unfinished", "{line}");
-    let message = line["error"]["message"].as_str().unwrap();
+    let json = summary_of(&stdout);
+    assert_eq!(at(&json, "/default"), false, "{json}");
+    assert_eq!(at(&json, "/live"), true, "{json}");
+    assert_eq!(at(&json, "/outcome"), "uploaded", "{json}");
+    assert_eq!(at(&json, "/build_id"), 4242_u64, "{json}");
+    assert_eq!(at(&json, "/error/code"), "unfinished", "{json}");
+    let message = text_at(&json, "/error/message");
     assert!(
         message
             .starts_with("Steam holds a build of app 1000, so a second upload would make another")
@@ -571,12 +571,12 @@ fn an_upload_to_an_app_with_no_branch_yet_goes_live_on_default_alone_and_says_ho
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
-    let line = summary_of(&stdout);
-    assert_eq!(line["branch"], "testing", "{line}");
-    assert_eq!(line["default"], true, "{line}");
-    assert_eq!(line["live"], false, "{line}");
-    assert_eq!(line["outcome"], "uploaded", "{line}");
-    assert!(line.get("error").is_none(), "{line}");
+    let json = summary_of(&stdout);
+    assert_eq!(at(&json, "/branch"), "testing", "{json}");
+    assert_eq!(at(&json, "/default"), true, "{json}");
+    assert_eq!(at(&json, "/live"), false, "{json}");
+    assert_eq!(at(&json, "/outcome"), "uploaded", "{json}");
+    assert!(json.get("error").is_none(), "{json}");
     for line in [
         "  branch    testing, not on Steam yet\n",
         "app 1000 has no build live on its default branch, and Steam gives it no other branch \
@@ -936,8 +936,8 @@ fn a_failed_upload_with_json_still_says_what_steam_kept() {
     ] {
         assert_eq!(summary.get(field), Some(&expected), "{field}: {summary}");
     }
-    assert_eq!(summary["error"]["code"], "unfinished", "{summary}");
-    let message = summary["error"]["message"].as_str().unwrap();
+    assert_eq!(at(&summary, "/error/code"), "unfinished", "{summary}");
+    let message = text_at(&summary, "/error/message");
     assert!(
         message
             .starts_with("Steam holds a build of app 1000, so a second upload would make another")
@@ -959,10 +959,10 @@ fn a_failed_upload_gives_its_reasons_as_json() {
         upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     let line = summary_of(&stdout);
-    assert_eq!(line["outcome"], serde_json::Value::Null, "{line}");
-    assert_eq!(line["build_id"], serde_json::Value::Null, "{line}");
-    assert_eq!(line["error"]["code"], "steamcmd-failed", "{line}");
-    let message = line["error"]["message"].as_str().unwrap();
+    assert_eq!(at(&line, "/outcome"), serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/build_id"), serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/error/code"), "steamcmd-failed", "{line}");
+    let message = text_at(&line, "/error/message");
     assert!(
         message.contains("Failed to initialize build on server (Access Denied)"),
         "{message}"
@@ -981,7 +981,7 @@ fn an_upload_steam_limits_says_login_limited_as_json() {
         upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
     assert_eq!(code, Some(6_i32), "{stdout}{stderr}");
     let line = summary_of(&stdout);
-    assert_eq!(line["error"]["code"], "login-limited", "{line}");
+    assert_eq!(at(&line, "/error/code"), "login-limited", "{line}");
 }
 
 #[test]
@@ -996,11 +996,11 @@ fn a_build_up_before_steamcmd_altered_itself_says_so_as_json() {
     );
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     let line = summary_of(&stdout);
-    assert_eq!(line["outcome"], "uploaded", "{line}");
-    assert_eq!(line["live"], true, "{line}");
-    assert_eq!(line["build_id"], 4242, "{line}");
-    assert_eq!(line["error"]["code"], "unfinished", "{line}");
-    let message = line["error"]["message"].as_str().unwrap();
+    assert_eq!(at(&line, "/outcome"), "uploaded", "{line}");
+    assert_eq!(at(&line, "/live"), true, "{line}");
+    assert_eq!(at(&line, "/build_id"), 4242_u64, "{line}");
+    assert_eq!(at(&line, "/error/code"), "unfinished", "{line}");
+    let message = text_at(&line, "/error/message");
     assert!(
         message.contains("Steam holds a build of app 1000")
             && message.contains("no longer the pinned one"),
@@ -1016,15 +1016,12 @@ fn a_build_up_before_steamcmd_altered_itself_says_so_as_json() {
         &[],
     );
     assert_eq!(earlier, Some(4_i32), "{said}{errors}");
-    let line = summary_of(&said);
-    assert_eq!(line["outcome"], "dry-run", "{line}");
-    assert_eq!(line["error"]["code"], "steamcmd-install", "{line}");
+    let dry = summary_of(&said);
+    assert_eq!(at(&dry, "/outcome"), "dry-run", "{dry}");
+    assert_eq!(at(&dry, "/error/code"), "steamcmd-install", "{dry}");
     assert!(
-        !line["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("Steam holds"),
-        "{line}"
+        !text_at(&dry, "/error/message").contains("Steam holds"),
+        "{dry}"
     );
 }
 
@@ -1040,11 +1037,11 @@ fn a_build_steam_would_not_set_live_before_steamcmd_altered_itself_names_both_as
     );
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     let line = summary_of(&stdout);
-    assert_eq!(line["outcome"], "uploaded", "{line}");
-    assert_eq!(line["build_id"], 777, "{line}");
-    assert_eq!(line["live"], false, "{line}");
-    assert_eq!(line["error"]["code"], "unfinished", "{line}");
-    let message = line["error"]["message"].as_str().unwrap();
+    assert_eq!(at(&line, "/outcome"), "uploaded", "{line}");
+    assert_eq!(at(&line, "/build_id"), 777_u64, "{line}");
+    assert_eq!(at(&line, "/live"), false, "{line}");
+    assert_eq!(at(&line, "/error/code"), "unfinished", "{line}");
+    let message = text_at(&line, "/error/message");
     let held = message.find("Failed to set build live on branch testing");
     let altered = message.find("no longer the pinned one");
     assert!(
@@ -1071,9 +1068,9 @@ fn a_failed_upload_whose_steamcmd_then_altered_itself_keeps_its_own_word_as_json
     );
     assert_eq!(code, Some(4_i32), "{stdout}{stderr}");
     let line = summary_of(&stdout);
-    assert_eq!(line["outcome"], serde_json::Value::Null, "{line}");
-    assert_eq!(line["error"]["code"], "steamcmd-failed", "{line}");
-    let message = line["error"]["message"].as_str().unwrap();
+    assert_eq!(at(&line, "/outcome"), serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/error/code"), "steamcmd-failed", "{line}");
+    let message = text_at(&line, "/error/message");
     assert!(
         message.contains("Failed to initialize build on server (Access Denied)")
             && !message.contains("no longer the pinned one"),
@@ -1089,9 +1086,9 @@ fn a_build_steam_kept_unnamed_is_uploaded_with_no_id_as_json() {
         upload(&script, home.path(), &["--version", "1.4.0", "--json"], &[]);
     assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
     let line = summary_of(&stdout);
-    assert_eq!(line["outcome"], "uploaded", "{line}");
-    assert_eq!(line["build_id"], serde_json::Value::Null, "{line}");
-    assert_eq!(line["error"]["code"], "unfinished", "{line}");
+    assert_eq!(at(&line, "/outcome"), "uploaded", "{line}");
+    assert_eq!(at(&line, "/build_id"), serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/error/code"), "unfinished", "{line}");
 }
 
 #[test]

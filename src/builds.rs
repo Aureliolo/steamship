@@ -305,8 +305,9 @@ mod tests {
         ];
         let mut lines = vec![failure_json("x", "y")];
         for error in &errors {
-            lines.push(error_json(480, error, None)["error"].clone());
-            lines.push(error_json(480, error, Some("none live"))["error"].clone());
+            for why in [None, Some("none live")] {
+                lines.extend(error_json(480, error, why).pointer("/error").cloned());
+            }
         }
         for line in lines {
             let mut keys: Vec<&String> = line.as_object().unwrap().keys().collect();

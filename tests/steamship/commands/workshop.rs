@@ -7,8 +7,8 @@ use steamship::platform::Platform;
 use steamship::steamcmd;
 
 use crate::{
-    failure, faked_with, icon_png, in_game, packed_login, pushed, pushed_game, saved_login,
-    steamship, steamship_in, workshop_item,
+    at, failure, faked_with, icon_png, in_game, packed_login, pushed, pushed_game, saved_login,
+    steamship, steamship_in, text_at, workshop_item,
 };
 
 /// A home whose steamcmd, given a Workshop item's script, says `said`, exits `code`, and gives
@@ -1391,13 +1391,9 @@ fn two_mods_are_one_line_of_json() {
     );
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     let line = one_line(&stdout);
-    let names: Vec<&str> = line["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|item| item["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, ["example", "fresh"], "{line}");
+    assert_eq!(text_at(&line, "/items/0/name"), "example", "{line}");
+    assert_eq!(text_at(&line, "/items/1/name"), "fresh", "{line}");
+    assert_eq!(at(&line, "/items/2"), serde_json::Value::Null, "{line}");
     assert!(line.get("error").is_none(), "{line}");
 }
 
@@ -1433,10 +1429,14 @@ fn a_second_mod_steam_fails_is_the_last_item_and_the_lines_error() {
     );
     assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
     let line = one_line(&stdout);
-    let items = line["items"].as_array().unwrap();
-    assert_eq!(items.len(), 2, "{line}");
-    assert_eq!(items[0]["outcome"], "made", "{line}");
-    assert_eq!(items[1]["outcome"], serde_json::Value::Null, "{line}");
+    assert_eq!(at(&line, "/items/0/outcome"), "made", "{line}");
+    assert_eq!(at(&line, "/items/1/name"), "fresh", "{line}");
+    assert_eq!(
+        at(&line, "/items/1/outcome"),
+        serde_json::Value::Null,
+        "{line}"
+    );
+    assert_eq!(at(&line, "/items/2"), serde_json::Value::Null, "{line}");
     assert_eq!(line.pointer("/error/code"), Some(&"steamcmd-failed".into()));
 }
 
