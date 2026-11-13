@@ -44,10 +44,7 @@ pub(crate) fn try_branch(app: &str, branch: &str, description: &str) -> Result<E
             return Err(code);
         }
     };
-    let Some(found) = branches
-        .iter()
-        .find(|found| found.name.eq_ignore_ascii_case(branch))
-    else {
+    let Some(found) = branch::find(&branches, branch) else {
         asking.failed("not on Steam");
         return Err(fail(
             &format!(

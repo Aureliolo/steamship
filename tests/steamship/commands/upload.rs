@@ -2295,6 +2295,10 @@ fn a_game_whose_branch_steam_will_not_describe_is_uploaded_all_the_same() {
         stderr.contains("steamship branch 1000050 testing --description \"0.3.1\""),
         "{stderr}"
     );
+    assert!(
+        !stderr.contains("steamship builds") && !stderr.contains("could not list"),
+        "a failed description ends the run before the builds list: {stderr}"
+    );
 }
 
 #[test]

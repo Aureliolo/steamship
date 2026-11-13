@@ -68,6 +68,37 @@ fn a_branch_is_described_only_when_its_description_differs() {
 }
 
 #[test]
+fn a_branch_is_described_under_the_name_typed_when_steam_lists_it_in_two_cases() {
+    let home = tempfile::tempdir().unwrap();
+    let (host, requests) = web_api(vec![
+        (
+            "200 OK",
+            r#"{"response": {"result": 1, "betas": {
+                "Testing": {"BuildID": 5, "Description": "upper"},
+                "testing": {"BuildID": 6, "Description": "lower"}
+            }}}"#,
+        ),
+        ("200 OK", UPDATED),
+    ]);
+    let (code, stdout, stderr) = steamship(
+        &["branch", "1000010", "testing", "--description", "x"],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  steam     \u{2713} described as \"lower\"\n"),
+        "{stdout}"
+    );
+    drop(requests.recv_timeout(Duration::from_secs(10)).unwrap());
+    let setting = requests.recv_timeout(Duration::from_secs(10)).unwrap();
+    assert!(
+        setting.ends_with("appid=1000010&betakey=testing&description=x"),
+        "{setting}"
+    );
+}
+
+#[test]
 fn a_branch_named_in_another_case_is_described_under_steams_name() {
     let home = tempfile::tempdir().unwrap();
     let (host, requests) = web_api(vec![
