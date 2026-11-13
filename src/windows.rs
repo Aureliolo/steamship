@@ -27,7 +27,7 @@ use std::time::{Duration, Instant, SystemTime};
 use windows_sys::Win32::Foundation::{
     ERROR_NOT_FOUND, ERROR_SHARING_VIOLATION, ERROR_SUCCESS, GENERIC_ALL, GENERIC_WRITE, HANDLE,
     HANDLE_FLAG_INHERIT, HLOCAL, INVALID_HANDLE_VALUE, LocalFree, SetHandleInformation,
-    WAIT_OBJECT_0, WAIT_TIMEOUT, WIN32_ERROR,
+    WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT, WIN32_ERROR,
 };
 use windows_sys::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW, SetSecurityInfo,
@@ -74,13 +74,13 @@ use windows_sys::Win32::System::SystemServices::{
     ACCESS_ALLOWED_ACE_TYPE, SECURITY_DESCRIPTOR_REVISION,
 };
 use windows_sys::Win32::System::Threading::{
-    CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+    CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateMutexW, CreateProcessW,
     DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
     GetExitCodeProcess, GetProcessAffinityMask, INFINITE, InitializeProcThreadAttributeList,
     LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ResumeThread,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, SetProcessAffinityMask, TerminateProcess,
-    UpdateProcThreadAttribute, WaitForSingleObject,
+    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_CREATION_FLAGS, PROCESS_INFORMATION, ReleaseMutex,
+    ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW, SetProcessAffinityMask,
+    TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::WINSTA_ALL_ACCESS;
 use zeroize::{Zeroize as _, Zeroizing};
@@ -1297,8 +1297,9 @@ impl Drop for Credential {
 ///
 /// # Errors
 ///
-/// When the Credential Manager refuses it.
+/// When the Credential Manager refuses it, or took it but had not shown it after [`SETTLE`].
 pub fn keep_secret(item: &keychain::Item, secret: &[u8]) -> Result<(), keychain::Error> {
+    let _turn = Turn::take(TURN, TURN_WAIT)?;
     let mut target = target(item);
     let mut label = wide(OsStr::new(item.label));
     let credential = CREDENTIALW {
@@ -1319,35 +1320,88 @@ pub fn keep_secret(item: &keychain::Item, secret: &[u8]) -> Result<(), keychain:
         return Err(store_failed(&io::Error::last_os_error()));
     }
     // Until it reads back, a delete finds nothing and the key turns up after `logout`.
-    if settles(item, |kept| kept == Some(secret))? {
+    if settled(item, |kept| kept == Some(secret))? {
         Ok(())
     } else {
-        Err(keychain::Error::Failed(format!(
-            "it took {} but never showed it",
-            target_name(item)
+        Err(keychain::Error::Unsettled(format!(
+            "it took {} but had not shown it after {} s",
+            target_name(item),
+            SETTLE.as_secs()
         )))
     }
 }
 
 /// Removes `item`, and says whether it was kept.
 ///
-/// A delete that finds nothing is taken at its word: every secret steamship keeps reads back
-/// before [`keep_secret`] returns.
+/// A delete that finds nothing answers false at once. That holds against other steamship runs,
+/// which take turns with this one and wait for each key they keep to read back. Another program
+/// changing credentials at the same moment can still make a kept key show late, or bring a
+/// removed one back.
 ///
 /// # Errors
 ///
-/// When the Credential Manager refuses, or still shows `item` once it was removed.
+/// When the Credential Manager refuses, or still showed `item` [`SETTLE`] after removing it.
 pub fn forget_secret(item: &keychain::Item) -> Result<bool, keychain::Error> {
+    let _turn = Turn::take(TURN, TURN_WAIT)?;
     if !delete(item)? {
         return Ok(false);
     }
-    if settles(item, |kept| kept.is_none())? {
+    if settled(item, |kept| kept.is_none())? {
         Ok(true)
     } else {
-        Err(keychain::Error::Failed(format!(
-            "it removed {} but still shows it",
-            target_name(item)
+        Err(keychain::Error::Unsettled(format!(
+            "it removed {} but still showed it after {} s",
+            target_name(item),
+            SETTLE.as_secs()
         )))
+    }
+}
+
+/// The mutex steamship's runs in this logon session take turns on to change a credential.
+const TURN: &str = "Local\\steamship-credentials";
+
+/// How long a run waits for another to finish changing a credential.
+const TURN_WAIT: Duration = Duration::from_secs(30);
+
+/// A turn at changing credentials, which no other steamship run of the logon session holds at the
+/// same time. Credential Manager can undo a change that another process makes at the same moment.
+/// steamship cannot hold off other programs, but its own runs, such as parallel CI jobs, take
+/// turns.
+#[derive(Debug)]
+struct Turn(OwnedHandle);
+
+impl Turn {
+    /// The turn at the mutex `name`, waited for for at most `wait`.
+    fn take(name: &str, wait: Duration) -> Result<Self, keychain::Error> {
+        let name = wide(OsStr::new(name));
+        // SAFETY: `name` is NUL-terminated and outlives the call, and the mutex takes the
+        // default security.
+        let mutex = unsafe { CreateMutexW(ptr::null(), 0, name.as_ptr()) };
+        if mutex.is_null() {
+            return Err(store_failed(&io::Error::last_os_error()));
+        }
+        // SAFETY: CreateMutexW gave back a handle that nothing else closes.
+        let mutex = unsafe { OwnedHandle::from_raw_handle(mutex) };
+        // A wait too long to count in milliseconds becomes none, which is still at most the wait.
+        let milliseconds = u32::try_from(wait.as_millis()).unwrap_or(0);
+        // SAFETY: the mutex handle is open for as long as `mutex`.
+        match unsafe { WaitForSingleObject(mutex.as_raw_handle(), milliseconds) } {
+            // An abandoned turn is one whose run ended without giving it back. It is this run's.
+            WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self(mutex)),
+            WAIT_TIMEOUT => Err(keychain::Error::Failed(format!(
+                "another steamship run has been changing credentials for {} s. Run this \
+                 command again once it ends",
+                wait.as_secs()
+            ))),
+            _ => Err(store_failed(&io::Error::last_os_error())),
+        }
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        // SAFETY: this thread took the mutex in `take`, and gives it back once, here.
+        let _: i32 = unsafe { ReleaseMutex(self.0.as_raw_handle()) };
     }
 }
 
@@ -1370,21 +1424,42 @@ fn delete(item: &keychain::Item) -> Result<bool, keychain::Error> {
 /// been seen to read back only 220 ms after `CredWriteW` returned.
 const SETTLE: Duration = Duration::from_secs(2);
 
-/// Waits until what `item` reads back satisfies `settled`, for at most [`SETTLE`], and says
+/// The pause between two reads of a change that has not shown yet.
+const POLL: Duration = Duration::from_millis(10);
+
+/// Waits until what `item` reads back satisfies `check`, for at most [`SETTLE`], and says
 /// whether it did.
-fn settles(
+fn settled(
     item: &keychain::Item,
-    settled: impl Fn(Option<&[u8]>) -> bool,
+    check: impl Fn(Option<&[u8]>) -> bool,
 ) -> Result<bool, keychain::Error> {
-    let deadline = Instant::now().checked_add(SETTLE);
+    settles(
+        || kept_secret(item),
+        check,
+        SETTLE,
+        Instant::now,
+        thread::sleep,
+    )
+}
+
+/// Reads with `read` until what it gives satisfies `check`, pausing [`POLL`] with `pause`
+/// between reads, for at most `limit` as `now` tells the time. Says whether it did.
+fn settles(
+    mut read: impl FnMut() -> Result<Option<Zeroizing<Vec<u8>>>, keychain::Error>,
+    check: impl Fn(Option<&[u8]>) -> bool,
+    limit: Duration,
+    mut now: impl FnMut() -> Instant,
+    mut pause: impl FnMut(Duration),
+) -> Result<bool, keychain::Error> {
+    let deadline = now().checked_add(limit);
     loop {
-        if settled(kept_secret(item)?.as_deref().map(Vec::as_slice)) {
+        if check(read()?.as_deref().map(Vec::as_slice)) {
             return Ok(true);
         }
-        if deadline.is_none_or(|deadline| Instant::now() >= deadline) {
+        if deadline.is_none_or(|deadline| now() >= deadline) {
             return Ok(false);
         }
-        thread::sleep(Duration::from_millis(10));
+        pause(POLL);
     }
 }
 
@@ -1870,6 +1945,7 @@ const fn size_of_u32<Structure>() -> u32 {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use std::cell::Cell;
     use std::env;
     use std::fs;
     use std::mem;
@@ -2817,6 +2893,88 @@ mod tests {
             keep_secret(&item, b"0123"),
             Err(keychain::Error::Failed(_))
         ));
+    }
+
+    /// What [`settles`] did with reads that show `shown` from the read numbered `from` on, as
+    /// (its answer, the reads it made, the pauses it took). The clock moves only by the pauses.
+    fn settling(from: Option<usize>) -> (Result<bool, keychain::Error>, usize, usize) {
+        let clock = Cell::new(Instant::now());
+        let reads = Cell::new(0_usize);
+        let pauses = Cell::new(0_usize);
+        let answer = settles(
+            || {
+                reads.set(reads.get().saturating_add(1));
+                Ok(from
+                    .is_some_and(|from| reads.get() >= from)
+                    .then(|| Zeroizing::new(b"shown".to_vec())))
+            },
+            |kept| kept == Some(b"shown".as_slice()),
+            Duration::from_secs(2),
+            || clock.get(),
+            |pause| {
+                pauses.set(pauses.get().saturating_add(1));
+                clock.set(clock.get().checked_add(pause).unwrap());
+            },
+        );
+        (answer, reads.get(), pauses.get())
+    }
+
+    #[test]
+    fn a_change_that_shows_at_once_is_read_once() {
+        assert_eq!(settling(Some(1)), (Ok(true), 1, 0));
+    }
+
+    #[test]
+    fn a_change_that_shows_late_is_read_until_it_shows() {
+        assert_eq!(settling(Some(4)), (Ok(true), 4, 3));
+    }
+
+    #[test]
+    fn a_change_that_never_shows_is_read_until_the_limit_and_no_longer() {
+        // Every 10 ms from 0 to 2 s.
+        assert_eq!(settling(None), (Ok(false), 201, 200));
+    }
+
+    #[test]
+    fn a_read_that_fails_ends_the_wait_with_its_error() {
+        let answer = settles(
+            || Err(keychain::Error::Failed("refused".to_owned())),
+            |_| true,
+            Duration::from_secs(2),
+            Instant::now,
+            |_| {},
+        );
+        assert_eq!(answer, Err(keychain::Error::Failed("refused".to_owned())));
+    }
+
+    #[test]
+    fn a_turn_keeps_another_waiting_until_it_is_given_back() {
+        let name = format!("Local\\steamship-test-turn-{}", process::id());
+        let (taken, held) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let (end, ended) = mpsc::channel::<()>();
+        let holder = {
+            let name = name.clone();
+            thread::spawn(move || {
+                let turn = Turn::take(&name, Duration::from_secs(5)).unwrap();
+                taken.send(()).unwrap();
+                released.recv().unwrap();
+                drop(turn);
+                taken.send(()).unwrap();
+                // Alive until the end, so that the turn is never left abandoned.
+                ended.recv().unwrap();
+            })
+        };
+        held.recv().unwrap();
+        assert!(matches!(
+            Turn::take(&name, Duration::from_millis(50)),
+            Err(keychain::Error::Failed(_))
+        ));
+        release.send(()).unwrap();
+        held.recv().unwrap();
+        drop(Turn::take(&name, Duration::from_secs(5)).unwrap());
+        end.send(()).unwrap();
+        holder.join().unwrap();
     }
 
     #[test]

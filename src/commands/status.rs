@@ -104,7 +104,11 @@ fn status_key(home: &Path) {
         Ok(true) => show::field("api key", &format!("kept in {}", keychain::STORE)),
         Ok(false) => show::field("api key", "none kept"),
         Err(keychain::Error::Unavailable(_)) => show::field("api key", "no credential store here"),
-        Err(error @ (keychain::Error::Failed(_) | keychain::Error::NotAKey)) => {
+        Err(
+            error @ (keychain::Error::Failed(_)
+            | keychain::Error::Unsettled(_)
+            | keychain::Error::NotAKey),
+        ) => {
             show::failed("api key", &error.to_string());
         }
     }
