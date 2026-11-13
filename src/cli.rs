@@ -821,9 +821,9 @@ pub struct Fetch {
     pub account: Option<String>,
     #[command(flatten)]
     pub password: BranchPassword,
-    /// Print `app`, `branch`, `build_id`, `system` and `folder` once the build is fetched, or
-    /// `app` and `error` when the fetch failed, on standard output as one line of JSON.
-    /// Everything else goes to standard error.
+    /// Print one line of JSON on standard output: `app`, `branch`, `build_id`, `system` and
+    /// `folder` once the build is fetched, or `app` and `error` when the fetch failed. Everything
+    /// else goes to standard error.
     #[arg(long)]
     pub json: bool,
 }

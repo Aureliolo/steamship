@@ -628,8 +628,9 @@ standard output, here spread out:
 ```
 
 A failed fetch prints `app` and `error` instead, with the words under
-[JSON output](#json-output). A refusal prints nothing. A refused branch password is
-`steamcmd-failed`, and its `message` ends on what to do next.
+[JSON output](#json-output). A fetch that steamship refuses to start, as for a branch the app
+does not have, prints nothing. When Steam refuses the branch password, `code` is
+`steamcmd-failed` and `message` ends on what to do next.
 
 ## Settings in Steamworks
 

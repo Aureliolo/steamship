@@ -253,7 +253,7 @@ fn a_fetch_that_got_another_build_than_steam_shows_live_fails() {
 }
 
 #[test]
-fn a_fetch_steam_does_not_answer_prints_its_error_as_json() {
+fn a_fetch_that_steam_does_not_answer_prints_its_error_as_json() {
     let home = tempfile::tempdir().unwrap();
     let (host, _requests) = web_api(vec![("500 Internal Server Error", ""), ("200 OK", APPS)]);
     let (code, stdout, stderr) = steamship(
@@ -272,7 +272,7 @@ fn a_fetch_steam_does_not_answer_prints_its_error_as_json() {
 }
 
 #[test]
-fn a_fetch_refused_a_login_prints_not_logged_in_as_json() {
+fn a_fetch_whose_login_steam_refuses_prints_not_logged_in_as_json() {
     let home = faked_with(
         "#!/bin/sh\n\
          echo \"Logging in user 'build_bot' to Steam Public...FAILED (Expired Login Auth Code)\"\n\
@@ -291,7 +291,7 @@ fn a_fetch_refused_a_login_prints_not_logged_in_as_json() {
 }
 
 #[test]
-fn a_fetch_steam_refuses_prints_its_reasons_as_json() {
+fn a_fetch_that_steam_refuses_prints_its_reasons_as_json() {
     let home = faked_with(
         "#!/bin/sh\n\
          echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
@@ -311,7 +311,7 @@ fn a_fetch_steam_refuses_prints_its_reasons_as_json() {
 }
 
 #[test]
-fn a_fetch_refused_after_steam_answered_prints_nothing() {
+fn a_fetch_for_a_branch_the_app_lacks_prints_no_json() {
     let home = faked_with(FETCHES);
     saved_login(home.path());
     let (code, stdout, stderr) =
