@@ -181,14 +181,19 @@ pub(crate) fn offer_to_keep(home: &Path, api: &webapi::Api, from: KeyFrom) {
     }
 }
 
-/// Why Steam gave `error` about `app`, when the apps the key holds can say, in words safe to show:
-/// asked only for the one error that needs them.
+/// Why Steam gave `error` about `app`, when the apps the key holds can say: asked only for the one
+/// error that needs them.
 pub(crate) fn why_unanswered(api: &webapi::Api, app: u32, error: &webapi::Error) -> Option<String> {
     if !matches!(error, webapi::Error::Status(500, _)) {
         return None;
     }
-    let why = webapi::no_build_yet(error, app, &api.apps().ok()?)?;
-    Some(redact::answer(answer_redactor().as_ref(), &why))
+    webapi::no_build_yet(error, app, &api.apps().ok()?)
+}
+
+/// `error` as a person reads it, with only the words Steam gave redacted.
+pub(crate) fn answered(error: &webapi::Error) -> String {
+    let redactor = answer_redactor();
+    error.said_with(&|steam| redact::answer(redactor.as_ref(), steam))
 }
 
 /// The redactor for this machine's steamcmd login secrets, or none when its files cannot be read.
@@ -214,8 +219,5 @@ pub(crate) fn web_api_failed(spinner: Spinner, error: &webapi::Error) -> ExitCod
         webapi::Error::Unreadable(_) => "unreadable".to_owned(),
         webapi::Error::Failed(_) => "failed".to_owned(),
     });
-    fail(
-        &redact::answer(answer_redactor().as_ref(), &error.to_string()),
-        FAILED,
-    )
+    fail(&answered(error), FAILED)
 }

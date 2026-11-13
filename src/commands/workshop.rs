@@ -262,6 +262,7 @@ fn try_workshop<'command>(
     let mut unkept: Option<Unkept> = None;
     let mut failure: Option<Failure> = None;
     let mut lines = Vec::new();
+    let mut shown = Redactor::default();
     for (index, (each, item)) in given.iter().zip(&items).enumerate() {
         let went = match upload_item((&account, packed.as_ref(), &home), each, item) {
             Ok(went) => went,
@@ -276,6 +277,7 @@ fn try_workshop<'command>(
             }
         };
         lines.push(went.line);
+        shown = went.redactor;
         unkept = unkept.or(went.unkept);
         failure = went.failure;
         code = went.code;
@@ -286,7 +288,7 @@ fn try_workshop<'command>(
     let after = install::verify(&held, &manifest).map_err(|error| {
         (
             late(steamcmd_failed(&error), unkept.is_some()),
-            error.to_string(),
+            redacted(&shown, &error.to_string()),
         )
     });
     let (exit, later) = match &after {
@@ -329,6 +331,8 @@ struct Went {
     failure: Option<Failure>,
     /// The item as the run's JSON lists it.
     line: serde_json::Value,
+    /// Hides the secrets in what is said after the run.
+    redactor: Redactor,
 }
 
 /// What a run of `items` for `app` came to, as `--json` prints it: the `items` as far as the run
@@ -433,10 +437,11 @@ fn upload_item(
                 show::failure(reason, "", None);
             }
             // Valve gives the real reason for a Workshop failure there, not on the console.
-            show::note(&format!(
+            let pointed = format!(
                 "{log}, and steamcmd's workshop log in {}",
                 steamcmd_logs.join("workshop_log.txt").display()
-            ));
+            );
+            show::note(&pointed);
             if let Some(redactor) = &redactor {
                 let console = written.then(|| ("steamcmd's console".to_owned(), saved));
                 dump_in_actions(
@@ -447,7 +452,7 @@ fn upload_item(
                 );
             }
             let (code, unkept) = after_failure(given, item, copied, &log, ExitCode::from(FAILED));
-            let failure = Failure::of_reasons("steamcmd-failed", &lines, &log);
+            let failure = Failure::of_reasons("steamcmd-failed", &lines, &pointed);
             (code, unkept, Some(failure))
         }
     };
@@ -456,6 +461,7 @@ fn upload_item(
         unkept,
         failure,
         line,
+        redactor: redactor_in_use.clone(),
     })
 }
 

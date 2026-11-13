@@ -17,11 +17,13 @@ use crate::steamcmd;
 /// What a secret is replaced with.
 pub const MARKER: &[u8] = b"[redacted]";
 
-/// What replaces Steam's words when the login files that name the secrets cannot be read.
-pub const WITHHELD: &str = "Steam's answer is not shown, because steamcmd's login files could not be read. Make them readable by this account, then run the command again";
+/// What replaces the words Steam gave when the login files that name the secrets cannot be read.
+pub const WITHHELD: &str = "withheld, because steamcmd's login files could not be read. Make them readable by this account, then run the command again";
 
-/// `text`, the words of an answer from Steam, with every secret of `redactor` replaced. Without a
-/// redactor nothing of the text can be known safe, so [`WITHHELD`] stands for it.
+/// `text`, words Steam gave, with every secret of `redactor` replaced.
+///
+/// Without a redactor nothing of them can be known safe, so [`WITHHELD`] stands for them. Only
+/// Steam's words go through here, never steamship's own.
 #[must_use]
 pub fn answer(redactor: Option<&Redactor>, text: &str) -> String {
     redactor.map_or_else(

@@ -6,6 +6,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use steamship::keychain;
+use steamship::platform::Platform;
+use steamship::steamcmd;
 use steamship::webapi::STAND_IN;
 
 use crate::common;
@@ -147,6 +149,93 @@ fn builds_json_prints_the_branches_and_builds_alone_on_standard_output() {
     );
     assert!(stderr.contains("2 branches and 2 builds"), "{stderr}");
     assert!(!stderr.contains(KEY), "never shown");
+}
+
+/// A home whose saved login is a folder, so that steamcmd's login files cannot be read.
+fn home_with_unreadable_login() -> tempfile::TempDir {
+    let home = crate::faked();
+    let config = steamcmd::saved_login(home.path(), Platform::THIS);
+    fs::create_dir_all(&config).unwrap();
+    home
+}
+
+#[test]
+fn with_unreadable_login_files_steamships_own_advice_for_a_failed_ask_is_still_given() {
+    let home = home_with_unreadable_login();
+    let (host, _requests) = web_api(vec![("500 Internal Server Error", ""), ("200 OK", APPS)]);
+    let (exit, stdout, stderr) = steamship(
+        &["builds", "1000030", "--json"],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(exit, Some(1_i32), "{stdout}{stderr}");
+    let said = summary_of(&stdout);
+    assert_eq!(
+        said.pointer("/error/message")
+            .and_then(|text| text.as_str()),
+        Some(
+            "Steam answered HTTP 500: this key holds app 1000030, and Steam answers so while no \
+             build is live on its default branch. Set one live there in Steamworks under \
+             SteamPipe, Builds, then ask again"
+        ),
+        "{said}"
+    );
+    assert!(!stderr.contains("withheld"), "{stderr}");
+}
+
+#[test]
+fn with_unreadable_login_files_a_refused_key_still_says_how_and_steams_words_are_withheld() {
+    let home = home_with_unreadable_login();
+    let refusing = web_api(vec![("403 Forbidden", "")]).0;
+    let (exit, stdout, stderr) = steamship(
+        &["promote", "1000010", "--build", "7", "--branch", "testing"],
+        Some(home.path()),
+        &web_api_variables(&refusing),
+    );
+    assert_eq!(exit, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).starts_with(
+            "Steam refused the Web API key. It must be the publisher key of a group that holds \
+             the app"
+        ),
+        "{stderr}"
+    );
+
+    let answer = r#"{"response": {"message": "words Steam gave"}}"#.to_owned();
+    let (host, _requests) = web_api(vec![("500 Internal Server Error", answer)]);
+    let (code, said, why) = steamship(
+        &["promote", "1000010", "--build", "7", "--branch", "testing"],
+        Some(home.path()),
+        &web_api_variables(&host),
+    );
+    assert_eq!(code, Some(1_i32), "{said}{why}");
+    assert!(
+        failure(&why)
+            .starts_with("Steam answered HTTP 500: withheld, because steamcmd's login files"),
+        "{why}"
+    );
+    assert!(!why.contains("words Steam gave"), "{why}");
+}
+
+#[test]
+fn with_unreadable_login_files_the_key_check_still_says_a_refused_key_needs_the_publisher_key() {
+    let home = home_with_unreadable_login();
+    let (host, _requests) = web_api(vec![("403 Forbidden", "")]);
+    let (code, stdout, stderr) = login_with_key(
+        home.path(),
+        &host,
+        KEY,
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains(
+            "Steam refused the Web API key. It must be the publisher key of a group that holds \
+             the app"
+        ),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("withheld"), "{stderr}");
 }
 
 #[test]

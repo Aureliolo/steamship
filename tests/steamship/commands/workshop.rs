@@ -1449,6 +1449,30 @@ fn a_workshop_run_whose_login_cannot_be_read_after_it_says_so_in_the_json_messag
         "{message}"
     );
     assert!(!message.contains("Access Denied"), "{message}");
+    assert!(
+        message.contains(", and steamcmd's workshop log in ")
+            && message.ends_with("workshop_log.txt"),
+        "{message}"
+    );
+}
+
+#[test]
+fn a_secret_in_the_fault_steamcmd_leaves_after_an_item_is_hidden_in_the_json_message() {
+    let home =
+        publishing_then("printf '#!' > \"$(dirname \"$0\")/a_saved_login_token_0123456789\"");
+    let (_temp, script) = workshop_item("");
+    let (code, stdout, stderr) = steamship(
+        &["workshop", script.to_str().unwrap(), "--json"],
+        Some(home.path()),
+        &[],
+    );
+    assert_eq!(code, Some(5_i32), "{stdout}{stderr}");
+    assert!(
+        !stdout.contains("a_saved_login_token_0123456789"),
+        "{stdout}"
+    );
+    let message = text_at(&one_line(&stdout), "/error/message");
+    assert!(message.contains("[redacted] is new"), "{message}");
 }
 
 #[test]

@@ -74,31 +74,38 @@ pub enum Error {
 
 impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotAKey => {
-                formatter.write_str("not a publisher Web API key, which is 32 hexadecimal digits")
-            }
-            Self::Refused => formatter.write_str(
-                "Steam refused the Web API key. It must be the publisher key of a group that \
-                 holds the app",
-            ),
-            Self::Status(status, said) if said.is_empty() => {
-                write!(formatter, "Steam answered HTTP {status}")
-            }
-            Self::Status(status, said) => write!(formatter, "Steam answered HTTP {status}: {said}"),
-            Self::Unreachable(unreached) => write!(
-                formatter,
-                "partner.steam-api.com could not be reached, tried twice: {unreached}"
-            ),
-            Self::Unreadable(what) => write!(formatter, "Steam's answer holds no {what}"),
-            Self::Failed(message) => write!(formatter, "Steam says: {message}"),
-        }
+        formatter.write_str(&self.said_with(&str::to_owned))
     }
 }
 
 impl error::Error for Error {}
 
 impl Error {
+    /// The error as a person reads it, with the words Steam gave passed through `steam`. The rest
+    /// is steamship's own and is never changed.
+    #[must_use]
+    pub fn said_with(&self, steam: &dyn Fn(&str) -> String) -> String {
+        match self {
+            Self::NotAKey => {
+                "not a publisher Web API key, which is 32 hexadecimal digits".to_owned()
+            }
+            Self::Refused => "Steam refused the Web API key. It must be the publisher key of a \
+                              group that holds the app"
+                .to_owned(),
+            Self::Status(status, said) if said.is_empty() => {
+                format!("Steam answered HTTP {status}")
+            }
+            Self::Status(status, said) => {
+                format!("Steam answered HTTP {status}: {}", steam(said))
+            }
+            Self::Unreachable(unreached) => {
+                format!("partner.steam-api.com could not be reached, tried twice: {unreached}")
+            }
+            Self::Unreadable(what) => format!("Steam's answer holds no {what}"),
+            Self::Failed(message) => format!("Steam says: {}", steam(message)),
+        }
+    }
+
     /// What went wrong, as a word a program can match on, which `--json` gives with the message.
     #[must_use]
     pub const fn code(&self) -> &'static str {

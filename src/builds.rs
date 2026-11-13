@@ -126,7 +126,8 @@ pub fn failure_json(code: &str, message: &str) -> Value {
 /// What `--json` prints when Steam did not answer about `app`.
 ///
 /// The code is [`webapi::Error::code`], or `no-build-live` when `why` says that is the reason. The
-/// message is what a person would read, with the secrets of `redactor` replaced.
+/// message is what a person would read, with the secrets of `redactor` replaced in the words Steam
+/// gave.
 #[must_use]
 pub fn error_json(
     app: u32,
@@ -134,11 +135,12 @@ pub fn error_json(
     why: Option<&str>,
     redactor: Option<&Redactor>,
 ) -> Value {
+    let said = error.said_with(&|steam| redact::answer(redactor, steam));
     let (code, message) = why.map_or_else(
-        || (error.code(), error.to_string()),
-        |why| ("no-build-live", format!("{error}: {why}")),
+        || (error.code(), said.clone()),
+        |why| ("no-build-live", format!("{said}: {why}")),
     );
-    json!({ "app": app, "error": failure_json(code, &redact::answer(redactor, &message)) })
+    json!({ "app": app, "error": failure_json(code, &message) })
 }
 
 #[cfg(test)]
