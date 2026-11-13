@@ -723,7 +723,7 @@ fn an_install_stopped_by_an_open_file_of_the_new_version_keeps_the_login() {
 }
 
 #[test]
-fn a_packages_own_config_file_over_the_login_stops_and_keeps_it() {
+fn a_packages_own_config_file_over_the_login_is_refused_and_the_login_kept() {
     let setup = Setup::new();
     drop(logged_in(&setup));
     let manifest = second(

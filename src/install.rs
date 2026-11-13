@@ -125,8 +125,8 @@ fn at(path: &Path) -> impl FnOnce(io::Error) -> Error {
     move |error| Error::Io { path, error }
 }
 
-/// [`at`], with what gets past a stop in the install's working folders. The system's error names
-/// neither a step nor, for a folder, that the entry it refused on lies inside it.
+/// [`at`], plus the step to take. The system's error gives no step, and for a folder it does not
+/// say that an entry inside it caused the refusal.
 fn stuck(path: &Path, folder: bool) -> impl FnOnce(io::Error) -> Error {
     let path = path.to_path_buf();
     move |error| {
@@ -327,7 +327,7 @@ where
     let copy = bookkeeping.join(format!("steam_cmd_{}.manifest", manifest.system));
     fs::write(&copy, &manifest.text).map_err(at(&copy))?;
     let inventory = Inventory::take(&staging, manifest)?;
-    // A steamship of another pin in this home would hold a half-replaced folder to this record.
+    // Removed first, so a steamship with another pin never checks a half-replaced install against it.
     let record = home.join(INVENTORY);
     match fs::remove_file(&record) {
         Err(error) if error.kind() != io::ErrorKind::NotFound => {
@@ -344,9 +344,9 @@ where
     clear(&downloads)
 }
 
-/// Moves each top-level entry of `from` into `into`, but the `config` folder, which is steamcmd's
-/// login and never travels with an install. Only a folder of that name stays: `walk` records any
-/// other entry called `config`, so an install has to carry it.
+/// Moves each top-level entry of `from` into `into`, except a `config` folder, which holds
+/// steamcmd's login and stays put. `walk` records any other entry called `config`, so that one
+/// moves with the install.
 fn shift(from: &Path, into: &Path) -> Result<(), Error> {
     // Listed first, since entries leave the folder as it is read.
     let entries = fs::read_dir(from)

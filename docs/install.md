@@ -211,7 +211,7 @@ macOS. `steamship status` prints the folder in use.
 | Entry                                           | Holds                                                           |
 | ----------------------------------------------- | --------------------------------------------------------------- |
 | `steamcmd/` and `steamcmd.inventory`            | The pinned steamcmd and the record it is verified against       |
-| `steamcmd.new/`, `steamcmd.old/`, `downloads/`  | An install's working folders, gone when it ends                 |
+| `steamcmd.new/`, `steamcmd.old/`, `downloads/`  | An install's working folders, cleared at its start and end      |
 | `steamship.lock`                                | What two runs take turns on                                     |
 | `account`                                       | The build account `login` remembered                            |
 | `latest-release`                                | The update check's last answer                                  |
