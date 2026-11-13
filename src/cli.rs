@@ -74,7 +74,7 @@ pub const ACCOUNT: &str = "STEAMSHIP_ACCOUNT";
 pub const VARIABLES: [(&str, &str); 14] = [
     (
         platform::HOME,
-        "Where steamcmd, its token and build output live, by default a per-user folder",
+        "Where steamcmd, its token and build output live, if not the per-user folder `status` shows",
     ),
     (
         ACCOUNT,

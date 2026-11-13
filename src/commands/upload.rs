@@ -669,7 +669,10 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
         Err(error) if error.kind() != io::ErrorKind::NotFound => Some(error),
         Err(_) | Ok(()) => None,
     };
-    let before = Redactor::for_home(steam.home).map_err(|error| fail(&error, FAILED))?;
+    let name = steam.account.name();
+    let before = Redactor::for_home(steam.home)
+        .map_err(|error| fail(&error, FAILED))?
+        .and_name(name);
     let spinner = Spinner::start("steam", doing, true);
     let finished = steamcmd::upload(steam.account, &steam.prepared.script, info_of).run(steam.home);
     let took = show::took(spinner.elapsed());
@@ -709,7 +712,11 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
         Ok(after) => {
             let redactor = before.clone().and(after);
             let saved = fs::write(steam.saved, redactor.redact(&finished.output));
-            let (written, line) = console_line(steam, saved.err(), removed);
+            let (written, mut line) = console_line(steam, saved.err(), removed);
+            // The logs steamcmd wrote beside the console name the account too.
+            if let Err(error) = redactor.redact_logs(&steam.prepared.output) {
+                line = format!("{line}. Not redacted: {error}");
+            }
             (Some(redactor), written, line)
         }
         Err(error) => {

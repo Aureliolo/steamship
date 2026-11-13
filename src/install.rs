@@ -32,9 +32,9 @@ use crate::windows as native;
 pub const FOLDER: &str = "steamcmd";
 const CONFIG: &str = "config";
 const INVENTORY: &str = "steamcmd.inventory";
-const STAGING: &str = "steamcmd.new";
-const PREVIOUS: &str = "steamcmd.old";
-const DOWNLOADS: &str = "downloads";
+pub const STAGING: &str = "steamcmd.new";
+pub const PREVIOUS: &str = "steamcmd.old";
+pub const DOWNLOADS: &str = "downloads";
 const LOCK: &str = "steamship.lock";
 /// The settings file steamcmd's bootstrapper reads beside itself.
 const SETTINGS: &str = "steam.cfg";

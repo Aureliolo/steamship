@@ -213,6 +213,31 @@ fn by_fields(folder: &Path, items: &Path, extra: &[&str]) -> Vec<String> {
 }
 
 #[test]
+fn an_items_saved_console_names_no_account() {
+    let home = faked_with(
+        "#!/bin/sh\n\
+         while [ $# -gt 0 ]; do [ \"$1\" = +workshop_build_item ] && script=\"$2\"; shift; done\n\
+         printf '\"workshopitem\"\\n{\\n\"appid\" \"480\"\\n\"publishedfileid\" \"777\"\\n}\\n' > \"$script\"\n\
+         echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+         echo 'Success.'\n",
+    );
+    saved_login(home.path());
+    let (temp, script) = workshop_item("");
+    let folder = script.parent().unwrap();
+    let items = temp.path().join("my game (x86)/steam/workshop_items.json");
+    let args = by_fields(folder, &items, &["--visibility", "private"]);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (code, stdout, stderr) = steamship(&args, Some(home.path()), &[]);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    let console =
+        fs::read_to_string(home.path().join("workshop/480/example/steamcmd.log")).unwrap();
+    assert!(
+        console.contains("Logging in user '[redacted]'") && !console.contains("build_bot"),
+        "{console}"
+    );
+}
+
+#[test]
 fn an_item_given_by_its_fields_is_made_kept_by_its_name_and_then_updated_from_ci() {
     let home = publishing("Success.", 0);
     let (temp, script) = workshop_item("");
