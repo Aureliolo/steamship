@@ -255,6 +255,7 @@ Each word with the exit code it comes with when it is the only failure:
 - `steamcmd-failed` (1): steamcmd ran and failed.
 - `steamcmd-install` (4): steamcmd could not be installed, was withdrawn by Valve or is not the
   pinned one, checked before the run or after it.
+- `another-build` (1): `fetch` got another build than the one the Web API showed live.
 - `steamcmd-not-run` (1): steamship failed on its own and could not run steamcmd again after an
   earlier run, as when a later Workshop item's copy cannot be made.
 - `unfinished` (5): Steam holds a build or a Workshop item that a second run would make again. The
@@ -625,6 +626,11 @@ standard output, here spread out:
   "folder": "/home/you/.local/share/steamship/fetched/480/testing-linux"
 }
 ```
+
+A failed fetch prints `app` and `error` instead, with the words under
+[JSON output](#json-output). A fetch that steamship refuses to start, as for a branch the app
+does not have, prints nothing. When Steam refuses the branch password, `code` is
+`steamcmd-failed` and `message` ends on what to do next.
 
 ## Settings in Steamworks
 
