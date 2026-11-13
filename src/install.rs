@@ -335,8 +335,8 @@ where
         }
         _ => {}
     }
-    fs::create_dir_all(root).map_err(at(root))?;
-    fs::create_dir_all(&previous).map_err(at(&previous))?;
+    fs::create_dir_all(root).map_err(stuck(root, false))?;
+    fs::create_dir_all(&previous).map_err(stuck(&previous, false))?;
     shift(root, &previous)?;
     shift(&staging, root)?;
     clear_working(home)?;
@@ -537,8 +537,8 @@ impl Inventory {
             .map(|(relative, target)| format!("link {relative} -> {target}\n"));
         let text: String = iter::once(header).chain(files).chain(links).collect();
         let part = path.with_extension("part");
-        fs::write(&part, text).map_err(at(&part))?;
-        fs::rename(&part, path).map_err(at(path))
+        fs::write(&part, text).map_err(stuck(&part, false))?;
+        fs::rename(&part, path).map_err(stuck(path, false))
     }
 
     /// The inventory at `path`, or none when there is none or it cannot be read as one, either

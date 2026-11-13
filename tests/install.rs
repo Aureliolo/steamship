@@ -913,5 +913,35 @@ fn a_record_that_cannot_be_removed_stops_the_install_before_it_changes_the_home(
     assert_eq!(path, record);
     assert!(said.ends_with(PATH_STEP), "{said}");
     assert_eq!(token(&setup), b"token");
-    assert!(setup.root().join("steamcmd.bin").exists());
+    assert_eq!(
+        fs::read(setup.root().join("steamcmd.bin")).unwrap(),
+        b"MZ steamcmd"
+    );
+}
+
+#[test]
+fn a_record_that_cannot_be_written_says_what_to_do_once_the_install_is_in_place() {
+    let setup = Setup::new();
+    drop(logged_in(&setup));
+    let part = setup.home.join("steamcmd.part");
+    fs::create_dir_all(&part).unwrap();
+    let manifest = second(&setup, &[("steamcmd.bin", Entry::File(b"MZ v2"))]);
+    let (path, said) = refusal(setup.install(&manifest, &Cell::new(0)));
+    assert_eq!(path, part);
+    assert!(said.ends_with(PATH_STEP), "{said}");
+    assert_eq!(token(&setup), b"token");
+    assert_eq!(
+        fs::read(setup.root().join("steamcmd.bin")).unwrap(),
+        b"MZ v2"
+    );
+}
+
+#[test]
+fn an_install_folder_that_cannot_be_made_says_what_to_do() {
+    let setup = Setup::new();
+    fs::create_dir_all(&setup.home).unwrap();
+    fs::write(setup.root(), b"in the way").unwrap();
+    let (path, said) = refusal(setup.install(&steamcmd(&setup), &Cell::new(0)));
+    assert_eq!(path, setup.root());
+    assert!(said.ends_with(PATH_STEP), "{said}");
 }
