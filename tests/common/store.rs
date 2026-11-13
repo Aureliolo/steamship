@@ -6,6 +6,9 @@
 //! with a few processes at once. So every test that keeps or forgets a key holds [`lock`],
 //! which also holds off the test runs cargo-mutants starts side by side.
 //!
+//! steamship's runs take turns on a mutex of their own while each changes a credential. A test
+//! holds [`lock`] across all the runs it starts, so the two cannot be one lock.
+//!
 //! One gnome-keyring shared by every test run falls over under many at once (it has been seen to
 //! fail its own assertions and exit), and would hold a person's real keys besides. So each test
 //! process starts a session bus and gnome-keyring of its own, in a folder of its own, unlocked,

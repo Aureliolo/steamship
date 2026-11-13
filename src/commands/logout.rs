@@ -110,7 +110,11 @@ fn forget_key(home: &Path) -> bool {
     match keychain::forget(home) {
         Ok(true) => show::done("api key", "forgotten"),
         Ok(false) | Err(keychain::Error::Unavailable(_)) => show::field("api key", "none kept"),
-        Err(error @ (keychain::Error::Failed(_) | keychain::Error::NotAKey)) => {
+        Err(
+            error @ (keychain::Error::Failed(_)
+            | keychain::Error::Unsettled(_)
+            | keychain::Error::NotAKey),
+        ) => {
             show::failed("api key", "not forgotten");
             report(
                 &error,

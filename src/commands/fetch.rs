@@ -12,7 +12,7 @@ use steamship::cli::{self, FAILED, REFUSED};
 use steamship::install;
 use steamship::platform::Platform;
 use steamship::redact::Redactor;
-use steamship::show::{self, Spinner};
+use steamship::show::{self, Hint, Spinner};
 use steamship::typing::{self, Echo};
 use steamship::{branch, dump, fetch, keychain, run, steamcmd, webapi};
 use zeroize::Zeroizing;
@@ -274,6 +274,18 @@ fn keep_branch_password(
     }
     match keychain::keep_branch_password(home, app, branch, &password.text) {
         Ok(()) => show::done("password", &format!("kept in {}", keychain::STORE)),
+        Err(error @ keychain::Error::Unsettled(_)) => {
+            show::failed("password", "not shown yet");
+            show::failure(
+                &error.to_string(),
+                "",
+                Some(Hint {
+                    before: "the next ",
+                    command: "steamship fetch",
+                    after: " of the branch uses it if it is kept, and asks for it if not",
+                }),
+            );
+        }
         Err(error) => {
             show::failed("password", "not kept");
             show::failure(&error.to_string(), "", None);

@@ -97,6 +97,9 @@ pub enum Error {
     Unavailable(String),
     /// The store refused, for this reason.
     Failed(String),
+    /// The store took a change but had not shown it after a while, so whether it holds is not
+    /// known.
+    Unsettled(String),
     /// What the store keeps is not a Web API key.
     NotAKey,
 }
@@ -105,7 +108,7 @@ impl fmt::Display for Error {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unavailable(why) => write!(formatter, "no credential store: {why}"),
-            Self::Failed(why) => write!(formatter, "{STORE}: {why}"),
+            Self::Failed(why) | Self::Unsettled(why) => write!(formatter, "{STORE}: {why}"),
             Self::NotAKey => write!(
                 formatter,
                 "{STORE} keeps something that is not a publisher Web API key"
@@ -211,6 +214,10 @@ mod tests {
         assert_eq!(
             Error::Failed("refused".to_owned()).to_string(),
             format!("{STORE}: refused")
+        );
+        assert_eq!(
+            Error::Unsettled("not shown yet".to_owned()).to_string(),
+            format!("{STORE}: not shown yet")
         );
         assert_eq!(
             Error::NotAKey.to_string(),

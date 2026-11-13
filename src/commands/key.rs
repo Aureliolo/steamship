@@ -84,7 +84,11 @@ pub(crate) fn web_api(home: &Path) -> Result<(webapi::Api, KeyFrom), ExitCode> {
             return Ok((webapi::Api::new(key), KeyFrom::Kept));
         }
         Ok(None) | Err(keychain::Error::Unavailable(_)) => {}
-        Err(error @ (keychain::Error::Failed(_) | keychain::Error::NotAKey)) => {
+        Err(
+            error @ (keychain::Error::Failed(_)
+            | keychain::Error::Unsettled(_)
+            | keychain::Error::NotAKey),
+        ) => {
             show::failed("api key", "not read");
             return Err(fail(&error, FAILED));
         }
@@ -140,8 +144,8 @@ pub(crate) fn check_key(api: &webapi::Api) -> Result<(), ExitCode> {
     }
 }
 
-/// Keeps `key` for `home` in the credential store, and answers whether it did. A failure is shown
-/// with its reason.
+/// Keeps `key` for `home` in the credential store, and answers whether it is known to be kept. A
+/// failure is shown with its reason.
 pub(crate) fn keep_key(home: &Path, key: &webapi::Key) -> bool {
     match keychain::keep(home, key) {
         Ok(()) => {
@@ -150,6 +154,19 @@ pub(crate) fn keep_key(home: &Path, key: &webapi::Key) -> bool {
                 show::aside(line);
             }
             true
+        }
+        Err(error @ keychain::Error::Unsettled(_)) => {
+            show::failed("api key", "not shown yet");
+            show::failure(
+                &error.to_string(),
+                "",
+                Some(Hint {
+                    before: "run ",
+                    command: "steamship status",
+                    after: " to see whether it is kept",
+                }),
+            );
+            false
         }
         Err(error) => {
             show::failed("api key", "not kept");
