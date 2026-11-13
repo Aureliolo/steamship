@@ -1422,7 +1422,7 @@ fn delete(item: &keychain::Item) -> Result<bool, keychain::Error> {
 
 /// How long the Credential Manager is given to show a change it has taken. A key it kept has
 /// been seen to read back only 220 ms after `CredWriteW` returned.
-const SETTLE: Duration = Duration::from_secs(2);
+pub const SETTLE: Duration = Duration::from_secs(2);
 
 /// The pause between two reads of a change that has not shown yet.
 const POLL: Duration = Duration::from_millis(10);
