@@ -14,7 +14,7 @@ use steamship::{drm, magic, steamcmd};
 
 use super::exit::fail;
 use super::game::{app_named, app_or_game};
-use super::ready::{login_refused, ready, reasons_shown, restore, run_as, steamcmd_failed};
+use super::ready::{login_refused, ready, restore, run_as, steamcmd_failed};
 use super::upload::redacted;
 
 pub(crate) fn try_drm_wrap(
@@ -56,9 +56,7 @@ pub(crate) fn try_drm_wrap(
     let (packed, account) = run_as(named)?;
     let (held, home, manifest) = ready()?;
     restore(packed.as_ref(), &home)?;
-    let before = Redactor::for_home(&home)
-        .map_err(|error| fail(&error, FAILED))?
-        .and_name(account.name());
+    let before = Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?;
     drop(fs::remove_file(&wrapped));
     let spinner = Spinner::start("steam", "wrapping", true);
     let finished = steamcmd::drm_wrap(&account, app_id, &input, &wrapped, mode).run(&home);
@@ -71,9 +69,7 @@ pub(crate) fn try_drm_wrap(
         }
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
-    // Judged as steamcmd wrote it, and only what is shown redacted.
     let console = String::from_utf8_lossy(&finished.output);
-    let redacted_console = redacted(&redactor, &console);
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
     let written = fs::metadata(&wrapped).is_ok_and(|found| found.len() > 0);
     match drm::judge(finished.code, &console, written) {
@@ -101,14 +97,8 @@ pub(crate) fn try_drm_wrap(
         drm::Outcome::Failed(reasons) => {
             drop(fs::remove_file(&wrapped));
             spinner.failed(&format!("failed after {took}"));
-            // The redacted console is judged too, so that steamship's own sentences in the
-            // reasons keep their words.
-            let shown = match drm::judge(finished.code, &redacted_console, written) {
-                drm::Outcome::Failed(shown) => Some(shown),
-                drm::Outcome::Wrapped | drm::Outcome::NotLoggedIn(_) => None,
-            };
-            for reason in reasons_shown(&reasons, shown, &redactor) {
-                show::failure(&reason, "", None);
+            for reason in &reasons {
+                show::failure(&redacted(&redactor, reason), "", None);
             }
             Err(ExitCode::from(FAILED))
         }

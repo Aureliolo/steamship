@@ -189,20 +189,14 @@ pub(crate) fn restore(packed: Option<&ci::Login>, home: &Path) -> Result<(), Exi
 
 /// Says Steam refused the login, and how to log in again: for one handed over in
 /// `STEAMSHIP_LOGIN`, with the day it was packed, since the token in it may simply have expired.
-/// `reason` is as steamcmd wrote it, since a name in it could change the exit code. Only what is
-/// shown goes through `redactor`.
+/// `reason` is as steamcmd wrote it, and what is shown has the secrets of `redactor` taken out.
 pub(crate) fn login_refused(
     reason: &str,
     redactor: &Redactor,
     packed: Option<&ci::Login>,
 ) -> ExitCode {
     let (words, log_in_again) = conversation::saved_login_words(reason);
-    // Only the part steamcmd wrote goes through the redactor: steamship's own words hold what an
-    // account can be named.
-    let words = words.strip_suffix(&format!(" ({reason})")).map_or_else(
-        || words.clone(),
-        |said| format!("{said} ({})", redacted(redactor, reason)),
-    );
+    let words = redacted(redactor, &words);
     match packed.and_then(ci::Login::packed_on) {
         _ if !log_in_again => show::failure("not logged in", &words, None),
         None => {
@@ -231,13 +225,8 @@ pub(crate) fn login_refused(
 
 /// The exit code for what Steam made of the saved login, or of the one handed over in `packed`.
 /// It says why when Steam did not take the login.
-///
-/// `judged` is steamcmd's console as it wrote it, and `shown` the same console after `redactor`.
-/// The outcome comes from `judged`, and what is printed from `shown`, so that steamship's own
-/// sentences are never redacted.
 pub(crate) fn verdict(
     judged: conversation::Login,
-    shown: conversation::Login,
     redactor: &Redactor,
     packed: Option<&ci::Login>,
 ) -> ExitCode {
@@ -245,32 +234,12 @@ pub(crate) fn verdict(
         conversation::Login::Taken => ExitCode::SUCCESS,
         conversation::Login::Refused(reason) => login_refused(&reason, redactor, packed),
         conversation::Login::Failed(reasons) => {
-            let conversation::Login::Failed(said) = shown else {
-                for reason in &reasons {
-                    show::failure(&redacted(redactor, reason), "", None);
-                }
-                return ExitCode::from(FAILED);
-            };
-            for reason in &said {
-                show::failure(reason, "", None);
+            for reason in &reasons {
+                show::failure(&redacted(redactor, reason), "", None);
             }
             ExitCode::from(FAILED)
         }
     }
-}
-
-/// The reasons of a failure to print: `shown`, the ones judged from the redacted console, or when
-/// that console was judged another way, the `raw` ones redacted.
-pub(crate) fn reasons_shown(
-    raw: &[String],
-    shown: Option<Vec<String>>,
-    redactor: &Redactor,
-) -> Vec<String> {
-    shown.unwrap_or_else(|| {
-        raw.iter()
-            .map(|reason| redacted(redactor, reason))
-            .collect()
-    })
 }
 
 /// Steam's logs of a failed run, as collapsed groups in a GitHub Actions job's log: `files` as

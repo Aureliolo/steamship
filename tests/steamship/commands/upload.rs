@@ -1531,6 +1531,39 @@ fn an_account_named_like_steamships_words_leaves_its_sentences_whole_in_a_failed
 }
 
 #[test]
+fn an_account_named_like_a_word_of_steamcmds_errors_changes_no_reason_or_advice() {
+    let (_project, script) = project(true);
+    for (name, said, words) in [
+        (
+            "error",
+            "echo '[..]: ERROR! Steam reported an error while building'",
+            "Steam reported an error while building",
+        ),
+        (
+            "trusted",
+            "echo 'unable to load trusted SSL root certificates'",
+            "Install the system's certificate store (ca-certificates)",
+        ),
+    ] {
+        let home = faked_with(&refusing_as_given(said));
+        let (code, stdout, stderr) = steamship(
+            &[
+                "upload",
+                script.to_str().unwrap(),
+                "--account",
+                name,
+                "--version",
+                "1.4.0",
+            ],
+            Some(home.path()),
+            &[],
+        );
+        assert_eq!(code, Some(1_i32), "{name}: {stdout}{stderr}");
+        assert!(stderr.contains(words), "{name}: {stderr}");
+    }
+}
+
+#[test]
 fn a_default_check_steam_refuses_leaves_no_log_naming_the_account() {
     let (_project, script) = project(true);
     let home = faked_with(&refusing_as_given(

@@ -273,6 +273,29 @@ fn an_accounts_name_in_a_refusal_changes_neither_the_exit_code_nor_the_message()
 }
 
 #[test]
+fn an_account_named_like_a_word_of_steamcmds_errors_changes_no_reason_or_advice() {
+    for (name, said, words) in [
+        (
+            "error",
+            "ERROR! Steam reported an error while checking",
+            "Steam reported an error while checking",
+        ),
+        (
+            "trusted",
+            "unable to load trusted SSL root certificates",
+            "Install the system's certificate store (ca-certificates)",
+        ),
+    ] {
+        let home = answering(said, 5);
+        saved_login(home.path());
+        let (code, stdout, stderr) =
+            steamship(&["status", "--account", name], Some(home.path()), &[]);
+        assert_eq!(code, Some(1_i32), "{name}: {stdout}{stderr}");
+        assert!(stderr.contains(words), "{name}: {stderr}");
+    }
+}
+
+#[test]
 fn a_login_handed_over_that_is_not_one_is_refused_without_repeating_it() {
     let home = tempfile::tempdir().unwrap();
     let (code, stdout, stderr) = steamship(

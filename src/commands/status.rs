@@ -87,11 +87,11 @@ pub(crate) fn try_status(named: Option<&str>) -> Result<ExitCode, ExitCode> {
         }
         return Ok(ExitCode::from(LOGIN));
     };
-    let (judged, shown, redactor) = check_saved_login(&account, packed.as_ref())?;
+    let (judged, redactor) = check_saved_login(&account, packed.as_ref())?;
     if judged == conversation::Login::Taken {
         show::success("ready to upload", "");
     }
-    Ok(verdict(judged, shown, &redactor, packed.as_ref()))
+    Ok(verdict(judged, &redactor, packed.as_ref()))
 }
 
 /// Where the Web API commands would find the key, found out without unlocking anything.
@@ -140,7 +140,7 @@ fn status_account(named: Option<&str>, home: &Path) -> Result<Option<Account>, E
 pub(crate) fn check_saved_login(
     account: &Account,
     packed: Option<&ci::Login>,
-) -> Result<(conversation::Login, conversation::Login, Redactor), ExitCode> {
+) -> Result<(conversation::Login, Redactor), ExitCode> {
     let (held, home, manifest) = ready()?;
     restore(packed, &home)?;
     match packed.and_then(ci::Login::packed_on) {
@@ -162,11 +162,9 @@ pub(crate) fn check_saved_login(
     };
     let redactor = before.and(Redactor::for_home(&home).map_err(|error| fail(&error, FAILED))?);
     let console = redactor.redact(&finished.output);
-    // Judged as steamcmd wrote it: an account named `limit` must not turn a refusal into another.
-    // The redacted console is judged too, for the reasons to print.
+    // Judged as steamcmd wrote it. The console is redacted only to be dumped.
     let judged =
         conversation::judge_login(finished.code, &String::from_utf8_lossy(&finished.output));
-    let shown = conversation::judge_login(finished.code, &String::from_utf8_lossy(&console));
     let took = show::took(spinner.elapsed());
     match &judged {
         conversation::Login::Taken => spinner.done("Steam takes the saved login"),
@@ -182,5 +180,5 @@ pub(crate) fn check_saved_login(
         }
     }
     install::verify(&held, &manifest).map_err(|error| steamcmd_failed(&error))?;
-    Ok((judged, shown, redactor))
+    Ok((judged, redactor))
 }

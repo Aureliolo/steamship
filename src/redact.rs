@@ -104,9 +104,17 @@ impl Redactor {
     /// `output` with every secret replaced by [`MARKER`]. Replacing runs until none is left, so
     /// that no secret survives by being put together from what surrounds a replacement. Each
     /// pass shortens the output, so there are never more passes than it has bytes. The account's
-    /// name follows in one pass, since the marker itself holds words a name can be.
+    /// name follows in one pass that leaves each marker alone, since the marker itself holds
+    /// words a name can be. For what steamship saves or shows whole.
     #[must_use]
     pub fn redact(&self, output: &[u8]) -> Vec<u8> {
+        replace_word(&self.redact_secrets(output), &self.name)
+    }
+
+    /// `output` with every secret replaced by [`MARKER`], and the account's name left. For text
+    /// steamship judges and prints: a long token matches no English word, and a name can.
+    #[must_use]
+    pub fn redact_secrets(&self, output: &[u8]) -> Vec<u8> {
         let mut text = output.to_vec();
         for _ in 0..=output.len() {
             let Some(secret) = self
@@ -118,7 +126,7 @@ impl Redactor {
             };
             text = replace(&text, secret);
         }
-        replace_word(&text, &self.name)
+        text
     }
 
     /// Rewrites each log that `logs` lists in `folder` through [`Redactor::redact`], only where
@@ -278,6 +286,12 @@ fn replace_word(text: &[u8], name: &[u8]) -> Vec<u8> {
     let mut before: Option<u8> = None;
     let mut rest = text;
     while let Some((&first, after_first)) = rest.split_first() {
+        if let Some(after) = rest.strip_prefix(MARKER) {
+            replaced.extend_from_slice(MARKER);
+            before = Some(b']');
+            rest = after;
+            continue;
+        }
         let whole = rest.split_at_checked(name.len()).filter(|(window, after)| {
             window.eq_ignore_ascii_case(name)
                 && before.is_none_or(|byte| !in_word(byte))
@@ -396,6 +410,18 @@ mod tests {
         let marked = Redactor::default().and_name("redacted").redact(said);
         assert_eq!(String::from_utf8(marked).unwrap(), "a [redacted] b");
         assert_eq!(Redactor::default().and_name("").redact(said), said);
+    }
+
+    #[test]
+    fn a_name_of_redacted_is_hidden_once_and_not_inside_a_marker() {
+        let redactor =
+            Redactor::from_texts(&[b"\"token\" \"a_long_token_value_0123456789\"".to_vec()])
+                .and_name("redacted");
+        let said = b"user redacted held a_long_token_value_0123456789";
+        assert_eq!(
+            String::from_utf8(redactor.redact(said)).unwrap(),
+            "user [redacted] held [redacted]"
+        );
     }
 
     #[test]

@@ -363,7 +363,6 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         info,
         log,
         written,
-        pairs,
         ..
     } = build_retrying(&steam, wording(request.preview))?;
     let (default, spinner) = shown_unreleased(
@@ -380,7 +379,6 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
         log: &log,
         shown: redactor.is_some(),
         redactor: redactor.as_ref().unwrap_or(&before),
-        pairs: &pairs,
         packed: packed.as_ref(),
         default: default.as_ref().map(|(api, _)| api),
     };
@@ -594,8 +592,6 @@ struct Ran {
     log: String,
     /// Whether this run's console was saved.
     written: bool,
-    /// Each reason of a failure as judged, with what to show for it.
-    pairs: Vec<(String, String)>,
 }
 
 /// Runs steamcmd's build, saying it is `doing` so, and runs it `again` while it fails in a way
@@ -713,33 +709,20 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
     } else {
         None
     };
-    let (redactor, written, line, pairs) = match after {
+    let (redactor, written, line) = match after {
         Ok(after) => {
             let redactor = before.clone().and(after);
-            // The redacted console is judged too, so that steamship's own sentences among the
-            // reasons keep their words.
-            let seen = upload::judge(
-                steam.prepared.app_id,
-                finished.code,
-                &redacted(&redactor, &console),
-                log.as_deref()
-                    .map(|log| redacted(&redactor, log))
-                    .as_deref(),
-                steam.preview,
-            );
-            let pairs = reason_pairs(&outcome, &seen, &redactor);
             let saved = fs::write(steam.saved, redactor.redact(&finished.output));
             let (written, mut line) = console_line(steam, saved.err(), removed);
             // The logs steamcmd wrote beside the console name the account too.
             if let Err(error) = redactor.redact_logs(&steam.prepared.output) {
                 line = format!("{line}. {}", logs_unredacted(&error));
             }
-            (Some(redactor), written, line, pairs)
+            (Some(redactor), written, line)
         }
         Err(error) => {
             let removed_logs = redact::remove_logs(&steam.prepared.output);
-            let line = logs_removed(steam, &error, removed_logs.err());
-            (None, false, line, Vec::new())
+            (None, false, logs_removed(steam, &error, removed_logs.err()))
         }
     };
     Ok(Ran {
@@ -752,51 +735,7 @@ fn build(steam: &Steam<'_>, doing: &str, info_of: Option<u32>) -> Result<Ran, Ex
         info,
         log: line,
         written,
-        pairs,
     })
-}
-
-/// The reasons a failed `outcome` gives, whatever the failure.
-fn failed_reasons(outcome: &upload::Outcome) -> &[String] {
-    match outcome {
-        upload::Outcome::Failed(reasons) | upload::Outcome::BuiltThenFailed { reasons, .. } => {
-            reasons
-        }
-        upload::Outcome::Built { .. }
-        | upload::Outcome::Previewed
-        | upload::Outcome::NotLoggedIn(_) => &[],
-    }
-}
-
-/// Each reason of `outcome`, judged from steamcmd's console as it wrote it, with what to show for
-/// it: the same reason judged from the redacted console, or else the reason redacted.
-fn reason_pairs(
-    outcome: &upload::Outcome,
-    seen: &upload::Outcome,
-    redactor: &Redactor,
-) -> Vec<(String, String)> {
-    let raw = failed_reasons(outcome);
-    let shown = failed_reasons(seen);
-    raw.iter()
-        .enumerate()
-        .map(|(at, reason)| {
-            let said = shown
-                .get(at)
-                .filter(|_| shown.len() == raw.len())
-                .cloned()
-                .unwrap_or_else(|| redacted(redactor, reason));
-            (reason.clone(), said)
-        })
-        .collect()
-}
-
-/// What to show of `reason`: what its pair says, and as it is when steamship added it after the
-/// run, since steamcmd wrote none of it.
-fn shown_reason(pairs: &[(String, String)], reason: &str) -> String {
-    pairs
-        .iter()
-        .find(|(raw, _)| raw == reason)
-        .map_or_else(|| reason.to_owned(), |(_, said)| said.clone())
 }
 
 /// What is said when a log of the build's folder could neither be redacted nor removed.
@@ -945,8 +884,6 @@ struct Reporting<'upload> {
     log: &'upload str,
     shown: bool,
     redactor: &'upload Redactor,
-    /// What to show for each reason a failure gives.
-    pairs: &'upload [(String, String)],
     packed: Option<&'upload ci::Login>,
     default: Option<&'upload webapi::Api>,
 }
@@ -969,7 +906,6 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
         log: logs,
         shown,
         redactor,
-        pairs,
         packed,
         default,
     } = reporting;
@@ -1000,7 +936,7 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
                 None,
             );
             for reason in reasons.iter().filter(|_| shown) {
-                show::failure(&shown_reason(pairs, reason), "", None);
+                show::failure(&redacted(redactor, reason), "", None);
             }
             if let Some(why) = upload::commit_refused(reasons, prepared.set_live.as_deref()) {
                 show::note(&why);
@@ -1026,7 +962,7 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
         upload::Outcome::Failed(reasons) => {
             spinner.failed(&format!("failed after {took}"));
             for reason in reasons.iter().filter(|_| shown) {
-                show::failure(&shown_reason(pairs, reason), "", None);
+                show::failure(&redacted(redactor, reason), "", None);
             }
             let kept = upload::commit_refused(reasons, prepared.set_live.as_deref());
             if let Some(why) = &kept {
@@ -1045,9 +981,10 @@ fn report(outcome: &upload::Outcome, reporting: Reporting<'_>) -> (ExitCode, Liv
     (code, Live::default())
 }
 
-/// `text` with every secret `redactor` knows replaced.
+/// `text`, as steamship prints it after judging it, with every secret `redactor` knows replaced.
+/// The account's name stays: it can be a word of steamship's own sentences.
 pub(crate) fn redacted(redactor: &Redactor, text: &str) -> String {
-    String::from_utf8_lossy(&redactor.redact(text.as_bytes())).into_owned()
+    String::from_utf8_lossy(&redactor.redact_secrets(text.as_bytes())).into_owned()
 }
 
 /// Says where `build_id`, just uploaded for `app`, is live: on `branch`, which the script set it

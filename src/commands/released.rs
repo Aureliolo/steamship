@@ -23,8 +23,7 @@ pub(crate) fn app_info(
     packed: Option<&ci::Login>,
     doing: &str,
 ) -> Result<(String, Spinner), ExitCode> {
-    let secrets_before = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
-    let before = secrets_before.clone().and_name(account.name());
+    let before = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
     let spinner = Spinner::start("steam", doing, true);
     let finished = match steamcmd::app_info(account, app).run(home) {
         Ok(finished) => finished,
@@ -33,24 +32,16 @@ pub(crate) fn app_info(
             return Err(fail(&error, FAILED));
         }
     };
-    let after = Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?;
-    let secrets = secrets_before.and(after.clone());
-    let redactor = before.and(after);
-    // Judged as steamcmd wrote it: an account named `limit` or `released` must change no outcome.
-    // What is returned is read as a block of settings, so only the secrets are taken out of it. The
-    // account's name stands in the login line before it.
+    let redactor = before.and(Redactor::for_home(home).map_err(|error| fail(&error, FAILED))?);
+    // Judged as steamcmd wrote it, and read as a block of settings with its secrets taken out.
     match conversation::judge_login(finished.code, &String::from_utf8_lossy(&finished.output)) {
         conversation::Login::Taken => Ok((
-            String::from_utf8_lossy(&secrets.redact(&finished.output)).into_owned(),
+            String::from_utf8_lossy(&redactor.redact_secrets(&finished.output)).into_owned(),
             spinner,
         )),
         judged @ (conversation::Login::Refused(_) | conversation::Login::Failed(_)) => {
             spinner.failed("not logged in");
-            let shown = conversation::judge_login(
-                finished.code,
-                &String::from_utf8_lossy(&redactor.redact(&finished.output)),
-            );
-            Err(verdict(judged, shown, &redactor, packed))
+            Err(verdict(judged, &redactor, packed))
         }
     }
 }
