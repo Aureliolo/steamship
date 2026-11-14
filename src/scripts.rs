@@ -69,15 +69,17 @@ pub struct FileMapping {
 
 impl DepotScript {
     /// Whether the depot ships `file`, as its mappings and exclusions take files from its content
-    /// root, whether or not the file is there yet.
+    /// root, whether or not the file is there yet. The two are compared where they lie, so a link,
+    /// junction or substituted drive in either spelling changes nothing.
     #[must_use]
     pub fn ships(&self, file: &Path) -> bool {
-        let root = &self.content_root;
+        let root = resolved(&self.content_root);
+        let file = resolved(file);
         let (Some(parent), Some(file_name)) = (file.parent(), file.file_name()) else {
             return false;
         };
         let file_name = file_name.to_string_lossy();
-        !self.excludes(file)
+        !self.excluded(&root, &file)
             && self.mappings.iter().any(|mapping| {
                 let (folder, name) = mapping.split();
                 let folder = root.join(folder);
@@ -137,7 +139,12 @@ impl DepotScript {
     /// A `FileExclusion` with a folder in it is matched against the path from the content root. One
     /// without is matched against the file name at any depth, as Valve's `"*.pdb"` example is.
     pub(crate) fn excludes(&self, file: &Path) -> bool {
-        let relative = file.strip_prefix(&self.content_root).unwrap_or(file);
+        self.excluded(&self.content_root, file)
+    }
+
+    /// As [`DepotScript::excludes`], with the content root spelt as `root`.
+    fn excluded(&self, root: &Path, file: &Path) -> bool {
+        let relative = file.strip_prefix(root).unwrap_or(file);
         let relative = relative.to_string_lossy().replace('\\', "/");
         let name = file
             .file_name()
@@ -151,6 +158,22 @@ impl DepotScript {
             }
         })
     }
+}
+
+/// `path` with its longest part that exists spelt where it lies, and the rest, which need not
+/// exist yet, kept as written. Two spellings of one place then compare equal.
+fn resolved(path: &Path) -> PathBuf {
+    path.ancestors()
+        .find_map(|there| {
+            let found = fs::canonicalize(there).ok()?;
+            let rest = path.strip_prefix(there).ok()?;
+            Some(if rest.as_os_str().is_empty() {
+                found
+            } else {
+                found.join(rest)
+            })
+        })
+        .unwrap_or_else(|| path.to_path_buf())
 }
 
 impl FileMapping {
@@ -534,6 +557,8 @@ fn naming(path: &Path) -> impl FnOnce(io::Error) -> io::Error {
 mod tests {
     use std::path::MAIN_SEPARATOR;
 
+    #[cfg(windows)]
+    use crate::run;
     #[cfg(unix)]
     use crate::unix::make_link;
 
@@ -576,6 +601,41 @@ mod tests {
         assert!(!depot(&[("*/windows/*", true)], &[]).ships(&demo));
         assert!(!depot(&[("*", true)], &["demo/windows/*"]).ships(&demo));
         assert!(!depot(&[("*", true)], &[]).ships(Path::new("")));
+    }
+
+    #[test]
+    fn a_depot_ships_a_file_spelt_through_a_link_to_its_content_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real");
+        fs::create_dir_all(real.join("export").join("windows")).unwrap();
+        let link = temp.path().join("link");
+        #[cfg(unix)]
+        make_link(real.to_str().unwrap(), &link).unwrap();
+        // A junction, which any user may make, where a symbolic link needs a privilege.
+        #[cfg(windows)]
+        assert!(
+            run::output(
+                run::command("cmd")
+                    .args(["/c", "mklink", "/J"])
+                    .arg(&link)
+                    .arg(&real)
+            )
+            .unwrap()
+            .status
+            .success()
+        );
+        let through_link = DepotScript {
+            content_root: link.join("export"),
+            ..depot(&[("windows/*", false)], &["windows/*.pdb"])
+        };
+        let file = real.join("export").join("windows").join("sample.exe");
+        assert!(through_link.ships(&file));
+        assert!(!through_link.ships(&file.with_extension("pdb")));
+        let at_real = DepotScript {
+            content_root: real.join("export"),
+            ..through_link
+        };
+        assert!(at_real.ships(&link.join("export").join("windows").join("sample.exe")));
     }
 
     #[test]
