@@ -39,9 +39,7 @@ fn builds_of(
             let why = why_unanswered(&api, app_id, &error);
             if unbuilt_is_expected && why.is_some() {
                 spinner.skipped("no build live yet");
-                show::aside(
-                    "The first upload with --default sets a build live on the default branch.",
-                );
+                show::aside("the game's first upload sets its build live on the default branch");
                 return Ok(ExitCode::SUCCESS);
             }
             let code = web_api_failed(spinner, &error);

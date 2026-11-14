@@ -467,7 +467,7 @@ fn a_game_check_does_not_fail_on_an_app_with_no_build_live_yet() {
     assert!(!stdout.contains("\u{2717} HTTP 500"), "{stdout}{stderr}");
     assert_eq!(
         stdout
-            .matches("The first upload with --default sets a build live")
+            .matches("the game's first upload sets its build live on the default branch")
             .count(),
         1,
         "{stdout}{stderr}"
