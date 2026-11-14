@@ -248,10 +248,10 @@ such as `SpacewarDemo`, under Installation, General Installation. Then save the 
 ### The first demo upload
 
 Until the demo has a build live on its default branch, it has no other branch. So `check --demo`
-says the script's branch is not on Steam yet. The first `upload --demo --default` then sets the
-build live on default alone. It names the `promote` command to run once the branch is made in
-Steamworks, under SteamPipe, Builds, as [Uploading a build](uploading.md#uploading-a-build)
-describes.
+says the script's branch is not on Steam yet, and that no build is live. The first
+`upload --demo` then sets the build live on default alone. It names the `promote` command to run
+once the branch is made in Steamworks, under SteamPipe, Builds, as
+[Uploading a build](uploading.md#uploading-a-build) describes.
 
 ### What the demo shares
 
