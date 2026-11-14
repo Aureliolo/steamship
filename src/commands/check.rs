@@ -14,7 +14,7 @@ use steamship::show::{self, Spinner};
 use steamship::{check, presets, receipt, redist, run, scripts, settings, upload, vdf};
 
 use super::achievements::try_achievements;
-use super::builds::try_builds;
+use super::builds::try_builds_before_upload;
 use super::exit::{either, fail, first_failure, refusals};
 use super::game::{game_achievements, game_as, game_script, script_given, script_named};
 use super::key::{answered, key_at_hand, why_unanswered};
@@ -319,7 +319,7 @@ fn try_game_check(demo: bool) -> Result<ExitCode, ExitCode> {
     snapshot_sound(&game, &script, false)?;
     let app = script_named(&game);
     let compared = compared(&game, &app)?;
-    let builds = either(try_builds(&app, 10, false));
+    let builds = either(try_builds_before_upload(&app, 10));
     Ok(first_failure([compared, builds]))
 }
 

@@ -435,6 +435,58 @@ fn a_game_check_compares_what_the_game_holds_with_steam_and_lists_its_builds() {
     }
 }
 
+/// The apps a key holds, the game's among them.
+const INN_APPS: &str = r#"{"applist": {"apps": {"app": [
+    {"appid": 1000010, "app_type": "game", "app_name": "Falcon Ridge Overseer"},
+    {"appid": 1000050, "app_type": "game", "app_name": "Inn"}
+]}}}"#;
+
+/// A game with nothing to compare, checked against a Web API that answers HTTP 500 to each
+/// question about the app and `apps` to the list of the apps its key holds.
+fn check_with_unbuilt_app(apps: &'static str) -> (Option<i32>, String, String) {
+    let (_temp, root) = pushed_game(None);
+    fs::remove_dir_all(root.join("mods")).unwrap();
+    fs::remove_file(root.join("steam").join("rich_presence_english.vdf")).unwrap();
+    let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", ""),
+        ("200 OK", apps),
+        ("500 Internal Server Error", ""),
+        ("200 OK", apps),
+    ]);
+    in_game_with(&root, &["check"], &web_api_variables(&host))
+}
+
+#[test]
+fn a_game_check_does_not_fail_on_an_app_with_no_build_live_yet() {
+    let (code, stdout, stderr) = check_with_unbuilt_app(INN_APPS);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  steam     no build live yet\n"),
+        "{stdout}{stderr}"
+    );
+    assert!(!stdout.contains("\u{2717} HTTP 500"), "{stdout}{stderr}");
+    assert_eq!(
+        stdout
+            .matches("The first upload with --default sets a build live")
+            .count(),
+        1,
+        "{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn a_game_check_still_fails_on_a_500_about_an_app_the_key_does_not_hold() {
+    let (code, stdout, stderr) = check_with_unbuilt_app(APPS_WITHOUT_THE_GAME);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("\u{2717} HTTP 500"), "{stdout}{stderr}");
+    assert!(!stdout.contains("no build live yet"), "{stdout}{stderr}");
+}
+
+/// The apps a key holds, the game's not among them.
+const APPS_WITHOUT_THE_GAME: &str = r#"{"applist": {"apps": {"app": [
+    {"appid": 1000010, "app_type": "game", "app_name": "Falcon Ridge Overseer"}
+]}}}"#;
+
 #[test]
 fn a_game_check_names_each_comparison_the_game_gives_nothing_for() {
     let (_temp, root) = pushed_game(None);
