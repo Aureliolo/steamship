@@ -10,6 +10,26 @@ use super::key::{offer_to_keep, print_unanswered, web_api, web_api_failed, why_u
 use super::ready::home;
 
 pub(crate) fn try_builds(app: &str, count: u32, json: bool) -> Result<ExitCode, ExitCode> {
+    builds_of(app, count, json, None)
+}
+
+/// `try_builds` for `check` in an unreleased game or demo, `whose` upload sets its build live on
+/// the default branch. Every game has no build live there before its first upload, so Steam's
+/// answer for that is no failure.
+pub(crate) fn try_builds_before_upload(
+    app: &str,
+    count: u32,
+    whose: &str,
+) -> Result<ExitCode, ExitCode> {
+    builds_of(app, count, false, Some(whose))
+}
+
+fn builds_of(
+    app: &str,
+    count: u32,
+    json: bool,
+    setting_default: Option<&str>,
+) -> Result<ExitCode, ExitCode> {
     if json {
         show::divert();
     }
@@ -22,6 +42,15 @@ pub(crate) fn try_builds(app: &str, count: u32, json: bool) -> Result<ExitCode, 
         Ok(overview) => overview,
         Err(error) => {
             let why = why_unanswered(&api, app_id, &error);
+            if let Some(whose) = setting_default.filter(|_| why.is_some()) {
+                spinner.skipped("no build live yet");
+                show::aside(&format!(
+                    "{whose} next upload sets its build live on the default branch"
+                ));
+                // Steam listed the key's apps to say so, which proves a typed key.
+                offer_to_keep(&home, &api, from);
+                return Ok(ExitCode::SUCCESS);
+            }
             let code = web_api_failed(spinner, &error);
             if let Some(why) = &why {
                 show::note(why);

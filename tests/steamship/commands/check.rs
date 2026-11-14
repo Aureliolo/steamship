@@ -129,7 +129,8 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
     assert!(
         new.contains(
             "app 480 has no build live on its default branch, and Steam gives it no other branch \
-             until it has. An upload with --default sets the build live on default alone"
+             until it has. While the app is unreleased, an upload in the game's folder or one \
+             with --default sets its first build live there alone"
         ),
         "{new}"
     );
@@ -433,6 +434,93 @@ fn a_game_check_compares_what_the_game_holds_with_steam_and_lists_its_builds() {
     ] {
         assert!(stdout.contains(section), "{section} in {stdout}{stderr}");
     }
+}
+
+/// The apps a key holds, the game and its demo among them.
+const INN_APPS: &str = r#"{"applist": {"apps": {"app": [
+    {"appid": 1000010, "app_type": "game", "app_name": "Falcon Ridge Overseer"},
+    {"appid": 1000050, "app_type": "game", "app_name": "Inn"},
+    {"appid": 1000070, "app_type": "demo", "app_name": "Inn Demo"}
+]}}}"#;
+
+/// The apps a key holds, neither the game nor its demo among them.
+const APPS_WITHOUT_THE_GAME: &str = r#"{"applist": {"apps": {"app": [
+    {"appid": 1000010, "app_type": "game", "app_name": "Falcon Ridge Overseer"}
+]}}}"#;
+
+/// `check` with `args` in a game with nothing to compare and `toml` as its steamship.toml, against
+/// a Web API that answers HTTP 500 to each question about the app, as Steam does while no build is
+/// live on its default branch, and `apps` to the list of the apps its key holds.
+fn check_with_unbuilt_app(
+    toml: Option<&str>,
+    args: &[&str],
+    apps: &'static str,
+) -> (Option<i32>, String, String) {
+    let (_temp, root) = pushed_game(toml);
+    fs::remove_dir_all(root.join("mods")).unwrap();
+    fs::remove_file(root.join("steam").join("rich_presence_english.vdf")).unwrap();
+    with_demo(&root, "../../export/", DEMO_TYPED);
+    pushed(&root, "Nothing to compare, and a demo");
+    let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", ""),
+        ("200 OK", apps),
+        ("500 Internal Server Error", ""),
+        ("200 OK", apps),
+    ]);
+    in_game_with(&root, args, &web_api_variables(&host))
+}
+
+#[test]
+fn a_game_check_does_not_fail_on_an_app_with_no_build_live_yet() {
+    let (code, stdout, stderr) = check_with_unbuilt_app(None, &["check"], INN_APPS);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  steam     no build live yet\n"),
+        "{stdout}{stderr}"
+    );
+    assert!(!stdout.contains("\u{2717} HTTP 500"), "{stdout}{stderr}");
+    assert_eq!(
+        stdout
+            .matches("the game's next upload sets its build live on the default branch")
+            .count(),
+        1,
+        "{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn a_demo_check_says_the_demos_next_upload_sets_its_build_live() {
+    let (code, stdout, stderr) = check_with_unbuilt_app(None, &["check", "--demo"], INN_APPS);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("the demo's next upload sets its build live on the default branch"),
+        "{stdout}{stderr}"
+    );
+    assert!(
+        !stdout.contains("the game's next upload"),
+        "{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn a_released_game_check_still_fails_with_no_build_live_on_default() {
+    let (code, stdout, stderr) =
+        check_with_unbuilt_app(Some("released = true\n"), &["check"], INN_APPS);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("\u{2717} HTTP 500"), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("Set one live there in Steamworks under SteamPipe, Builds"),
+        "{stdout}{stderr}"
+    );
+    assert!(!stdout.contains("next upload"), "{stdout}{stderr}");
+}
+
+#[test]
+fn a_game_check_still_fails_on_a_500_about_an_app_the_key_does_not_hold() {
+    let (code, stdout, stderr) = check_with_unbuilt_app(None, &["check"], APPS_WITHOUT_THE_GAME);
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("\u{2717} HTTP 500"), "{stdout}{stderr}");
+    assert!(!stdout.contains("no build live yet"), "{stdout}{stderr}");
 }
 
 #[test]

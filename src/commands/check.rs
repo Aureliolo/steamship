@@ -14,7 +14,7 @@ use steamship::show::{self, Spinner};
 use steamship::{check, presets, receipt, redist, run, scripts, settings, upload, vdf};
 
 use super::achievements::try_achievements;
-use super::builds::try_builds;
+use super::builds::{try_builds, try_builds_before_upload};
 use super::exit::{either, fail, first_failure, refusals};
 use super::game::{game_achievements, game_as, game_script, script_given, script_named};
 use super::key::{answered, key_at_hand, why_unanswered};
@@ -319,7 +319,13 @@ fn try_game_check(demo: bool) -> Result<ExitCode, ExitCode> {
     snapshot_sound(&game, &script, false)?;
     let app = script_named(&game);
     let compared = compared(&game, &app)?;
-    let builds = either(try_builds(&app, 10, false));
+    // A released app's uploads never set its default branch live, so nothing live there is a
+    // fault for it.
+    let builds = either(if game.released {
+        try_builds(&app, 10, false)
+    } else {
+        try_builds_before_upload(&app, 10, if demo { "the demo's" } else { "the game's" })
+    });
     Ok(first_failure([compared, builds]))
 }
 
@@ -532,8 +538,9 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<Branch, Ex
                 spinner.skipped(&format!("{branch}, not on Steam yet"));
                 show::aside(&format!(
                     "app {app} has no build live on its default branch, and Steam gives it no \
-                     other branch until it has. An upload with --default sets the build live on \
-                     default alone. Then make {branch} in Steamworks under SteamPipe, Builds"
+                     other branch until it has. While the app is unreleased, an upload in the \
+                     game's folder or one with --default sets its first build live there alone. \
+                     Then make {branch} in Steamworks under SteamPipe, Builds"
                 ));
                 return Ok(Branch::Unbranched);
             }
