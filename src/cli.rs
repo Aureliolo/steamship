@@ -229,9 +229,10 @@ pub enum Command {
         /// demo's depots ship is judged that way without the flag.
         #[arg(long)]
         demo: bool,
-        /// In a game's folder, check the content in this folder instead of the one the game's
-        /// app build script names as its `ContentRoot`. A relative path is read from the current
-        /// folder. A depot's own relative `ContentRoot` is read from it.
+        /// In a game's folder, check the files in this folder instead of those in the app build
+        /// script's `ContentRoot`. `check` alone leaves the content's files to `upload`. A
+        /// relative path is read from the current folder, and a depot's own relative
+        /// `ContentRoot` is read from this folder. The folder must exist.
         #[arg(long, value_name = "DIR", conflicts_with_all = ["app", "scripts_only"])]
         content_root: Option<PathBuf>,
     },
@@ -788,8 +789,8 @@ pub struct Upload {
     pub demo: bool,
     /// In a game's folder, upload the build in this folder instead of the one the game's app
     /// build script names as its `ContentRoot`. A relative path is read from the current folder,
-    /// and a depot's own relative `ContentRoot` from it. The folder must exist before the build
-    /// starts. The committed script is left as it is.
+    /// and a depot's own relative `ContentRoot` is read from this folder. The folder must exist
+    /// before the build starts.
     #[arg(long, value_name = "DIR", conflicts_with = "app")]
     pub content_root: Option<PathBuf>,
     /// The build account, if not the one the last login remembered.

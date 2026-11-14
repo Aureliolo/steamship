@@ -142,23 +142,23 @@ did not write, make or rename, such as an export from an earlier build.
 On Windows a copied file keeps its source's times. steamship can tell it is new only from its
 creation time. A build that copies over a file already there should empty the folder first.
 
-### A content root of your own
+### A different content root
 
-A game whose build writes outside the checkout names that folder with `--content-root`. It takes
-the place of the app build script's `ContentRoot` for that run, in `upload` and in `check`, for
-the game and with `--demo` for the demo:
+`--content-root` names the folder a build writes to when that is outside the game's folder. It
+replaces the app build script's `ContentRoot` for that run in `upload` and `check`, and with
+`--demo` it does the same for the demo:
 
 ```sh
 steamship upload --content-root ../builds/inn
 steamship check --demo --content-root ../builds/inn-demo
 ```
 
-The committed script is not changed. A relative folder is read from where steamship runs, and a
-depot's own relative `ContentRoot` from the folder given. The folder has to exist before the build
-starts, and the files the depots map have to be written into it by the build. `check` with the
-flag checks the files in the folder, which `check` alone leaves to `upload`.
+A relative folder is read from where steamship runs, and a depot's own relative `ContentRoot` from
+the folder given. The folder has to exist before the build starts. The build must write the files
+the depots map into it. `check` alone does not check the files. With the flag it checks those in
+the folder.
 
-The flag works in a game's folder only. Given with an app or a script, it is refused.
+The flag is refused with an app, a script or `--scripts-only`.
 
 ### The first upload
 

@@ -3645,9 +3645,10 @@ fn demo_steamcmd() -> String {
     )
 }
 
-#[test]
-fn a_demo_upload_with_a_content_root_gives_steamcmd_a_copy_naming_it() {
-    let (_temp, root) = pushed_game(Some(""));
+/// The game [`pushed_game`] makes with a demo whose settings snapshot is Steam's own, pushed,
+/// beside a home whose steamcmd answers for the demo.
+fn settled_demo() -> (tempfile::TempDir, PathBuf, tempfile::TempDir) {
+    let (temp, root) = pushed_game(Some(""));
     with_demo(&root, "../../export/", DEMO_TYPED);
     let home = faked_with(&demo_steamcmd());
     saved_login(home.path());
@@ -3660,10 +3661,14 @@ fn a_demo_upload_with_a_content_root_gives_steamcmd_a_copy_naming_it() {
     );
     assert_eq!(saved, Some(0_i32), "{said}{why}");
     pushed(&root, "The demo's settings as Steam has them");
-    let apart = built_elsewhere(&root);
+    (temp, root, home)
+}
+
+/// `upload --demo --dry-run --content-root` of `apart` in the game at `root`.
+fn demo_previewed_from(root: &Path, home: &Path, apart: &Path) -> (Option<i32>, String, String) {
     let (host, _requests) = web_api(vec![("200 OK", BETAS); 6]);
-    let (code, stdout, stderr) = steamship_in(
-        &root,
+    steamship_in(
+        root,
         &[
             "upload",
             "--demo",
@@ -3671,9 +3676,59 @@ fn a_demo_upload_with_a_content_root_gives_steamcmd_a_copy_naming_it() {
             "--content-root",
             apart.to_str().unwrap(),
         ],
+        Some(home),
+        &web_api_variables(&host),
+    )
+}
+
+#[test]
+fn an_upload_checks_the_content_in_the_content_root_not_the_checkouts_export() {
+    let (_temp, root, home) = settled_inn("");
+    fs::remove_file(root.join("export").join("game.txt")).unwrap();
+    let apart = built_elsewhere(&root);
+    let (host, _requests) = web_api(vec![("200 OK", BETAS); 6]);
+    let (code, stdout, stderr) = steamship_in(
+        &root,
+        &[
+            "upload",
+            "--dry-run",
+            "--content-root",
+            apart.to_str().unwrap(),
+        ],
         Some(home.path()),
         &web_api_variables(&host),
     );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(stdout.contains("1 file, checked"), "{stdout}{stderr}");
+}
+
+#[test]
+fn a_demo_upload_judges_the_exports_by_the_content_root() {
+    let (_temp, root, home) = settled_demo();
+    let apart = built_elsewhere(&root);
+    let made_in = apart.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        root.join("export_presets.cfg"),
+        format!(
+            "[preset.0]\n\nname=\"Windows Desktop\"\nplatform=\"Windows Desktop\"\n\
+             custom_features=\"\"\nexport_path=\"{made_in}/inn.exe\"\n\n[preset.0.options]\n"
+        ),
+    )
+    .unwrap();
+    pushed(&root, "A preset making the full game into the folder");
+    let (code, stdout, stderr) = demo_previewed_from(&root, home.path(), &apart);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains("makes it without the \"demo\" feature"),
+        "{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn a_demo_upload_with_a_content_root_gives_steamcmd_a_copy_naming_it() {
+    let (_temp, root, home) = settled_demo();
+    let apart = built_elsewhere(&root);
+    let (code, stdout, stderr) = demo_previewed_from(&root, home.path(), &apart);
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
     assert_eq!(
         copy_content_root(home.path(), 1_000_070),
@@ -3707,9 +3762,7 @@ fn a_content_root_that_is_missing_or_not_a_folder_is_refused_before_the_build() 
         assert!(
             said.starts_with("--content-root ")
                 && said.contains(given)
-                && said.contains(&format!(
-                    " {why}. Give the folder the game's build is written to"
-                )),
+                && said.contains(&format!(" {why}. Name the folder the build writes to")),
             "{said}"
         );
         assert!(

@@ -75,7 +75,7 @@ pub(crate) fn content_root_given(given: Option<&Path>) -> Result<Option<PathBuf>
     };
     Err(fail(
         &format!(
-            "--content-root {} {why}. Give the folder the game's build is written to",
+            "--content-root {} {why}. Name the folder the build writes to",
             absolute.display()
         ),
         REFUSED,
