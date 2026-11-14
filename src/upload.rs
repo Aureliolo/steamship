@@ -228,6 +228,24 @@ pub fn prepare(
     description: &str,
     preview: bool,
 ) -> Result<Prepared, Error> {
+    prepare_in(home, original, description, preview, None)
+}
+
+/// Writes the copy as [`prepare`] does, naming `content_root`, when given, as its `ContentRoot` in
+/// place of the original's. It must be absolute, as steamcmd reads a relative one against the
+/// copy's folder.
+///
+/// # Errors
+///
+/// When the script cannot be read, has no app ID, or cannot be written back, or the folders in
+/// the home cannot be made.
+pub fn prepare_in(
+    home: &Path,
+    original: &Path,
+    description: &str,
+    preview: bool,
+    content_root: Option<&Path>,
+) -> Result<Prepared, Error> {
     let problem = |reason: &str| Error::Script {
         path: original.to_path_buf(),
         reason: reason.to_owned(),
@@ -246,9 +264,13 @@ pub fn prepare(
     let folder = absolute
         .parent()
         .map_or_else(|| absolute.clone(), Path::to_path_buf);
-    let content_root = app
-        .text("ContentRoot")
-        .map_or_else(|| folder.clone(), |root| scripts::resolve(&folder, root));
+    let content_root = content_root.map_or_else(
+        || {
+            app.text("ContentRoot")
+                .map_or_else(|| folder.clone(), |root| scripts::resolve(&folder, root))
+        },
+        Path::to_path_buf,
+    );
     let apps = home.join(APPS).join(app_id.to_string());
     let output = apps.join("output");
     fs::create_dir_all(&output).map_err(at(&output))?;

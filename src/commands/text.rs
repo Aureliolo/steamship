@@ -320,7 +320,7 @@ fn text_achievements(game: &Project) -> Result<Vec<text::Entry>, ExitCode> {
     if paths.is_empty() {
         return Ok(Vec::new());
     }
-    let app = game_script(game)?.app_id;
+    let app = game_script(game, None)?.app_id;
     let mut files = Vec::with_capacity(paths.len());
     for path in &paths {
         files.push((path.display().to_string(), achievements_file(path, app)?));

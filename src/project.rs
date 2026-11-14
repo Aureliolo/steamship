@@ -970,9 +970,15 @@ pub fn written_now() -> io::Result<SystemTime> {
 
 /// Every file the depots of the app build script at `script` upload that last changed before
 /// `since`, as one a build had written since would not.
+///
+/// The depots' content is `content_root` when given, in place of the script's.
 #[must_use]
-pub fn unwritten(script: &Path, since: SystemTime) -> BTreeSet<PathBuf> {
-    check::check(script)
+pub fn unwritten(
+    script: &Path,
+    content_root: Option<&Path>,
+    since: SystemTime,
+) -> BTreeSet<PathBuf> {
+    check::against_in(script, None, content_root)
         .depots
         .into_iter()
         .flat_map(|depot| depot.files)
@@ -1618,10 +1624,10 @@ mod tests {
         fs::write(&game, "built").unwrap();
         let changed = native::changed(&game).unwrap();
         let script = steam.join("app_build.vdf");
-        assert_eq!(unwritten(&script, changed), BTreeSet::new());
+        assert_eq!(unwritten(&script, None, changed), BTreeSet::new());
         // Windows counts time in tenths of a microsecond, and drops anything less.
         let later = changed.checked_add(Duration::from_micros(1)).unwrap();
-        assert_eq!(unwritten(&script, later), [game].into());
+        assert_eq!(unwritten(&script, None, later), [game].into());
     }
 
     #[test]

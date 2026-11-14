@@ -133,7 +133,8 @@ fn run(command: Command) -> ExitCode {
             app,
             scripts_only,
             demo,
-        } => check_in(app.as_deref(), scripts_only, demo),
+            content_root,
+        } => check_in(app.as_deref(), scripts_only, demo, content_root.as_deref()),
         Command::Assets { folder } => run_assets(&folder),
         Command::Ci {
             app,

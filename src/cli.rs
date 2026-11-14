@@ -229,6 +229,11 @@ pub enum Command {
         /// demo's depots ship is judged that way without the flag.
         #[arg(long)]
         demo: bool,
+        /// In a game's folder, check the content in this folder instead of the one the game's
+        /// app build script names as its `ContentRoot`. A relative path is read from the current
+        /// folder. A depot's own relative `ContentRoot` is read from it.
+        #[arg(long, value_name = "DIR", conflicts_with_all = ["app", "scripts_only"])]
+        content_root: Option<PathBuf>,
     },
     /// Check, build and upload, then print the build ID.
     ///
@@ -781,6 +786,12 @@ pub struct Upload {
     /// settings snapshot, which must show it typed Demo with the full game as its base game.
     #[arg(long, conflicts_with = "app")]
     pub demo: bool,
+    /// In a game's folder, upload the build in this folder instead of the one the game's app
+    /// build script names as its `ContentRoot`. A relative path is read from the current folder,
+    /// and a depot's own relative `ContentRoot` from it. The folder must exist before the build
+    /// starts. The committed script is left as it is.
+    #[arg(long, value_name = "DIR", conflicts_with = "app")]
+    pub content_root: Option<PathBuf>,
     /// The build account, if not the one the last login remembered.
     #[arg(long, env = ACCOUNT)]
     pub account: Option<String>,
@@ -1159,6 +1170,33 @@ mod tests {
             said.contains("'--demo'") && said.contains("[APP]"),
             "{said}"
         );
+    }
+
+    #[test]
+    fn a_content_root_works_in_a_games_folder_and_is_refused_beside_a_script_or_app() {
+        for line in [
+            &["upload", "--content-root", "out", "steam/app_build.vdf"][..],
+            &["upload", "--content-root", "out", "480"],
+            &["check", "--content-root", "out", "steam/app_build.vdf"],
+            &["check", "--content-root", "out", "--scripts-only"],
+        ] {
+            let error = refused(line);
+            assert_eq!(error.kind(), ErrorKind::ArgumentConflict, "{line:?}");
+            assert!(
+                error.to_string().contains("'--content-root <DIR>'"),
+                "{error}"
+            );
+        }
+        let Command::Upload(request) = parsed(&["upload", "--demo", "--content-root", "out"])
+        else {
+            panic!("upload");
+        };
+        assert_eq!(request.content_root, Some(PathBuf::from("out")));
+        let Command::Check { content_root, .. } = parsed(&["check", "--content-root", "out"])
+        else {
+            panic!("check");
+        };
+        assert_eq!(content_root, Some(PathBuf::from("out")));
     }
 
     #[test]

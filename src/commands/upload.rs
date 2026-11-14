@@ -27,7 +27,9 @@ use super::check::{
     Branch, apart, built, checked, compared, exports_apart, redistributables_shown, snapshot_sound,
 };
 use super::exit::{either, fail, first_failure, late};
-use super::game::{game_as, game_script, script_given, script_named, shipped_from};
+use super::game::{
+    content_root_given, game_as, game_script, script_given, script_named, shipped_from,
+};
 use super::key::{KeyFrom, key_at_hand, key_variable, offer_to_keep, web_api};
 use super::ready::{
     dump_in_actions, login_refusal, named, ready, restore, run_as, steamcmd_failed,
@@ -44,6 +46,7 @@ pub(crate) fn upload_in(request: &cli::Upload) -> ExitCode {
         json: request.json,
         demo: request.demo,
         green: green::Policy::from_flag(request.allow_ungreen),
+        content_root: request.content_root.as_deref(),
     };
     let default = request.default;
     let script = match request.app.as_deref() {
@@ -62,6 +65,7 @@ pub(crate) fn upload_in(request: &cli::Upload) -> ExitCode {
                 default,
                 account: shipping.account,
                 json: shipping.json,
+                content_root: None,
                 shipped: None,
             })
             .0
@@ -87,6 +91,7 @@ struct Shipping<'command> {
     json: bool,
     demo: bool,
     green: green::Policy,
+    content_root: Option<&'command Path>,
 }
 
 /// `upload` in a game: the pushed commit, built, checked against Steam, uploaded, and its branch
@@ -95,6 +100,9 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     if shipping.json {
         show::divert();
     }
+    // Before the commit and the build, so that a folder that is not there costs neither.
+    let content_root = content_root_given(shipping.content_root)?;
+    let content_root = content_root.as_deref();
     let game = game_as(shipping.demo)?;
     shipped_from(&game)?;
     // Before the build, which takes minutes, so that a commit no round has passed costs none.
@@ -113,11 +121,11 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     };
     upload::shippable(&version).map_err(|error| fail(&error, REFUSED))?;
     show::field("version", &version);
-    let script = game_script(&game)?;
+    let script = game_script(&game, content_root)?;
     apart(&game)?;
     exports_apart(&game, &script)?;
     snapshot_sound(&game, &script, true)?;
-    built(&game)?;
+    built(&game, content_root)?;
     let app = script_named(&game);
     let snapshot = game.snapshot();
     let steps = [
@@ -138,6 +146,7 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
         default: !shipping.preview && !game.released,
         account: shipping.account,
         json: shipping.json,
+        content_root,
         shipped: shipped.as_ref(),
     });
     if uploaded != ExitCode::SUCCESS || shipping.preview {
@@ -226,6 +235,8 @@ struct Upload<'command> {
     default: bool,
     account: Option<&'command str>,
     json: bool,
+    /// The folder a game's content is read from in place of the script's `ContentRoot`.
+    content_root: Option<&'command Path>,
     /// The commit a game's upload is made from, to record for a rollback, and whether its green
     /// branch held it.
     shipped: Option<&'command green::Shipped>,
@@ -308,6 +319,32 @@ fn record_live(
     }
 }
 
+/// The copy of the script that steamcmd is given, with the branch it sets live held back while the
+/// app cannot have that branch yet.
+fn prepared_copy(
+    request: &Upload<'_>,
+    home: &Path,
+    description: &str,
+    branch: Branch,
+) -> Result<upload::Prepared, ExitCode> {
+    let mut prepared = upload::prepare_in(
+        home,
+        request.script,
+        description,
+        request.preview,
+        request.content_root,
+    )
+    .map_err(|error| fail(&error, FAILED))?;
+    // steamcmd uploads everything before Steam refuses to commit a build to a branch the app
+    // cannot have yet, so the build goes up set live nowhere by steamcmd.
+    if branch == Branch::Unbranched && !request.preview {
+        prepared
+            .hold_back_set_live()
+            .map_err(|error| fail(&error, FAILED))?;
+    }
+    Ok(prepared)
+}
+
 fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCode> {
     if request.json {
         show::divert();
@@ -315,7 +352,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
     let (title, doing, again) = wording(request.preview);
     show::title(title);
     let (packed, account) = run_as(request.account)?;
-    let (found, branch) = checked(request.script, false)?;
+    let (found, branch) = checked(request.script, false, request.content_root)?;
     let needing = needs_redistributable(&found)?;
     let description = upload::commit(request.script)
         .and_then(|commit| upload::description(request.version, &commit))
@@ -326,15 +363,7 @@ fn try_upload(request: &Upload<'_>) -> Result<(ExitCode, Option<String>), ExitCo
     if needing {
         ticked_on_steam(&found, (&held, &home, &manifest), &account, packed.as_ref())?;
     }
-    let mut prepared = upload::prepare(&home, request.script, &description, request.preview)
-        .map_err(|error| fail(&error, FAILED))?;
-    // steamcmd uploads everything before Steam refuses to commit a build to a branch the app
-    // cannot have yet, so the build goes up set live nowhere by steamcmd.
-    if branch == Branch::Unbranched && !request.preview {
-        prepared
-            .hold_back_set_live()
-            .map_err(|error| fail(&error, FAILED))?;
-    }
+    let prepared = prepared_copy(request, &home, &description, branch)?;
     let (default, in_run) = default_key(
         request.default,
         (&held, &home, &manifest),

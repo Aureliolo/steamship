@@ -204,6 +204,16 @@ pub fn app_named(path: &Path) -> Option<u32> {
 ///
 /// Every problem that stops the scripts from being understood, all of them rather than the first.
 pub fn load(path: &Path) -> Result<AppScript, Vec<Problem>> {
+    load_in(path, None)
+}
+
+/// Reads the scripts as [`load`] does, with `content_root`, when given, in place of the app
+/// script's `ContentRoot`. A depot's own relative `ContentRoot` then resolves against it.
+///
+/// # Errors
+///
+/// Every problem that stops the scripts from being understood, all of them rather than the first.
+pub fn load_in(path: &Path, content_root: Option<&Path>) -> Result<AppScript, Vec<Problem>> {
     if matches!(fs::metadata(path), Err(error) if error.kind() == io::ErrorKind::NotFound) {
         return Err(vec![Problem::new(
             path,
@@ -217,7 +227,9 @@ pub fn load(path: &Path) -> Result<AppScript, Vec<Problem>> {
     let mut problems = Vec::new();
     let app_id = number(app, "AppID", path, &mut problems);
     let folder = parent(path);
-    let content_root = app.text("ContentRoot").map(|root| resolve(&folder, root));
+    let content_root = content_root
+        .map(Path::to_path_buf)
+        .or_else(|| app.text("ContentRoot").map(|root| resolve(&folder, root)));
     let mut depots = Vec::new();
     match app.block("Depots") {
         Some(listed) if !listed.pairs.is_empty() => {
@@ -564,6 +576,49 @@ mod tests {
         assert!(!depot(&[("*/windows/*", true)], &[]).ships(&demo));
         assert!(!depot(&[("*", true)], &["demo/windows/*"]).ships(&demo));
         assert!(!depot(&[("*", true)], &[]).ships(Path::new("")));
+    }
+
+    #[test]
+    fn a_content_root_given_replaces_the_scripts_and_a_depots_relative_one_resolves_against_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let steam = temp.path().join("steam");
+        fs::create_dir_all(&steam).unwrap();
+        let app = steam.join("app_build.vdf");
+        fs::write(
+            &app,
+            r#""AppBuild" { "AppID" "1000050" "ContentRoot" "../export/" "Depots" { "1000051" "own.vdf" "1000052" "plain.vdf" } }"#,
+        )
+        .unwrap();
+        let mapping = r#""FileMapping" { "LocalPath" "*" "DepotPath" "." }"#;
+        fs::write(
+            steam.join("own.vdf"),
+            format!(r#""DepotBuild" {{ "DepotID" "1000051" "ContentRoot" "windows" {mapping} }}"#),
+        )
+        .unwrap();
+        fs::write(
+            steam.join("plain.vdf"),
+            format!(r#""DepotBuild" {{ "DepotID" "1000052" {mapping} }}"#),
+        )
+        .unwrap();
+        let given = temp.path().join("apart");
+        let roots = |script: &AppScript| -> Vec<PathBuf> {
+            script
+                .depots
+                .iter()
+                .map(|depot| depot.content_root.clone())
+                .collect()
+        };
+        assert_eq!(
+            roots(&load_in(&app, Some(&given)).unwrap()),
+            [given.join("windows"), given.clone()]
+        );
+        assert_eq!(
+            roots(&load(&app).unwrap()),
+            [
+                temp.path().join("export").join("windows"),
+                temp.path().join("export")
+            ]
+        );
     }
 
     #[test]
