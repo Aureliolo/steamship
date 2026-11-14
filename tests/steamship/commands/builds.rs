@@ -13,8 +13,8 @@ use steamship::webapi::STAND_IN;
 use crate::common;
 use crate::{
     APPS, BETAS, BUILDS, KEY, SET_LIVE, Session, failure, faked_with, forgetting_home, in_game,
-    in_game_with, login_with_key, pushed_game, saved_login, steamship, steamship_in, summary_of,
-    web_api, web_api_variables,
+    in_game_with, login_with_key, pushed, pushed_game, saved_login, steamship, steamship_in,
+    summary_of, web_api, web_api_variables,
 };
 
 #[test]
@@ -65,6 +65,38 @@ fn builds_at_a_terminal_asks_for_the_key_then_offers_to_keep_it() {
         let kept = status.contains(&format!("  api key   kept in {}\n", keychain::STORE));
         assert_eq!(kept, answer == "\r", "{answer:?}: {status}\nshown: {seen}");
     }
+}
+
+#[test]
+fn a_key_typed_for_a_game_check_with_no_build_live_yet_is_offered_for_keeping() {
+    let (_temp, root) = pushed_game(None);
+    fs::remove_dir_all(root.join("mods")).unwrap();
+    fs::remove_file(root.join("steam").join("rich_presence_english.vdf")).unwrap();
+    pushed(&root, "Nothing to compare");
+    let steamship_program = env!("CARGO_BIN_EXE_steamship");
+    #[cfg(windows)]
+    let line = format!("cd /d {} && {steamship_program} check", root.display());
+    #[cfg(unix)]
+    let line = format!("cd '{}' && '{steamship_program}' check", root.display());
+    let home = forgetting_home();
+    let held = r#"{"applist": {"apps": {"app": [
+        {"appid": 1000050, "app_type": "game", "app_name": "Inn"}
+    ]}}}"#;
+    let (host, _requests) = web_api(vec![("500 Internal Server Error", ""), ("200 OK", held)]);
+    let mut session = Session::start_with(
+        &line,
+        home.path(),
+        &[("STEAMSHIP_NO_UPDATE_CHECK", "1"), (STAND_IN, &host)],
+    );
+    session.wait_for("api key");
+    session.type_in(&format!("{KEY}\r"));
+    session.wait_for("keep it");
+    session.type_in("n\r");
+    session.wait_for("  api key   not kept");
+    let _: Option<i32> = session.end().wait().unwrap();
+    let seen = session.seen();
+    assert!(seen.contains("no build live yet"), "{seen}");
+    assert!(!seen.contains(KEY), "the key was shown: {seen}");
 }
 
 #[test]

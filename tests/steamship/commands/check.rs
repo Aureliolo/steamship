@@ -129,8 +129,8 @@ fn check_goes_on_when_steam_cannot_say_or_no_key_is_at_hand() {
     assert!(
         new.contains(
             "app 480 has no build live on its default branch, and Steam gives it no other branch \
-             until it has. Its first build goes live on default alone, from an upload in the \
-             game's folder or one with --default"
+             until it has. While the app is unreleased, an upload in the game's folder or one \
+             with --default sets its first build live there alone"
         ),
         "{new}"
     );

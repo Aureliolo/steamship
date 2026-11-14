@@ -47,6 +47,8 @@ fn builds_of(
                 show::aside(&format!(
                     "{whose} next upload sets its build live on the default branch"
                 ));
+                // Steam listed the key's apps to say so, which proves a typed key.
+                offer_to_keep(&home, &api, from);
                 return Ok(ExitCode::SUCCESS);
             }
             let code = web_api_failed(spinner, &error);

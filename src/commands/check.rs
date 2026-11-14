@@ -538,9 +538,9 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<Branch, Ex
                 spinner.skipped(&format!("{branch}, not on Steam yet"));
                 show::aside(&format!(
                     "app {app} has no build live on its default branch, and Steam gives it no \
-                     other branch until it has. Its first build goes live on default alone, from \
-                     an upload in the game's folder or one with --default. Then make {branch} in \
-                     Steamworks under SteamPipe, Builds"
+                     other branch until it has. While the app is unreleased, an upload in the \
+                     game's folder or one with --default sets its first build live there alone. \
+                     Then make {branch} in Steamworks under SteamPipe, Builds"
                 ));
                 return Ok(Branch::Unbranched);
             }
