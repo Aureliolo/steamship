@@ -16,7 +16,9 @@ use steamship::{check, presets, receipt, redist, run, scripts, settings, upload,
 use super::achievements::try_achievements;
 use super::builds::{try_builds, try_builds_before_upload};
 use super::exit::{either, fail, first_failure, refusals};
-use super::game::{game_achievements, game_as, game_script, script_given, script_named};
+use super::game::{
+    content_root_given, game_achievements, game_as, game_script, script_given, script_named,
+};
 use super::key::{answered, key_at_hand, why_unanswered};
 use super::leaderboards::{Changes, Listing, try_leaderboards};
 use super::presence::{presence_read, try_rich_presence};
@@ -24,7 +26,12 @@ use super::settings::settings_file;
 
 /// `check` of the build's folder or the app's script given, or of the game, or its demo, when there
 /// is neither.
-pub(crate) fn check_in(app: Option<&str>, scripts_only: bool, demo: bool) -> ExitCode {
+pub(crate) fn check_in(
+    app: Option<&str>,
+    scripts_only: bool,
+    demo: bool,
+    content_root: Option<&Path>,
+) -> ExitCode {
     let script = match app.map(|word| script_given(Some(word), demo)).transpose() {
         Ok(script) => script,
         Err(code) => return code,
@@ -39,8 +46,8 @@ pub(crate) fn check_in(app: Option<&str>, scripts_only: bool, demo: bool) -> Exi
             ),
             REFUSED,
         ),
-        Some(script) => run_check(script, scripts_only, None),
-        None => either(try_game_check(demo)),
+        Some(script) => run_check(script, scripts_only, None, None),
+        None => either(try_game_check(demo, content_root)),
     }
 }
 
@@ -306,14 +313,20 @@ fn unchecked(command: &str, why: &str) {
 }
 
 /// `check` in a game: its scripts, then its records and rich presence against Steam's, and its
-/// branches.
-fn try_game_check(demo: bool) -> Result<ExitCode, ExitCode> {
+/// branches. Given a `--content-root`, the content in that folder is checked too.
+fn try_game_check(demo: bool, content_root: Option<&Path>) -> Result<ExitCode, ExitCode> {
+    let content_root = content_root_given(content_root)?;
     let game = game_as(demo)?;
-    let checked = run_check(&game.script, true, Some(&game));
+    let checked = run_check(
+        &game.script,
+        content_root.is_none(),
+        Some(&game),
+        content_root.as_deref(),
+    );
     if checked != ExitCode::SUCCESS {
         return Ok(checked);
     }
-    let script = game_script(&game)?;
+    let script = game_script(&game, content_root.as_deref())?;
     apart(&game)?;
     exports_apart(&game, &script)?;
     snapshot_sound(&game, &script, false)?;
@@ -330,8 +343,9 @@ fn try_game_check(demo: bool) -> Result<ExitCode, ExitCode> {
 }
 
 /// Runs the game's `build` command in its folder, its output shown as it comes, and refuses when
-/// it fails or leaves the tree changed.
-pub(crate) fn built(game: &Project) -> Result<(), ExitCode> {
+/// it fails or leaves the tree changed. The files the depots upload must be written by it, in
+/// `content_root` when given, else where the script puts them.
+pub(crate) fn built(game: &Project, content_root: Option<&Path>) -> Result<(), ExitCode> {
     let Some((program, args)) = game.build.split_first() else {
         show::field(
             "build",
@@ -382,7 +396,7 @@ pub(crate) fn built(game: &Project) -> Result<(), ExitCode> {
         }
     }
     project::unchanged(&game.root).map_err(|why| fail(&why, REFUSED))?;
-    let unwritten = project::unwritten(&game.script, since);
+    let unwritten = project::unwritten(&game.script, content_root, since);
     if !unwritten.is_empty() {
         return Err(fail(
             &project::left_over(&unwritten, &game.root, &named),
@@ -400,12 +414,13 @@ pub(crate) fn built(game: &Project) -> Result<(), ExitCode> {
 pub(crate) fn checked(
     script: &Path,
     scripts_only: bool,
+    content_root: Option<&Path>,
 ) -> Result<(check::Report, Branch), ExitCode> {
     let report = if scripts_only {
         check::scripts_only(script)
     } else {
         let settings = snapshot_beside(script, scripts::app_named(script))?;
-        check::against(script, settings.as_ref())
+        check::against_in(script, settings.as_ref(), content_root)
     };
     if report.problems.is_empty() {
         let what = if report.content {
@@ -552,10 +567,15 @@ fn live_branch_found(script: &Path, app: u32, branch: &str) -> Result<Branch, Ex
 }
 
 /// `check` of `script`, or of `game`'s script, whose content waits for its upload to build it.
-fn run_check(script: &Path, scripts_only: bool, game: Option<&Project>) -> ExitCode {
+fn run_check(
+    script: &Path,
+    scripts_only: bool,
+    game: Option<&Project>,
+    content_root: Option<&Path>,
+) -> ExitCode {
     show::title("check");
     show::field("script", &script.display().to_string());
-    match checked(script, scripts_only).and_then(|(report, _)| {
+    match checked(script, scripts_only, content_root).and_then(|(report, _)| {
         if let Some(game) = game {
             game.live_on(report.set_live.as_deref())
                 .map_err(|why| fail(&why, REFUSED))?;

@@ -1120,3 +1120,79 @@ fn the_command_lists_every_refusal_and_exits_2() {
     );
     assert!(stderr.contains("\"Preview\" is set in the script. Pass --dry-run"));
 }
+
+/// A folder holding two files of a build, outside any game.
+fn two_files() -> tempfile::TempDir {
+    let folder = tempfile::tempdir().unwrap();
+    fs::write(folder.path().join("game.pck"), "pack").unwrap();
+    fs::write(folder.path().join("extra.pck"), "more").unwrap();
+    folder
+}
+
+#[test]
+fn a_game_check_with_a_content_root_checks_the_content_in_it() {
+    let folder = two_files();
+    let apart = folder.path().to_str().unwrap();
+    for args in [
+        ["check", "--content-root", apart].as_slice(),
+        ["check", "--demo", "--content-root", apart].as_slice(),
+    ] {
+        let (code, stdout, stderr) = check_with_unbuilt_app(None, args, INN_APPS);
+        assert_eq!(code, Some(0_i32), "{args:?}: {stdout}{stderr}");
+        assert!(
+            stdout.contains(", 1 depot, 2 files, checked\n")
+                && stdout.contains("  depot     ")
+                && stdout.contains(", 2 files\n"),
+            "{args:?}: {stdout}"
+        );
+    }
+}
+
+#[test]
+fn a_game_check_with_a_content_root_judges_exports_by_where_it_points() {
+    let (_temp, root) = pushed_game(None);
+    fs::write(
+        root.join("export_presets.cfg"),
+        "[preset.0]\n\nname=\"Windows Desktop\"\nplatform=\"Windows Desktop\"\n\
+         custom_features=\"\"\nexport_path=\"export/windows/inn.exe\"\n\n[preset.0.options]\n\n\
+         [preset.1]\n\nname=\"Windows Desktop Demo\"\nplatform=\"Windows Desktop\"\n\
+         custom_features=\"demo\"\nexport_path=\"export/demo/windows/inn.exe\"\n\n\
+         [preset.1.options]\n",
+    )
+    .unwrap();
+    pushed(&root, "Presets for the game and its demo");
+    let elsewhere = two_files();
+    let host = refusing_web_api(12);
+    let variables = [("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, host.as_str())];
+    let (apart, _shown, reason) = in_game_with(
+        &root,
+        &[
+            "check",
+            "--content-root",
+            elsewhere.path().to_str().unwrap(),
+        ],
+        &variables,
+    );
+    assert!(
+        !reason.contains("export preset"),
+        "nothing there is a demo's export: {reason}"
+    );
+    assert_eq!(apart, Some(1_i32), "Steam refused every question: {reason}");
+
+    let (crossed, shown, why) = in_game_with(
+        &root,
+        &[
+            "check",
+            "--content-root",
+            root.join("export").to_str().unwrap(),
+        ],
+        &variables,
+    );
+    assert_eq!(crossed, Some(2_i32), "{shown}{why}");
+    assert!(
+        why.contains(
+            "the export preset \"Windows Desktop Demo\" in export_presets.cfg makes it with"
+        ),
+        "{why}"
+    );
+}

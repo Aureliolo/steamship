@@ -44,21 +44,28 @@ const DO_NOT_SHIP: [&str; 2] = [
 /// Checks the app script at `path`, its depot scripts, and the content they map.
 #[must_use]
 pub fn check(path: &Path) -> Report {
-    checked(path, true, None)
+    checked(path, true, None, None)
 }
 
 /// Checks as [`check`] does, and the content against `settings`, the app's settings snapshot,
 /// when there is one.
 #[must_use]
 pub fn against(path: &Path, settings: Option<&Block>) -> Report {
-    checked(path, true, settings)
+    against_in(path, settings, None)
+}
+
+/// Checks as [`against`] does, with the content read from `content_root`, when given, in place of
+/// the one the app script names.
+#[must_use]
+pub fn against_in(path: &Path, settings: Option<&Block>, content_root: Option<&Path>) -> Report {
+    checked(path, true, settings, content_root)
 }
 
 /// Checks the app script at `path` and its depot scripts alone, as can be done before the build
 /// they map exists.
 #[must_use]
 pub fn scripts_only(path: &Path) -> Report {
-    checked(path, false, None)
+    checked(path, false, None, None)
 }
 
 /// Checks every file in the build folder `path`, as before a script maps it: for app `app`, when
@@ -101,8 +108,13 @@ pub fn folder(path: &Path, app: Option<u32>) -> Report {
     }
 }
 
-fn checked(path: &Path, content: bool, settings: Option<&Block>) -> Report {
-    match scripts::load(path) {
+fn checked(
+    path: &Path,
+    content: bool,
+    settings: Option<&Block>,
+    content_root: Option<&Path>,
+) -> Report {
+    match scripts::load_in(path, content_root) {
         Ok(app) => check_loaded(&app, content, settings),
         Err(problems) => Report {
             app_id: None,

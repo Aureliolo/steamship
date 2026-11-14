@@ -1,7 +1,7 @@
 //! The app a command works on: the game the current folder is in, or the one named.
 
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::{self, Path, PathBuf};
 use std::process::ExitCode;
 
 use steamship::cli::{FAILED, REFUSED};
@@ -57,10 +57,38 @@ pub(crate) fn script_named(game: &Project) -> String {
     game.script.display().to_string()
 }
 
+/// The folder `--content-root` names, made absolute from the current folder, or none when it was
+/// not given. Refused unless it is a folder.
+pub(crate) fn content_root_given(given: Option<&Path>) -> Result<Option<PathBuf>, ExitCode> {
+    let Some(given) = given else {
+        return Ok(None);
+    };
+    let absolute = path::absolute(given)
+        .map_err(|error| fail(&format!("{}: {error}", given.display()), FAILED))?;
+    if absolute.is_dir() {
+        return Ok(Some(absolute));
+    }
+    let why = if absolute.exists() {
+        "is not a folder"
+    } else {
+        "does not exist"
+    };
+    Err(fail(
+        &format!(
+            "--content-root {} {why}. Name the folder the build writes to",
+            absolute.display()
+        ),
+        REFUSED,
+    ))
+}
+
 /// The game's app build script, read, every problem in it shown, and refused unless it sets the
-/// game's branch live.
-pub(crate) fn game_script(game: &Project) -> Result<scripts::AppScript, ExitCode> {
-    let script = scripts::load(&game.script).map_err(|problems| {
+/// game's branch live. Its content is `content_root` when given, in place of the script's.
+pub(crate) fn game_script(
+    game: &Project,
+    content_root: Option<&Path>,
+) -> Result<scripts::AppScript, ExitCode> {
+    let script = scripts::load_in(&game.script, content_root).map_err(|problems| {
         for problem in &problems {
             show::failure("refused", &problem.to_string(), None);
         }

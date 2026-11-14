@@ -41,7 +41,7 @@ pub(crate) fn try_ci(setup: &Setup<'_>) -> Result<ExitCode, ExitCode> {
     let script = ci_script(setup.app, root.as_deref())?;
     // CI is set up before it has built anything, and a checkout seldom holds the build, so the
     // content is left to the check each upload makes.
-    drop(checked(&script, true)?);
+    drop(checked(&script, true, None)?);
     show::field("content", "not checked (each upload checks it)");
     let repository = match setup.output {
         Some(_) => None,
