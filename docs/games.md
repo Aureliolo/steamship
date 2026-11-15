@@ -363,7 +363,10 @@ writes from English kept by hand beside the build scripts. `--unchanged` writes 
 ```
 
 A field or block of another name is refused, and the error names it. An image is named as the
-Description tab's custom images name it, the same in every language. Items in a row make one
+Description tab's custom images name it, the same in every language. For an image that differs
+by language, make it a
+[localised image group](https://partner.steamgames.com/doc/store/page/assets) in that tab. Each
+player then sees the image for their language under that name. Items in a row make one
 list. A `field` is any other text Steam shows in the player's language, such as a system
 requirement, by its name on the form.
 
