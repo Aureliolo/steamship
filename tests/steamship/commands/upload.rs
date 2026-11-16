@@ -32,8 +32,9 @@ use crate::steamship_command;
 use crate::{
     BETAS, BUILDS, CUT_OFF, CUT_OFF_SAID, DEMO_TYPED, DESCRIBED, KEY, NEEDS_VC, SECRETS, SET_LIVE,
     Session, UPDATED, assert_no_secret_in, at, failure, faked_with, in_game, in_game_with,
-    packed_login, project, pushed, pushed_game, released_as, saved_login, shipping_dll, steamship,
-    steamship_in, summary_of, text_at, upload, web_api, web_api_variables, with_demo, written,
+    packed_login, project, pushed, pushed_game, released_as, saved_login, shipping_dll, spelt,
+    steamship, steamship_in, summary_of, text_at, upload, web_api, web_api_variables, with_demo,
+    written,
 };
 
 #[test]
@@ -3761,11 +3762,6 @@ fn building_into(folder: &Path) -> String {
 /// The folder the builds of [`building_into`] make, beside the game at `root`.
 fn made_by_the_build(root: &Path) -> PathBuf {
     root.parent().unwrap().join("made")
-}
-
-/// The folder `given`, from the current folder, as the message of a refusal spells it.
-fn spelt(root: &Path, given: &str) -> String {
-    root.join(given).display().to_string()
 }
 
 #[test]
