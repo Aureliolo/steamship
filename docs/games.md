@@ -144,7 +144,7 @@ creation time. A build that copies over a file already there should empty the fo
 
 ### A different content root
 
-`--content-root` names the folder a build writes to when that is outside the game's folder. It
+`--content-root` names the folder the build writes to, when outside the game's folder. It
 replaces the app build script's `ContentRoot` for that run in `upload` and `check`, and with
 `--demo` it does the same for the demo:
 
@@ -154,7 +154,7 @@ steamship check --demo --content-root ../builds/inn-demo
 ```
 
 A relative folder is read from where steamship runs, and a depot's own relative `ContentRoot` from
-the folder given. The build may make the folder, and without a build it has to exist. The build
+the folder given. A build command may make the folder. Without one it must exist already. The build
 must write the files the depots map into it. `check` alone does not check the files. With the flag
 it checks those in the folder.
 

@@ -399,7 +399,7 @@ pub(crate) fn built(game: &Project, content_root: Option<&Path>) -> Result<(), E
     if let Some(root) = content_root.filter(|root| !root.is_dir()) {
         return Err(fail(
             &format!(
-                "--content-root {} {} after {named}. Name the folder it writes to",
+                "--content-root {} {} after {named}. Name the folder the build writes to",
                 root.display(),
                 if root.exists() {
                     "is not a folder"

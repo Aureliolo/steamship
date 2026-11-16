@@ -3971,7 +3971,7 @@ fn a_build_that_makes_the_content_root_as_a_file_is_refused_as_not_a_folder() {
         failure(&stderr),
         format!(
             "--content-root {} is not a folder after git config --file {made_text} game.built \
-             now. Name the folder it writes to",
+             now. Name the folder the build writes to",
             made.display()
         )
     );
@@ -3991,7 +3991,8 @@ fn a_build_that_never_makes_the_content_root_is_refused_before_steamcmd() {
     assert_eq!(
         failure(&stderr),
         format!(
-            "--content-root {} does not exist after git --version. Name the folder it writes to",
+            "--content-root {} does not exist after git --version. Name the folder the build \
+             writes to",
             missing.display()
         )
     );

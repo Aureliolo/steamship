@@ -787,10 +787,10 @@ pub struct Upload {
     /// settings snapshot, which must show it typed Demo with the full game as its base game.
     #[arg(long, conflicts_with = "app")]
     pub demo: bool,
-    /// In a game's folder, upload the build in this folder instead of the one the game's app
+    /// In a game's folder, upload the build from this folder instead of the one the game's app
     /// build script names as its `ContentRoot`. A relative path is read from the current folder,
-    /// and a depot's own relative `ContentRoot` is read from this folder. The build may make the
-    /// folder, and without a build it must exist.
+    /// and a depot's own relative `ContentRoot` is read from this folder. A build command may make
+    /// the folder. Without one it must exist already.
     #[arg(long, value_name = "DIR", conflicts_with = "app")]
     pub content_root: Option<PathBuf>,
     /// The build account, if not the one the last login remembered.
