@@ -443,7 +443,7 @@ jobs:
         env:
           # renovate: datasource=github-release-attachments depName=bnjbvr/cargo-machete versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
           CARGO_MACHETE_TAG: v0.10.1
-          CARGO_MACHETE_SHA256: caa097f9d93e624e6e36045df6f3bf672d6021376dbd414fcd1f594e4b576139
+          CARGO_MACHETE_SHA256: 785d381985140ffa172246d82089adeb7f2eb9c774d961c48f77a4494023afb5
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
