@@ -45,17 +45,23 @@ pins() {
   '
 }
 
+# Each list is made into a variable before it is read into an array, so that a command failing in
+# it stops the script under `set -e`. An empty text gives an empty array.
 changed=()
 failed=0
 for file in .github/workflows/*.yml .github/actions/*/action.yml; do
   [[ -f "${file}" ]] || continue
-  mapfile -t pinned < <(pins < "${file}")
+  current="$(pins < "${file}")"
+  pinned=()
+  [[ -z "${current}" ]] || mapfile -t pinned <<< "${current}"
   ((${#pinned[@]} > 0)) || continue
+  previous=""
   if git cat-file -e "${base}:${file}" 2> /dev/null; then
-    mapfile -t earlier < <(git show "${base}:${file}" | pins)
-  else
-    earlier=()
+    previous="$(git show "${base}:${file}")"
+    previous="$(pins <<< "${previous}")"
   fi
+  earlier=()
+  [[ -z "${previous}" ]] || mapfile -t earlier <<< "${previous}"
 
   for pin in "${pinned[@]}"; do
     read -r line repository variable tag digest <<< "${pin}"
@@ -100,8 +106,10 @@ for file in .github/workflows/*.yml .github/actions/*/action.yml; do
       echo "::notice file=${file},line=${line}::GitHub did not list ${repository}'s releases ${base_tag} and ${tag}, so ${label} keeps its SHA-256."
       continue
     fi
-    mapfile -t names < <(jq -r --arg digest "sha256:${base_digest}" \
-      '.assets[] | select(.digest == $digest) | .name' <<< "${old_release}" | tr -d '\r')
+    found="$(jq -r --arg digest "sha256:${base_digest}" \
+      '.assets[] | select(.digest == $digest) | .name' <<< "${old_release}")"
+    names=()
+    [[ -z "${found}" ]] || mapfile -t names <<< "${found//$'\r'/}"
     if ((${#names[@]} != 1)); then
       echo "::notice file=${file},line=${line}::${repository} ${base_tag} lists ${#names[@]} assets with the digest of ${label}, so it keeps its SHA-256."
       continue
@@ -109,8 +117,10 @@ for file in .github/workflows/*.yml .github/actions/*/action.yml; do
     name="${names[0]}"
     name="${name//"${base_tag}"/"${tag}"}"
     name="${name//"${base_tag#v}"/"${tag#v}"}"
-    mapfile -t digests < <(jq -r --arg name "${name}" \
-      '.assets[] | select(.name == $name) | .digest // ""' <<< "${new_release}" | tr -d '\r')
+    found="$(jq -r --arg name "${name}" \
+      '.assets[] | select(.name == $name) | .digest // ""' <<< "${new_release}")"
+    digests=()
+    [[ -z "${found}" ]] || mapfile -t digests <<< "${found//$'\r'/}"
     if ((${#digests[@]} != 1)) || [[ ! "${digests[0]}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
       echo "::notice file=${file},line=${line}::${repository} ${tag} has no single ${name} with a digest, so ${label} keeps its SHA-256."
       continue
@@ -125,7 +135,8 @@ for file in .github/workflows/*.yml .github/actions/*/action.yml; do
 done
 
 if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
-  mapfile -t unique < <(printf '%s\n' "${changed[@]}" | sort -u)
-  echo "files=${unique[*]}" >> "${GITHUB_OUTPUT}"
+  unique="$(printf '%s\n' "${changed[@]}")"
+  unique="$(sort -u <<< "${unique}")"
+  echo "files=${unique//$'\n'/ }" >> "${GITHUB_OUTPUT}"
 fi
 exit "${failed}"
