@@ -11,6 +11,9 @@ name: Pins
 # when that names the version already on the branch, so whoever pushes can only have a pin made
 # whole. Its own commit, if it runs again for it, finds nothing left to change.
 # A NuGet package's SHA-256 is finished the same way, in each .github script that pins one.
+# A release tool's SHA-256 in .github/tools.env is the digest GitHub lists for the asset main's pin
+# names, in the new release. The pins live outside .github/workflows so this job's token may
+# commit them, and main's copy of the script runs, never the branch's.
 on:
   push:
     branches:
@@ -18,6 +21,7 @@ on:
     paths:
       - pins/**
       - .github/*.sh
+      - .github/tools.env
 
 permissions: {}
 
@@ -109,15 +113,31 @@ jobs:
           echo "files=${changed[*]}" >> "${GITHUB_OUTPUT}"
           exit "${failed}"
 
+      # Renovate hashes a checksum file that holds only a bare hash instead of the archive. The
+      # script comes from main, so the branch can change what it reads but never what runs.
+      - name: Read the digest of each raised release attachment
+        id: attachments
+        if: '!cancelled()'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin main
+          if ! git show origin/main:.github/attachment-digests.sh > "${RUNNER_TEMP}/attachment-digests.sh"; then
+            echo "::notice::main has no .github/attachment-digests.sh yet, so the release tools keep the digests Renovate wrote."
+            exit 0
+          fi
+          bash "${RUNNER_TEMP}/attachment-digests.sh" origin/main
+
       # Committed through the API rather than pushed, as release-prepare.yml does: GitHub signs
       # what it commits itself. The commit is made only on the head this run checked, so a newer
       # push from Renovate is never overwritten; that push runs this again.
       - name: Commit the finished pins
-        if: ${{ !cancelled() && (steps.fetch.outputs.files != '' || steps.nuget.outputs.files != '') }}
+        if: ${{ !cancelled() && (steps.fetch.outputs.files != '' || steps.nuget.outputs.files != '' || steps.attachments.outputs.files != '') }}
         env:
           GH_TOKEN: ${{ github.token }}
           BRANCH: ${{ github.ref_name }}
-          FILES: ${{ steps.fetch.outputs.files }} ${{ steps.nuget.outputs.files }}
+          FILES: ${{ steps.fetch.outputs.files }} ${{ steps.nuget.outputs.files }} ${{ steps.attachments.outputs.files }}
         run: |
           set -euo pipefail
           additions='[]'
