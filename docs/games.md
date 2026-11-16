@@ -366,11 +366,12 @@ A field or block of another name is refused, and the error names it. An image is
 Description tab's custom images name it, the same in every language. For an image that differs
 by language, make it a
 [localised image group](https://partner.steamgames.com/doc/store/page/assets) in that tab. Each
-player then sees the image for their language under that name. An image may hold
-`"clip": true` or `false` to tell a game's own tools whether it moves. Nothing steamship writes
-for Steam carries it. Items in a row make one
+player then sees the image for their language under that name. Items in a row make one
 list. A `field` is any other text Steam shows in the player's language, such as a system
 requirement, by its name on the form.
+
+An image may also hold `"clip": true` or `false`, for a game's own scripts to tell a clip from a
+still. steamship checks it is one of the two and writes nothing of it for Steam.
 
 Until the `itemid` is set no store upload is written, since one naming no item cannot go up.
 
