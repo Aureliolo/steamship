@@ -31,19 +31,17 @@ jobs:
         with:
           persist-credentials: false
 
-      # The release archive, refused unless it matches the digest written here. shellcheck comes
-      # with the runner image, so the shell inside run: blocks is checked too.
+      # The release archive, refused unless it matches the digest in .github/tools.env. shellcheck
+      # comes with the runner image, so the shell inside run: blocks is checked too.
       - name: Run actionlint
         env:
-          # renovate: datasource=github-release-attachments depName=rhysd/actionlint versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          ACTIONLINT_TAG: v1.7.12
-          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          archive="actionlint_${ACTIONLINT_TAG#v}_linux_amd64.tar.gz"
-          bash .github/tool-download.sh rhysd/actionlint "${ACTIONLINT_TAG}" "${archive}" \
-            "${ACTIONLINT_SHA256}" "${RUNNER_TEMP}"
+          tag="$(bash .github/pin.sh ACTIONLINT_TAG)"
+          archive="actionlint_${tag#v}_linux_amd64.tar.gz"
+          bash .github/tool-download.sh rhysd/actionlint "${tag}" "${archive}" \
+            "$(bash .github/pin.sh ACTIONLINT_SHA256)" "${RUNNER_TEMP}"
           tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}" actionlint
           "${RUNNER_TEMP}/actionlint" -color
 

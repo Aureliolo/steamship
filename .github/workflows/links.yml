@@ -35,15 +35,12 @@ jobs:
 
       - name: Install lychee
         env:
-          # renovate: datasource=github-release-attachments depName=lycheeverse/lychee versioning=regex:^lychee-v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          LYCHEE_TAG: lychee-v0.24.2
-          LYCHEE_SHA256: 73657a111819a30c47c08352896796f23d64e4eb2b3ed39b6d32149241566fc5
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           archive="lychee-x86_64-unknown-linux-musl.tar.gz"
-          bash .github/tool-download.sh lycheeverse/lychee "${LYCHEE_TAG}" "${archive}" \
-            "${LYCHEE_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh lycheeverse/lychee "$(bash .github/pin.sh LYCHEE_TAG)" \
+            "${archive}" "$(bash .github/pin.sh LYCHEE_SHA256)" "${RUNNER_TEMP}"
           tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}/lychee-x86_64-unknown-linux-musl" >> "${GITHUB_PATH}"
 

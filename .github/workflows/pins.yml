@@ -11,8 +11,9 @@ name: Pins
 # when that names the version already on the branch, so whoever pushes can only have a pin made
 # whole. Its own commit, if it runs again for it, finds nothing left to change.
 # A NuGet package's SHA-256 is finished the same way, in each .github script that pins one.
-# A release-attachment pin's SHA-256 is the digest GitHub lists for the asset the base's pin
-# names, in the new release. main's copy of the script runs, never the branch's.
+# A release tool's SHA-256 in .github/tools.env is the digest GitHub lists for the asset main's pin
+# names, in the new release. The pins live outside .github/workflows so this job's token may
+# commit them, and main's copy of the script runs, never the branch's.
 on:
   push:
     branches:
@@ -20,8 +21,7 @@ on:
     paths:
       - pins/**
       - .github/*.sh
-      - .github/workflows/*.yml
-      - .github/actions/*/action.yml
+      - .github/tools.env
 
 permissions: {}
 
@@ -124,7 +124,7 @@ jobs:
           set -euo pipefail
           git fetch --no-tags --depth=1 origin main
           if ! git show origin/main:.github/attachment-digests.sh > "${RUNNER_TEMP}/attachment-digests.sh"; then
-            echo "::notice::main has no .github/attachment-digests.sh yet, so the attachment pins keep the digests Renovate wrote."
+            echo "::notice::main has no .github/attachment-digests.sh yet, so the release tools keep the digests Renovate wrote."
             exit 0
           fi
           bash "${RUNNER_TEMP}/attachment-digests.sh" origin/main
