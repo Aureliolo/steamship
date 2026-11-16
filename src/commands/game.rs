@@ -58,14 +58,18 @@ pub(crate) fn script_named(game: &Project) -> String {
 }
 
 /// The folder `--content-root` names, made absolute from the current folder, or none when it was
-/// not given. Refused unless it is a folder.
-pub(crate) fn content_root_given(given: Option<&Path>) -> Result<Option<PathBuf>, ExitCode> {
+/// not given. Refused when it is a file, and when it is missing unless a build is to make it
+/// (`built_later`).
+pub(crate) fn content_root_given(
+    given: Option<&Path>,
+    built_later: bool,
+) -> Result<Option<PathBuf>, ExitCode> {
     let Some(given) = given else {
         return Ok(None);
     };
     let absolute = path::absolute(given)
         .map_err(|error| fail(&format!("{}: {error}", given.display()), FAILED))?;
-    if absolute.is_dir() {
+    if absolute.is_dir() || (built_later && !absolute.exists()) {
         return Ok(Some(absolute));
     }
     let why = if absolute.exists() {

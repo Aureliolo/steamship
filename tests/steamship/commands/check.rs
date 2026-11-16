@@ -1149,6 +1149,20 @@ fn a_game_check_with_a_content_root_checks_the_content_in_it() {
 }
 
 #[test]
+fn a_game_check_with_a_content_root_that_is_missing_is_refused_even_when_a_build_is_named() {
+    let (_temp, root) = pushed_game(Some("build = [\"git\", \"--version\"]\n"));
+    let (code, stdout, stderr) = in_game(&root, &["check", "--content-root", "missing"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        format!(
+            "--content-root {} does not exist. Name the folder the build writes to",
+            root.join("missing").display()
+        )
+    );
+}
+
+#[test]
 fn a_game_check_with_a_content_root_judges_exports_by_where_it_points() {
     let (_temp, root) = pushed_game(None);
     fs::write(

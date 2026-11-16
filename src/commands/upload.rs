@@ -100,10 +100,11 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     if shipping.json {
         show::divert();
     }
-    // Before the commit and the build, so that a folder that is not there costs neither.
-    let content_root = content_root_given(shipping.content_root)?;
-    let content_root = content_root.as_deref();
     let game = game_as(shipping.demo)?;
+    // Before the commit and the build, so that a folder that is not there, and that no build is to
+    // make, costs neither.
+    let content_root = content_root_given(shipping.content_root, !game.build.is_empty())?;
+    let content_root = content_root.as_deref();
     shipped_from(&game)?;
     // Before the build, which takes minutes, so that a commit no round has passed costs none.
     let shipped = match &game.green {

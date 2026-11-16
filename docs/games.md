@@ -154,9 +154,9 @@ steamship check --demo --content-root ../builds/inn-demo
 ```
 
 A relative folder is read from where steamship runs, and a depot's own relative `ContentRoot` from
-the folder given. The folder has to exist before the build starts. The build must write the files
-the depots map into it. `check` alone does not check the files. With the flag it checks those in
-the folder.
+the folder given. The build may make the folder, and without a build it has to exist. The build
+must write the files the depots map into it. `check` alone does not check the files. With the flag
+it checks those in the folder.
 
 The flag is refused with an app, a script or `--scripts-only`.
 

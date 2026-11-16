@@ -3749,31 +3749,131 @@ fn a_relative_content_root_is_read_from_the_current_folder() {
     );
 }
 
+/// A build, as `steamship.toml` names it, that makes `folder` and writes the game's project file
+/// into it.
+fn building_into(folder: &Path) -> String {
+    format!(
+        "[\"git\", \"checkout-index\", \"--force\", \"--prefix={}/\", \"--\", \"project.godot\"]\n",
+        folder.to_str().unwrap().replace('\\', "/")
+    )
+}
+
+/// The folder the builds of [`building_into`] make, beside the game at `root`.
+fn made_by_the_build(root: &Path) -> PathBuf {
+    root.parent().unwrap().join("made")
+}
+
+/// The folder `given`, from the current folder, as the message of a refusal spells it.
+fn spelt(root: &Path, given: &str) -> String {
+    root.join(given).display().to_string()
+}
+
 #[test]
-fn a_content_root_that_is_missing_or_not_a_folder_is_refused_before_the_build() {
+fn a_content_root_that_is_not_a_folder_is_refused_before_the_build() {
     let (_temp, root) = pushed_game(Some(BUILDING));
-    for (given, why) in [
-        ("missing", "does not exist"),
-        ("project.godot", "is not a folder"),
-    ] {
-        let (code, stdout, stderr) = in_game(&root, &["upload", "--content-root", given]);
-        assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
-        let said = failure(&stderr);
-        assert!(
-            said.starts_with("--content-root ")
-                && said.contains(given)
-                && said.contains(&format!(" {why}. Name the folder the build writes to")),
-            "{said}"
-        );
-        assert!(
-            !stdout.contains("build"),
-            "refused before the build: {stdout}"
-        );
-    }
+    let (code, stdout, stderr) = in_game(&root, &["upload", "--content-root", "project.godot"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        format!(
+            "--content-root {} is not a folder. Name the folder the build writes to",
+            spelt(&root, "project.godot")
+        )
+    );
+    assert!(
+        !stdout.contains("build"),
+        "refused before the build: {stdout}"
+    );
     assert_eq!(
         fs::read_to_string(root.join("export").join("game.txt")).unwrap(),
         "[game]\n\tbuilt = before\n"
     );
+}
+
+#[test]
+fn a_content_root_that_is_missing_is_refused_before_anything_runs_when_no_build_is_named() {
+    let (_temp, root) = pushed_game(Some(""));
+    let (code, stdout, stderr) = in_game(&root, &["upload", "--content-root", "missing"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        format!(
+            "--content-root {} does not exist. Name the folder the build writes to",
+            spelt(&root, "missing")
+        )
+    );
+    assert!(!stdout.contains("commit"), "refused first: {stdout}");
+}
+
+#[test]
+fn a_build_that_makes_the_content_root_uploads_it_from_a_fresh_checkout() {
+    let (_temp, root, home) = settled_inn("");
+    let made = made_by_the_build(&root);
+    fs::write(
+        root.join("steamship.toml"),
+        format!("build = {}", building_into(&made)),
+    )
+    .unwrap();
+    pushed(&root, "A build that makes the folder it writes to");
+    assert!(!made.exists());
+    let (code, stdout, stderr, _asked) = uploaded_inn_with(
+        &root,
+        home.path(),
+        &["--content-root", made.to_str().unwrap()],
+    );
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  build     \u{2713} built in "),
+        "{stdout}"
+    );
+    assert_eq!(
+        copy_content_root(home.path(), 1_000_050),
+        fs::canonicalize(&made).unwrap()
+    );
+}
+
+#[test]
+fn a_demo_build_that_makes_the_content_root_uploads_it_from_a_fresh_checkout() {
+    let (_temp, root, home) = settled_demo();
+    let made = made_by_the_build(&root);
+    fs::write(
+        root.join("steamship.toml"),
+        format!("[demo]\nbuild = {}", building_into(&made)),
+    )
+    .unwrap();
+    pushed(&root, "A demo build that makes the folder it writes to");
+    assert!(!made.exists());
+    let (code, stdout, stderr) = demo_previewed_from(&root, home.path(), &made);
+    assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains("  build     \u{2713} built in "),
+        "{stdout}"
+    );
+    assert_eq!(
+        copy_content_root(home.path(), 1_000_070),
+        fs::canonicalize(&made).unwrap()
+    );
+}
+
+#[test]
+fn a_build_that_never_makes_the_content_root_is_refused_before_steamcmd() {
+    let (_temp, root, home) = settled_inn("build = [\"git\", \"--version\"]\n");
+    let missing = root.parent().unwrap().join("never");
+    let (code, stdout, stderr, _asked) = uploaded_inn_with(
+        &root,
+        home.path(),
+        &["--content-root", missing.to_str().unwrap()],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        format!(
+            "--content-root {} does not exist after git --version. Name the folder it writes to",
+            missing.display()
+        )
+    );
+    assert!(!home.path().join("builds").exists(), "steamcmd ran");
+    assert!(!home.path().join("apps").exists(), "steamcmd ran");
 }
 
 #[test]
