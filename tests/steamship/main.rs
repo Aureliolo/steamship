@@ -1074,6 +1074,15 @@ fn pushed(root: &Path, message: &str) {
     );
 }
 
+/// `given`, relative to the game at `root`, as a message of [`in_game`]'s run spells it. The run's
+/// current folder is the one the system reports, which on macOS reads a temporary folder's
+/// `/var` as `/private/var`.
+fn spelt(root: &Path, given: &str) -> String {
+    #[cfg(unix)]
+    let root = fs::canonicalize(root).unwrap();
+    root.join(given).display().to_string()
+}
+
 /// `steamship` with `args` in the game at `root`, with its own home.
 fn in_game(root: &Path, args: &[&str]) -> (Option<i32>, String, String) {
     in_game_with(root, args, &[])

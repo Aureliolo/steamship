@@ -100,10 +100,11 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     if shipping.json {
         show::divert();
     }
-    // Before the commit and the build, so that a folder that is not there costs neither.
-    let content_root = content_root_given(shipping.content_root)?;
-    let content_root = content_root.as_deref();
     let game = game_as(shipping.demo)?;
+    // Before the commit and the build, so that a folder that is not there, and that no build is to
+    // make, costs neither.
+    let content_root = content_root_given(shipping.content_root, !game.build.is_empty())?;
+    let content_root = content_root.as_deref();
     shipped_from(&game)?;
     // Before the build, which takes minutes, so that a commit no round has passed costs none.
     let shipped = match &game.green {
@@ -125,7 +126,13 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     apart(&game)?;
     exports_apart(&game, &script)?;
     snapshot_sound(&game, &script, true)?;
+    let made_by_build = content_root.is_some_and(|root| !root.exists());
     built(&game, content_root)?;
+    if made_by_build {
+        // Before the build a missing folder could only be compared by its spelling. A link or a
+        // different case in what it made puts an export where that comparison did not look.
+        exports_apart(&game, &script)?;
+    }
     let app = script_named(&game);
     let snapshot = game.snapshot();
     let steps = [

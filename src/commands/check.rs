@@ -315,7 +315,7 @@ fn unchecked(command: &str, why: &str) {
 /// `check` in a game: its scripts, then its records and rich presence against Steam's, and its
 /// branches. Given a `--content-root`, the content in that folder is checked too.
 fn try_game_check(demo: bool, content_root: Option<&Path>) -> Result<ExitCode, ExitCode> {
-    let content_root = content_root_given(content_root)?;
+    let content_root = content_root_given(content_root, false)?;
     let game = game_as(demo)?;
     let checked = run_check(
         &game.script,
@@ -344,7 +344,7 @@ fn try_game_check(demo: bool, content_root: Option<&Path>) -> Result<ExitCode, E
 
 /// Runs the game's `build` command in its folder, its output shown as it comes, and refuses when
 /// it fails or leaves the tree changed. The files the depots upload must be written by it, in
-/// `content_root` when given, else where the script puts them.
+/// `content_root` when given, which it must have made by then, else where the script puts them.
 pub(crate) fn built(game: &Project, content_root: Option<&Path>) -> Result<(), ExitCode> {
     let Some((program, args)) = game.build.split_first() else {
         show::field(
@@ -396,6 +396,20 @@ pub(crate) fn built(game: &Project, content_root: Option<&Path>) -> Result<(), E
         }
     }
     project::unchanged(&game.root).map_err(|why| fail(&why, REFUSED))?;
+    if let Some(root) = content_root.filter(|root| !root.is_dir()) {
+        return Err(fail(
+            &format!(
+                "--content-root {} {} after {named}. Name the folder the build writes to",
+                root.display(),
+                if root.exists() {
+                    "is not a folder"
+                } else {
+                    "does not exist"
+                }
+            ),
+            REFUSED,
+        ));
+    }
     let unwritten = project::unwritten(&game.script, content_root, since);
     if !unwritten.is_empty() {
         return Err(fail(

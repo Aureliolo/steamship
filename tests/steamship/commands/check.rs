@@ -15,8 +15,8 @@ use steamship::webapi::STAND_IN;
 use crate::write_program;
 use crate::{
     BETAS, BUILDS, DEMO_TYPED, INN_BOARDS, KEY, NEEDS_VC, failure, in_game, in_game_with,
-    presence_file, pushed, pushed_game, refusing_web_api, shipping_dll, steamship, steamship_in,
-    web_api, web_api_variables, with_demo,
+    presence_file, pushed, pushed_game, refusing_web_api, shipping_dll, spelt, steamship,
+    steamship_in, web_api, web_api_variables, with_demo,
 };
 
 /// An app script for Spacewar's content that sets `branch` live, in a folder of its own.
@@ -1146,6 +1146,20 @@ fn a_game_check_with_a_content_root_checks_the_content_in_it() {
             "{args:?}: {stdout}"
         );
     }
+}
+
+#[test]
+fn a_game_check_with_a_content_root_that_is_missing_is_refused_even_when_a_build_is_named() {
+    let (_temp, root) = pushed_game(Some("build = [\"git\", \"--version\"]\n"));
+    let (code, stdout, stderr) = in_game(&root, &["check", "--content-root", "missing"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        format!(
+            "--content-root {} does not exist. Name the folder the build writes to",
+            spelt(&root, "missing")
+        )
+    );
 }
 
 #[test]
