@@ -126,7 +126,13 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     apart(&game)?;
     exports_apart(&game, &script)?;
     snapshot_sound(&game, &script, true)?;
+    let made_by_build = content_root.is_some_and(|root| !root.exists());
     built(&game, content_root)?;
+    if made_by_build {
+        // Before the build a missing folder could only be compared by its spelling. A link or a
+        // different case in what it made puts an export where that comparison did not look.
+        exports_apart(&game, &script)?;
+    }
     let app = script_named(&game);
     let snapshot = game.snapshot();
     let steps = [

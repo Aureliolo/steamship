@@ -3855,6 +3855,129 @@ fn a_demo_build_that_makes_the_content_root_uploads_it_from_a_fresh_checkout() {
     );
 }
 
+/// Commits a preset that makes the demo's build of the game into `export`.
+fn demo_export_preset(root: &Path, export: &Path) {
+    fs::write(
+        root.join("export_presets.cfg"),
+        format!(
+            "[preset.0]\n\nname=\"Windows Desktop Demo\"\nplatform=\"Windows Desktop\"\n\
+             custom_features=\"demo\"\nexport_path=\"{}\"\n\n[preset.0.options]\n",
+            export.to_str().unwrap().replace('\\', "/")
+        ),
+    )
+    .unwrap();
+    pushed(root, "A preset making the demo");
+}
+
+/// Asserts that an upload was refused for the full game's depot shipping the demo's export,
+/// before steamcmd uploaded anything.
+fn assert_demo_export_refused(home: &Path, code: Option<i32>, stdout: &str, stderr: &str) {
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        stderr.contains(
+            "and the export preset \"Windows Desktop Demo\" in export_presets.cfg makes it with \
+             the \"demo\" feature"
+        ),
+        "{stdout}{stderr}"
+    );
+    assert!(!home.join("builds").exists(), "steamcmd ran");
+}
+
+#[test]
+fn a_content_root_the_build_makes_as_a_link_to_the_demos_export_is_refused_before_steamcmd() {
+    let (_temp, root, home) = settled_inn("");
+    let made = made_by_the_build(&root);
+    let export = root.join("export");
+    demo_export_preset(&root, &export.join("demo").join("inn.exe"));
+    let made_text = made.to_str().unwrap();
+    let export_text = export.to_str().unwrap();
+    let written = format!("{export_text}/game.txt");
+    let (program, flag, steps) = if cfg!(windows) {
+        (
+            "cmd",
+            "/c",
+            format!(
+                "mklink /J {made_text} {export_text} && git config --file {written} game.built now"
+            ),
+        )
+    } else {
+        (
+            "sh",
+            "-c",
+            format!(
+                "ln -s '{export_text}' '{made_text}' && git config --file '{written}' \
+                 game.built now"
+            ),
+        )
+    };
+    fs::write(
+        root.join("steamship.toml"),
+        format!("build = [{program:?}, {flag:?}, {steps:?}]\n"),
+    )
+    .unwrap();
+    pushed(&root, "A build that links the content root to the export");
+    let (code, stdout, stderr, _asked) = uploaded_inn_with(
+        &root,
+        home.path(),
+        &["--content-root", made.to_str().unwrap()],
+    );
+    assert_demo_export_refused(home.path(), code, &stdout, &stderr);
+}
+
+#[test]
+fn a_content_root_the_build_makes_in_another_case_than_given_is_refused_before_steamcmd() {
+    let (temp, root, home) = settled_inn("");
+    fs::create_dir_all(temp.path().join("probe")).unwrap();
+    if !temp.path().join("PROBE").exists() {
+        return;
+    }
+    let made = made_by_the_build(&root);
+    demo_export_preset(&root, &made.join("demo").join("inn.exe"));
+    fs::write(
+        root.join("steamship.toml"),
+        format!("build = {}", building_into(&made)),
+    )
+    .unwrap();
+    pushed(&root, "A build that makes the folder it writes to");
+    let given = root.parent().unwrap().join("MADE");
+    let (code, stdout, stderr, _asked) = uploaded_inn_with(
+        &root,
+        home.path(),
+        &["--content-root", given.to_str().unwrap()],
+    );
+    assert_demo_export_refused(home.path(), code, &stdout, &stderr);
+}
+
+#[test]
+fn a_build_that_makes_the_content_root_as_a_file_is_refused_as_not_a_folder() {
+    let (_temp, root, home) = settled_inn("");
+    let made = made_by_the_build(&root);
+    let made_text = made.to_str().unwrap().replace('\\', "/");
+    fs::write(
+        root.join("steamship.toml"),
+        format!(
+            "build = [\"git\", \"config\", \"--file\", {made_text:?}, \"game.built\", \"now\"]\n"
+        ),
+    )
+    .unwrap();
+    pushed(&root, "A build that writes a file where the folder belongs");
+    let (code, stdout, stderr, _asked) = uploaded_inn_with(
+        &root,
+        home.path(),
+        &["--content-root", made.to_str().unwrap()],
+    );
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert_eq!(
+        failure(&stderr),
+        format!(
+            "--content-root {} is not a folder after git config --file {made_text} game.built \
+             now. Name the folder it writes to",
+            made.display()
+        )
+    );
+    assert!(!home.path().join("builds").exists(), "steamcmd ran");
+}
+
 #[test]
 fn a_build_that_never_makes_the_content_root_is_refused_before_steamcmd() {
     let (_temp, root, home) = settled_inn("build = [\"git\", \"--version\"]\n");
