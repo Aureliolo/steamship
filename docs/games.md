@@ -370,6 +370,9 @@ player then sees the image for their language under that name. Items in a row ma
 list. A `field` is any other text Steam shows in the player's language, such as a system
 requirement, by its name on the form.
 
+An image may also hold `"clip": true` or `false`, for a game's own scripts to tell a clip from a
+still. steamship checks it is one of the two and writes nothing of it for Steam.
+
 Until the `itemid` is set no store upload is written, since one naming no item cannot go up.
 
 ### Image alt text

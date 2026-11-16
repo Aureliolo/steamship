@@ -11,6 +11,7 @@ use serde_json::{Map, Value as Json};
 
 use crate::achievements::{self, Catalogued, Listed};
 use crate::presence;
+use crate::show;
 use crate::vdf::{self, Block, Pair, Value};
 
 /// The store page in English: its item ID, its text and the statement of how AI was used.
@@ -229,12 +230,19 @@ fn block(given: &Json, number: usize) -> Result<Part, String> {
                 Some(Json::String(alt)) => Some(alt.clone()),
                 Some(_) => return Err(format!("block {number}'s \"alt\" is not a text")),
             };
+            // "clip" tells a game's own tools that the image moves. Steam learns that from the
+            // file uploaded, so nothing steamship writes carries it.
+            if given.get("clip").is_some_and(|clip| !clip.is_boolean()) {
+                return Err(format!(
+                    "block {number}'s \"clip\" is neither true nor false"
+                ));
+            }
             (
                 Part::Image {
                     name: field("image")?,
                     alt,
                 },
-                &["image", "alt"],
+                &["image", "alt", "clip"],
             )
         }
         Some("field") => (
@@ -260,7 +268,7 @@ fn block(given: &Json, number: usize) -> Result<Part, String> {
         return Err(format!(
             "block {number} holds \"{other}\", which a block of kind {} does not take: it takes {}",
             given.get("kind").and_then(Json::as_str).unwrap_or_default(),
-            takes.join(" and ")
+            show::listed(takes, " and ")
         ));
     }
     Ok(part)
@@ -1357,6 +1365,35 @@ msgstr "Die Erlenhexe"
     }
 
     #[test]
+    fn an_about_image_marked_as_a_clip_or_not_writes_what_an_unmarked_one_does() {
+        let marked = |clip: &str| {
+            STORE_PAGE.replace(
+                r#""image": "about_score""#,
+                &format!(r#""image": "about_score", "clip": {clip}"#),
+            )
+        };
+        assert_ne!(marked("true"), STORE_PAGE, "the page marks its image");
+        let unmarked = written(
+            &English {
+                store: Some(store(STORE_PAGE).unwrap()),
+                ..English::default()
+            },
+            &[german(GERMAN)],
+        );
+        for clip in ["true", "false"] {
+            let english = English {
+                store: Some(store(&marked(clip)).unwrap()),
+                ..English::default()
+            };
+            assert_eq!(
+                written(&english, &[german(GERMAN)]),
+                unmarked,
+                "clip {clip}"
+            );
+        }
+    }
+
+    #[test]
     fn screenshots_alt_text_is_written_to_a_sheet_of_its_own_in_every_language() {
         let page = STORE_PAGE.replacen(
             '{',
@@ -1526,7 +1563,7 @@ msgstr "Die Erlenhexe"
             (
                 "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\", \"width\": 1}]}",
                 "block 1 holds \"width\", which a block of kind image does not take: it takes \
-                 image and alt",
+                 image, alt and clip",
             ),
             (
                 "{\"screenshots\": \"A.\"}",
@@ -1553,6 +1590,32 @@ msgstr "Die Erlenhexe"
             .is_ok(),
             "an image shown twice, its alt text given once"
         );
+    }
+
+    #[test]
+    fn only_an_image_block_takes_a_clip_and_only_as_true_or_false() {
+        for (page, why) in [
+            (
+                "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\", \"clip\": \"yes\"}]}",
+                "block 1's \"clip\" is neither true nor false",
+            ),
+            (
+                "{\"blocks\": [{\"kind\": \"image\", \"image\": \"a\", \"clip\": null}]}",
+                "block 1's \"clip\" is neither true nor false",
+            ),
+            (
+                "{\"blocks\": [{\"kind\": \"short\", \"text\": \"A.\", \"clip\": true}]}",
+                "block 1 holds \"clip\", which a block of kind short does not take: it takes text",
+            ),
+            (
+                "{\"blocks\": [{\"kind\": \"field\", \"field\": \"a\", \"text\": \"A.\", \
+                 \"clip\": true}]}",
+                "block 1 holds \"clip\", which a block of kind field does not take: it takes \
+                 field and text",
+            ),
+        ] {
+            assert_eq!(store(page), Err(why.to_owned()), "{page}");
+        }
     }
 
     #[test]
