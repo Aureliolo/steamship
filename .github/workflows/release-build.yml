@@ -138,35 +138,26 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends musl-tools
 
-      # The project's own build for the runner, refused unless it matches the digest written here,
-      # in seconds where building it from source took up to half a minute on each system.
+      # The project's own build for the runner, refused unless it matches the digest in
+      # .github/tools.env, in seconds where building it from source took up to half a minute on
+      # each system.
       - name: Install cargo-auditable
         env:
-          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          LINUX_X64_TAG: v0.7.7
-          LINUX_X64_SHA256: 7676443367c5e33d9fb22acef63cccb5e9202de12dae1b0579995eb3e2bc7a18
-          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          WINDOWS_X64_TAG: v0.7.7
-          WINDOWS_X64_SHA256: 717ba2d3ed7997c501e9987ee7c94bebf9d7219b18b185a03009420ec7029c7d
-          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          WINDOWS_ARM64_TAG: v0.7.7
-          WINDOWS_ARM64_SHA256: ad827b9c8e94de85930ba32a52d5ab5873e7b54148b4e415279b8d5f3f9eb917
-          # renovate: datasource=github-release-attachments depName=rust-secure-code/cargo-auditable versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          MACOS_ARM64_TAG: v0.7.7
-          MACOS_ARM64_SHA256: a66ad6392861ca1abfe0b02b522622d91edf63e5d7b60f4d3088b5c23d240c72
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           case "${RUNNER_OS}-${RUNNER_ARCH}" in
-            Linux-X64) host=x86_64-unknown-linux-musl tag="${LINUX_X64_TAG}" digest="${LINUX_X64_SHA256}" ;;
-            Windows-X64) host=x86_64-pc-windows-msvc tag="${WINDOWS_X64_TAG}" digest="${WINDOWS_X64_SHA256}" ;;
-            Windows-ARM64) host=aarch64-pc-windows-msvc tag="${WINDOWS_ARM64_TAG}" digest="${WINDOWS_ARM64_SHA256}" ;;
-            macOS-ARM64) host=aarch64-apple-darwin tag="${MACOS_ARM64_TAG}" digest="${MACOS_ARM64_SHA256}" ;;
+            Linux-X64) host=x86_64-unknown-linux-musl pin=CARGO_AUDITABLE_LINUX_X64 ;;
+            Windows-X64) host=x86_64-pc-windows-msvc pin=CARGO_AUDITABLE_WINDOWS_X64 ;;
+            Windows-ARM64) host=aarch64-pc-windows-msvc pin=CARGO_AUDITABLE_WINDOWS_ARM64 ;;
+            macOS-ARM64) host=aarch64-apple-darwin pin=CARGO_AUDITABLE_MACOS_ARM64 ;;
             *)
               echo "No cargo-auditable build is pinned for ${RUNNER_OS} on ${RUNNER_ARCH}." >&2
               exit 1
               ;;
           esac
+          tag="$(bash .github/pin.sh "${pin}_TAG")"
+          digest="$(bash .github/pin.sh "${pin}_SHA256")"
           archive="cargo-auditable-${host}.tar.xz"
           if [[ "${RUNNER_OS}" == Windows ]]; then
             archive="cargo-auditable-${host}.zip"
@@ -339,18 +330,16 @@ jobs:
 
       - name: Generate the SBOM
         env:
-          # renovate: datasource=github-release-attachments depName=anchore/syft versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          SYFT_TAG: v1.57.1
-          SYFT_SHA256: bf52519eb57f675d47c07d43213cb6dff6449f3d6d1147ff6701ed91f44eef0c
           GH_TOKEN: ${{ github.token }}
           SYFT_CHECK_FOR_APP_UPDATE: 'false'
           SYFT_SOURCE_NAME: steamship
           SYFT_SOURCE_VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
-          archive="syft_${SYFT_TAG#v}_linux_amd64.tar.gz"
-          bash .github/tool-download.sh anchore/syft "${SYFT_TAG}" "${archive}" "${SYFT_SHA256}" \
-            "${RUNNER_TEMP}"
+          tag="$(bash .github/pin.sh SYFT_TAG)"
+          archive="syft_${tag#v}_linux_amd64.tar.gz"
+          bash .github/tool-download.sh anchore/syft "${tag}" "${archive}" \
+            "$(bash .github/pin.sh SYFT_SHA256)" "${RUNNER_TEMP}"
           tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}" syft
           "${RUNNER_TEMP}/syft" scan dir:sbom-input -c .github/syft.yaml \
             -o "spdx-json=dist/steamship-${SYFT_SOURCE_VERSION}.spdx.json"

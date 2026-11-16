@@ -7,8 +7,10 @@
     "The dependency dashboard is on: it is the only place that shows what Renovate tried and could not land, which the weekly pull request never mentions.",
     "The commit pins.yml adds to finish a raise is not taken as someone else's edit, so Renovate still rebases and updates its branch."
   ],
-  "dependencyDashboard": true,
-  "dependencyDashboardLabels": ["renovate"],
+  "dependencyDashboard": {
+    "enabled": true,
+    "labels": ["renovate"]
+  },
   "separateMajorMinor": false,
   "gitIgnoredAuthors": ["41898282+github-actions[bot]@users.noreply.github.com"],
   "commitMessageAction": "Raise",
@@ -116,11 +118,11 @@
       "versioningTemplate": "regex:^(?<major>\\d+)$"
     },
     {
-      "description": "A release tag with the SHA-256 of the asset downloaded on the next line, in a workflow or an action of this repository: actionlint, cargo-deny, nFPM and the like. The tag and the digest move together.",
+      "description": "A release tag with the SHA-256 of the asset downloaded, in .github/tools.env: actionlint, cargo-deny, nFPM and the like. The tag and the digest move together. The file is outside .github/workflows so that .github/workflows/pins.yml may commit the corrected digest with its job token.",
       "customType": "regex",
-      "managerFilePatterns": ["/^\\.github/workflows/.+\\.ya?ml$/", "/^\\.github/actions/.+/action\\.ya?ml$/"],
+      "managerFilePatterns": ["/^\\.github/tools\\.env$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>\\S+) versioning=(?<versioning>\\S+)\\n\\s*[A-Z0-9_]+_TAG: (?<currentValue>\\S+)\\n\\s*[A-Z0-9_]+_SHA256: (?<currentDigest>[0-9a-f]{64})"
+        "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>\\S+) versioning=(?<versioning>\\S+)\\n[A-Z0-9_]+_TAG=(?<currentValue>\\S+)\\n[A-Z0-9_]+_SHA256=(?<currentDigest>[0-9a-f]{64})"
       ]
     },
     {

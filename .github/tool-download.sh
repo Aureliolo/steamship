@@ -15,6 +15,12 @@ tag="$2"
 file="$3"
 sha256="$4"
 folder="$5"
+# A step that reads its pin inside the arguments cannot stop on a failed read, so an empty or
+# malformed value is refused here.
+if [[ -z "${tag}" || ! "${sha256}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "::error::${repository} needs a tag and a 64-digit SHA-256, got '${tag}' and '${sha256}'." >&2
+  exit 2
+fi
 
 downloaded=false
 for wait in 1 2 4 8 16 32 0; do

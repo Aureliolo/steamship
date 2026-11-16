@@ -323,15 +323,12 @@ jobs:
 
       - name: Install cargo-llvm-cov
         env:
-          # renovate: datasource=github-release-attachments depName=taiki-e/cargo-llvm-cov versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          CARGO_LLVM_COV_TAG: v0.9.1
-          CARGO_LLVM_COV_SHA256: 3fca950394a3c49457657c158b1619cec8dfd2647ae5b48746734c0ab969a522
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           archive="cargo-llvm-cov-x86_64-unknown-linux-musl.tar.gz"
-          bash .github/tool-download.sh taiki-e/cargo-llvm-cov "${CARGO_LLVM_COV_TAG}" "${archive}" \
-            "${CARGO_LLVM_COV_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh taiki-e/cargo-llvm-cov "$(bash .github/pin.sh CARGO_LLVM_COV_TAG)" \
+            "${archive}" "$(bash .github/pin.sh CARGO_LLVM_COV_SHA256)" "${RUNNER_TEMP}"
           tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 
@@ -362,15 +359,13 @@ jobs:
       # Spelling in British English everywhere, the code included.
       - name: Check spelling
         env:
-          # renovate: datasource=github-release-attachments depName=crate-ci/typos versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          TYPOS_TAG: v1.52.2
-          TYPOS_SHA256: 3b13d1291281d39d01822e54035636487a7a0f228e70097899b1e33aeb0e7e93
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          archive="typos-${TYPOS_TAG}-x86_64-unknown-linux-musl.tar.gz"
-          bash .github/tool-download.sh crate-ci/typos "${TYPOS_TAG}" "${archive}" \
-            "${TYPOS_SHA256}" "${RUNNER_TEMP}"
+          tag="$(bash .github/pin.sh TYPOS_TAG)"
+          archive="typos-${tag}-x86_64-unknown-linux-musl.tar.gz"
+          bash .github/tool-download.sh crate-ci/typos "${tag}" "${archive}" \
+            "$(bash .github/pin.sh TYPOS_SHA256)" "${RUNNER_TEMP}"
           tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}" ./typos
           "${RUNNER_TEMP}/typos"
 
@@ -441,15 +436,13 @@ jobs:
       - name: Install cargo-machete
         if: '!cancelled()'
         env:
-          # renovate: datasource=github-release-attachments depName=bnjbvr/cargo-machete versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          CARGO_MACHETE_TAG: v0.10.1
-          CARGO_MACHETE_SHA256: 785d381985140ffa172246d82089adeb7f2eb9c774d961c48f77a4494023afb5
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          name="cargo-machete-${CARGO_MACHETE_TAG}-x86_64-unknown-linux-musl"
-          bash .github/tool-download.sh bnjbvr/cargo-machete "${CARGO_MACHETE_TAG}" "${name}.tar.gz" \
-            "${CARGO_MACHETE_SHA256}" "${RUNNER_TEMP}"
+          tag="$(bash .github/pin.sh CARGO_MACHETE_TAG)"
+          name="cargo-machete-${tag}-x86_64-unknown-linux-musl"
+          bash .github/tool-download.sh bnjbvr/cargo-machete "${tag}" "${name}.tar.gz" \
+            "$(bash .github/pin.sh CARGO_MACHETE_SHA256)" "${RUNNER_TEMP}"
           tar -xzf "${RUNNER_TEMP}/${name}.tar.gz" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}/${name}" >> "${GITHUB_PATH}"
 
@@ -458,19 +451,17 @@ jobs:
         if: '!cancelled()'
         run: cargo machete
 
-      # The release archive, refused unless it matches the digest written here.
+      # The release archive, refused unless it matches the digest in .github/tools.env.
       - name: Install cargo-deny
         if: '!cancelled()'
         env:
-          # renovate: datasource=github-release-attachments depName=EmbarkStudios/cargo-deny versioning=semver
-          CARGO_DENY_TAG: 0.20.2
-          CARGO_DENY_SHA256: 9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          name="cargo-deny-${CARGO_DENY_TAG}-x86_64-unknown-linux-musl"
-          bash .github/tool-download.sh EmbarkStudios/cargo-deny "${CARGO_DENY_TAG}" "${name}.tar.gz" \
-            "${CARGO_DENY_SHA256}" "${RUNNER_TEMP}"
+          tag="$(bash .github/pin.sh CARGO_DENY_TAG)"
+          name="cargo-deny-${tag}-x86_64-unknown-linux-musl"
+          bash .github/tool-download.sh EmbarkStudios/cargo-deny "${tag}" "${name}.tar.gz" \
+            "$(bash .github/pin.sh CARGO_DENY_SHA256)" "${RUNNER_TEMP}"
           tar -xzf "${RUNNER_TEMP}/${name}.tar.gz" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}/${name}" >> "${GITHUB_PATH}"
 

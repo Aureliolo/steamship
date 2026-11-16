@@ -117,30 +117,24 @@ jobs:
       - name: Install cargo-mutants
         if: runner.os == 'Linux'
         env:
-          # renovate: datasource=github-release-attachments depName=sourcefrog/cargo-mutants versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          CARGO_MUTANTS_TAG: v27.1.0
-          CARGO_MUTANTS_SHA256: dfe6dc37d0342c891d2829b5a695aa57c2d0edecef7e7d0399a30cc6e206411e
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           archive="cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
-          bash .github/tool-download.sh sourcefrog/cargo-mutants "${CARGO_MUTANTS_TAG}" "${archive}" \
-            "${CARGO_MUTANTS_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh sourcefrog/cargo-mutants "$(bash .github/pin.sh CARGO_MUTANTS_LINUX_TAG)" \
+            "${archive}" "$(bash .github/pin.sh CARGO_MUTANTS_LINUX_SHA256)" "${RUNNER_TEMP}"
           tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 
       - name: Install cargo-mutants
         if: runner.os == 'Windows'
         env:
-          # renovate: datasource=github-release-attachments depName=sourcefrog/cargo-mutants versioning=regex:^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$
-          CARGO_MUTANTS_TAG: v27.1.0
-          CARGO_MUTANTS_SHA256: 2a2f00e47d4b458262a41501b0820aa26015fd35779903d2c8b30b2993f36791
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           archive="cargo-mutants-x86_64-pc-windows-msvc.zip"
-          bash .github/tool-download.sh sourcefrog/cargo-mutants "${CARGO_MUTANTS_TAG}" "${archive}" \
-            "${CARGO_MUTANTS_SHA256}" "${RUNNER_TEMP}"
+          bash .github/tool-download.sh sourcefrog/cargo-mutants "$(bash .github/pin.sh CARGO_MUTANTS_WINDOWS_TAG)" \
+            "${archive}" "$(bash .github/pin.sh CARGO_MUTANTS_WINDOWS_SHA256)" "${RUNNER_TEMP}"
           unzip -q "${RUNNER_TEMP}/${archive}" -d "${RUNNER_TEMP}"
           echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
 

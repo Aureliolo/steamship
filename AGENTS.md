@@ -77,7 +77,8 @@ moderation, game server tokens, cheat reports).
 ## Supply chain
 
 Every action is pinned by commit SHA with its version beside it. Every tool a workflow downloads
-is pinned by version and SHA-256. Renovate raises them, apart from winget, whose newer release
+is pinned by version and SHA-256, the release tools in `.github/tools.env`. Renovate raises them,
+apart from winget, whose newer release
 fails `winget.yml`'s weekly run. The Windows archives carry Microsoft's ConPTY, pinned the same
 way in `.github/conpty.sh`, as BinSkim is in `.github/binskim.sh`. Renovate raises each version and
 `pins.yml` writes its SHA-256.

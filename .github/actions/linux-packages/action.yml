@@ -22,15 +22,13 @@ runs:
     - name: Install nFPM
       shell: bash
       env:
-        # renovate: datasource=github-release-attachments depName=goreleaser/nfpm versioning=semver
-        NFPM_TAG: v2.49.0
-        NFPM_SHA256: 2afaa5ffb5e3493402e31e7c67a5a1fb42133e3f66fc315ca0051934125561c7
         GH_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-        archive="nfpm_${NFPM_TAG#v}_Linux_x86_64.tar.gz"
-        bash .github/tool-download.sh goreleaser/nfpm "${NFPM_TAG}" "${archive}" "${NFPM_SHA256}" \
-          "${RUNNER_TEMP}"
+        tag="$(bash .github/pin.sh NFPM_TAG)"
+        archive="nfpm_${tag#v}_Linux_x86_64.tar.gz"
+        bash .github/tool-download.sh goreleaser/nfpm "${tag}" "${archive}" \
+          "$(bash .github/pin.sh NFPM_SHA256)" "${RUNNER_TEMP}"
         mkdir -p "${RUNNER_TEMP}/nfpm"
         tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}/nfpm" nfpm
 
