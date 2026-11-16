@@ -12,6 +12,8 @@ on:
     paths:
       - .github/workflows/links.yml
       - .github/lychee.toml
+      # Where lychee's pin lives, so a raise of it is checked on its own pull request.
+      - .github/tools.env
 
 permissions: {}
 
