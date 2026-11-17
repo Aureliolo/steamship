@@ -191,17 +191,13 @@ pub struct Mod {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pushed {
     pub commit: String,
-    pub held_by: HeldBy,
-}
-
-/// The branch of origin that is at a game's commit, named.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HeldBy {
-    /// The game's green branch, at the newest commit its tests passed, which the default branch
-    /// has moved past.
-    Green(String),
     /// origin's default branch.
-    Default(String),
+    pub default: String,
+    /// Whether the commit is the tip of the game's green branch, in the default branch's history
+    /// but behind its tip.
+    pub at_green_tip: bool,
+    /// Whether a shallow clone was fetched whole to tell.
+    pub deepened: bool,
 }
 
 impl Project {
@@ -934,7 +930,8 @@ pub fn godot_version(text: &str) -> Option<String> {
 /// not and origin's default branch or `green` branch is at it.
 ///
 /// So what goes up is the newest pushed commit, or the newest the game's tests passed. The
-/// default branch is asked first, so a commit at both is held by it.
+/// default branch is asked first, so a commit at both is its tip. Green's tip is taken only once
+/// the default branch has it in its history.
 ///
 /// # Errors
 ///
@@ -951,29 +948,63 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
     if at == commit {
         return Ok(Pushed {
             commit,
-            held_by: HeldBy::Default(branch),
+            default: branch,
+            at_green_tip: false,
+            deepened: false,
         });
     }
-    let green_at = match green {
-        Some(passed) => tip(root, passed)?.map(|passed_at| (passed, passed_at)),
-        None => None,
+    let refused = format!(
+        "HEAD is at {}, and origin's {branch} is at {}. Push or pull until they match",
+        short(&commit),
+        short(&at)
+    );
+    let Some(passed) = green else {
+        return Err(refused);
     };
-    match green_at {
-        Some((passed, passed_at)) if passed_at == commit => Ok(Pushed {
-            commit,
-            held_by: HeldBy::Green(passed.to_owned()),
-        }),
-        Some((passed, passed_at)) => Err(format!(
-            "HEAD is at {}, origin's {branch} is at {} and its {passed} at {}. Check out \
-             {passed}, or push or pull until {branch} matches",
-            short(&commit),
-            short(&at),
+    match tip(root, passed)? {
+        Some(passed_at) if passed_at == commit => {
+            let (in_history, deepened) = in_history_of(root, &commit, &branch)?;
+            if !in_history {
+                return Err(format!(
+                    "{refused}. It is the tip of origin's {passed}, which ships only once \
+                     {branch} has it in its history"
+                ));
+            }
+            Ok(Pushed {
+                commit,
+                default: branch,
+                at_green_tip: true,
+                deepened,
+            })
+        }
+        Some(passed_at) => Err(format!(
+            "{refused}, or fetch origin's {passed} and check out its tip, {}",
             short(&passed_at)
         )),
-        None => Err(format!(
-            "HEAD is at {}, and origin's {branch} is at {}. Push or pull until they match",
-            short(&commit),
-            short(&at)
+        None => Err(refused),
+    }
+}
+
+/// Whether origin's `branch`, fetched, has `commit` in its history, and whether a shallow clone
+/// was fetched whole to tell. That leaves the checkout's history whole for any later comparison.
+fn in_history_of(root: &Path, commit: &str, branch: &str) -> Result<(bool, bool), String> {
+    let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
+    let reference = format!("refs/heads/{branch}");
+    let fetch: &[&str] = if shallow {
+        &["fetch", "--quiet", "--unshallow", "origin", &reference]
+    } else {
+        &["fetch", "--quiet", "origin", &reference]
+    };
+    drop(git(root, fetch)?);
+    let fetched = git(root, &["rev-parse", "FETCH_HEAD"])?;
+    let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, &fetched])?;
+    match ancestry.status.code() {
+        Some(0) => Ok((true, shallow)),
+        Some(1) => Ok((false, shallow)),
+        _ => Err(format!(
+            "git could not tell whether origin's {branch} has {} in its history: {}",
+            short(commit),
+            String::from_utf8_lossy(&ancestry.stderr).trim()
         )),
     }
 }

@@ -5,7 +5,7 @@ use std::path::{self, Path, PathBuf};
 use std::process::ExitCode;
 
 use steamship::cli::{FAILED, REFUSED};
-use steamship::project::{self, HeldBy, Project};
+use steamship::project::{self, Project};
 use steamship::show::{self, Spinner};
 use steamship::{run, scripts};
 
@@ -130,22 +130,31 @@ pub(crate) fn shipped_from(
         },
     );
     show::field("cores", &held_to(game.cores)?);
-    let spinner = Spinner::start(
-        "commit",
-        "asking origin which branch is at this commit",
-        false,
+    let asking = green.map_or_else(
+        || "asking origin for its default branch".to_owned(),
+        |passed| format!("asking origin for its default and {passed} branches"),
     );
+    let spinner = Spinner::start("commit", &asking, false);
     match project::pushed(&game.root, green) {
         Ok(pushed) => {
-            let (HeldBy::Green(branch) | HeldBy::Default(branch)) = &pushed.held_by;
-            spinner.done(&format!(
-                "{}, at the tip of origin's {branch}, with nothing uncommitted",
-                project::short(&pushed.commit)
-            ));
+            let short = project::short(&pushed.commit);
+            let default = &pushed.default;
+            spinner.done(&match green {
+                Some(passed) if pushed.at_green_tip => format!(
+                    "{short}, the tip of origin's {passed}, in {default}'s history, with nothing \
+                     uncommitted"
+                ),
+                _ => format!("{short}, as origin's {default} has it, with nothing uncommitted"),
+            });
+            if pushed.deepened {
+                show::note(&format!(
+                    "this shallow clone was fetched whole, to compare it with origin's {default}"
+                ));
+            }
             Ok(pushed)
         }
         Err(why) => {
-            spinner.failed("refused");
+            spinner.failed("not pushed");
             Err(fail(&why, REFUSED))
         }
     }

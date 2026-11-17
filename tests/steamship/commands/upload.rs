@@ -2321,9 +2321,9 @@ fn a_game_ships_green_s_tip_behind_main_but_no_older_green_commit() {
     let (shown, why) = refused_for(&["upload", "--version", "0.0.0"]);
     assert!(
         shown.contains(&format!(
-            "{}, at the tip of origin's green, with nothing uncommitted",
+            "{}, the tip of origin's green, in main's history, with nothing uncommitted",
             short(&tested)
-        )),
+        )) && shown.contains(&format!("{}, on origin's green", short(&tested))),
         "{shown}"
     );
     assert!(
@@ -2338,13 +2338,31 @@ fn a_game_ships_green_s_tip_behind_main_but_no_older_green_commit() {
     let (_, older_why) = refused_for(&["upload", "--allow-ungreen", "--version", "0.0.0"]);
     assert!(
         older_why.contains(&format!(
-            "HEAD is at {}, origin's main is at {} and its green at {}. Check out green, or push \
-             or pull until main matches",
+            "HEAD is at {}, and origin's main is at {}. Push or pull until they match, or fetch \
+             origin's green and check out its tip, {}",
             short(&tested),
             short(&newest),
             short(&newest)
         )),
         "an older green commit is refused, --allow-ungreen or not: {older_why}"
+    );
+
+    // Green's tip ships only once main has it in its history.
+    commit(&root, "A commit on green alone");
+    let aside = head(&root);
+    git(
+        &root,
+        &["push", "--quiet", "origin", "+HEAD:refs/heads/green"],
+    );
+    let (_, aside_why) = refused_for(&["upload", "--version", "0.0.0"]);
+    assert!(
+        aside_why.contains(&format!(
+            "HEAD is at {}, and origin's main is at {}. Push or pull until they match. It is the \
+             tip of origin's green, which ships only once main has it in its history",
+            short(&aside),
+            short(&newest)
+        )),
+        "{aside_why}"
     );
 
     // Last, as a file just deleted can still be listed for a moment on Windows.
@@ -2421,7 +2439,11 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
     );
     assert_eq!(default_code, Some(2_i32), "{default_out}{default_why}");
     assert!(
-        failure(&default_why).contains("BuildID 4242, live on default, was made from "),
+        failure(&default_why).contains("BuildID 4242, live on default, was made from ")
+            && failure(&default_why).ends_with(
+                "If the game is out on Steam, set released = true in steamship.toml, as its \
+                 uploads leave the default branch alone"
+            ),
         "{default_why}"
     );
 
@@ -2429,16 +2451,18 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
     assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
     assert!(
         failure(&stderr).contains(&format!(
-            "BuildID 4242, live on testing, was made from {}, which this commit does not hold. \
-             Upload the default branch's tip instead",
+            "BuildID 4242, live on testing, was made from {}, which is not in this commit's \
+             history. Upload once your tests have moved green to origin's main tip",
             abbreviated(&hotfix)
-        )),
-        "{stderr}"
+        )) && stdout.contains("refused for testing's build"),
+        "{stdout}{stderr}"
     );
 
     let (_, passed, passed_why) = live_from(&tested);
     assert!(
-        passed.contains("  live      \u{2713} this commit holds the build live on testing\n"),
+        passed.contains(
+            "  live      \u{2713} the build live on testing comes from this commit's history\n"
+        ),
         "{passed}{passed_why}"
     );
     let (_, both, both_why) = asked(
@@ -2450,7 +2474,7 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
         ),
     );
     assert!(
-        both.contains("this commit holds the builds live on testing and default\n"),
+        both.contains("the builds live on testing and default come from this commit's history\n"),
         "{both}{both_why}"
     );
 
@@ -2458,26 +2482,27 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
     let refused_for = |(exit, shown, why): (Option<i32>, String, String), said: &str| {
         assert_eq!(exit, Some(2_i32), "{shown}{why}");
         assert!(
-            failure(&why).contains(&format!(
-                "BuildID 4242, live on testing, {said}. Upload the default branch's tip instead"
+            failure(&why).ends_with(&format!(
+                "BuildID 4242, live on testing, {said}. Upload once your tests have moved green \
+                 to origin's main tip"
             )),
             "{why}"
         );
     };
     refused_for(
         live_from("0123456789abcdef0123456789abcdef01234567"),
-        "was made from 012345678, which is not one commit in this checkout",
+        "was made from 012345678, which is not in this commit's history",
     );
     refused_for(
         asked(
             testing_live(4242).to_owned(),
             r#"{"response": {"builds": {"4242": {"Description": "Uploaded by hand"}}}}"#.to_owned(),
         ),
-        "has a description steamship did not write",
+        "has a description steamship did not write, so it cannot be compared",
     );
     refused_for(
         asked(testing_live(4242).to_owned(), BUILDS.to_owned()),
-        "is not among the last 20 builds Steam listed",
+        "is not among the last 20 builds Steam listed, so it cannot be compared",
     );
 }
 
@@ -2524,21 +2549,61 @@ fn green_s_tip_ships_with_nothing_live_and_is_refused_while_steam_cannot_say() {
     assert!(
         failure(&unlisted_why).contains(
             "Steam lists no branches while nothing is live on the default branch, so the \
-             live builds cannot be compared. Upload the default branch's tip instead"
+             live builds cannot be compared. Upload once your tests have moved green to \
+             origin's main tip"
         ),
         "{unlisted_why}"
     );
 
-    let (forbidding, _forbidden) = web_api(vec![("403 Forbidden", "{}")]);
-    let (unasked_code, unasked, unasked_why) = in_game_with(
-        &root,
-        &["upload"],
-        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &forbidding)],
-    );
-    assert_eq!(unasked_code, Some(1_i32), "{unasked}{unasked_why}");
+    let (keyless_code, keyless, keyless_why) = in_game(&root, &["upload"]);
+    assert_eq!(keyless_code, Some(2_i32), "{keyless}{keyless_why}");
     assert!(
-        failure(&unasked_why).starts_with("Steam could not be asked which builds are live: "),
-        "{unasked_why}"
+        failure(&keyless_why).contains(
+            "the commit is the tip of origin's green, behind its main, and needs a Web API key \
+             to see which builds are live"
+        ),
+        "{keyless_why}"
+    );
+}
+
+#[test]
+fn green_s_tip_is_refused_in_steam_s_words_and_offered_a_retry_only_for_what_may_pass() {
+    let (_temp, root) = pushed_game(Some(GREEN_UNBUILT));
+    let tested = head(&root);
+    pushed_ungreen(&root, "Main moves past green");
+    git(&root, &["checkout", "--quiet", "--detach", &tested]);
+
+    // A refusal that will not pass is said in Steam's words, with no retry offered.
+    let refused_with = |answer: (&'static str, String), row: &str, said: &str| {
+        let (host, _asked) = web_api(vec![answer]);
+        let (code, shown, why) = in_game_with(
+            &root,
+            &["upload"],
+            &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+        );
+        assert_eq!(code, Some(1_i32), "{shown}{why}");
+        assert!(
+            shown.contains(&format!("live      \u{2717} {row}\n"))
+                && failure(&why).starts_with("Steam did not say which builds are live: ")
+                && failure(&why).contains(said)
+                && failure(&why)
+                    .ends_with(". Upload once your tests have moved green to origin's main tip"),
+            "{shown}{why}"
+        );
+    };
+    refused_with(
+        ("403 Forbidden", "{}".to_owned()),
+        "key refused",
+        "Steam refused the Web API key",
+    );
+    refused_with(
+        (
+            "404 Not Found",
+            r#"{"response": {"result": 2, "message": "Unable to find specificed betakey testing"}}"#
+                .to_owned(),
+        ),
+        "HTTP 404",
+        "Steam answered HTTP 404: Unable to find specificed betakey testing",
     );
 
     // A 500 is nothing live only for an app the key lists, and only for the branches.
@@ -2551,8 +2616,12 @@ fn green_s_tip_ships_with_nothing_live_and_is_refused_while_steam_cannot_say() {
         );
         assert_eq!(code, Some(1_i32), "{shown}{why}");
         assert!(
-            failure(&why).starts_with("Steam could not be asked which builds are live: "),
-            "{why}"
+            shown.contains("live      \u{2717} HTTP 500\n")
+                && failure(&why).starts_with("Steam did not say which builds are live: ")
+                && failure(&why).ends_with(
+                    "Try again, or upload once your tests have moved green to origin's main tip"
+                ),
+            "{shown}{why}"
         );
     };
     unanswered(vec![
@@ -2563,16 +2632,6 @@ fn green_s_tip_ships_with_nothing_live_and_is_refused_while_steam_cannot_say() {
         ("200 OK", testing_live(4242).to_owned()),
         ("500 Internal Server Error", String::new()),
     ]);
-
-    let (keyless_code, keyless, keyless_why) = in_game(&root, &["upload"]);
-    assert_eq!(keyless_code, Some(2_i32), "{keyless}{keyless_why}");
-    assert!(
-        failure(&keyless_why).contains(
-            "the commit is green's tip, behind origin's default branch, and needs a Web API key \
-             to see which builds are live"
-        ),
-        "{keyless_why}"
-    );
 }
 
 #[test]
@@ -2603,7 +2662,9 @@ fn a_released_game_s_green_tip_is_not_held_to_the_default_branch_s_build() {
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
     assert!(
-        shown.contains("  live      \u{2713} this commit holds the build live on testing\n"),
+        shown.contains(
+            "  live      \u{2713} the build live on testing comes from this commit's history\n"
+        ),
         "{shown}{why}"
     );
 }
@@ -2658,15 +2719,21 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
     };
     let (_, shown, why) = live_from(&first);
     assert!(
-        shown.contains("  live      \u{2713} this commit holds the build live on testing\n"),
+        why.contains("this shallow clone was fetched whole, to compare it with origin's main")
+            && shown.contains(
+                "  live      \u{2713} the build live on testing comes from this commit's history\n"
+            ),
         "{shown}{why}"
     );
-    // A clone of green alone never has main's hotfix, which green's tip does not hold.
+    // Main's hotfix is fetched with main, and is not in green's history.
     let (code, hotfix_shown, hotfix_why) = live_from(&hotfix);
     assert_eq!(code, Some(2_i32), "{hotfix_shown}{hotfix_why}");
     assert!(
-        failure(&hotfix_why).contains("which is not one commit in this checkout"),
-        "{hotfix_why}"
+        failure(&hotfix_why).contains(&format!(
+            "was made from {}, which is not in this commit's history",
+            hotfix.get(..9).unwrap()
+        )) && !hotfix_why.contains("fetched whole"),
+        "{hotfix_shown}{hotfix_why}"
     );
 }
 
@@ -2707,6 +2774,17 @@ fn a_game_checks_the_branch_its_file_names_not_one_called_green() {
     );
     let (held_out, _) = ran(&["upload", "--version", "0.0.0"]);
     assert!(held_out.contains(", on origin's passed"), "{held_out}");
+
+    let tested = head(&root);
+    pushed_ungreen(&root, "Main moves past passed");
+    git(&root, &["checkout", "--quiet", "--detach", &tested]);
+    let (_, keyless_why) = ran(&["upload"]);
+    assert!(
+        keyless_why.starts_with("the commit is the tip of origin's passed, behind its main")
+            && keyless_why
+                .ends_with("or upload once your tests have moved passed to origin's main tip"),
+        "{keyless_why}"
+    );
 }
 
 #[test]
