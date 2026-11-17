@@ -19,7 +19,7 @@ use crate::common::pe::settings_ticking;
 use steamship::install;
 use steamship::ledger;
 use steamship::platform::Platform;
-use steamship::project::short;
+use steamship::project::{self, short};
 #[cfg(any(any(windows, target_os = "linux"), unix))]
 use steamship::run;
 use steamship::steamcmd;
@@ -2786,10 +2786,13 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
         let whole = fs::read_to_string(&traced_whole).unwrap();
         assert!(
             trace.contains(
-                " fetch --quiet --no-write-fetch-head --refmap= --no-tags --recurse-submodules=no \
-                 origin refs/heads/main"
+                " fetch --quiet --no-write-fetch-head --no-tags --recurse-submodules=no origin \
+                 +refs/heads/main:refs/remotes/origin/main"
             )
                 && trace.matches("built-in: git fetch").count() == 1
+                // Its ref tells origin what the clone holds, so the next fetch is not sent it all.
+                && project::git(&shallow, &["rev-parse", "refs/remotes/origin/main"])
+                    == project::git(&root, &["rev-parse", "main"])
                 // Git before 2.45 refuses that option, so it never reaches git.
                 && whole.contains("rev-parse --verify --quiet")
                 && !whole.contains("--no-lazy-fetch")
@@ -2832,7 +2835,7 @@ fn a_whole_clone_fetches_main_once_for_green_s_tip_past_a_lock_another_git_left(
     pushed_ungreen(&root, "Main moves past the clone");
     let traced = temp.path().join("git-trace.txt");
     let tracing = [("GIT_TRACE", traced.to_str().unwrap())];
-    // The fetch writes no ref, so a lock another git run left on origin/main is no obstacle.
+    // A lock another git run left on origin/main fails only the ref's update, after the commits.
     fs::write(whole.join(".git/refs/remotes/origin/main.lock"), "").unwrap();
     for fetches in [1, 0] {
         // The second upload finds what the first fetched, and fetches nothing.

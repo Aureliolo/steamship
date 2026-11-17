@@ -998,10 +998,9 @@ fn in_history_of(
 ) -> Result<(bool, bool), String> {
     let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
     // A partial clone, such as a shallow one fetched before, fetches first, as git before 2.45
-    // would fetch a missing `at` alone, with its whole history, on looking for it. A whole clone
-    // fetches only when it lacks `at`, as the fetch names nothing that tells origin what it holds.
+    // would fetch a missing `at` alone, with its whole history, on looking for it.
     if shallow || partial(root)? || !has_commit(root, at)? {
-        fetched(root, branch, shallow)?;
+        fetched(root, (branch, at), shallow)?;
     }
     if !has_commit(root, at)? {
         return Err(format!(
@@ -1044,16 +1043,17 @@ fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
         .success())
 }
 
-/// Fetches origin's `branch`, the whole history too when the checkout is `shallow`. It writes no
-/// ref and no `FETCH_HEAD`, so uploads at once, or a lock another git run left, never collide
-/// with it, and it leaves submodules alone, whose remotes the comparison never needs.
-fn fetched(root: &Path, branch: &str, shallow: bool) -> Result<(), String> {
-    let reference = format!("refs/heads/{branch}");
+/// Fetches origin's `branch` until the checkout has `at`, the whole history too when it is
+/// `shallow`. It leaves `FETCH_HEAD` and tags alone, and submodules, whose remotes the comparison
+/// never needs.
+fn fetched(root: &Path, (branch, at): (&str, &str), shallow: bool) -> Result<(), String> {
+    // Into origin's remote-tracking branch even where the clone tracks only green, as the next
+    // fetch then tells origin what the checkout holds, rather than taking it all again.
+    let reference = format!("+refs/heads/{branch}:refs/remotes/origin/{branch}");
     let mut args = vec![
         "fetch",
         "--quiet",
         "--no-write-fetch-head",
-        "--refmap=",
         "--no-tags",
         "--recurse-submodules=no",
     ];
@@ -1066,6 +1066,11 @@ fn fetched(root: &Path, branch: &str, shallow: bool) -> Result<(), String> {
     let Err(why) = git(root, &args) else {
         return Ok(());
     };
+    // Git writes the ref after the commits, so another upload's lock on it, or one a git run left,
+    // fails a fetch that has already brought what the comparison needs.
+    if has_commit(root, at)? {
+        return Ok(());
+    }
     let lock = root.join(git(root, &["rev-parse", "--git-path", "shallow.lock"])?);
     Err(if lock.exists() {
         format!(
