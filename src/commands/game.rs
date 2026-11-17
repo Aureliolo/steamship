@@ -148,12 +148,12 @@ pub(crate) fn shipped_from(
                      origin's {default}. Older files are still fetched only when git needs them"
                 ));
             }
-            if let Some(why) = &pushed.unrecorded {
+            if let Some(lock) = &pushed.held_back {
                 show::note(&format!(
-                    "{why}. The upload went ahead, but origin/{default} did not move. Each later \
-                     fetch downloads those commits again until git can move it. Delete the lock \
-                     file the error names if no git is running, or wait for the other git run to \
-                     end"
+                    "{} exists, so git could not move origin/{default} to the commits it fetched. \
+                     Later fetches download them again until that file is gone. Delete it if no \
+                     git is running",
+                    lock.display()
                 ));
             }
             Ok(pushed)

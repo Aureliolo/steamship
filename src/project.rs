@@ -198,9 +198,8 @@ pub struct Pushed {
     pub at_green_tip: bool,
     /// Whether a shallow clone fetched more history to tell.
     pub deepened: bool,
-    /// Git's error when the fetch brought the commits but could not move origin's branch, such as
-    /// on a held lock.
-    pub unrecorded: Option<String>,
+    /// The lock file that kept origin's default branch from moving to what the fetch brought.
+    pub held_back: Option<PathBuf>,
 }
 
 impl Project {
@@ -954,7 +953,7 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
             default: branch,
             at_green_tip: false,
             deepened: false,
-            unrecorded: None,
+            held_back: None,
         });
     }
     let refused = format!(
@@ -967,7 +966,7 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
     };
     match tip(root, passed)? {
         Some(passed_at) if passed_at == commit => {
-            let (in_history, deepened, unrecorded) = in_history_of(root, &commit, (&branch, &at))?;
+            let (in_history, deepened, held_back) = in_history_of(root, &commit, (&branch, &at))?;
             if !in_history {
                 return Err(format!(
                     "{refused}. It is the tip of origin's {passed}, which ships only once \
@@ -979,7 +978,7 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
                 default: branch,
                 at_green_tip: true,
                 deepened,
-                unrecorded,
+                held_back,
             })
         }
         Some(passed_at) => Err(format!(
@@ -991,8 +990,8 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
 }
 
 /// Whether `at`, the commit origin's `branch` is at, has `commit` in its history, whether a
-/// shallow clone fetched more history to tell, and why git could not record what it fetched, if
-/// it could not. That leaves every commit in the checkout for any later comparison.
+/// shallow clone fetched more history to tell, and the lock file that kept origin's branch from
+/// moving, if one did. That leaves every commit in the checkout for any later comparison.
 ///
 /// It compares with `at` itself, never with what a fetch names, which another git run in the
 /// checkout can rewrite.
@@ -1000,11 +999,11 @@ fn in_history_of(
     root: &Path,
     commit: &str,
     (branch, at): (&str, &str),
-) -> Result<(bool, bool, Option<String>), String> {
+) -> Result<(bool, bool, Option<PathBuf>), String> {
     let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
     // A partial clone, such as a shallow one fetched before, fetches first, as git before 2.45
     // would fetch a missing `at` alone, with its whole history, on looking for it.
-    let unrecorded = if shallow || partial(root)? || !has_commit(root, at)? {
+    let held_back = if shallow || partial(root)? || !has_commit(root, at)? {
         fetched(root, (branch, at), shallow)?
     } else {
         None
@@ -1017,8 +1016,8 @@ fn in_history_of(
     }
     let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, at])?;
     match ancestry.status.code() {
-        Some(0) => Ok((true, shallow, unrecorded)),
-        Some(1) => Ok((false, shallow, unrecorded)),
+        Some(0) => Ok((true, shallow, held_back)),
+        Some(1) => Ok((false, shallow, held_back)),
         _ => Err(format!(
             "git could not tell whether origin's {branch} has {} in its history: {}",
             short(commit),
@@ -1051,12 +1050,12 @@ fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
 }
 
 /// Fetches origin's `branch` until the checkout has `at`, the whole history too when `shallow`.
-/// It gives git's error when only moving origin's branch failed.
+/// It gives the lock file that kept origin's branch from moving, when that is what failed.
 fn fetched(
     root: &Path,
     (branch, at): (&str, &str),
     shallow: bool,
-) -> Result<Option<String>, String> {
+) -> Result<Option<PathBuf>, String> {
     // Into origin's remote-tracking branch even where the clone tracks only green, as the next
     // fetch then tells origin what the checkout holds, rather than taking it all again. No refs
     // the remote's configuration maps it to, which can be the checkout's own branches.
@@ -1083,7 +1082,7 @@ fn fetched(
     // fails a fetch that has already brought what the comparison needs. A clone still shallow
     // has not.
     if git(root, &["rev-parse", "--is-shallow-repository"])? == "false" && has_commit(root, at)? {
-        return unrecorded(root, (branch, at), why);
+        return held_back(root, (branch, at));
     }
     let lock = root.join(git(root, &["rev-parse", "--git-path", "shallow.lock"])?);
     Err(if lock.exists() {
@@ -1097,16 +1096,17 @@ fn fetched(
     })
 }
 
-/// `why` the fetch failed, only while origin's `branch` is not at `at`. When another upload moved
-/// it there, or it was there already, there is nothing to report.
-fn unrecorded(
-    root: &Path,
-    (branch, at): (&str, &str),
-    why: &str,
-) -> Result<Option<String>, String> {
+/// The lock file that keeps origin's `branch` behind `at`, while there is one. Every later fetch
+/// takes the same commits again until it is gone. Any other failure passes with the next fetch.
+fn held_back(root: &Path, (branch, at): (&str, &str)) -> Result<Option<PathBuf>, String> {
     let tracking = format!("refs/remotes/origin/{branch}");
+    let lock = root.join(git(
+        root,
+        &["rev-parse", "--git-path", &format!("{tracking}.lock")],
+    )?);
     let resolved = git_run(root, &["rev-parse", "--verify", "--quiet", &tracking])?;
-    Ok((String::from_utf8_lossy(&resolved.stdout).trim() != at).then(|| why.to_owned()))
+    let behind = String::from_utf8_lossy(&resolved.stdout).trim() != at;
+    Ok((behind && lock.exists()).then_some(lock))
 }
 
 /// This moment as the file system tells a file's change time, read back from a file made for it.
@@ -1374,16 +1374,19 @@ mod tests {
         assert!(has_commit(&clone, &first).unwrap());
         // git would fetch the second commit from origin to answer, had it not been held.
         assert!(!has_commit(&clone, &second).unwrap());
-        // A failed fetch is told only while origin's remote-tracking branch is not where it was.
+        // A lock is told only while it holds origin's remote-tracking branch behind.
         let branch = git(&origin, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
-        assert_eq!(
-            unrecorded(&clone, (&branch, &first), "error: locked"),
-            Ok(None)
-        );
-        assert_eq!(
-            unrecorded(&clone, (&branch, &second), "error: locked"),
-            Ok(Some("error: locked".to_owned()))
-        );
+        assert_eq!(held_back(&clone, (&branch, &second)), Ok(None));
+        let lock = clone
+            .join(".git")
+            .join("refs")
+            .join("remotes")
+            .join("origin")
+            .join(format!("{branch}.lock"));
+        fs::write(&lock, "").unwrap();
+        assert_eq!(held_back(&clone, (&branch, &first)), Ok(None));
+        let held = held_back(&clone, (&branch, &second)).unwrap().unwrap();
+        assert_eq!(held.canonicalize().unwrap(), lock.canonicalize().unwrap());
     }
 
     #[test]

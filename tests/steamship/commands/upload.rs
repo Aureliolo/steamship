@@ -2849,12 +2849,11 @@ fn a_whole_clone_fetches_main_once_for_green_s_tip_past_a_lock_another_git_left(
         );
         // Only the fetch that could not move origin/main says so.
         assert_eq!(
-            why.contains("main.lock")
-                && why.contains(
-                    "exists. The upload went ahead, but origin/main did not move. Each later fetch \
-                     downloads those commits again until git can move it. Delete the lock file \
-                     the error names if no git is running, or wait for the other git run to end"
-                ),
+            why.contains(
+                "main.lock exists, so git could not move origin/main to the commits it fetched. \
+                 Later fetches download them again until that file is gone. Delete it if no git \
+                 is running"
+            ),
             fetches == 1,
             "{why}"
         );
