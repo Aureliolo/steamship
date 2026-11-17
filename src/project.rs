@@ -1029,7 +1029,7 @@ fn in_history_of(
 /// Whether the checkout at `root` is a partial clone, as git marks one: a `.promisor` file beside
 /// a pack it fetched with a filter, whichever remote it came from.
 fn partial(root: &Path) -> Result<bool, String> {
-    let packs = root.join(git(root, &["rev-parse", "--git-path", "objects/pack"])?);
+    let packs = git_path(root, "objects/pack")?;
     Ok(fs::read_dir(packs).is_ok_and(|entries| {
         entries.flatten().any(|entry| {
             entry
@@ -1084,7 +1084,7 @@ fn fetched(
     if git(root, &["rev-parse", "--is-shallow-repository"])? == "false" && has_commit(root, at)? {
         return held_back(root, (branch, at));
     }
-    let lock = root.join(git(root, &["rev-parse", "--git-path", "shallow.lock"])?);
+    let lock = git_path(root, "shallow.lock")?;
     Err(if lock.exists() {
         format!(
             "{} exists, so another git run may be fetching into this checkout. Run the command \
@@ -1100,13 +1100,36 @@ fn fetched(
 /// takes the same commits again until it is gone. Any other failure passes with the next fetch.
 fn held_back(root: &Path, (branch, at): (&str, &str)) -> Result<Option<PathBuf>, String> {
     let tracking = format!("refs/remotes/origin/{branch}");
-    let lock = root.join(git(
-        root,
-        &["rev-parse", "--git-path", &format!("{tracking}.lock")],
-    )?);
     let resolved = git_run(root, &["rev-parse", "--verify", "--quiet", &tracking])?;
-    let behind = String::from_utf8_lossy(&resolved.stdout).trim() != at;
-    Ok((behind && lock.exists()).then_some(lock))
+    if String::from_utf8_lossy(&resolved.stdout).trim() == at {
+        return Ok(None);
+    }
+    // A reftable repository locks its one list of tables rather than the ref's own file. Origin's
+    // branch is in the list every worktree shares, which `--git-path` would map to a linked
+    // worktree's own.
+    let common = git(root, &["rev-parse", "--git-common-dir"])?;
+    for lock in [
+        git_path(root, &format!("{tracking}.lock"))?,
+        native(&root.join(common).join("reftable").join("tables.list.lock")),
+    ] {
+        if lock.exists() {
+            return Ok(Some(lock));
+        }
+    }
+    Ok(None)
+}
+
+/// The file `name` in the checkout's git folder, wherever a worktree or a subfolder puts it.
+fn git_path(root: &Path, name: &str) -> Result<PathBuf, String> {
+    Ok(native(
+        &root.join(git(root, &["rev-parse", "--git-path", name])?),
+    ))
+}
+
+/// `path` with one kind of separator, as git prints `/` and Windows' `del` refuses a path that
+/// mixes them.
+fn native(path: &Path) -> PathBuf {
+    path.components().collect()
 }
 
 /// This moment as the file system tells a file's change time, read back from a file made for it.
@@ -1325,37 +1348,47 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    /// git run with `args` in `root`, which has to succeed.
+    fn ran(root: &Path, args: &[&str]) {
+        let output = git_run(root, args).unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+    }
+
+    /// A commit made in `origin` with `message`, in full.
+    fn committed(origin: &Path, message: &str) -> String {
+        ran(
+            origin,
+            &[
+                "-c",
+                "user.name=Sample",
+                "-c",
+                "user.email=sample@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                message,
+            ],
+        );
+        git(origin, &["rev-parse", "HEAD"]).unwrap()
+    }
+
+    /// A repository `origin` in `temp`, with one commit, and the URL a clone of it takes.
+    fn origin_in(temp: &Path) -> (PathBuf, String, String) {
+        ran(temp, &["init", "--quiet", "origin"]);
+        let origin = temp.join("origin");
+        let first = committed(&origin, "First");
+        let path = origin.display().to_string().replace('\\', "/");
+        let url = format!("file:///{}", path.trim_start_matches('/'));
+        (origin, first, url)
+    }
+
     #[test]
     fn a_commit_a_partial_clone_lacks_is_not_fetched_to_tell_whether_it_is_there() {
         let temp = tempfile::tempdir().unwrap();
-        let ran = |root: &Path, args: &[&str]| {
-            let output = git_run(root, args).unwrap();
-            assert!(output.status.success(), "git {args:?}: {output:?}");
-        };
-        ran(temp.path(), &["init", "--quiet", "origin"]);
-        let origin = temp.path().join("origin");
-        let committed = |message: &str| {
-            ran(
-                &origin,
-                &[
-                    "-c",
-                    "user.name=Sample",
-                    "-c",
-                    "user.email=sample@example.invalid",
-                    "-c",
-                    "commit.gpgsign=false",
-                    "commit",
-                    "--quiet",
-                    "--allow-empty",
-                    "-m",
-                    message,
-                ],
-            );
-            git(&origin, &["rev-parse", "HEAD"]).unwrap()
-        };
-        let first = committed("First");
-        let path = origin.display().to_string().replace('\\', "/");
-        let url = format!("file:///{}", path.trim_start_matches('/'));
+        let (origin, first, url) = origin_in(temp.path());
         ran(
             temp.path(),
             &[
@@ -1369,24 +1402,64 @@ mod tests {
             ],
         );
         let clone = temp.path().join("partial");
-        let second = committed("Second");
+        let second = committed(&origin, "Second");
         assert!(partial(&clone).unwrap() && !partial(&origin).unwrap());
         assert!(has_commit(&clone, &first).unwrap());
         // git would fetch the second commit from origin to answer, had it not been held.
         assert!(!has_commit(&clone, &second).unwrap());
-        // A lock is told only while it holds origin's remote-tracking branch behind.
+    }
+
+    #[test]
+    fn a_lock_holding_origin_s_branch_behind_is_named_wherever_git_keeps_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let (origin, first, url) = origin_in(temp.path());
         let branch = git(&origin, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
-        assert_eq!(held_back(&clone, (&branch, &second)), Ok(None));
-        let lock = clone
+        ran(temp.path(), &["clone", "--quiet", &url, "files"]);
+        ran(
+            temp.path(),
+            &["clone", "--quiet", "--ref-format=reftable", &url, "table"],
+        );
+        let second = committed(&origin, "Second");
+        let files = temp.path().join("files");
+        fs::create_dir_all(files.join("game")).unwrap();
+        ran(
+            &files,
+            &["worktree", "add", "--quiet", "--detach", "../linked"],
+        );
+        assert_eq!(held_back(&files, (&branch, &second)), Ok(None));
+        let lock = files
             .join(".git")
             .join("refs")
             .join("remotes")
             .join("origin")
             .join(format!("{branch}.lock"));
         fs::write(&lock, "").unwrap();
-        assert_eq!(held_back(&clone, (&branch, &first)), Ok(None));
-        let held = held_back(&clone, (&branch, &second)).unwrap().unwrap();
-        assert_eq!(held.canonicalize().unwrap(), lock.canonicalize().unwrap());
+        assert_eq!(held_back(&files, (&branch, &first)), Ok(None));
+        // A game in a subfolder, and a linked worktree, share the clone's refs.
+        for root in [
+            files.clone(),
+            files.join("game"),
+            temp.path().join("linked"),
+        ] {
+            let held = held_back(&root, (&branch, &second)).unwrap().unwrap();
+            assert_eq!(held.canonicalize().unwrap(), lock.canonicalize().unwrap());
+            // One kind of separator, as Windows' del refuses a path that mixes them.
+            let native: PathBuf = held.components().collect();
+            assert_eq!(held.to_string_lossy(), native.to_string_lossy());
+        }
+        let table = temp.path().join("table");
+        ran(
+            &table,
+            &["worktree", "add", "--quiet", "--detach", "../tabled"],
+        );
+        let tables = table.join(".git").join("reftable").join("tables.list.lock");
+        fs::write(&tables, "").unwrap();
+        // A linked worktree's own list holds only its HEAD, so the lock that matters is the one
+        // every worktree shares.
+        for root in [table, temp.path().join("tabled")] {
+            let held = held_back(&root, (&branch, &second)).unwrap().unwrap();
+            assert_eq!(held.canonicalize().unwrap(), tables.canonicalize().unwrap());
+        }
     }
 
     #[test]
