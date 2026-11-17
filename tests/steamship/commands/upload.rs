@@ -2813,22 +2813,38 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
     };
     // Main's hotfix came with main, and is not in green's history.
     fetched_once(&hotfix, &hotfix);
-    let whole = green_cloned(temp.path(), "whole", &[]);
     pushed_ungreen(&root, "Main moves on again");
     fetched_once(&first, "");
-    // The fetch writes no ref, so a lock another git run left on origin/main is no obstacle.
-    fs::write(whole.join(".git/refs/remotes/origin/main.lock"), "").unwrap();
-    let (_, whole_shown, whole_why) = live_in(&whole, &first, false);
-    assert!(
-        whole_shown.contains("the build live on testing comes from this commit's history\n"),
-        "{whole_shown}{whole_why}"
-    );
     // A build made from a branch the clone never fetched is not in its history either.
     git(&root, &["checkout", "--quiet", "-b", "side"]);
     commit(&root, "A build of a side branch");
     git(&root, &["push", "--quiet", "origin", "side"]);
     let side = head(&root);
     fetched_once(&side, &side);
+}
+
+#[test]
+fn a_whole_clone_fetches_main_once_for_green_s_tip_past_a_lock_another_git_left() {
+    let (temp, root) = pushed_game(Some(GREEN_UNBUILT));
+    let first = head(&root);
+    pushed(&root, "Green moves on");
+    let whole = green_cloned(temp.path(), "whole", &[]);
+    pushed_ungreen(&root, "Main moves past the clone");
+    let traced = temp.path().join("git-trace.txt");
+    let tracing = [("GIT_TRACE", traced.to_str().unwrap())];
+    // The fetch writes no ref, so a lock another git run left on origin/main is no obstacle.
+    fs::write(whole.join(".git/refs/remotes/origin/main.lock"), "").unwrap();
+    for fetches in [1, 0] {
+        // The second upload finds what the first fetched, and fetches nothing.
+        fs::write(&traced, "").unwrap();
+        let (_, shown, why) = uploaded_with_live_testing(&whole, &first, &tracing);
+        let trace = fs::read_to_string(&traced).unwrap();
+        assert!(
+            shown.contains("the build live on testing comes from this commit's history\n")
+                && trace.matches("built-in: git fetch").count() == fetches,
+            "{shown}{why}{trace}"
+        );
+    }
 }
 
 #[test]

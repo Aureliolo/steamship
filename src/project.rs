@@ -997,9 +997,12 @@ fn in_history_of(
     (branch, at): (&str, &str),
 ) -> Result<(bool, bool), String> {
     let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
-    // Always, as a partial clone, such as a shallow one fetched before, would fetch a missing `at`
-    // alone, with its whole history, on looking for it. A fetch asks only for what it lacks.
-    fetched(root, branch, shallow)?;
+    // A partial clone, such as a shallow one fetched before, fetches first, as git before 2.45
+    // would fetch a missing `at` alone, with its whole history, on looking for it. A whole clone
+    // fetches only when it lacks `at`, as the fetch names nothing that tells origin what it holds.
+    if shallow || partial(root)? || !has_commit(root, at)? {
+        fetched(root, branch, shallow)?;
+    }
     if !has_commit(root, at)? {
         return Err(format!(
             "origin's {branch} moved from {} while it was fetched. Run the command again",
@@ -1016,6 +1019,20 @@ fn in_history_of(
             String::from_utf8_lossy(&ancestry.stderr).trim()
         )),
     }
+}
+
+/// Whether the checkout at `root` is a partial clone, as git marks one: a `.promisor` file beside
+/// a pack it fetched with a filter, whichever remote it came from.
+fn partial(root: &Path) -> Result<bool, String> {
+    let packs = root.join(git(root, &["rev-parse", "--git-path", "objects/pack"])?);
+    Ok(fs::read_dir(packs).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|end| end == "promisor")
+        })
+    }))
 }
 
 /// Whether the checkout at `root` has `commit`, never fetching it, so one that a force-push took
@@ -1320,11 +1337,12 @@ mod tests {
                 "partial",
             ],
         );
-        let partial = temp.path().join("partial");
+        let clone = temp.path().join("partial");
         let second = committed("Second");
-        assert!(has_commit(&partial, &first).unwrap());
+        assert!(partial(&clone).unwrap() && !partial(&origin).unwrap());
+        assert!(has_commit(&clone, &first).unwrap());
         // git would fetch the second commit from origin to answer, had it not been held.
-        assert!(!has_commit(&partial, &second).unwrap());
+        assert!(!has_commit(&clone, &second).unwrap());
     }
 
     #[test]
