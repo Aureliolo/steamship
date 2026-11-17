@@ -1260,7 +1260,7 @@ mod tests {
     fn a_git_failure_is_told_by_its_first_line_that_is_not_a_warning() {
         assert_eq!(
             failure_line(
-                "\nwarning: filtering not recognized by server, ignoring\n  fatal: no such ref\n"
+                "\nwarning: redirecting to https://example.com/game.git/\n  fatal: no such ref\n"
             ),
             "fatal: no such ref"
         );
