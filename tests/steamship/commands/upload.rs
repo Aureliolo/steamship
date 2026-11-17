@@ -2681,16 +2681,10 @@ fn a_released_game_s_green_tip_is_not_held_to_the_default_branch_s_build() {
     );
 }
 
-#[test]
-fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
-    let (temp, root) = pushed_game(Some(GREEN_UNBUILT));
-    let first = head(&root);
-    pushed(&root, "Green moves on");
-    pushed_ungreen(&root, "A hotfix on main");
-    let hotfix = head(&root);
-    let shallow = temp.path().join("shallow");
+/// A clone of the fixture origin's green branch, in `temp`'s folder `name`, made with `args`.
+fn green_cloned(temp: &Path, name: &str, args: &[&str]) -> PathBuf {
+    let clone = temp.join(name);
     let bare = temp
-        .path()
         .join("origin.git")
         .display()
         .to_string()
@@ -2699,20 +2693,26 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
         "file://{}{bare}",
         if bare.starts_with('/') { "" } else { "/" }
     );
-    git(
-        temp.path(),
-        &[
-            "clone",
-            "--quiet",
-            "--depth",
-            "1",
-            "--branch",
-            "green",
-            &origin,
-            &shallow.to_string_lossy(),
-        ],
-    );
-    let live_from = |commit: &str| {
+    let target = clone.to_string_lossy();
+    let mut cloning = vec!["clone", "--quiet", "--branch", "green"];
+    cloning.extend(args);
+    cloning.extend([origin.as_str(), &target]);
+    git(temp, &cloning);
+    clone
+}
+
+#[test]
+fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
+    let (temp, root) = pushed_game(Some(GREEN_UNBUILT));
+    let first = head(&root);
+    pushed(&root, "Green moves on");
+    pushed_ungreen(&root, "A hotfix on main");
+    let hotfix = head(&root);
+    let shallow = green_cloned(temp.path(), "shallow", &["--depth", "1"]);
+    // Every git command steamship runs, as git traces it.
+    let traced = temp.path().join("git-trace.txt");
+    let traced_text = traced.display().to_string();
+    let live_in = |clone: &Path, commit: &str, trace: bool| {
         let (host, _requests) = web_api(vec![
             ("200 OK", testing_live(4242).to_owned()),
             (
@@ -2723,12 +2723,21 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
                 ),
             ),
         ]);
-        in_game_with(
-            &shallow,
-            &["upload"],
-            &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
-        )
+        let mut variables = vec![("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, host.as_str())];
+        if trace {
+            variables.push(("GIT_TRACE", traced_text.as_str()));
+        }
+        in_game_with(clone, &["upload"], &variables)
     };
+    let live_from = |commit: &str| live_in(&shallow, commit, false);
+
+    // A whole clone of green alone lacks main's tip, and fetches it.
+    let narrow = green_cloned(temp.path(), "narrow", &["--single-branch"]);
+    let (_, narrow_shown, narrow_why) = live_in(&narrow, &first, false);
+    assert!(
+        narrow_shown.contains("the build live on testing comes from this commit's history\n"),
+        "{narrow_shown}{narrow_why}"
+    );
     // Another git run fetching into the shallow clone is named, with the lock it holds.
     let lock = shallow.join(".git").join("shallow.lock");
     fs::write(&lock, "").unwrap();
@@ -2752,8 +2761,14 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
             ),
         "{shown}{why}"
     );
-    // Main's hotfix is fetched with main, and is not in green's history.
-    let (code, hotfix_shown, hotfix_why) = live_from(&hotfix);
+    // Main's hotfix came with main, and is not in green's history. A clone that already has both
+    // is not fetched again.
+    let (code, hotfix_shown, hotfix_why) = live_in(&shallow, &hotfix, true);
+    let trace = fs::read_to_string(&traced).unwrap();
+    assert!(
+        trace.contains(" ls-remote ") && !trace.contains(" fetch "),
+        "{trace}"
+    );
     assert_eq!(code, Some(2_i32), "{hotfix_shown}{hotfix_why}");
     assert!(
         failure(&hotfix_why).contains(&format!(
