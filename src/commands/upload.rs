@@ -13,12 +13,12 @@ use steamship::cli::{self, FAILED, LIMITED, REFUSED, UNFINISHED};
 use steamship::install;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
-use steamship::project;
+use steamship::project::{self, HeldBy, Project};
 use steamship::redact::{self, Redactor};
 use steamship::show::{self, Hint, Spinner};
 use steamship::{
     branch, builds, check, ci, download, dump, green, keychain, ledger, redist, release, run,
-    settings, steamcmd, upload, webapi,
+    scripts, settings, steamcmd, upload, webapi,
 };
 
 use super::branch::try_branch;
@@ -30,7 +30,7 @@ use super::exit::{either, fail, first_failure, late};
 use super::game::{
     content_root_given, game_as, game_script, script_given, script_named, shipped_from,
 };
-use super::key::{KeyFrom, key_at_hand, key_variable, offer_to_keep, web_api};
+use super::key::{KeyFrom, key_at_hand, key_variable, offer_to_keep, web_api, why_unanswered};
 use super::ready::{
     dump_in_actions, login_refusal, named, ready, restore, run_as, steamcmd_failed,
 };
@@ -105,14 +105,20 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     // make, costs neither.
     let content_root = content_root_given(shipping.content_root, !game.build.is_empty())?;
     let content_root = content_root.as_deref();
-    shipped_from(&game)?;
+    let pushed = shipped_from(&game, game.green.as_deref())?;
+    let at_green_tip = !shipping.preview && matches!(pushed.held_by, HeldBy::Green(_));
     // Before the build, which takes minutes, so that a commit no round has passed costs none.
-    let shipped = match &game.green {
+    let shipped = match (&game.green, pushed.held_by) {
         _ if shipping.preview => None,
-        Some(branch) => Some(green_commit(&game.root, branch, shipping.green)?),
-        None => Some(green::Shipped {
-            commit: project::git(&game.root, &["rev-parse", "HEAD"])
-                .map_err(|why| fail(&why, FAILED))?,
+        (_, HeldBy::Green(_)) => Some(green::Shipped {
+            commit: pushed.commit,
+            green: true,
+        }),
+        (Some(branch), HeldBy::Default(_)) => {
+            Some(green_commit(&game.root, branch, shipping.green)?)
+        }
+        (None, HeldBy::Default(_)) => Some(green::Shipped {
+            commit: pushed.commit,
             green: false,
         }),
     };
@@ -123,6 +129,9 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     upload::shippable(&version).map_err(|error| fail(&error, REFUSED))?;
     show::field("version", &version);
     let script = game_script(&game, content_root)?;
+    if at_green_tip {
+        nothing_newer_live(&game, &script)?;
+    }
     apart(&game)?;
     exports_apart(&game, &script)?;
     snapshot_sound(&game, &script, true)?;
@@ -247,6 +256,139 @@ struct Upload<'command> {
     /// The commit a game's upload is made from, to record for a rollback, and whether its green
     /// branch held it.
     shipped: Option<&'command green::Shipped>,
+}
+
+/// The way round a green tip [`nothing_newer_live`] refuses.
+const INSTEAD: &str = "Upload the default branch's tip instead";
+
+/// Refuses the game's commit unless it holds the commit each build live on a branch `script` sets
+/// live was made from, the default branch too while the game is unreleased.
+///
+/// Green's tip is older than the default branch's, and a build from that branch, such as a hotfix,
+/// must not be undone. So a live build this cannot compare refuses the commit too, as do no key at
+/// hand and a Steam that cannot be asked. The default branch's tip goes up without this.
+fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(), ExitCode> {
+    let targets: Vec<&str> = script
+        .set_live
+        .as_deref()
+        .into_iter()
+        .chain((!game.released).then_some("default"))
+        .collect();
+    let Some(api) = key_at_hand()? else {
+        return Err(fail(
+            &format!(
+                "the commit is green's tip, behind origin's default branch, and needs a Web API \
+                 key to see which builds are live. Set STEAMSHIP_WEB_API_KEY, run steamship login \
+                 --web-api-key-only, or {}",
+                INSTEAD.to_lowercase()
+            ),
+            REFUSED,
+        ));
+    };
+    let spinner = Spinner::start("live", "asking Steam which builds are live", false);
+    let unasked = |error: &webapi::Error| {
+        fail(
+            &format!(
+                "Steam could not be asked which builds are live: {}. Try again, or {}",
+                steams_words(error, None),
+                INSTEAD.to_lowercase()
+            ),
+            FAILED,
+        )
+    };
+    let branches = match api.branches(script.app_id) {
+        Ok(branches) => branches,
+        // Steam lists no branch while nothing is live on default, and another may still hold a
+        // newer build.
+        Err(error) if why_unanswered(&api, script.app_id, &error).is_some() => {
+            spinner.failed("no branches listed");
+            return Err(fail(
+                &format!(
+                    "Steam lists no branches while nothing is live on the default branch, so \
+                     the live builds cannot be compared. {INSTEAD}"
+                ),
+                REFUSED,
+            ));
+        }
+        Err(error) => {
+            spinner.failed("not answered");
+            return Err(unasked(&error));
+        }
+    };
+    let shown: Vec<&str> = targets
+        .iter()
+        .map(|target| branch::shown_name(target))
+        .collect();
+    if targets
+        .iter()
+        .all(|target| upload::live_build(&branches, &[], target).is_none())
+    {
+        spinner.skipped(&format!("nothing live on {}", show::listed(&shown, " or ")));
+        return Ok(());
+    }
+    match api.builds(script.app_id, 20) {
+        Ok(builds) => held_live(&game.root, &targets, &branches, &builds, spinner),
+        Err(error) => {
+            spinner.failed("not answered");
+            Err(unasked(&error))
+        }
+    }
+}
+
+/// Refuses the commit at `root` unless it holds the commit each build live on `targets` was made
+/// from, as `branches` and `builds` show them, and says which it holds.
+fn held_live(
+    root: &Path,
+    targets: &[&str],
+    branches: &[webapi::Branch],
+    builds: &[webapi::Build],
+    spinner: Spinner,
+) -> Result<(), ExitCode> {
+    let mut compared = Vec::new();
+    for target in targets {
+        let Some((build_id, description)) = upload::live_build(branches, builds, target) else {
+            continue;
+        };
+        let on = branch::shown_name(target);
+        let live = format!("BuildID {build_id}, live on {on},");
+        let why = match description.map(upload::version_and_commit) {
+            None => format!("{live} is not among the last 20 builds Steam listed"),
+            Some(None) => format!("{live} has a description steamship did not write"),
+            Some(Some((_, commit))) => match green::holds(root, commit) {
+                Ok(green::Holds::Yes) => {
+                    compared.push(on);
+                    continue;
+                }
+                Ok(green::Holds::No) => {
+                    format!("{live} was made from {commit}, which this commit does not hold")
+                }
+                Ok(green::Holds::Unknown) => {
+                    format!(
+                        "{live} was made from {commit}, which is not one commit in this checkout"
+                    )
+                }
+                Err(why) => {
+                    spinner.failed(&format!("{on}'s build not compared"));
+                    return Err(fail(
+                        &format!(
+                            "{live} could not be compared: {}. Try again, or {}",
+                            why.trim_end_matches('.'),
+                            INSTEAD.to_lowercase()
+                        ),
+                        FAILED,
+                    ));
+                }
+            },
+        };
+        spinner.failed(&format!("refused for {on}'s build"));
+        return Err(fail(&format!("{why}. {INSTEAD}"), REFUSED));
+    }
+    let plural = if compared.len() == 1 { "" } else { "s" };
+    spinner.done(&format!(
+        "this commit holds the build{plural} live on {}",
+        show::listed(&compared, " and ")
+    ));
+    Ok(())
 }
 
 /// The commit at `root`, refused unless origin's `branch` holds it or `policy` allows otherwise,

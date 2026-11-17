@@ -90,6 +90,9 @@ API, which needs the publisher key. Keep the key as a secret of its own and give
 build live on the script's branch. Once Steam shows the game released, the step says so and
 uploads to the script's branch alone.
 
+Uploading a game's green tip, once the default branch is ahead of it, needs the key too. See
+[the tree and the scripts](games.md#the-tree-and-the-scripts).
+
 ### Content built in another job
 
 When your content is built in another job, hand it over as a tar archive.

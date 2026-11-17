@@ -537,6 +537,22 @@ pub fn uploaded_as(builds: &[webapi::Build], description: &str) -> Option<u64> {
         .map(|build| build.build_id)
 }
 
+/// The ID of the build live on `target`, when one is, and its description when it is among
+/// `builds`.
+#[must_use]
+pub fn live_build<'found>(
+    branches: &[webapi::Branch],
+    builds: &'found [webapi::Build],
+    target: &str,
+) -> Option<(u64, Option<&'found str>)> {
+    let live = branch::find(branches, target)?.build_id;
+    let description = builds
+        .iter()
+        .find(|build| build.build_id == live)
+        .map(|build| build.description.as_str());
+    (live > 0).then_some((live, description))
+}
+
 /// How long an upload waits in all for Steam's CDN to serve a manifest steamcmd builds against.
 ///
 /// The CDN was seen to answer 404 for a branch's last manifest 16 minutes after its build, and to
@@ -1376,6 +1392,43 @@ mod tests {
             ("Public default branch", None),
         ] {
             assert_eq!(version_and_commit(description), expected, "{description:?}");
+        }
+    }
+
+    #[test]
+    fn each_target_gives_its_live_build_and_its_description_when_steam_listed_it() {
+        let branch = |name: &str, build_id| webapi::Branch {
+            name: name.to_owned(),
+            build_id,
+            description: String::new(),
+            locked: false,
+        };
+        let build = |build_id, description: &str| webapi::Build {
+            build_id,
+            description: description.to_owned(),
+            created: 0,
+        };
+        let branches = [
+            branch("public", 40),
+            branch("testing", 41),
+            branch("beta", 42),
+            branch("staging", 0),
+            branch("old", 7),
+        ];
+        let builds = [
+            build(42, "0.3.2 abc1234"),
+            build(41, "0.3.1 a1b2c3d4e5f6"),
+            build(40, "Uploaded by hand"),
+        ];
+        for (target, expected) in [
+            ("testing", Some((41, Some("0.3.1 a1b2c3d4e5f6")))),
+            ("Beta", Some((42, Some("0.3.2 abc1234")))),
+            ("default", Some((40, Some("Uploaded by hand")))),
+            ("old", Some((7, None))),
+            ("staging", None),
+            ("missing", None),
+        ] {
+            assert_eq!(live_build(&branches, &builds, target), expected, "{target}");
         }
     }
 

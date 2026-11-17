@@ -104,7 +104,8 @@ fn try_game_workshop(request: &cli::Workshop) -> Result<ExitCode, ExitCode> {
         show::divert();
     }
     if !request.dry_run {
-        shipped_from(&game)?;
+        // From the newest commit alone, as an item outlives the build it was made beside.
+        drop(shipped_from(&game, None)?);
     }
     let app = script.display().to_string();
     // A file that cannot be read is named by the upload itself. Until then no item counts as made.

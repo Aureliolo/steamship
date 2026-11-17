@@ -70,11 +70,10 @@ pub fn require(root: &Path, branch: &str, policy: Policy) -> Result<Shipped, Str
 ///
 /// When Git cannot be run or origin cannot be asked.
 pub fn standing(root: &Path, branch: &str, commit: &str) -> Result<Standing, String> {
-    let reference = format!("refs/heads/{branch}");
-    let printed = git(root, &["ls-remote", "origin", &reference])?;
-    let Some(tip) = tip_of(&printed) else {
+    let Some(tip) = tip(root, branch)? else {
         return Ok(Standing::Off { tip: None });
     };
+    let reference = format!("refs/heads/{branch}");
     if tip == commit {
         return Ok(Standing::On);
     }
@@ -91,6 +90,56 @@ pub fn standing(root: &Path, branch: &str, commit: &str) -> Result<Standing, Str
             String::from_utf8_lossy(&ancestry.stderr).trim()
         )),
     }
+}
+
+/// Whether the commit at `root`'s HEAD holds another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Holds {
+    /// The other is HEAD or one of its ancestors.
+    Yes,
+    No,
+    /// The checkout has no commit by that name, or more than one.
+    Unknown,
+}
+
+/// Whether the commit at `root`'s HEAD holds `commit`, which may be abbreviated.
+///
+/// A commit HEAD holds is in its history, so one missing from the checkout is not held. A shallow
+/// clone, as CI checks out, is deepened first, since it lacks that history.
+///
+/// # Errors
+///
+/// When Git cannot be run, or a shallow clone cannot be deepened.
+pub fn holds(root: &Path, commit: &str) -> Result<Holds, String> {
+    if git(root, &["rev-parse", "--is-shallow-repository"])? == "true" {
+        drop(git(root, &["fetch", "--quiet", "--unshallow", "origin"])?);
+    }
+    let named = format!("{commit}^{{commit}}");
+    let resolved = git_run(root, &["rev-parse", "--verify", "--quiet", &named])?;
+    if !resolved.status.success() {
+        return Ok(Holds::Unknown);
+    }
+    // The full name, as a blob can share the abbreviation, which merge-base would refuse.
+    let full = String::from_utf8_lossy(&resolved.stdout).trim().to_owned();
+    let ancestry = git_run(root, &["merge-base", "--is-ancestor", &full, "HEAD"])?;
+    match ancestry.status.code() {
+        Some(0) => Ok(Holds::Yes),
+        Some(1) => Ok(Holds::No),
+        _ => Err(format!(
+            "git could not tell whether HEAD holds {commit}: {}",
+            String::from_utf8_lossy(&ancestry.stderr).trim()
+        )),
+    }
+}
+
+/// The commit origin's `branch` is at, when origin has the branch.
+///
+/// # Errors
+///
+/// When Git cannot be run or origin cannot be asked.
+pub fn tip(root: &Path, branch: &str) -> Result<Option<String>, String> {
+    let reference = format!("refs/heads/{branch}");
+    git(root, &["ls-remote", "origin", &reference]).map(|printed| tip_of(&printed))
 }
 
 /// The commit `git ls-remote` printed for the branch, when it printed one.

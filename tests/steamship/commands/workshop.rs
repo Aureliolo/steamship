@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use steamship::platform::Platform;
 use steamship::steamcmd;
 
+use crate::common::git::{commit, git, head};
 use crate::{
     at, failure, faked_with, icon_png, in_game, packed_login, pushed, pushed_game, saved_login,
     steamship, steamship_in, text_at, workshop_item,
@@ -960,7 +961,7 @@ fn a_word_with_no_field_is_an_item_script_or_the_games_app() {
     );
     let (own_said, own_why) = exits_2(in_game(&root, &["workshop", "1000050"]));
     assert!(
-        own_said.contains("as origin's main has it"),
+        own_said.contains("at the tip of origin's main"),
         "{own_said}{own_why}"
     );
     assert!(!own_why.contains("is not this game's"), "{own_why}");
@@ -1082,12 +1083,27 @@ fn a_games_workshop_items_go_up_only_from_a_pushed_tree() {
 }
 
 #[test]
+fn a_game_s_workshop_items_are_never_sent_from_green_s_tip_behind_main() {
+    let (_temp, root) = pushed_game(Some("green = \"green\"\n"));
+    let tested = head(&root);
+    commit(&root, "Main moves past green");
+    git(&root, &["push", "--quiet", "origin", "main"]);
+    git(&root, &["checkout", "--quiet", "--detach", &tested]);
+    let (code, stdout, stderr) = in_game(&root, &["workshop"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).contains(", and origin's main is at "),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn a_games_example_mods_are_its_workshop_items_and_one_without_any_is_refused() {
     let (_temp, root) = pushed_game(None);
     let (code, stdout, stderr) = in_game(&root, &["workshop", "--visibility", "public"]);
     assert_ne!(code, Some(0_i32), "no steamcmd here: {stdout}{stderr}");
     assert!(
-        stdout.contains("as origin's main has it"),
+        stdout.contains("at the tip of origin's main"),
         "{stdout}{stderr}"
     );
 
