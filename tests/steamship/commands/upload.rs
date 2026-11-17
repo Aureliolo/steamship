@@ -2756,7 +2756,8 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
     let (_, shown, why) = live_from(&first);
     assert!(
         why.contains(
-            "this shallow clone fetched its history of commits, to compare it with origin's main"
+            "this shallow clone fetched more history, to compare the commit with origin's main. \
+             Older files are still fetched only when git needs them"
         ) && shown.contains(
             "  live      \u{2713} the build live on testing comes from this commit's history\n"
         ),
@@ -2775,7 +2776,7 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
         failure(&hotfix_why).contains(&format!(
             "was made from {}, which is not in this commit's history",
             hotfix.get(..9).unwrap()
-        )) && !hotfix_why.contains("history of commits"),
+        )) && !hotfix_why.contains("fetched more history"),
         "{hotfix_shown}{hotfix_why}"
     );
 

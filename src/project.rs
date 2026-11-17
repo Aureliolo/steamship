@@ -196,7 +196,7 @@ pub struct Pushed {
     /// Whether the commit is the tip of the game's green branch, in the default branch's history
     /// but behind its tip.
     pub at_green_tip: bool,
-    /// Whether a shallow clone fetched its history of commits to tell.
+    /// Whether a shallow clone fetched more history to tell.
     pub deepened: bool,
 }
 
@@ -986,8 +986,8 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
 }
 
 /// Whether `at`, the commit origin's `branch` is at, has `commit` in its history, and whether a
-/// shallow clone fetched its history of commits to tell. That leaves every commit in the checkout
-/// for any later comparison.
+/// shallow clone fetched more history to tell. That leaves every commit in the checkout for any
+/// later comparison.
 ///
 /// It compares with `at` itself, never with what a fetch names, which another git run in the
 /// checkout can rewrite. A checkout with its whole history and `at` in it is not fetched at all.
@@ -1018,7 +1018,7 @@ fn in_history_of(
     }
 }
 
-/// Whether the checkout at `root` has `commit`.
+/// Whether the checkout holds `commit`, never fetching it, as a missing commit answers no.
 fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
     let named = format!("{commit}^{{commit}}");
     Ok(git_held(root, &["cat-file", "-e", &named])?
@@ -1192,8 +1192,8 @@ pub fn git(root: &Path, args: &[&str]) -> Result<String, String> {
         .to_owned())
 }
 
-/// The line of git's `stderr` that says why it failed: the first that is not a warning, as git
-/// warns before it fails, such as of a filter a server ignores.
+/// The line of git's `stderr` that says why it failed. Git can warn first, such as of a filter the
+/// server ignores, so it is the first line not starting `warning: `, or the first when all do.
 fn failure_line(stderr: &str) -> &str {
     let mut said = stderr
         .lines()
