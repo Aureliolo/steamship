@@ -990,14 +990,22 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
 /// later comparison.
 ///
 /// It compares with `at` itself, never with what a fetch names, which another git run in the
-/// checkout can rewrite. A checkout with its whole history and `at` in it is not fetched at all.
+/// checkout can rewrite. A whole clone with `at` in it is not fetched at all.
 fn in_history_of(
     root: &Path,
     commit: &str,
     (branch, at): (&str, &str),
 ) -> Result<(bool, bool), String> {
     let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
-    if shallow || !has_commit(root, at)? {
+    // A partial clone, such as a shallow one fetched before, would fetch a missing `at` alone, with
+    // its whole history, on looking for it. A fetch first asks only for what the checkout lacks.
+    let partial = git_run(
+        root,
+        &["config", "--get", "--type=bool", "remote.origin.promisor"],
+    )?
+    .stdout
+    .starts_with(b"true");
+    if shallow || partial || !has_commit(root, at)? {
         fetched(root, branch, shallow)?;
     }
     if !has_commit(root, at)? {
@@ -1006,7 +1014,7 @@ fn in_history_of(
             short(at)
         ));
     }
-    let ancestry = git_held(root, &["merge-base", "--is-ancestor", commit, at])?;
+    let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, at])?;
     match ancestry.status.code() {
         Some(0) => Ok((true, shallow)),
         Some(1) => Ok((false, shallow)),
@@ -1018,12 +1026,10 @@ fn in_history_of(
     }
 }
 
-/// Whether the checkout holds `commit`, never fetching it, as a missing commit answers no.
+/// Whether the checkout at `root` has `commit`.
 fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
     let named = format!("{commit}^{{commit}}");
-    Ok(git_held(root, &["cat-file", "-e", &named])?
-        .status
-        .success())
+    Ok(git_run(root, &["cat-file", "-e", &named])?.status.success())
 }
 
 /// Fetches origin's `branch`, the whole history too when the checkout is `shallow`, leaving
@@ -1213,8 +1219,9 @@ pub fn git_run(root: &Path, args: &[&str]) -> Result<process::Output, String> {
     git_output(root, args, false)
 }
 
-/// Git run with `args` in `root`, however it ended, never fetching an object the checkout lacks.
-/// A partial clone would otherwise fetch a missing commit alone, with its whole history.
+/// Git run with `args` in `root`, however it ended, never fetching an object the checkout lacks
+/// from git 2.45 on. A partial clone would otherwise fetch a missing commit alone, with its whole
+/// history.
 ///
 /// # Errors
 ///

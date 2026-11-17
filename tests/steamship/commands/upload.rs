@@ -2709,9 +2709,11 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
     pushed_ungreen(&root, "A hotfix on main");
     let hotfix = head(&root);
     let shallow = green_cloned(temp.path(), "shallow", &["--depth", "1"]);
-    // Every git command steamship runs, as git traces it.
+    // Every git command steamship runs, as git traces it. The second trace keeps global options.
     let traced = temp.path().join("git-trace.txt");
     let traced_text = traced.display().to_string();
+    let traced_whole = temp.path().join("git-trace2.txt");
+    let traced_whole_text = traced_whole.display().to_string();
     let live_in = |clone: &Path, commit: &str, trace: bool| {
         let (host, _requests) = web_api(vec![
             ("200 OK", testing_live(4242).to_owned()),
@@ -2726,6 +2728,7 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
         let mut variables = vec![("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, host.as_str())];
         if trace {
             variables.push(("GIT_TRACE", traced_text.as_str()));
+            variables.push(("GIT_TRACE2", traced_whole_text.as_str()));
         }
         in_game_with(clone, &["upload"], &variables)
     };
@@ -2763,36 +2766,49 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
         ),
         "{shown}{why}"
     );
-    // Main's hotfix came with main, and is not in green's history. A clone that already has both
-    // is not fetched again.
-    let (code, hotfix_shown, hotfix_why) = live_in(&shallow, &hotfix, true);
-    let trace = fs::read_to_string(&traced).unwrap();
-    assert!(
-        trace.contains(" ls-remote ") && !trace.contains(" fetch "),
-        "{trace}"
-    );
-    assert_eq!(code, Some(2_i32), "{hotfix_shown}{hotfix_why}");
-    assert!(
-        failure(&hotfix_why).contains(&format!(
-            "was made from {}, which is not in this commit's history",
-            hotfix.get(..9).unwrap()
-        )) && !hotfix_why.contains("fetched more history"),
-        "{hotfix_shown}{hotfix_why}"
-    );
-
-    // Once main moves on, its new commits are asked for as one fetch, never fetched one by one,
-    // and without --no-lazy-fetch, which git before 2.45 refuses.
+    // The clone is partial now. Each later upload asks origin for what it lacks in one fetch,
+    // before git could fetch a missing commit alone, with its whole history.
+    let fetched_once = |commit: &str, made_from: &str| {
+        fs::write(&traced, "").unwrap();
+        fs::write(&traced_whole, "").unwrap();
+        let (exit, said, told) = live_in(&shallow, commit, true);
+        let trace = fs::read_to_string(&traced).unwrap();
+        let whole = fs::read_to_string(&traced_whole).unwrap();
+        assert!(
+            trace.contains(" fetch --quiet --no-write-fetch-head origin refs/heads/main")
+                && trace.matches("built-in: git fetch").count() == 1
+                // Git before 2.45 refuses that option, so it never reaches git.
+                && whole.contains("rev-parse --verify --quiet")
+                && !whole.contains("--no-lazy-fetch")
+                && !told.contains("fetched more history"),
+            "{said}{told}{trace}"
+        );
+        if made_from.is_empty() {
+            assert!(
+                said.contains("the build live on testing comes from this commit's history\n"),
+                "{said}{told}"
+            );
+        } else {
+            assert_eq!(exit, Some(2_i32), "{said}{told}");
+            assert!(
+                failure(&told).contains(&format!(
+                    "was made from {}, which is not in this commit's history",
+                    made_from.get(..9).unwrap()
+                )),
+                "{said}{told}"
+            );
+        }
+    };
+    // Main's hotfix came with main, and is not in green's history.
+    fetched_once(&hotfix, &hotfix);
     pushed_ungreen(&root, "Main moves on again");
-    fs::remove_file(&traced).unwrap();
-    let (_, moved_shown, moved_why) = live_in(&shallow, &first, true);
-    let moved_trace = fs::read_to_string(&traced).unwrap();
-    assert!(
-        moved_shown.contains("the build live on testing comes from this commit's history\n")
-            && moved_trace.contains(" fetch --quiet --no-write-fetch-head origin refs/heads/main")
-            && moved_trace.matches("built-in: git fetch").count() == 1
-            && !moved_trace.contains("--no-lazy-fetch"),
-        "{moved_shown}{moved_why}{moved_trace}"
-    );
+    fetched_once(&first, "");
+    // A build made from a branch the clone never fetched is not in its history either.
+    git(&root, &["checkout", "--quiet", "-b", "side"]);
+    commit(&root, "A build of a side branch");
+    git(&root, &["push", "--quiet", "origin", "side"]);
+    let side = head(&root);
+    fetched_once(&side, &side);
 }
 
 #[test]
