@@ -537,6 +537,27 @@ pub fn uploaded_as(builds: &[webapi::Build], description: &str) -> Option<u64> {
         .map(|build| build.build_id)
 }
 
+/// The build live on each of `targets` and the commit it was made from.
+///
+/// The commit is the one the description [`description`] wrote names. A branch with no build live,
+/// or whose build is not among `builds` or was described otherwise, has none.
+#[must_use]
+pub fn live_commits<'found>(
+    branches: &[webapi::Branch],
+    builds: &'found [webapi::Build],
+    targets: &[&str],
+) -> Vec<(String, u64, &'found str)> {
+    targets
+        .iter()
+        .filter_map(|target| {
+            let live = branch::find(branches, target)?.build_id;
+            let build = builds.iter().find(|build| build.build_id == live)?;
+            let (_, commit) = version_and_commit(&build.description)?;
+            Some((branch::shown_name(target).to_owned(), live, commit))
+        })
+        .collect()
+}
+
 /// How long an upload waits in all for Steam's CDN to serve a manifest steamcmd builds against.
 ///
 /// The CDN was seen to answer 404 for a branch's last manifest 16 minutes after its build, and to
@@ -1377,6 +1398,45 @@ mod tests {
         ] {
             assert_eq!(version_and_commit(description), expected, "{description:?}");
         }
+    }
+
+    #[test]
+    fn each_target_gives_the_commit_of_its_live_build_when_upload_described_it() {
+        let branch = |name: &str, build_id| webapi::Branch {
+            name: name.to_owned(),
+            build_id,
+            description: String::new(),
+            locked: false,
+        };
+        let build = |build_id, description: &str| webapi::Build {
+            build_id,
+            description: description.to_owned(),
+            created: 0,
+        };
+        let branches = [
+            branch("public", 40),
+            branch("testing", 41),
+            branch("beta", 42),
+            branch("staging", 0),
+            branch("old", 7),
+        ];
+        let builds = [
+            build(42, "0.3.2 abc1234"),
+            build(41, "0.3.1 a1b2c3d4e5f6"),
+            build(40, "Uploaded by hand"),
+        ];
+        assert_eq!(
+            live_commits(
+                &branches,
+                &builds,
+                &["testing", "default", "staging", "old", "missing"]
+            ),
+            vec![("testing".to_owned(), 41, "a1b2c3d4e5f6")]
+        );
+        assert_eq!(
+            live_commits(&branches, &builds, &["Beta"]),
+            vec![("Beta".to_owned(), 42, "abc1234")]
+        );
     }
 
     /// The `Retry` a failure of `kind` reads as: 0 for a manifest the CDN does not serve, then

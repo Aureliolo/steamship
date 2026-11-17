@@ -13,12 +13,12 @@ use steamship::cli::{self, FAILED, LIMITED, REFUSED, UNFINISHED};
 use steamship::install;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
-use steamship::project::{self, HeldBy};
+use steamship::project::{self, HeldBy, Project};
 use steamship::redact::{self, Redactor};
 use steamship::show::{self, Hint, Spinner};
 use steamship::{
     branch, builds, check, ci, download, dump, green, keychain, ledger, redist, release, run,
-    settings, steamcmd, upload, webapi,
+    scripts, settings, steamcmd, upload, webapi,
 };
 
 use super::branch::try_branch;
@@ -106,6 +106,7 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     let content_root = content_root_given(shipping.content_root, !game.build.is_empty())?;
     let content_root = content_root.as_deref();
     let pushed = shipped_from(&game)?;
+    let at_green_tip = !shipping.preview && matches!(pushed.held_by, HeldBy::Green(_));
     // Before the build, which takes minutes, so that a commit no round has passed costs none.
     let shipped = match (&game.green, pushed.held_by) {
         _ if shipping.preview => None,
@@ -128,6 +129,9 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     upload::shippable(&version).map_err(|error| fail(&error, REFUSED))?;
     show::field("version", &version);
     let script = game_script(&game, content_root)?;
+    if at_green_tip {
+        nothing_newer_live(&game, &script)?;
+    }
     apart(&game)?;
     exports_apart(&game, &script)?;
     snapshot_sound(&game, &script, true)?;
@@ -252,6 +256,73 @@ struct Upload<'command> {
     /// The commit a game's upload is made from, to record for a rollback, and whether its green
     /// branch held it.
     shipped: Option<&'command green::Shipped>,
+}
+
+/// Refuses the game's commit unless it holds the commit each build live on a branch `script` sets
+/// live was made from, the default branch too while the game is unreleased. Green's tip is older
+/// than the default branch's, and a build from that branch, such as a hotfix, must not be undone.
+/// With no key at hand, or a Steam that cannot be asked, it holds nothing up and says so.
+fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(), ExitCode> {
+    let targets: Vec<&str> = script
+        .set_live
+        .as_deref()
+        .into_iter()
+        .chain((!game.released).then_some("default"))
+        .collect();
+    let Ok(Some(api)) = key_at_hand() else {
+        show::aside(
+            "no Web API key is at hand, so Steam was not asked whether a newer build is live",
+        );
+        return Ok(());
+    };
+    let spinner = Spinner::start("live", "asking Steam which commits are live", false);
+    let asked: Result<(Vec<webapi::Branch>, Vec<webapi::Build>), webapi::Error> =
+        api.branches(script.app_id).and_then(|branches| {
+            let any_live = targets.iter().any(|target| {
+                branch::find(&branches, target).is_some_and(|found| found.build_id > 0)
+            });
+            let builds = if any_live {
+                api.builds(script.app_id, 20)?
+            } else {
+                Vec::new()
+            };
+            Ok((branches, builds))
+        });
+    let (branches, builds) = match asked {
+        Ok(asked) => asked,
+        Err(error) => {
+            spinner.failed("not asked");
+            show::aside(&steams_words(&error, None));
+            return Ok(());
+        }
+    };
+    for (on, build_id, commit) in upload::live_commits(&branches, &builds, &targets) {
+        match green::holds(&game.root, commit) {
+            Ok(true) => {}
+            Ok(false) => {
+                spinner.failed(&format!("{on} has a newer build"));
+                return Err(fail(
+                    &format!(
+                        "BuildID {build_id}, live on {on}, was made from {commit}, which this \
+                         commit does not hold. Upload a commit that holds it"
+                    ),
+                    REFUSED,
+                ));
+            }
+            Err(why) => {
+                spinner.failed(&format!("{on} not compared"));
+                return Err(fail(
+                    &format!(
+                        "BuildID {build_id}, live on {on}, was made from {commit}: {why}. Upload \
+                         a commit that holds it"
+                    ),
+                    REFUSED,
+                ));
+            }
+        }
+    }
+    spinner.done("nothing live is newer than this commit");
+    Ok(())
 }
 
 /// The commit at `root`, refused unless origin's `branch` holds it or `policy` allows otherwise,

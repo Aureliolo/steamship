@@ -118,12 +118,16 @@ first that fails:
 ### The tree and the scripts
 
 The tree is refused while it holds anything its commit does not, untracked files included. It is
-refused too unless origin's default branch is at that commit, or the `green` branch below is.
+refused too unless the commit is the tip of origin's default branch or of the `green` branch
+below.
 
-With `green` set, the commit has to be on that branch of origin. Its tip ships even once the
-default branch has moved past it. An older commit on it does not. The check runs before the build.
+With `green` set, the commit has to be on that branch of origin. The check runs before the build.
 When it refuses, it names the commit and where the branch is. `--dry-run` skips the check.
 `--allow-ungreen` uploads a commit that is not on the branch, such as a hotfix.
+
+Green's tip ships even once the default branch has moved past it. It is refused while a build
+live on a branch the upload sets live came from a commit it lacks, such as that hotfix. Steam is
+asked which builds are live only when a Web API key is at hand.
 
 The app build script has to set the game's branch live, and no other. The settings snapshot has
 to be there, with an install folder of letters and digits alone.

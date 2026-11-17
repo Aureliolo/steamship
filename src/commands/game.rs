@@ -127,7 +127,11 @@ pub(crate) fn shipped_from(game: &Project) -> Result<project::Pushed, ExitCode> 
         },
     );
     show::field("cores", &held_to(game.cores)?);
-    let spinner = Spinner::start("commit", "asking origin which branch is at it", false);
+    let spinner = Spinner::start(
+        "commit",
+        "asking origin which branch is at this commit",
+        false,
+    );
     match project::pushed(&game.root, game.green.as_deref()) {
         Ok(pushed) => {
             let held_by = match &pushed.held_by {

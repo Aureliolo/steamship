@@ -2303,10 +2303,7 @@ fn a_game_naming_a_green_branch_is_refused_unless_origin_holds_its_commit_there(
 
     pushed(&root, "Green holds it");
     let (held_out, _) = ran(&["upload", "--version", "0.0.0"]);
-    assert!(
-        held_out.contains(", at the tip of origin's green"),
-        "{held_out}"
-    );
+    assert!(held_out.contains(", on origin's green"), "{held_out}");
 }
 
 #[test]
@@ -2341,8 +2338,8 @@ fn a_game_ships_green_s_tip_behind_main_but_no_older_green_commit() {
     let (_, older_why) = refused_for(&["upload", "--allow-ungreen", "--version", "0.0.0"]);
     assert!(
         older_why.contains(&format!(
-            "HEAD is at {}, origin's main is at {} and its green at {}. Check out green, the \
-             newest commit your tests passed, or push or pull until main matches",
+            "HEAD is at {}, origin's main is at {} and its green at {}. Check out green, or push \
+             or pull until main matches",
             short(&tested),
             short(&newest),
             short(&newest)
@@ -2377,6 +2374,65 @@ fn a_game_naming_no_green_branch_ships_only_main_s_tip() {
             short(&moved)
         )),
         "{stderr}"
+    );
+}
+
+#[test]
+fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
+    let (_temp, root) = pushed_game(Some("green = \"green\"\n"));
+    let tested = head(&root);
+    pushed_ungreen(&root, "A hotfix");
+    let hotfix = head(&root);
+    git(&root, &["checkout", "--quiet", "--detach", &tested]);
+    // Abbreviated as Git abbreviates in the build's description.
+    let abbreviated = |commit: &str| commit.get(..9).unwrap().to_owned();
+    let live_from = |commit: &str| {
+        let builds = format!(
+            r#"{{"response": {{"builds": {{"4242": {{"Description": "0.3.1 {}"}}}}}}}}"#,
+            abbreviated(commit)
+        );
+        let (host, _requests) = web_api(vec![
+            ("200 OK", testing_live(4242).to_owned()),
+            ("200 OK", builds),
+        ]);
+        in_game_with(
+            &root,
+            &["upload"],
+            &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+        )
+    };
+
+    let (code, stdout, stderr) = live_from(&hotfix);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).contains(&format!(
+            "BuildID 4242, live on testing, was made from {}, which this commit does not hold. \
+             Upload a commit that holds it",
+            abbreviated(&hotfix)
+        )),
+        "{stderr}"
+    );
+
+    let (_, passed, passed_why) = live_from(&tested);
+    assert!(
+        passed.contains("nothing live is newer than this commit"),
+        "{passed}{passed_why}"
+    );
+
+    let (lost_code, lost_out, lost_why) = live_from("0123456789abcdef0123456789abcdef01234567");
+    assert_eq!(lost_code, Some(2_i32), "{lost_out}{lost_why}");
+    assert!(
+        failure(&lost_why).contains(
+            "BuildID 4242, live on testing, was made from 012345678: commit 012345678 is not on \
+             origin. Upload a commit that holds it"
+        ),
+        "{lost_why}"
+    );
+
+    let (_, keyless, keyless_why) = in_game(&root, &["upload"]);
+    assert!(
+        keyless.contains("no Web API key is at hand, so Steam was not asked whether a newer build"),
+        "{keyless}{keyless_why}"
     );
 }
 
@@ -2416,10 +2472,7 @@ fn a_game_checks_the_branch_its_file_names_not_one_called_green() {
         &["push", "--quiet", "origin", "main:refs/heads/passed"],
     );
     let (held_out, _) = ran(&["upload", "--version", "0.0.0"]);
-    assert!(
-        held_out.contains(", at the tip of origin's passed"),
-        "{held_out}"
-    );
+    assert!(held_out.contains(", on origin's passed"), "{held_out}");
 }
 
 #[test]

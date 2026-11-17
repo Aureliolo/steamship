@@ -92,6 +92,32 @@ pub fn standing(root: &Path, branch: &str, commit: &str) -> Result<Standing, Str
     }
 }
 
+/// Whether the commit at `root`'s HEAD holds `commit`, which may be abbreviated: it is HEAD or one
+/// of its ancestors. A commit not here is fetched from origin first.
+///
+/// # Errors
+///
+/// When Git cannot be run, or origin cannot be asked or does not have `commit` either.
+pub fn holds(root: &Path, commit: &str) -> Result<bool, String> {
+    let named = format!("{commit}^{{commit}}");
+    let known = || git_run(root, &["cat-file", "-e", &named]).map(|asked| asked.status.success());
+    if !known()? {
+        drop(git(root, &["fetch", "--quiet", "origin"])?);
+        if !known()? {
+            return Err(format!("commit {commit} is not on origin"));
+        }
+    }
+    let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, "HEAD"])?;
+    match ancestry.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(format!(
+            "git could not tell whether HEAD holds {commit}: {}",
+            String::from_utf8_lossy(&ancestry.stderr).trim()
+        )),
+    }
+}
+
 /// The commit origin's `branch` is at, when origin has the branch.
 ///
 /// # Errors
