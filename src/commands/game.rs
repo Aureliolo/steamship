@@ -137,18 +137,15 @@ pub(crate) fn shipped_from(
     );
     match project::pushed(&game.root, green) {
         Ok(pushed) => {
-            let held_by = match &pushed.held_by {
-                HeldBy::Green(branch) => format!("at the tip of origin's {branch}"),
-                HeldBy::Default(branch) => format!("as origin's {branch} has it"),
-            };
+            let (HeldBy::Green(branch) | HeldBy::Default(branch)) = &pushed.held_by;
             spinner.done(&format!(
-                "{}, {held_by}, with nothing uncommitted",
+                "{}, at the tip of origin's {branch}, with nothing uncommitted",
                 project::short(&pushed.commit)
             ));
             Ok(pushed)
         }
         Err(why) => {
-            spinner.failed("not pushed");
+            spinner.failed("refused");
             Err(fail(&why, REFUSED))
         }
     }

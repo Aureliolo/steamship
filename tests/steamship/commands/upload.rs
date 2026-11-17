@@ -2438,7 +2438,7 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
 
     let (_, passed, passed_why) = live_from(&tested);
     assert!(
-        passed.contains("  live      \u{2713} this commit holds what testing has live\n"),
+        passed.contains("  live      \u{2713} this commit holds the build live on testing\n"),
         "{passed}{passed_why}"
     );
     let (_, both, both_why) = asked(
@@ -2450,7 +2450,7 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
         ),
     );
     assert!(
-        both.contains("this commit holds what testing and default have live\n"),
+        both.contains("this commit holds the builds live on testing and default\n"),
         "{both}{both_why}"
     );
 
@@ -2466,7 +2466,7 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
     };
     refused_for(
         live_from("0123456789abcdef0123456789abcdef01234567"),
-        "was made from 012345678, which names no one commit here",
+        "was made from 012345678, which is not one commit in this checkout",
     );
     refused_for(
         asked(
@@ -2523,8 +2523,8 @@ fn green_s_tip_ships_with_nothing_live_and_is_refused_while_steam_cannot_say() {
     assert_eq!(unlisted_code, Some(2_i32), "{unlisted}{unlisted_why}");
     assert!(
         failure(&unlisted_why).contains(
-            "Steam lists no branches while nothing is live on the default branch, so their \
-             builds cannot be compared. Upload the default branch's tip instead"
+            "Steam lists no branches while nothing is live on the default branch, so the \
+             live builds cannot be compared. Upload the default branch's tip instead"
         ),
         "{unlisted_why}"
     );
@@ -2568,8 +2568,8 @@ fn green_s_tip_ships_with_nothing_live_and_is_refused_while_steam_cannot_say() {
     assert_eq!(keyless_code, Some(2_i32), "{keyless}{keyless_why}");
     assert!(
         failure(&keyless_why).contains(
-            "the commit is green's tip, behind origin's default branch, so Steam has to show \
-             which builds are live"
+            "the commit is green's tip, behind origin's default branch, and needs a Web API key \
+             to see which builds are live"
         ),
         "{keyless_why}"
     );
@@ -2603,7 +2603,7 @@ fn a_released_game_s_green_tip_is_not_held_to_the_default_branch_s_build() {
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
     assert!(
-        shown.contains("  live      \u{2713} this commit holds what testing has live\n"),
+        shown.contains("  live      \u{2713} this commit holds the build live on testing\n"),
         "{shown}{why}"
     );
 }
@@ -2658,14 +2658,14 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
     };
     let (_, shown, why) = live_from(&first);
     assert!(
-        shown.contains("  live      \u{2713} this commit holds what testing has live\n"),
+        shown.contains("  live      \u{2713} this commit holds the build live on testing\n"),
         "{shown}{why}"
     );
     // A clone of green alone never has main's hotfix, which green's tip does not hold.
     let (code, hotfix_shown, hotfix_why) = live_from(&hotfix);
     assert_eq!(code, Some(2_i32), "{hotfix_shown}{hotfix_why}");
     assert!(
-        failure(&hotfix_why).contains("which names no one commit here"),
+        failure(&hotfix_why).contains("which is not one commit in this checkout"),
         "{hotfix_why}"
     );
 }

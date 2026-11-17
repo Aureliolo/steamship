@@ -277,15 +277,15 @@ fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(),
     let Some(api) = key_at_hand()? else {
         return Err(fail(
             &format!(
-                "the commit is green's tip, behind origin's default branch, so Steam has to show \
-                 which builds are live. Set STEAMSHIP_WEB_API_KEY, run steamship login \
+                "the commit is green's tip, behind origin's default branch, and needs a Web API \
+                 key to see which builds are live. Set STEAMSHIP_WEB_API_KEY, run steamship login \
                  --web-api-key-only, or {}",
                 INSTEAD.to_lowercase()
             ),
             REFUSED,
         ));
     };
-    let spinner = Spinner::start("live", "asking Steam which commits are live", false);
+    let spinner = Spinner::start("live", "asking Steam which builds are live", false);
     let unasked = |error: &webapi::Error| {
         fail(
             &format!(
@@ -305,13 +305,13 @@ fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(),
             return Err(fail(
                 &format!(
                     "Steam lists no branches while nothing is live on the default branch, so \
-                     their builds cannot be compared. {INSTEAD}"
+                     the live builds cannot be compared. {INSTEAD}"
                 ),
                 REFUSED,
             ));
         }
         Err(error) => {
-            spinner.failed("not asked");
+            spinner.failed("not answered");
             return Err(unasked(&error));
         }
     };
@@ -329,7 +329,7 @@ fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(),
     match api.builds(script.app_id, 20) {
         Ok(builds) => held_live(&game.root, &targets, &branches, &builds, spinner),
         Err(error) => {
-            spinner.failed("not asked");
+            spinner.failed("not answered");
             Err(unasked(&error))
         }
     }
@@ -363,7 +363,9 @@ fn held_live(
                     format!("{live} was made from {commit}, which this commit does not hold")
                 }
                 Ok(green::Holds::Unknown) => {
-                    format!("{live} was made from {commit}, which names no one commit here")
+                    format!(
+                        "{live} was made from {commit}, which is not one commit in this checkout"
+                    )
                 }
                 Err(why) => {
                     spinner.failed(&format!("{on}'s build not compared"));
@@ -378,12 +380,12 @@ fn held_live(
                 }
             },
         };
-        spinner.failed(&format!("{on}'s build not held"));
+        spinner.failed(&format!("refused for {on}'s build"));
         return Err(fail(&format!("{why}. {INSTEAD}"), REFUSED));
     }
-    let have = if compared.len() == 1 { "has" } else { "have" };
+    let plural = if compared.len() == 1 { "" } else { "s" };
     spinner.done(&format!(
-        "this commit holds what {} {have} live",
+        "this commit holds the build{plural} live on {}",
         show::listed(&compared, " and ")
     ));
     Ok(())

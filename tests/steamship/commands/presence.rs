@@ -163,7 +163,7 @@ fn a_games_rich_presence_is_sent_from_its_pushed_tree_and_one_without_any_is_ref
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
     );
     assert_eq!(code, Some(0_i32), "{stdout}{stderr}");
-    assert!(stdout.contains("as origin's main has it"), "{stdout}");
+    assert!(stdout.contains("at the tip of origin's main"), "{stdout}");
     assert!(
         stdout.contains("app 1000050: rich presence replaced for english"),
         "{stdout}"
