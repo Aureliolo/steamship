@@ -1186,23 +1186,28 @@ fn remote_head(printed: &str) -> Option<(String, String)> {
 pub fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_run(root, args)?;
     if !output.status.success() {
-        let said = String::from_utf8_lossy(&output.stderr);
-        // Git warns before it fails, as of a filter a server ignores, and the failure is the news.
-        let said = said
-            .lines()
-            .find(|line| !line.trim().is_empty() && !line.starts_with("warning: "))
-            .or_else(|| said.lines().find(|line| !line.trim().is_empty()))
-            .unwrap_or("");
         return Err(format!(
             "git {} failed in {}: {}",
             args.join(" "),
             root.display(),
-            said.trim()
+            failure_line(&String::from_utf8_lossy(&output.stderr))
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout)
         .trim_end()
         .to_owned())
+}
+
+/// The line of git's `stderr` that says why it failed: the first that is not a warning, as git
+/// warns before it fails, such as of a filter a server ignores.
+fn failure_line(stderr: &str) -> &str {
+    let mut said = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let first = said.clone().next().unwrap_or("");
+    said.find(|line| !line.starts_with("warning: "))
+        .unwrap_or(first)
 }
 
 /// Git run with `args` in `root`, however it ended.
@@ -1250,6 +1255,22 @@ mod tests {
     use super::*;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn a_git_failure_is_told_by_its_first_line_that_is_not_a_warning() {
+        assert_eq!(
+            failure_line(
+                "\nwarning: filtering not recognized by server, ignoring\n  fatal: no such ref\n"
+            ),
+            "fatal: no such ref"
+        );
+        assert_eq!(
+            failure_line("\n  warning: only a warning\n"),
+            "warning: only a warning"
+        );
+        assert_eq!(failure_line("error: one\nwarning: two\n"), "error: one");
+        assert_eq!(failure_line(""), "");
+    }
 
     fn configured(text: &str) -> Result<Project, String> {
         Project::configured(Path::new("game"), text)
