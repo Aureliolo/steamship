@@ -148,6 +148,12 @@ pub(crate) fn shipped_from(
                      origin's {default}. Older files are still fetched only when git needs them"
                 ));
             }
+            if let Some(why) = &pushed.unrecorded {
+                show::note(&format!(
+                    "{why}. The comparison went ahead, but until git can move origin/{default} \
+                     here, each upload fetches the same commits again"
+                ));
+            }
             Ok(pushed)
         }
         Err(why) => {

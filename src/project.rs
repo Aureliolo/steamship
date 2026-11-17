@@ -198,6 +198,9 @@ pub struct Pushed {
     pub at_green_tip: bool,
     /// Whether a shallow clone fetched more history to tell.
     pub deepened: bool,
+    /// Why git could not move origin's remote-tracking branch to what it fetched, when that was
+    /// all that failed.
+    pub unrecorded: Option<String>,
 }
 
 impl Project {
@@ -951,6 +954,7 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
             default: branch,
             at_green_tip: false,
             deepened: false,
+            unrecorded: None,
         });
     }
     let refused = format!(
@@ -963,7 +967,7 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
     };
     match tip(root, passed)? {
         Some(passed_at) if passed_at == commit => {
-            let (in_history, deepened) = in_history_of(root, &commit, (&branch, &at))?;
+            let (in_history, deepened, unrecorded) = in_history_of(root, &commit, (&branch, &at))?;
             if !in_history {
                 return Err(format!(
                     "{refused}. It is the tip of origin's {passed}, which ships only once \
@@ -975,6 +979,7 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
                 default: branch,
                 at_green_tip: true,
                 deepened,
+                unrecorded,
             })
         }
         Some(passed_at) => Err(format!(
@@ -985,9 +990,9 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
     }
 }
 
-/// Whether `at`, the commit origin's `branch` is at, has `commit` in its history, and whether a
-/// shallow clone fetched more history to tell. That leaves every commit in the checkout for any
-/// later comparison.
+/// Whether `at`, the commit origin's `branch` is at, has `commit` in its history, whether a
+/// shallow clone fetched more history to tell, and why git could not record what it fetched, if
+/// it could not. That leaves every commit in the checkout for any later comparison.
 ///
 /// It compares with `at` itself, never with what a fetch names, which another git run in the
 /// checkout can rewrite.
@@ -995,13 +1000,15 @@ fn in_history_of(
     root: &Path,
     commit: &str,
     (branch, at): (&str, &str),
-) -> Result<(bool, bool), String> {
+) -> Result<(bool, bool, Option<String>), String> {
     let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
     // A partial clone, such as a shallow one fetched before, fetches first, as git before 2.45
     // would fetch a missing `at` alone, with its whole history, on looking for it.
-    if shallow || partial(root)? || !has_commit(root, at)? {
-        fetched(root, (branch, at), shallow)?;
-    }
+    let unrecorded = if shallow || partial(root)? || !has_commit(root, at)? {
+        fetched(root, (branch, at), shallow)?
+    } else {
+        None
+    };
     if !has_commit(root, at)? {
         return Err(format!(
             "origin's {branch} moved from {} while it was fetched. Run the command again",
@@ -1010,8 +1017,8 @@ fn in_history_of(
     }
     let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, at])?;
     match ancestry.status.code() {
-        Some(0) => Ok((true, shallow)),
-        Some(1) => Ok((false, shallow)),
+        Some(0) => Ok((true, shallow, unrecorded)),
+        Some(1) => Ok((false, shallow, unrecorded)),
         _ => Err(format!(
             "git could not tell whether origin's {branch} has {} in its history: {}",
             short(commit),
@@ -1044,16 +1051,22 @@ fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
 }
 
 /// Fetches origin's `branch` until the checkout has `at`, the whole history too when it is
-/// `shallow`. It leaves `FETCH_HEAD` and tags alone, and submodules, whose remotes the comparison
-/// never needs.
-fn fetched(root: &Path, (branch, at): (&str, &str), shallow: bool) -> Result<(), String> {
+/// `shallow`, and tells why git could not move origin's remote-tracking branch when that alone
+/// failed. It leaves `FETCH_HEAD`, tags, every other ref and submodules alone.
+fn fetched(
+    root: &Path,
+    (branch, at): (&str, &str),
+    shallow: bool,
+) -> Result<Option<String>, String> {
     // Into origin's remote-tracking branch even where the clone tracks only green, as the next
-    // fetch then tells origin what the checkout holds, rather than taking it all again.
+    // fetch then tells origin what the checkout holds, rather than taking it all again. No refs
+    // the remote's configuration maps it to, which can be the checkout's own branches.
     let reference = format!("+refs/heads/{branch}:refs/remotes/origin/{branch}");
     let mut args = vec![
         "fetch",
         "--quiet",
         "--no-write-fetch-head",
+        "--refmap=",
         "--no-tags",
         "--recurse-submodules=no",
     ];
@@ -1064,12 +1077,13 @@ fn fetched(root: &Path, (branch, at): (&str, &str), shallow: bool) -> Result<(),
     }
     args.extend(["origin", reference.as_str()]);
     let Err(why) = git(root, &args) else {
-        return Ok(());
+        return Ok(None);
     };
     // Git writes the ref after the commits, so another upload's lock on it, or one a git run left,
-    // fails a fetch that has already brought what the comparison needs.
-    if has_commit(root, at)? {
-        return Ok(());
+    // fails a fetch that has already brought what the comparison needs. A clone still shallow
+    // has not.
+    if git(root, &["rev-parse", "--is-shallow-repository"])? == "false" && has_commit(root, at)? {
+        return Ok(Some(why));
     }
     let lock = root.join(git(root, &["rev-parse", "--git-path", "shallow.lock"])?);
     Err(if lock.exists() {

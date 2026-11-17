@@ -2786,7 +2786,8 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
         let whole = fs::read_to_string(&traced_whole).unwrap();
         assert!(
             trace.contains(
-                " fetch --quiet --no-write-fetch-head --no-tags --recurse-submodules=no origin \
+                " fetch --quiet --no-write-fetch-head --refmap= --no-tags --recurse-submodules=no \
+                 origin \
                  +refs/heads/main:refs/remotes/origin/main"
             )
                 && trace.matches("built-in: git fetch").count() == 1
@@ -2847,7 +2848,33 @@ fn a_whole_clone_fetches_main_once_for_green_s_tip_past_a_lock_another_git_left(
                 && trace.matches("built-in: git fetch").count() == fetches,
             "{shown}{why}{trace}"
         );
+        // Only the fetch that could not move origin/main says so.
+        assert_eq!(
+            why.contains("main.lock")
+                && why.contains(
+                    "The comparison went ahead, but until git can move origin/main here, each \
+                     upload fetches the same commits again"
+                ),
+            fetches == 1,
+            "{why}"
+        );
     }
+}
+
+#[test]
+fn a_shallow_clone_holding_main_s_tip_is_refused_while_another_git_fetches_into_it() {
+    let (temp, root) = pushed_game(Some(GREEN_UNBUILT));
+    let first = head(&root);
+    pushed(&root, "Green moves on");
+    pushed_ungreen(&root, "Main moves on");
+    let both = green_cloned(temp.path(), "both", &["--depth", "1", "--no-single-branch"]);
+    fs::write(both.join(".git").join("shallow.lock"), "").unwrap();
+    let (code, shown, why) = uploaded_with_live_testing(&both, &first, &[]);
+    assert_eq!(code, Some(2_i32), "{shown}{why}");
+    assert!(
+        failure(&why).starts_with("another git run is fetching into this checkout, as "),
+        "{shown}{why}"
+    );
 }
 
 #[test]
