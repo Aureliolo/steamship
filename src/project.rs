@@ -1076,14 +1076,15 @@ fn fetched(
         args.extend(["--unshallow", "--filter=blob:none"]);
     }
     args.extend(["origin", reference.as_str()]);
-    let Err(why) = git(root, &args) else {
+    let Err(failed) = git(root, &args) else {
         return Ok(None);
     };
+    let why = failed.trim_end_matches('.');
     // Git writes the ref after the commits, so another upload's lock on it, or one a git run left,
     // fails a fetch that has already brought what the comparison needs. A clone still shallow
     // has not.
     if git(root, &["rev-parse", "--is-shallow-repository"])? == "false" && has_commit(root, at)? {
-        return Ok(Some(why));
+        return unrecorded(root, (branch, at), why);
     }
     let lock = root.join(git(root, &["rev-parse", "--git-path", "shallow.lock"])?);
     Err(if lock.exists() {
@@ -1095,6 +1096,19 @@ fn fetched(
     } else {
         format!("{why}. Run the command again")
     })
+}
+
+/// `why` a fetch that brought `at` failed, while origin's remote-tracking `branch` is not at
+/// `at`. Another upload may have moved it there, or it was there before, and then nothing is
+/// fetched again.
+fn unrecorded(
+    root: &Path,
+    (branch, at): (&str, &str),
+    why: &str,
+) -> Result<Option<String>, String> {
+    let tracking = format!("refs/remotes/origin/{branch}");
+    let resolved = git_run(root, &["rev-parse", "--verify", "--quiet", &tracking])?;
+    Ok((String::from_utf8_lossy(&resolved.stdout).trim() != at).then(|| why.to_owned()))
 }
 
 /// This moment as the file system tells a file's change time, read back from a file made for it.
@@ -1362,6 +1376,16 @@ mod tests {
         assert!(has_commit(&clone, &first).unwrap());
         // git would fetch the second commit from origin to answer, had it not been held.
         assert!(!has_commit(&clone, &second).unwrap());
+        // A failed fetch is told only while origin's remote-tracking branch is not where it was.
+        let branch = git(&origin, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            unrecorded(&clone, (&branch, &first), "error: locked"),
+            Ok(None)
+        );
+        assert_eq!(
+            unrecorded(&clone, (&branch, &second), "error: locked"),
+            Ok(Some("error: locked".to_owned()))
+        );
     }
 
     #[test]

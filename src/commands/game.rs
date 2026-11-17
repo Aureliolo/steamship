@@ -151,7 +151,7 @@ pub(crate) fn shipped_from(
             if let Some(why) = &pushed.unrecorded {
                 show::note(&format!(
                     "{why}. The comparison went ahead, but until git can move origin/{default} \
-                     here, each upload fetches the same commits again"
+                     here, each later fetch takes those commits again"
                 ));
             }
             Ok(pushed)

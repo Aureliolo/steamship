@@ -2852,8 +2852,8 @@ fn a_whole_clone_fetches_main_once_for_green_s_tip_past_a_lock_another_git_left(
         assert_eq!(
             why.contains("main.lock")
                 && why.contains(
-                    "The comparison went ahead, but until git can move origin/main here, each \
-                     upload fetches the same commits again"
+                    "exists. The comparison went ahead, but until git can move origin/main here, \
+                     each later fetch takes those commits again"
                 ),
             fetches == 1,
             "{why}"
