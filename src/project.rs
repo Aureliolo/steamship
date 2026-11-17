@@ -990,24 +990,16 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
 /// later comparison.
 ///
 /// It compares with `at` itself, never with what a fetch names, which another git run in the
-/// checkout can rewrite. A whole clone with `at` in it is not fetched at all.
+/// checkout can rewrite.
 fn in_history_of(
     root: &Path,
     commit: &str,
     (branch, at): (&str, &str),
 ) -> Result<(bool, bool), String> {
     let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
-    // A partial clone, such as a shallow one fetched before, would fetch a missing `at` alone, with
-    // its whole history, on looking for it. A fetch first asks only for what the checkout lacks.
-    let partial = git_run(
-        root,
-        &["config", "--get", "--type=bool", "remote.origin.promisor"],
-    )?
-    .stdout
-    .starts_with(b"true");
-    if shallow || partial || !has_commit(root, at)? {
-        fetched(root, branch, shallow)?;
-    }
+    // Always, as a partial clone, such as a shallow one fetched before, would fetch a missing `at`
+    // alone, with its whole history, on looking for it. A fetch asks only for what it lacks.
+    fetched(root, branch, shallow)?;
     if !has_commit(root, at)? {
         return Err(format!(
             "origin's {branch} moved from {} while it was fetched. Run the command again",
@@ -1026,10 +1018,13 @@ fn in_history_of(
     }
 }
 
-/// Whether the checkout at `root` has `commit`.
+/// Whether the checkout at `root` has `commit`, never fetching it, so one that a force-push took
+/// from origin's branch while it was fetched answers no.
 fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
     let named = format!("{commit}^{{commit}}");
-    Ok(git_run(root, &["cat-file", "-e", &named])?.status.success())
+    Ok(git_held(root, &["cat-file", "-e", &named])?
+        .status
+        .success())
 }
 
 /// Fetches origin's `branch`, the whole history too when the checkout is `shallow`, leaving

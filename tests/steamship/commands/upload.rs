@@ -2720,8 +2720,8 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
             (
                 "200 OK",
                 format!(
-                    r#"{{"response": {{"builds": {{"4242": {{"Description": "0.3.1 {}"}}}}}}}}"#,
-                    commit.get(..9).unwrap()
+                    // In full, as git fetches a missing commit only by its whole name.
+                    r#"{{"response": {{"builds": {{"4242": {{"Description": "0.3.1 {commit}"}}}}}}}}"#
                 ),
             ),
         ]);
@@ -2792,8 +2792,7 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
             assert_eq!(exit, Some(2_i32), "{said}{told}");
             assert!(
                 failure(&told).contains(&format!(
-                    "was made from {}, which is not in this commit's history",
-                    made_from.get(..9).unwrap()
+                    "was made from {made_from}, which is not in this commit's history"
                 )),
                 "{said}{told}"
             );
