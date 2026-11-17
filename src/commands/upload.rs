@@ -411,8 +411,9 @@ fn in_history(
         // A game out on Steam that steamship.toml does not mark released keeps an old build on
         // default, which its uploads never replace.
         let released = if *target == "default" && !game.released {
-            ". If the game is out on Steam, set released = true in steamship.toml, as its \
-             uploads leave the default branch alone"
+            ". If the game is out on Steam, commit released = true in steamship.toml and upload \
+             once your tests have passed it, as a released game's uploads leave the default \
+             branch alone"
         } else {
             ""
         };

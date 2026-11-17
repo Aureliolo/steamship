@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::time::{Duration, SystemTime};
-use std::{env, process, thread};
+use std::time::SystemTime;
+use std::{env, process};
 
 use serde_json::Value;
 use toml::de::Error as TomlError;
@@ -963,7 +963,7 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
     };
     match tip(root, passed)? {
         Some(passed_at) if passed_at == commit => {
-            let (in_history, deepened) = in_history_of(root, &commit, &branch)?;
+            let (in_history, deepened) = in_history_of(root, &commit, (&branch, &at))?;
             if !in_history {
                 return Err(format!(
                     "{refused}. It is the tip of origin's {passed}, which ships only once \
@@ -985,41 +985,28 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
     }
 }
 
-/// The longest a fetch waits for another git run to let go of a shallow clone.
-const LOCK_WAIT: Duration = Duration::from_secs(120);
-
-/// Whether origin's `branch`, fetched, has `commit` in its history, and whether a shallow clone
-/// was fetched whole to tell. That leaves the checkout's history whole for any later comparison.
-fn in_history_of(root: &Path, commit: &str, branch: &str) -> Result<(bool, bool), String> {
-    let reference = format!("refs/heads/{branch}");
-    let fetch = || {
-        let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
-        let args: &[&str] = if shallow {
-            &["fetch", "--quiet", "--unshallow", "origin", &reference]
-        } else {
-            &["fetch", "--quiet", "origin", &reference]
-        };
-        git(root, args).map(|_| shallow)
-    };
-    let shallow = match fetch() {
-        Ok(shallow) => shallow,
-        // Another git run in this checkout, such as a second upload, holds the lock while it
-        // fetches the same history, so this one goes on once that ends.
-        Err(why) => {
-            let lock = PathBuf::from(git(root, &["rev-parse", "--git-path", "shallow.lock"])?);
-            let lock = root.join(lock);
-            if !lock.exists() {
-                return Err(why);
-            }
-            let waited = SystemTime::now();
-            while lock.exists() && waited.elapsed().unwrap_or_default() < LOCK_WAIT {
-                thread::sleep(Duration::from_millis(200));
-            }
-            fetch()?
-        }
-    };
-    let fetched = git(root, &["rev-parse", "FETCH_HEAD"])?;
-    let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, &fetched])?;
+/// Whether `at`, the commit origin's `branch` is at, has `commit` in its history, and whether a
+/// shallow clone was fetched whole to tell. That leaves the checkout's history whole for any later
+/// comparison.
+///
+/// It compares with `at` itself, never with what a fetch names, which another git run in the
+/// checkout can rewrite. A checkout with its whole history and `at` in it is not fetched at all.
+fn in_history_of(
+    root: &Path,
+    commit: &str,
+    (branch, at): (&str, &str),
+) -> Result<(bool, bool), String> {
+    let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
+    if shallow || !has_commit(root, at)? {
+        fetched(root, branch, shallow)?;
+    }
+    if !has_commit(root, at)? {
+        return Err(format!(
+            "origin's {branch} moved from {} while it was fetched. Run the command again",
+            short(at)
+        ));
+    }
+    let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, at])?;
     match ancestry.status.code() {
         Some(0) => Ok((true, shallow)),
         Some(1) => Ok((false, shallow)),
@@ -1029,6 +1016,38 @@ fn in_history_of(root: &Path, commit: &str, branch: &str) -> Result<(bool, bool)
             String::from_utf8_lossy(&ancestry.stderr).trim()
         )),
     }
+}
+
+/// Whether the checkout at `root` has `commit`.
+fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
+    let named = format!("{commit}^{{commit}}");
+    Ok(git_run(root, &["cat-file", "-e", &named])?.status.success())
+}
+
+/// Fetches origin's `branch`, the whole history too when the checkout is `shallow`, leaving
+/// `FETCH_HEAD` to whatever else fetches in the checkout.
+fn fetched(root: &Path, branch: &str, shallow: bool) -> Result<(), String> {
+    let reference = format!("refs/heads/{branch}");
+    let mut args = vec!["fetch", "--quiet", "--no-write-fetch-head"];
+    if shallow {
+        // Commits alone answer the comparison, and a game's history of art and audio can be
+        // large. A server that cannot filter sends it whole.
+        args.extend(["--unshallow", "--filter=blob:none"]);
+    }
+    args.extend(["origin", reference.as_str()]);
+    let Err(why) = git(root, &args) else {
+        return Ok(());
+    };
+    let lock = root.join(git(root, &["rev-parse", "--git-path", "shallow.lock"])?);
+    Err(if lock.exists() {
+        format!(
+            "another git run is fetching into this checkout, as {} shows. Run the command again \
+             once it ends, or delete that file if no git is running",
+            lock.display()
+        )
+    } else {
+        format!("{why}. Run the command again")
+    })
 }
 
 /// This moment as the file system tells a file's change time, read back from a file made for it.

@@ -2443,8 +2443,9 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
     assert!(
         failure(&default_why).contains("BuildID 4242, live on default, was made from ")
             && failure(&default_why).ends_with(
-                "If the game is out on Steam, set released = true in steamship.toml, as its \
-                 uploads leave the default branch alone"
+                "If the game is out on Steam, commit released = true in steamship.toml and upload \
+                 once your tests have passed it, as a released game's uploads leave the default \
+                 branch alone"
             ),
         "{default_why}"
     );
@@ -2728,15 +2729,22 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
             &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
         )
     };
-    // Another git run's hold on the shallow clone is waited out.
+    // Another git run fetching into the shallow clone is named, with the lock it holds.
     let lock = shallow.join(".git").join("shallow.lock");
     fs::write(&lock, "").unwrap();
-    let freed = thread::spawn(move || {
-        thread::sleep(Duration::from_secs(2));
-        fs::remove_file(lock).unwrap();
-    });
+    let (locked_code, locked, locked_why) = live_from(&first);
+    assert_eq!(locked_code, Some(2_i32), "{locked}{locked_why}");
+    assert!(
+        failure(&locked_why).starts_with("another git run is fetching into this checkout, as ")
+            && failure(&locked_why).ends_with(
+                "shallow.lock shows. Run the command again once it ends, or delete that file if \
+                 no git is running"
+            ),
+        "{locked_why}"
+    );
+    fs::remove_file(&lock).unwrap();
+
     let (_, shown, why) = live_from(&first);
-    freed.join().unwrap();
     assert!(
         why.contains("this shallow clone was fetched whole, to compare it with origin's main")
             && shown.contains(
