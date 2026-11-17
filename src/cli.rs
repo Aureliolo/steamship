@@ -256,8 +256,8 @@ pub enum Command {
     ///
     /// A game whose `steamship.toml` sets `green` ships only a commit on that branch of origin,
     /// unless `--allow-ungreen` is given. `--dry-run` skips that check. Its tip ships even once the
-    /// default branch has moved past it, unless a build live on a branch the upload sets live came
-    /// from a commit it lacks.
+    /// default branch has moved past it, while Steam shows that the tip holds every build live on
+    /// a branch the upload sets live. That needs a Web API key.
     ///
     /// While the app is unreleased, the build goes live on the default branch too. A game whose
     /// `steamship.toml` sets `released = true` never gets a build live on default. Once the build

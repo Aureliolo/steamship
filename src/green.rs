@@ -98,31 +98,29 @@ pub enum Holds {
     /// The other is HEAD or one of its ancestors.
     Yes,
     No,
-    /// Neither the checkout nor origin has a commit by that name, or more than one.
+    /// The checkout has no commit by that name, or more than one.
     Unknown,
 }
 
-/// Whether the commit at `root`'s HEAD holds `commit`, which may be abbreviated. A commit not here
-/// is fetched from origin first.
+/// Whether the commit at `root`'s HEAD holds `commit`, which may be abbreviated.
+///
+/// A commit HEAD holds is in its history, so one missing from the checkout is not held. A shallow
+/// clone, as CI checks out, is deepened first, since it lacks that history.
 ///
 /// # Errors
 ///
-/// When Git cannot be run or origin cannot be asked.
+/// When Git cannot be run, or a shallow clone cannot be deepened.
 pub fn holds(root: &Path, commit: &str) -> Result<Holds, String> {
-    // A shallow clone, as CI checks out, lacks the history that says whether HEAD holds an older
-    // commit.
     if git(root, &["rev-parse", "--is-shallow-repository"])? == "true" {
         drop(git(root, &["fetch", "--quiet", "--unshallow", "origin"])?);
     }
     let named = format!("{commit}^{{commit}}");
-    let known = || git_run(root, &["cat-file", "-e", &named]).map(|asked| asked.status.success());
-    if !known()? {
-        drop(git(root, &["fetch", "--quiet", "origin"])?);
-        if !known()? {
-            return Ok(Holds::Unknown);
-        }
+    let resolved = git_run(root, &["rev-parse", "--verify", "--quiet", &named])?;
+    if !resolved.status.success() {
+        return Ok(Holds::Unknown);
     }
-    let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, "HEAD"])?;
+    let full = String::from_utf8_lossy(&resolved.stdout).trim().to_owned();
+    let ancestry = git_run(root, &["merge-base", "--is-ancestor", &full, "HEAD"])?;
     match ancestry.status.code() {
         Some(0) => Ok(Holds::Yes),
         Some(1) => Ok(Holds::No),

@@ -259,10 +259,13 @@ struct Upload<'command> {
 }
 
 /// Refuses the game's commit unless it holds the commit each build live on a branch `script` sets
-/// live was made from, the default branch too while the game is unreleased. Green's tip is older
-/// than the default branch's, and a build from that branch, such as a hotfix, must not be undone.
-/// It is refused too with no key at hand, or a Steam that cannot be asked.
+/// live was made from, the default branch too while the game is unreleased.
+///
+/// Green's tip is older than the default branch's, and a build from that branch, such as a hotfix,
+/// must not be undone. So a live build this cannot compare refuses the commit too, as do no key at
+/// hand and a Steam that cannot be asked. The default branch's tip goes up without this.
 fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(), ExitCode> {
+    const INSTEAD: &str = "Upload the default branch's tip instead";
     let targets: Vec<&str> = script
         .set_live
         .as_deref()
@@ -271,18 +274,28 @@ fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(),
         .collect();
     let Some(api) = key_at_hand()? else {
         return Err(fail(
-            &"the commit is green's tip, behind origin's default branch, so Steam has to show \
-             which builds are live. Set STEAMSHIP_WEB_API_KEY, or run steamship login \
-             --web-api-key-only",
+            &format!(
+                "the commit is green's tip, behind origin's default branch, so Steam has to show \
+                 which builds are live. Set STEAMSHIP_WEB_API_KEY, run steamship login \
+                 --web-api-key-only, or {}",
+                INSTEAD.to_lowercase()
+            ),
             REFUSED,
         ));
     };
     let spinner = Spinner::start("live", "asking Steam which commits are live", false);
-    let asked = api
-        .branches(script.app_id)
-        .and_then(|branches| Ok((branches, api.builds(script.app_id, 20)?)));
-    let (branches, builds) = match asked {
-        Ok(asked) => asked,
+    let unasked = |error: &webapi::Error| {
+        fail(
+            &format!(
+                "Steam could not be asked which builds are live: {}. Try again, or {}",
+                steams_words(error, None),
+                INSTEAD.to_lowercase()
+            ),
+            FAILED,
+        )
+    };
+    let branches = match api.branches(script.app_id) {
+        Ok(branches) => branches,
         // Steam's answer for an app with nothing live yet, so nothing newer either.
         Err(error) if why_unanswered(&api, script.app_id, &error).is_some() => {
             spinner.skipped("no build live yet");
@@ -290,61 +303,62 @@ fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(),
         }
         Err(error) => {
             spinner.failed("not asked");
-            return Err(fail(
-                &format!(
-                    "Steam could not be asked which builds are live: {}. Try again, or upload \
-                     the default branch's tip",
-                    steams_words(&error, None)
-                ),
-                FAILED,
-            ));
+            return Err(unasked(&error));
+        }
+    };
+    if targets
+        .iter()
+        .all(|target| upload::live_build(&branches, &[], target).is_none())
+    {
+        spinner.skipped("no build live yet");
+        return Ok(());
+    }
+    let builds = match api.builds(script.app_id, 20) {
+        Ok(builds) => builds,
+        Err(error) => {
+            spinner.failed("not asked");
+            return Err(unasked(&error));
         }
     };
     let mut compared = Vec::new();
-    let mut uncompared = Vec::new();
     for target in &targets {
-        let Some((build_id, commit)) = upload::live_build(&branches, &builds, target) else {
+        let Some((build_id, description)) = upload::live_build(&branches, &builds, target) else {
             continue;
         };
         let on = branch::shown_name(target);
-        let Some(commit) = commit else {
-            uncompared.push(format!(
-                "BuildID {build_id}, live on {on}, names no commit steamship can read"
-            ));
-            continue;
-        };
-        match green::holds(&game.root, commit) {
-            Ok(green::Holds::Yes) => compared.push(on),
-            Ok(green::Holds::No) => {
-                spinner.failed(&format!("{on} has a newer build"));
-                return Err(fail(
-                    &format!(
-                        "BuildID {build_id}, live on {on}, was made from {commit}, which this \
-                         commit does not hold. Upload a commit that holds it"
-                    ),
+        let live = format!("BuildID {build_id}, live on {on},");
+        let (why, code) = match description.map(upload::version_and_commit) {
+            None => (
+                format!("{live} is not among the last 20 builds Steam listed"),
+                REFUSED,
+            ),
+            Some(None) => (
+                format!("{live} has a description steamship did not write"),
+                REFUSED,
+            ),
+            Some(Some((_, commit))) => match green::holds(&game.root, commit) {
+                Ok(green::Holds::Yes) => {
+                    compared.push(on);
+                    continue;
+                }
+                Ok(green::Holds::No) => (
+                    format!("{live} was made from {commit}, which this commit does not hold"),
                     REFUSED,
-                ));
-            }
-            Ok(green::Holds::Unknown) => uncompared.push(format!(
-                "BuildID {build_id}, live on {on}, names {commit}, which is no one commit on origin"
-            )),
-            Err(why) => {
-                spinner.failed(&format!("{on} not compared"));
-                return Err(fail(&why, FAILED));
-            }
-        }
+                ),
+                Ok(green::Holds::Unknown) => (
+                    format!("{live} was made from {commit}, which names no one commit here"),
+                    REFUSED,
+                ),
+                Err(why) => (format!("{live} could not be compared: {why}"), FAILED),
+            },
+        };
+        spinner.failed(&format!("{on}'s build not held"));
+        return Err(fail(&format!("{why}. {INSTEAD}"), code));
     }
-    if compared.is_empty() {
-        spinner.skipped("no live build to compare");
-    } else {
-        spinner.done(&format!(
-            "this commit holds what {} has live",
-            show::listed(&compared, " and ")
-        ));
-    }
-    for why in uncompared {
-        show::aside(&format!("{why}, so it was not compared"));
-    }
+    spinner.done(&format!(
+        "this commit holds what {} has live",
+        show::listed(&compared, " and ")
+    ));
     Ok(())
 }
 

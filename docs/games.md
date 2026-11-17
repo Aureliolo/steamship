@@ -125,9 +125,11 @@ With `green` set, the commit has to be on that branch of origin. The check runs 
 When it refuses, it names the commit and where the branch is. `--dry-run` skips the check.
 `--allow-ungreen` uploads a commit that is not on the branch, such as a hotfix.
 
-Green's tip ships even once the default branch has moved past it. It is refused while a build
-live on a branch the upload sets live came from a commit it lacks, such as that hotfix. Steam is
-asked which builds are live, so this needs a Web API key.
+Green's tip ships even once the default branch has moved past it, so long as it holds every
+build live on a branch the upload sets live, such as that hotfix. Steam is asked which builds are
+live, so this needs a Web API key. A live build steamship did not describe, or one older than the
+last 20, cannot be compared, and the upload is refused. The default branch's tip then uploads as
+before.
 
 The app build script has to set the game's branch live, and no other. The settings snapshot has
 to be there, with an install folder of letters and digits alone.

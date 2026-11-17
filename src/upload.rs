@@ -537,10 +537,8 @@ pub fn uploaded_as(builds: &[webapi::Build], description: &str) -> Option<u64> {
         .map(|build| build.build_id)
 }
 
-/// The ID of the build live on `target`, when one is, and the commit it was made from.
-///
-/// The commit is the one the description [`description`] wrote names. It is missing when the build
-/// is not among `builds` or was described otherwise.
+/// The ID of the build live on `target`, when one is, and its description when it is among
+/// `builds`.
 #[must_use]
 pub fn live_build<'found>(
     branches: &[webapi::Branch],
@@ -548,12 +546,11 @@ pub fn live_build<'found>(
     target: &str,
 ) -> Option<(u64, Option<&'found str>)> {
     let live = branch::find(branches, target)?.build_id;
-    let commit = builds
+    let description = builds
         .iter()
         .find(|build| build.build_id == live)
-        .and_then(|build| version_and_commit(&build.description))
-        .map(|(_, commit)| commit);
-    (live > 0).then_some((live, commit))
+        .map(|build| build.description.as_str());
+    (live > 0).then_some((live, description))
 }
 
 /// How long an upload waits in all for Steam's CDN to serve a manifest steamcmd builds against.
@@ -1399,7 +1396,7 @@ mod tests {
     }
 
     #[test]
-    fn each_target_gives_its_live_build_and_the_commit_when_upload_described_it() {
+    fn each_target_gives_its_live_build_and_its_description_when_steam_listed_it() {
         let branch = |name: &str, build_id| webapi::Branch {
             name: name.to_owned(),
             build_id,
@@ -1424,9 +1421,9 @@ mod tests {
             build(40, "Uploaded by hand"),
         ];
         for (target, expected) in [
-            ("testing", Some((41, Some("a1b2c3d4e5f6")))),
-            ("Beta", Some((42, Some("abc1234")))),
-            ("default", Some((40, None))),
+            ("testing", Some((41, Some("0.3.1 a1b2c3d4e5f6")))),
+            ("Beta", Some((42, Some("0.3.2 abc1234")))),
+            ("default", Some((40, Some("Uploaded by hand")))),
             ("old", Some((7, None))),
             ("staging", None),
             ("missing", None),
