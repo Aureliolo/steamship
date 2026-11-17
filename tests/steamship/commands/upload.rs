@@ -2377,9 +2377,14 @@ fn a_game_naming_no_green_branch_ships_only_main_s_tip() {
     );
 }
 
+/// A `steamship.toml` naming `green` and a build that fails at once, so an upload that gets past
+/// the live builds stops there.
+const GREEN_UNBUILT: &str =
+    "green = \"green\"\nbuild = [\"git\", \"rev-parse\", \"--verify\", \"--quiet\", \"none\"]\n";
+
 #[test]
 fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
-    let (_temp, root) = pushed_game(Some("green = \"green\"\n"));
+    let (_temp, root) = pushed_game(Some(GREEN_UNBUILT));
     let tested = head(&root);
     pushed_ungreen(&root, "A hotfix");
     let hotfix = head(&root);
@@ -2480,6 +2485,18 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
         "{unlisted}{unlisted_why}"
     );
 
+    let (host, _requests) = web_api(vec![("403 Forbidden", "{}")]);
+    let (unasked_code, unasked, unasked_why) = in_game_with(
+        &root,
+        &["upload"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert_eq!(unasked_code, Some(1_i32), "{unasked}{unasked_why}");
+    assert!(
+        failure(&unasked_why).starts_with("Steam could not be asked which builds are live: "),
+        "{unasked_why}"
+    );
+
     let (keyless_code, keyless, keyless_why) = in_game(&root, &["upload"]);
     assert_eq!(keyless_code, Some(2_i32), "{keyless}{keyless_why}");
     assert!(
@@ -2493,7 +2510,7 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
 
 #[test]
 fn a_released_game_s_green_tip_is_not_held_to_the_default_branch_s_build() {
-    let (_temp, root) = pushed_game(Some("released = true\ngreen = \"green\"\n"));
+    let (_temp, root) = pushed_game(Some(&format!("released = true\n{GREEN_UNBUILT}")));
     let tested = head(&root);
     pushed_ungreen(&root, "A hotfix on default");
     let hotfix = head(&root);
@@ -2526,7 +2543,7 @@ fn a_released_game_s_green_tip_is_not_held_to_the_default_branch_s_build() {
 
 #[test]
 fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
-    let (temp, root) = pushed_game(Some("green = \"green\"\n"));
+    let (temp, root) = pushed_game(Some(GREEN_UNBUILT));
     let first = head(&root);
     pushed(&root, "Green moves on");
     pushed_ungreen(&root, "Main moves past green");
