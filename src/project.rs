@@ -1270,6 +1270,56 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    fn a_commit_a_partial_clone_lacks_is_not_fetched_to_tell_whether_it_is_there() {
+        let temp = tempfile::tempdir().unwrap();
+        let ran = |root: &Path, args: &[&str]| {
+            let output = git_run(root, args).unwrap();
+            assert!(output.status.success(), "git {args:?}: {output:?}");
+        };
+        ran(temp.path(), &["init", "--quiet", "origin"]);
+        let origin = temp.path().join("origin");
+        let committed = |message: &str| {
+            ran(
+                &origin,
+                &[
+                    "-c",
+                    "user.name=Sample",
+                    "-c",
+                    "user.email=sample@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--quiet",
+                    "--allow-empty",
+                    "-m",
+                    message,
+                ],
+            );
+            git(&origin, &["rev-parse", "HEAD"]).unwrap()
+        };
+        let first = committed("First");
+        let path = origin.display().to_string().replace('\\', "/");
+        let url = format!("file:///{}", path.trim_start_matches('/'));
+        ran(
+            temp.path(),
+            &[
+                "-c",
+                "uploadpack.allowFilter=true",
+                "clone",
+                "--quiet",
+                "--filter=blob:none",
+                &url,
+                "partial",
+            ],
+        );
+        let partial = temp.path().join("partial");
+        let second = committed("Second");
+        assert!(has_commit(&partial, &first).unwrap());
+        // git would fetch the second commit from origin to answer, had it not been held.
+        assert!(!has_commit(&partial, &second).unwrap());
+    }
+
+    #[test]
     fn a_git_failure_is_told_by_its_first_line_that_is_not_a_warning() {
         assert_eq!(
             failure_line(
