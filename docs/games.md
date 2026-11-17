@@ -123,8 +123,8 @@ also refused unless the commit is the tip of origin's default branch, apart from
 below.
 
 With `green` set, the commit has to be on that branch of origin. The check runs before the build.
-When it refuses, it names the commit and where the branch is. `--allow-ungreen` uploads a commit
-that is not on the branch, such as a hotfix.
+When it refuses, it names the commit and where the branch is. `--dry-run` skips the check.
+`--allow-ungreen` uploads a commit that is not on the branch, such as a hotfix.
 
 The tip of `green` ships even after the default branch has moved past it, while the default
 branch has it in its history. Every build live on a branch the upload sets live has to come from
@@ -139,8 +139,8 @@ The upload of that tip is refused when Steam cannot show this, as with:
 - a live build made from a commit outside the tip's history
 
 Upload once your tests have moved `green` to the default branch's tip. A game out on Steam needs
-`released = true`, or its default branch's old build is compared too. `--dry-run` skips these
-checks.
+`released = true`, or its default branch's old build is compared too. `--dry-run` skips the
+comparison with Steam, but not the default branch's history.
 
 The app build script has to set the game's branch live, and no other. The settings snapshot has
 to be there, with an install folder of letters and digits alone.

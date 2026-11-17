@@ -243,7 +243,7 @@ pub enum Command {
     ///
     /// Without an app, in a game's folder, it ships the game. That is refused while the game's
     /// tree holds anything uncommitted. It is also refused unless its commit is the tip of origin's
-    /// default branch or of the game's `green` branch. The game's script must set the game's
+    /// default branch, apart from the `green` case below. The game's script must set the game's
     /// branch live: `testing`, or the branch `steamship.toml` names.
     ///
     /// The game is built with its `build` command, with steamcmd and the build held to 4
@@ -255,9 +255,12 @@ pub enum Command {
     /// else the one `project.godot` gives.
     ///
     /// A game whose `steamship.toml` sets `green` ships only a commit on that branch of origin,
-    /// unless `--allow-ungreen` is given. `--dry-run` skips that check. The green branch's tip also
-    /// ships after the default branch has moved past it, provided it holds every build live on a
-    /// branch the upload sets live, as Steam shows. That needs a Web API key.
+    /// unless `--allow-ungreen` is given. `--dry-run` skips that check.
+    ///
+    /// The tip of `green` ships even after the default branch has moved past it, while the default
+    /// branch has it in its history. Every build live on a branch the upload sets live must then
+    /// come from that history, as Steam shows, which needs a Web API key. That includes the default
+    /// branch until `steamship.toml` sets `released`. `--dry-run` skips the comparison with Steam.
     ///
     /// While the app is unreleased, the build goes live on the default branch too. A game whose
     /// `steamship.toml` sets `released = true` never gets a build live on default. Once the build

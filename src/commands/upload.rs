@@ -345,7 +345,7 @@ fn nothing_newer_live(
 fn unasked(spinner: Spinner, error: &webapi::Error, ways: &Ways) -> ExitCode {
     spinner.failed(&failed_word(error));
     let passing = match error {
-        webapi::Error::Status(status, _) => *status >= 500,
+        webapi::Error::Status(status, _) => *status == 429 || *status >= 500,
         webapi::Error::Unreachable(_) | webapi::Error::Unreadable(_) => true,
         webapi::Error::NotAKey | webapi::Error::Refused | webapi::Error::Failed { .. } => false,
     };

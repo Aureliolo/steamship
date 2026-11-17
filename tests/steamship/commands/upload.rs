@@ -2320,10 +2320,12 @@ fn a_game_ships_green_s_tip_behind_main_but_no_older_green_commit() {
     // A version of noughts is refused after the commit and green checks, so nothing is built.
     let (shown, why) = refused_for(&["upload", "--version", "0.0.0"]);
     assert!(
-        shown.contains(&format!(
-            "{}, the tip of origin's green, in main's history, with nothing uncommitted",
-            short(&tested)
-        )) && shown.contains(&format!("{}, on origin's green", short(&tested))),
+        shown.contains("asking origin for its default branch...")
+            && shown.contains(&format!(
+                "{}, the tip of origin's green, in main's history, with nothing uncommitted",
+                short(&tested)
+            ))
+            && shown.contains(&format!("{}, on origin's green", short(&tested))),
         "{shown}"
     );
     assert!(
@@ -2607,7 +2609,8 @@ fn green_s_tip_is_refused_in_steam_s_words_and_offered_a_retry_only_for_what_may
     );
 
     // A 500 is nothing live only for an app the key lists, and only for the branches.
-    let unanswered = |answers: Vec<(&'static str, String)>| {
+    let unanswered = |status: u16, answers: Vec<(&'static str, String)>| {
+        let row = format!("live      \u{2717} HTTP {status}\n");
         let (host, _asked) = web_api(answers);
         let (code, shown, why) = in_game_with(
             &root,
@@ -2616,7 +2619,7 @@ fn green_s_tip_is_refused_in_steam_s_words_and_offered_a_retry_only_for_what_may
         );
         assert_eq!(code, Some(1_i32), "{shown}{why}");
         assert!(
-            shown.contains("live      \u{2717} HTTP 500\n")
+            shown.contains(&row)
                 && failure(&why).starts_with("Steam did not say which builds are live: ")
                 && failure(&why).ends_with(
                     "Try again, or upload once your tests have moved green to origin's main tip"
@@ -2624,14 +2627,22 @@ fn green_s_tip_is_refused_in_steam_s_words_and_offered_a_retry_only_for_what_may
             "{shown}{why}"
         );
     };
-    unanswered(vec![
-        ("500 Internal Server Error", String::new()),
-        ("200 OK", r#"{"applist": {"apps": {"app": []}}}"#.to_owned()),
-    ]);
-    unanswered(vec![
-        ("200 OK", testing_live(4242).to_owned()),
-        ("500 Internal Server Error", String::new()),
-    ]);
+    unanswered(
+        500,
+        vec![
+            ("500 Internal Server Error", String::new()),
+            ("200 OK", r#"{"applist": {"apps": {"app": []}}}"#.to_owned()),
+        ],
+    );
+    unanswered(
+        500,
+        vec![
+            ("200 OK", testing_live(4242).to_owned()),
+            ("500 Internal Server Error", String::new()),
+        ],
+    );
+    // Steam's limit on how often a key asks, which passes.
+    unanswered(429, vec![("429 Too Many Requests", String::new())]);
 }
 
 #[test]
@@ -2717,7 +2728,15 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
             &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
         )
     };
+    // Another git run's hold on the shallow clone is waited out.
+    let lock = shallow.join(".git").join("shallow.lock");
+    fs::write(&lock, "").unwrap();
+    let freed = thread::spawn(move || {
+        thread::sleep(Duration::from_secs(2));
+        fs::remove_file(lock).unwrap();
+    });
     let (_, shown, why) = live_from(&first);
+    freed.join().unwrap();
     assert!(
         why.contains("this shallow clone was fetched whole, to compare it with origin's main")
             && shown.contains(

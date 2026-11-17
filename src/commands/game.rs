@@ -130,11 +130,7 @@ pub(crate) fn shipped_from(
         },
     );
     show::field("cores", &held_to(game.cores)?);
-    let asking = green.map_or_else(
-        || "asking origin for its default branch".to_owned(),
-        |passed| format!("asking origin for its default and {passed} branches"),
-    );
-    let spinner = Spinner::start("commit", &asking, false);
+    let spinner = Spinner::start("commit", "asking origin for its default branch", false);
     match project::pushed(&game.root, green) {
         Ok(pushed) => {
             let short = project::short(&pushed.commit);

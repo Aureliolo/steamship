@@ -11,8 +11,8 @@ use std::collections::BTreeSet;
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::time::SystemTime;
-use std::{env, process};
+use std::time::{Duration, SystemTime};
+use std::{env, process, thread};
 
 use serde_json::Value;
 use toml::de::Error as TomlError;
@@ -985,17 +985,39 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
     }
 }
 
+/// The longest a fetch waits for another git run to let go of a shallow clone.
+const LOCK_WAIT: Duration = Duration::from_secs(120);
+
 /// Whether origin's `branch`, fetched, has `commit` in its history, and whether a shallow clone
 /// was fetched whole to tell. That leaves the checkout's history whole for any later comparison.
 fn in_history_of(root: &Path, commit: &str, branch: &str) -> Result<(bool, bool), String> {
-    let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
     let reference = format!("refs/heads/{branch}");
-    let fetch: &[&str] = if shallow {
-        &["fetch", "--quiet", "--unshallow", "origin", &reference]
-    } else {
-        &["fetch", "--quiet", "origin", &reference]
+    let fetch = || {
+        let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
+        let args: &[&str] = if shallow {
+            &["fetch", "--quiet", "--unshallow", "origin", &reference]
+        } else {
+            &["fetch", "--quiet", "origin", &reference]
+        };
+        git(root, args).map(|_| shallow)
     };
-    drop(git(root, fetch)?);
+    let shallow = match fetch() {
+        Ok(shallow) => shallow,
+        // Another git run in this checkout, such as a second upload, holds the lock while it
+        // fetches the same history, so this one goes on once that ends.
+        Err(why) => {
+            let lock = PathBuf::from(git(root, &["rev-parse", "--git-path", "shallow.lock"])?);
+            let lock = root.join(lock);
+            if !lock.exists() {
+                return Err(why);
+            }
+            let waited = SystemTime::now();
+            while lock.exists() && waited.elapsed().unwrap_or_default() < LOCK_WAIT {
+                thread::sleep(Duration::from_millis(200));
+            }
+            fetch()?
+        }
+    };
     let fetched = git(root, &["rev-parse", "FETCH_HEAD"])?;
     let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, &fetched])?;
     match ancestry.status.code() {
