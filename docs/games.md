@@ -127,7 +127,7 @@ When it refuses, it names the commit and where the branch is. `--dry-run` skips 
 
 Green's tip ships even once the default branch has moved past it. It is refused while a build
 live on a branch the upload sets live came from a commit it lacks, such as that hotfix. Steam is
-asked which builds are live only when a Web API key is at hand.
+asked which builds are live, so this needs a Web API key.
 
 The app build script has to set the game's branch live, and no other. The settings snapshot has
 to be there, with an install folder of letters and digits alone.

@@ -2433,24 +2433,145 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
 
     let (_, passed, passed_why) = live_from(&tested);
     assert!(
-        passed.contains("nothing live is newer than this commit"),
+        passed.contains("  live      \u{2713} this commit holds what testing has live\n"),
         "{passed}{passed_why}"
     );
 
-    let (lost_code, lost_out, lost_why) = live_from("0123456789abcdef0123456789abcdef01234567");
-    assert_eq!(lost_code, Some(2_i32), "{lost_out}{lost_why}");
+    // A commit origin does not have, and one described by hand, are said and not compared.
+    let (_, lost, lost_why) = live_from("0123456789abcdef0123456789abcdef01234567");
     assert!(
-        failure(&lost_why).contains(
-            "BuildID 4242, live on testing, was made from 012345678: commit 012345678 is not on \
-             origin. Upload a commit that holds it"
+        lost.contains("no live build to compare")
+            && lost.contains(
+                "BuildID 4242, live on testing, names 012345678, which is no one commit on \
+                 origin, so it was not compared"
+            ),
+        "{lost}{lost_why}"
+    );
+    let (_, by_hand, by_hand_why) = asked(
+        testing_live(4242).to_owned(),
+        r#"{"response": {"builds": {"4242": {"Description": "Uploaded by hand"}}}}"#.to_owned(),
+    );
+    assert!(
+        by_hand.contains(
+            "BuildID 4242, live on testing, names no commit steamship can read, so it was not \
+             compared"
         ),
-        "{lost_why}"
+        "{by_hand}{by_hand_why}"
     );
 
-    let (_, keyless, keyless_why) = in_game(&root, &["upload"]);
+    // Steam's answer for an app with nothing live yet.
+    let (host, _requests) = web_api(vec![
+        ("500 Internal Server Error", String::new()),
+        (
+            "200 OK",
+            r#"{"applist": {"apps": {"app": [
+                {"appid": 1000050, "app_type": "game", "app_name": "Inn"}
+            ]}}}"#
+                .to_owned(),
+        ),
+    ]);
+    let (_, unlisted, unlisted_why) = in_game_with(
+        &root,
+        &["upload"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
     assert!(
-        keyless.contains("no Web API key is at hand, so Steam was not asked whether a newer build"),
-        "{keyless}{keyless_why}"
+        unlisted.contains("no build live yet\n"),
+        "{unlisted}{unlisted_why}"
+    );
+
+    let (keyless_code, keyless, keyless_why) = in_game(&root, &["upload"]);
+    assert_eq!(keyless_code, Some(2_i32), "{keyless}{keyless_why}");
+    assert!(
+        failure(&keyless_why).contains(
+            "the commit is green's tip, behind origin's default branch, so Steam has to show \
+             which builds are live"
+        ),
+        "{keyless_why}"
+    );
+}
+
+#[test]
+fn a_released_game_s_green_tip_is_not_held_to_the_default_branch_s_build() {
+    let (_temp, root) = pushed_game(Some("released = true\ngreen = \"green\"\n"));
+    let tested = head(&root);
+    pushed_ungreen(&root, "A hotfix on default");
+    let hotfix = head(&root);
+    git(&root, &["checkout", "--quiet", "--detach", &tested]);
+    let (host, _requests) = web_api(vec![
+        (
+            "200 OK",
+            r#"{"response": {"result": 1, "betas": {"public": {"BuildID": 4242}, "testing": {"BuildID": 4300}}}}"#
+                .to_owned(),
+        ),
+        (
+            "200 OK",
+            format!(
+                r#"{{"response": {{"builds": {{"4300": {{"Description": "0.3.1 {}"}}, "4242": {{"Description": "0.3.1 {}"}}}}}}}}"#,
+                tested.get(..9).unwrap(),
+                hotfix.get(..9).unwrap()
+            ),
+        ),
+    ]);
+    let (_, shown, why) = in_game_with(
+        &root,
+        &["upload"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert!(
+        shown.contains("  live      \u{2713} this commit holds what testing has live\n"),
+        "{shown}{why}"
+    );
+}
+
+#[test]
+fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
+    let (temp, root) = pushed_game(Some("green = \"green\"\n"));
+    let first = head(&root);
+    pushed(&root, "Green moves on");
+    pushed_ungreen(&root, "Main moves past green");
+    let shallow = temp.path().join("shallow");
+    let bare = temp
+        .path()
+        .join("origin.git")
+        .display()
+        .to_string()
+        .replace('\\', "/");
+    let origin = format!(
+        "file://{}{bare}",
+        if bare.starts_with('/') { "" } else { "/" }
+    );
+    git(
+        temp.path(),
+        &[
+            "clone",
+            "--quiet",
+            "--depth",
+            "1",
+            "--branch",
+            "green",
+            &origin,
+            &shallow.to_string_lossy(),
+        ],
+    );
+    let (host, _requests) = web_api(vec![
+        ("200 OK", testing_live(4242).to_owned()),
+        (
+            "200 OK",
+            format!(
+                r#"{{"response": {{"builds": {{"4242": {{"Description": "0.3.1 {}"}}}}}}}}"#,
+                first.get(..9).unwrap()
+            ),
+        ),
+    ]);
+    let (_, shown, why) = in_game_with(
+        &shallow,
+        &["upload"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+    );
+    assert!(
+        shown.contains("  live      \u{2713} this commit holds what testing has live\n"),
+        "{shown}{why}"
     );
 }
 

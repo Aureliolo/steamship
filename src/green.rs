@@ -92,25 +92,40 @@ pub fn standing(root: &Path, branch: &str, commit: &str) -> Result<Standing, Str
     }
 }
 
-/// Whether the commit at `root`'s HEAD holds `commit`, which may be abbreviated: it is HEAD or one
-/// of its ancestors. A commit not here is fetched from origin first.
+/// Whether the commit at `root`'s HEAD holds another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Holds {
+    /// The other is HEAD or one of its ancestors.
+    Yes,
+    No,
+    /// Neither the checkout nor origin has a commit by that name, or more than one.
+    Unknown,
+}
+
+/// Whether the commit at `root`'s HEAD holds `commit`, which may be abbreviated. A commit not here
+/// is fetched from origin first.
 ///
 /// # Errors
 ///
-/// When Git cannot be run, or origin cannot be asked or does not have `commit` either.
-pub fn holds(root: &Path, commit: &str) -> Result<bool, String> {
+/// When Git cannot be run or origin cannot be asked.
+pub fn holds(root: &Path, commit: &str) -> Result<Holds, String> {
+    // A shallow clone, as CI checks out, lacks the history that says whether HEAD holds an older
+    // commit.
+    if git(root, &["rev-parse", "--is-shallow-repository"])? == "true" {
+        drop(git(root, &["fetch", "--quiet", "--unshallow", "origin"])?);
+    }
     let named = format!("{commit}^{{commit}}");
     let known = || git_run(root, &["cat-file", "-e", &named]).map(|asked| asked.status.success());
     if !known()? {
         drop(git(root, &["fetch", "--quiet", "origin"])?);
         if !known()? {
-            return Err(format!("commit {commit} is not on origin"));
+            return Ok(Holds::Unknown);
         }
     }
     let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, "HEAD"])?;
     match ancestry.status.code() {
-        Some(0) => Ok(true),
-        Some(1) => Ok(false),
+        Some(0) => Ok(Holds::Yes),
+        Some(1) => Ok(Holds::No),
         _ => Err(format!(
             "git could not tell whether HEAD holds {commit}: {}",
             String::from_utf8_lossy(&ancestry.stderr).trim()

@@ -279,8 +279,9 @@ pub enum Command {
     ///
     /// With no fields and no first word, in a game's folder it uploads each example mod, or only
     /// the one `--name` names. The game's own app as the first word does the same. An example mod
-    /// is a folder in `modding/` holding a `manifest.json`. This is refused unless the tree is
-    /// pushed, as for `upload`. Each mod's title, description
+    /// is a folder in `modding/` holding a `manifest.json`. This is refused unless the tree holds
+    /// nothing uncommitted and its commit is the tip of origin's default branch. Each mod's title,
+    /// description
     /// and version come from its manifest. Its preview is the `preview.png` in its folder. Each
     /// item's ID is kept in `steam/workshop_items.json`.
     ///
@@ -470,7 +471,7 @@ pub enum Command {
     ///
     /// With neither the app nor files, in a game's folder, it sends every
     /// `rich_presence_<language>.vdf` beside the game's build scripts. That is refused unless the
-    /// tree is pushed, as for `upload`.
+    /// tree holds nothing uncommitted and its commit is the tip of origin's default branch.
     #[command(name = "rich-presence")]
     RichPresence {
         /// The app, by its ID or its app build script. In a game's folder, the game's own.
