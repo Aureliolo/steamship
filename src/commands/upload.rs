@@ -258,6 +258,9 @@ struct Upload<'command> {
     shipped: Option<&'command green::Shipped>,
 }
 
+/// The way round a green tip [`nothing_newer_live`] refuses.
+const INSTEAD: &str = "Upload the default branch's tip instead";
+
 /// Refuses the game's commit unless it holds the commit each build live on a branch `script` sets
 /// live was made from, the default branch too while the game is unreleased.
 ///
@@ -265,7 +268,6 @@ struct Upload<'command> {
 /// must not be undone. So a live build this cannot compare refuses the commit too, as do no key at
 /// hand and a Steam that cannot be asked. The default branch's tip goes up without this.
 fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(), ExitCode> {
-    const INSTEAD: &str = "Upload the default branch's tip instead";
     let targets: Vec<&str> = script
         .set_live
         .as_deref()
@@ -296,67 +298,92 @@ fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(),
     };
     let branches = match api.branches(script.app_id) {
         Ok(branches) => branches,
-        // Steam's answer for an app with nothing live yet, so nothing newer either.
+        // Steam lists no branch while nothing is live on default, and another may still hold a
+        // newer build.
         Err(error) if why_unanswered(&api, script.app_id, &error).is_some() => {
-            spinner.skipped("no build live yet");
-            return Ok(());
+            spinner.failed("no branches listed");
+            return Err(fail(
+                &format!(
+                    "Steam lists no branches while nothing is live on the default branch, so \
+                     their builds cannot be compared. {INSTEAD}"
+                ),
+                REFUSED,
+            ));
         }
         Err(error) => {
             spinner.failed("not asked");
             return Err(unasked(&error));
         }
     };
+    let shown: Vec<&str> = targets
+        .iter()
+        .map(|target| branch::shown_name(target))
+        .collect();
     if targets
         .iter()
         .all(|target| upload::live_build(&branches, &[], target).is_none())
     {
-        spinner.skipped("no build live yet");
+        spinner.skipped(&format!("nothing live on {}", show::listed(&shown, " or ")));
         return Ok(());
     }
-    let builds = match api.builds(script.app_id, 20) {
-        Ok(builds) => builds,
+    match api.builds(script.app_id, 20) {
+        Ok(builds) => held_live(&game.root, &targets, &branches, &builds, spinner),
         Err(error) => {
             spinner.failed("not asked");
-            return Err(unasked(&error));
+            Err(unasked(&error))
         }
-    };
+    }
+}
+
+/// Refuses the commit at `root` unless it holds the commit each build live on `targets` was made
+/// from, as `branches` and `builds` show them, and says which it holds.
+fn held_live(
+    root: &Path,
+    targets: &[&str],
+    branches: &[webapi::Branch],
+    builds: &[webapi::Build],
+    spinner: Spinner,
+) -> Result<(), ExitCode> {
     let mut compared = Vec::new();
-    for target in &targets {
-        let Some((build_id, description)) = upload::live_build(&branches, &builds, target) else {
+    for target in targets {
+        let Some((build_id, description)) = upload::live_build(branches, builds, target) else {
             continue;
         };
         let on = branch::shown_name(target);
         let live = format!("BuildID {build_id}, live on {on},");
-        let (why, code) = match description.map(upload::version_and_commit) {
-            None => (
-                format!("{live} is not among the last 20 builds Steam listed"),
-                REFUSED,
-            ),
-            Some(None) => (
-                format!("{live} has a description steamship did not write"),
-                REFUSED,
-            ),
-            Some(Some((_, commit))) => match green::holds(&game.root, commit) {
+        let why = match description.map(upload::version_and_commit) {
+            None => format!("{live} is not among the last 20 builds Steam listed"),
+            Some(None) => format!("{live} has a description steamship did not write"),
+            Some(Some((_, commit))) => match green::holds(root, commit) {
                 Ok(green::Holds::Yes) => {
                     compared.push(on);
                     continue;
                 }
-                Ok(green::Holds::No) => (
-                    format!("{live} was made from {commit}, which this commit does not hold"),
-                    REFUSED,
-                ),
-                Ok(green::Holds::Unknown) => (
-                    format!("{live} was made from {commit}, which names no one commit here"),
-                    REFUSED,
-                ),
-                Err(why) => (format!("{live} could not be compared: {why}"), FAILED),
+                Ok(green::Holds::No) => {
+                    format!("{live} was made from {commit}, which this commit does not hold")
+                }
+                Ok(green::Holds::Unknown) => {
+                    format!("{live} was made from {commit}, which names no one commit here")
+                }
+                Err(why) => {
+                    spinner.failed(&format!("{on}'s build not compared"));
+                    return Err(fail(
+                        &format!(
+                            "{live} could not be compared: {}. Try again, or {}",
+                            why.trim_end_matches('.'),
+                            INSTEAD.to_lowercase()
+                        ),
+                        FAILED,
+                    ));
+                }
             },
         };
         spinner.failed(&format!("{on}'s build not held"));
-        return Err(fail(&format!("{why}. {INSTEAD}"), code));
+        return Err(fail(&format!("{why}. {INSTEAD}"), REFUSED));
     }
+    let have = if compared.len() == 1 { "has" } else { "have" };
     spinner.done(&format!(
-        "this commit holds what {} has live",
+        "this commit holds what {} {have} live",
         show::listed(&compared, " and ")
     ));
     Ok(())

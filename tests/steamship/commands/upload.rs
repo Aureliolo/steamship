@@ -2441,6 +2441,18 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
         passed.contains("  live      \u{2713} this commit holds what testing has live\n"),
         "{passed}{passed_why}"
     );
+    let (_, both, both_why) = asked(
+        r#"{"response": {"result": 1, "betas": {"public": {"BuildID": 4300}, "testing": {"BuildID": 4300}}}}"#
+            .to_owned(),
+        format!(
+            r#"{{"response": {{"builds": {{"4300": {{"Description": "0.3.1 {}"}}}}}}}}"#,
+            abbreviated(&tested)
+        ),
+    );
+    assert!(
+        both.contains("this commit holds what testing and default have live\n"),
+        "{both}{both_why}"
+    );
 
     // A live build that cannot be compared refuses the commit as one it lacks would.
     let refused_for = |(exit, shown, why): (Option<i32>, String, String), said: &str| {
@@ -2476,7 +2488,23 @@ fn green_s_tip_ships_with_nothing_live_and_is_refused_while_steam_cannot_say() {
     pushed_ungreen(&root, "Main moves past green");
     git(&root, &["checkout", "--quiet", "--detach", &tested]);
 
-    // Steam's answer for an app with nothing live yet.
+    // A branch the upload does not set live holds nothing up.
+    let (elsewhere, _elsewhere_asked) = web_api(vec![(
+        "200 OK",
+        r#"{"response": {"result": 1, "betas": {"friends": {"BuildID": 4100, "ReqPassword": 1}}}}"#
+            .to_owned(),
+    )]);
+    let (_, unheld, unheld_why) = in_game_with(
+        &root,
+        &["upload"],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &elsewhere)],
+    );
+    assert!(
+        unheld.contains("nothing live on testing or default\n"),
+        "{unheld}{unheld_why}"
+    );
+
+    // Steam's answer while nothing is live on default, which hides any other branch.
     let (unlisting, _requests) = web_api(vec![
         ("500 Internal Server Error", String::new()),
         (
@@ -2487,14 +2515,18 @@ fn green_s_tip_ships_with_nothing_live_and_is_refused_while_steam_cannot_say() {
                 .to_owned(),
         ),
     ]);
-    let (_, unlisted, unlisted_why) = in_game_with(
+    let (unlisted_code, unlisted, unlisted_why) = in_game_with(
         &root,
         &["upload"],
         &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &unlisting)],
     );
+    assert_eq!(unlisted_code, Some(2_i32), "{unlisted}{unlisted_why}");
     assert!(
-        unlisted.contains("no build live yet\n"),
-        "{unlisted}{unlisted_why}"
+        failure(&unlisted_why).contains(
+            "Steam lists no branches while nothing is live on the default branch, so their \
+             builds cannot be compared. Upload the default branch's tip instead"
+        ),
+        "{unlisted_why}"
     );
 
     let (forbidding, _forbidden) = web_api(vec![("403 Forbidden", "{}")]);

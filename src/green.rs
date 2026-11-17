@@ -119,6 +119,7 @@ pub fn holds(root: &Path, commit: &str) -> Result<Holds, String> {
     if !resolved.status.success() {
         return Ok(Holds::Unknown);
     }
+    // The full name, as a blob can share the abbreviation, which merge-base would refuse.
     let full = String::from_utf8_lossy(&resolved.stdout).trim().to_owned();
     let ancestry = git_run(root, &["merge-base", "--is-ancestor", &full, "HEAD"])?;
     match ancestry.status.code() {
