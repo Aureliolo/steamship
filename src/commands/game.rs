@@ -114,9 +114,12 @@ pub(crate) fn game_achievements(game: &Project) -> Result<Vec<PathBuf>, ExitCode
     Ok(files)
 }
 
-/// Shows the game, and refuses it unless its tree holds nothing uncommitted and origin's green
-/// branch or default branch is at its commit.
-pub(crate) fn shipped_from(game: &Project) -> Result<project::Pushed, ExitCode> {
+/// Shows the game, and refuses it unless its tree holds nothing uncommitted and origin's default
+/// branch, or the `green` branch when given, is at its commit.
+pub(crate) fn shipped_from(
+    game: &Project,
+    green: Option<&str>,
+) -> Result<project::Pushed, ExitCode> {
     show::title("game");
     show::field(
         "folder",
@@ -132,7 +135,7 @@ pub(crate) fn shipped_from(game: &Project) -> Result<project::Pushed, ExitCode> 
         "asking origin which branch is at this commit",
         false,
     );
-    match project::pushed(&game.root, game.green.as_deref()) {
+    match project::pushed(&game.root, green) {
         Ok(pushed) => {
             let held_by = match &pushed.held_by {
                 HeldBy::Green(branch) => format!("at the tip of origin's {branch}"),

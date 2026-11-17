@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use steamship::webapi::STAND_IN;
 
+use crate::common::git::{commit, git, head};
 use crate::{
     KEY, failure, in_game, in_game_with, presence_file, pushed_game, steamship, web_api,
     web_api_variables,
@@ -186,6 +187,21 @@ fn a_games_rich_presence_is_sent_from_its_pushed_tree_and_one_without_any_is_ref
         "{why}"
     );
     assert!(said.starts_with("steamship rich-presence\n"), "{said}");
+}
+
+#[test]
+fn a_game_s_rich_presence_is_never_sent_from_green_s_tip_behind_main() {
+    let (_temp, root) = pushed_game(Some("green = \"green\"\n"));
+    let tested = head(&root);
+    commit(&root, "Main moves past green");
+    git(&root, &["push", "--quiet", "origin", "main"]);
+    git(&root, &["checkout", "--quiet", "--detach", &tested]);
+    let (code, stdout, stderr) = in_game(&root, &["rich-presence"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).contains(", and origin's main is at "),
+        "{stderr}"
+    );
 }
 
 #[test]

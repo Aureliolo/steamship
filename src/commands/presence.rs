@@ -37,7 +37,9 @@ pub(crate) fn rich_presence_in(
             ));
         }
         if !dry_run {
-            drop(shipped_from(game)?);
+            // Rich presence is the app's for every build, so it is sent from the newest commit
+            // alone, never from a green tip a newer build may have strings beyond.
+            drop(shipped_from(game, None)?);
         }
     }
     try_rich_presence(&app, &files, dry_run)

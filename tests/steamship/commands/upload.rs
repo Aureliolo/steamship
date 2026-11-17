@@ -2386,21 +2386,39 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
     git(&root, &["checkout", "--quiet", "--detach", &tested]);
     // Abbreviated as Git abbreviates in the build's description.
     let abbreviated = |commit: &str| commit.get(..9).unwrap().to_owned();
-    let live_from = |commit: &str| {
-        let builds = format!(
-            r#"{{"response": {{"builds": {{"4242": {{"Description": "0.3.1 {}"}}}}}}}}"#,
-            abbreviated(commit)
-        );
-        let (host, _requests) = web_api(vec![
-            ("200 OK", testing_live(4242).to_owned()),
-            ("200 OK", builds),
-        ]);
+    let asked = |betas: String, builds: String| {
+        let (host, _requests) = web_api(vec![("200 OK", betas), ("200 OK", builds)]);
         in_game_with(
             &root,
             &["upload"],
             &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
         )
     };
+    let live_from = |commit: &str| {
+        asked(
+            testing_live(4242).to_owned(),
+            format!(
+                r#"{{"response": {{"builds": {{"4242": {{"Description": "0.3.1 {}"}}}}}}}}"#,
+                abbreviated(commit)
+            ),
+        )
+    };
+
+    // The game is unreleased, so its upload goes live on default too.
+    let (default_code, default_out, default_why) = asked(
+        r#"{"response": {"result": 1, "betas": {"public": {"BuildID": 4242}, "testing": {"BuildID": 4300}}}}"#
+            .to_owned(),
+        format!(
+            r#"{{"response": {{"builds": {{"4300": {{"Description": "0.3.1 {}"}}, "4242": {{"Description": "0.3.1 {}"}}}}}}}}"#,
+            abbreviated(&tested),
+            abbreviated(&hotfix)
+        ),
+    );
+    assert_eq!(default_code, Some(2_i32), "{default_out}{default_why}");
+    assert!(
+        failure(&default_why).contains("BuildID 4242, live on default, was made from "),
+        "{default_why}"
+    );
 
     let (code, stdout, stderr) = live_from(&hotfix);
     assert_eq!(code, Some(2_i32), "{stdout}{stderr}");

@@ -105,7 +105,7 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     // make, costs neither.
     let content_root = content_root_given(shipping.content_root, !game.build.is_empty())?;
     let content_root = content_root.as_deref();
-    let pushed = shipped_from(&game)?;
+    let pushed = shipped_from(&game, game.green.as_deref())?;
     let at_green_tip = !shipping.preview && matches!(pushed.held_by, HeldBy::Green(_));
     // Before the build, which takes minutes, so that a commit no round has passed costs none.
     let shipped = match (&game.green, pushed.held_by) {
@@ -276,18 +276,9 @@ fn nothing_newer_live(game: &Project, script: &scripts::AppScript) -> Result<(),
         return Ok(());
     };
     let spinner = Spinner::start("live", "asking Steam which commits are live", false);
-    let asked: Result<(Vec<webapi::Branch>, Vec<webapi::Build>), webapi::Error> =
-        api.branches(script.app_id).and_then(|branches| {
-            let any_live = targets.iter().any(|target| {
-                branch::find(&branches, target).is_some_and(|found| found.build_id > 0)
-            });
-            let builds = if any_live {
-                api.builds(script.app_id, 20)?
-            } else {
-                Vec::new()
-            };
-            Ok((branches, builds))
-        });
+    let asked = api
+        .branches(script.app_id)
+        .and_then(|branches| Ok((branches, api.builds(script.app_id, 20)?)));
     let (branches, builds) = match asked {
         Ok(asked) => asked,
         Err(error) => {
