@@ -37,7 +37,7 @@ pub(crate) fn rich_presence_in(
             ));
         }
         if !dry_run {
-            shipped_from(game)?;
+            drop(shipped_from(game)?);
         }
     }
     try_rich_presence(&app, &files, dry_run)

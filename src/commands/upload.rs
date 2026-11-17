@@ -13,7 +13,7 @@ use steamship::cli::{self, FAILED, LIMITED, REFUSED, UNFINISHED};
 use steamship::install;
 use steamship::manifest::Manifest;
 use steamship::platform::Platform;
-use steamship::project;
+use steamship::project::{self, HeldBy};
 use steamship::redact::{self, Redactor};
 use steamship::show::{self, Hint, Spinner};
 use steamship::{
@@ -105,14 +105,19 @@ fn try_game_upload(shipping: &Shipping<'_>) -> Result<ExitCode, ExitCode> {
     // make, costs neither.
     let content_root = content_root_given(shipping.content_root, !game.build.is_empty())?;
     let content_root = content_root.as_deref();
-    shipped_from(&game)?;
+    let pushed = shipped_from(&game)?;
     // Before the build, which takes minutes, so that a commit no round has passed costs none.
-    let shipped = match &game.green {
+    let shipped = match (&game.green, pushed.held_by) {
         _ if shipping.preview => None,
-        Some(branch) => Some(green_commit(&game.root, branch, shipping.green)?),
-        None => Some(green::Shipped {
-            commit: project::git(&game.root, &["rev-parse", "HEAD"])
-                .map_err(|why| fail(&why, FAILED))?,
+        (_, HeldBy::Green(_)) => Some(green::Shipped {
+            commit: pushed.commit,
+            green: true,
+        }),
+        (Some(branch), HeldBy::Default(_)) => {
+            Some(green_commit(&game.root, branch, shipping.green)?)
+        }
+        (None, HeldBy::Default(_)) => Some(green::Shipped {
+            commit: pushed.commit,
             green: false,
         }),
     };

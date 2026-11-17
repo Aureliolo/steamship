@@ -19,6 +19,7 @@ use crate::common::pe::settings_ticking;
 use steamship::install;
 use steamship::ledger;
 use steamship::platform::Platform;
+use steamship::project::short;
 #[cfg(any(any(windows, target_os = "linux"), unix))]
 use steamship::run;
 use steamship::steamcmd;
@@ -2302,7 +2303,80 @@ fn a_game_naming_a_green_branch_is_refused_unless_origin_holds_its_commit_there(
 
     pushed(&root, "Green holds it");
     let (held_out, _) = ran(&["upload", "--version", "0.0.0"]);
-    assert!(held_out.contains(", on origin's green"), "{held_out}");
+    assert!(
+        held_out.contains(", at the tip of origin's green"),
+        "{held_out}"
+    );
+}
+
+#[test]
+fn a_game_ships_green_s_tip_behind_main_but_no_older_green_commit() {
+    let (_temp, root) = pushed_game(Some("green = \"green\"\n"));
+    let refused_for = |args: &[&str]| {
+        let (code, stdout, stderr) = in_game(&root, args);
+        assert_eq!(code, Some(2_i32), "{args:?}: {stdout}{stderr}");
+        (stdout, failure(&stderr).to_owned())
+    };
+    let tested = head(&root);
+    pushed_ungreen(&root, "Main moves past green");
+    git(&root, &["checkout", "--quiet", "--detach", &tested]);
+    // A version of noughts is refused after the commit and green checks, so nothing is built.
+    let (shown, why) = refused_for(&["upload", "--version", "0.0.0"]);
+    assert!(
+        shown.contains(&format!(
+            "{}, at the tip of origin's green, with nothing uncommitted",
+            short(&tested)
+        )),
+        "{shown}"
+    );
+    assert!(
+        why.contains("0.0.0"),
+        "refused for its version alone: {why}"
+    );
+
+    fs::write(root.join("stray.txt"), "not committed").unwrap();
+    let (_, stray_why) = refused_for(&["upload", "--version", "0.0.0"]);
+    assert!(
+        stray_why.contains("the game's folder holds what its commit does not (stray.txt)"),
+        "{stray_why}"
+    );
+    fs::remove_file(root.join("stray.txt")).unwrap();
+
+    git(&root, &["checkout", "--quiet", "main"]);
+    pushed(&root, "Green moves on");
+    let newest = head(&root);
+    git(&root, &["checkout", "--quiet", "--detach", &tested]);
+    let (_, older_why) = refused_for(&["upload", "--allow-ungreen", "--version", "0.0.0"]);
+    assert!(
+        older_why.contains(&format!(
+            "HEAD is at {}, origin's main is at {} and its green at {}. Check out green, the \
+             newest commit your tests passed, or push or pull until main matches",
+            short(&tested),
+            short(&newest),
+            short(&newest)
+        )),
+        "an older green commit is refused, --allow-ungreen or not: {older_why}"
+    );
+}
+
+#[test]
+fn a_game_naming_no_green_branch_ships_only_main_s_tip() {
+    let (_temp, root) = pushed_game(None);
+    // The fixture's origin has a green branch, which a game that names none does not ship from.
+    let tested = head(&root);
+    pushed_ungreen(&root, "Main moves past green");
+    let moved = head(&root);
+    git(&root, &["checkout", "--quiet", "--detach", &tested]);
+    let (code, stdout, stderr) = in_game(&root, &["upload", "--version", "0.0.0"]);
+    assert_eq!(code, Some(2_i32), "{stdout}{stderr}");
+    assert!(
+        failure(&stderr).contains(&format!(
+            "HEAD is at {}, and origin's main is at {}. Push or pull until they match",
+            short(&tested),
+            short(&moved)
+        )),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -2341,7 +2415,10 @@ fn a_game_checks_the_branch_its_file_names_not_one_called_green() {
         &["push", "--quiet", "origin", "main:refs/heads/passed"],
     );
     let (held_out, _) = ran(&["upload", "--version", "0.0.0"]);
-    assert!(held_out.contains(", on origin's passed"), "{held_out}");
+    assert!(
+        held_out.contains(", at the tip of origin's passed"),
+        "{held_out}"
+    );
 }
 
 #[test]

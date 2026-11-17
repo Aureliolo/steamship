@@ -118,9 +118,10 @@ first that fails:
 ### The tree and the scripts
 
 The tree is refused while it holds anything its commit does not, untracked files included. It is
-refused too while origin's default branch is at another commit.
+refused too unless origin's default branch is at that commit, or the `green` branch below is.
 
-With `green` set, the commit has to be on that branch of origin. The check runs before the build.
+With `green` set, the commit has to be on that branch of origin. Its tip ships even once the
+default branch has moved past it. An older commit on it does not. The check runs before the build.
 When it refuses, it names the commit and where the branch is. `--dry-run` skips the check.
 `--allow-ungreen` uploads a commit that is not on the branch, such as a hotfix.
 

@@ -5,7 +5,7 @@ use std::path::{self, Path, PathBuf};
 use std::process::ExitCode;
 
 use steamship::cli::{FAILED, REFUSED};
-use steamship::project::{self, Project};
+use steamship::project::{self, HeldBy, Project};
 use steamship::show::{self, Spinner};
 use steamship::{run, scripts};
 
@@ -114,9 +114,9 @@ pub(crate) fn game_achievements(game: &Project) -> Result<Vec<PathBuf>, ExitCode
     Ok(files)
 }
 
-/// Shows the game, and refuses it unless its tree holds nothing uncommitted and origin's default
-/// branch is at its commit.
-pub(crate) fn shipped_from(game: &Project) -> Result<(), ExitCode> {
+/// Shows the game, and refuses it unless its tree holds nothing uncommitted and origin's green
+/// branch or default branch is at its commit.
+pub(crate) fn shipped_from(game: &Project) -> Result<project::Pushed, ExitCode> {
     show::title("game");
     show::field(
         "folder",
@@ -127,15 +127,18 @@ pub(crate) fn shipped_from(game: &Project) -> Result<(), ExitCode> {
         },
     );
     show::field("cores", &held_to(game.cores)?);
-    let spinner = Spinner::start("commit", "asking origin for its default branch", false);
-    match project::pushed(&game.root) {
+    let spinner = Spinner::start("commit", "asking origin which branch is at it", false);
+    match project::pushed(&game.root, game.green.as_deref()) {
         Ok(pushed) => {
+            let held_by = match &pushed.held_by {
+                HeldBy::Green(branch) => format!("at the tip of origin's {branch}"),
+                HeldBy::Default(branch) => format!("as origin's {branch} has it"),
+            };
             spinner.done(&format!(
-                "{}, as origin's {} has it, with nothing uncommitted",
-                project::short(&pushed.commit),
-                pushed.branch
+                "{}, {held_by}, with nothing uncommitted",
+                project::short(&pushed.commit)
             ));
-            Ok(())
+            Ok(pushed)
         }
         Err(why) => {
             spinner.failed("not pushed");

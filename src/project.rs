@@ -17,6 +17,7 @@ use std::{env, process};
 use serde_json::Value;
 use toml::de::Error as TomlError;
 
+use crate::green::tip;
 #[cfg(unix)]
 use crate::unix as native;
 #[cfg(windows)]
@@ -190,8 +191,16 @@ pub struct Mod {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pushed {
     pub commit: String,
-    /// origin's default branch, which is at the same commit.
-    pub branch: String,
+    pub held_by: HeldBy,
+}
+
+/// The branch of origin that is at a game's commit, named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeldBy {
+    /// The game's green branch, at the newest commit its tests passed.
+    Green(String),
+    /// origin's default branch.
+    Default(String),
 }
 
 impl Project {
@@ -921,28 +930,54 @@ pub fn godot_version(text: &str) -> Option<String> {
 }
 
 /// The commit the game at `root` is at, refused unless its tree holds nothing that commit does
-/// not and origin's default branch is at it too: so that what goes up is what was pushed.
+/// not and origin's default branch or `green` branch is at it.
+///
+/// So what goes up is the newest pushed commit, or the newest the game's tests passed.
 ///
 /// # Errors
 ///
 /// When Git cannot be run, the game is not in a repository, its tree holds changes, or origin
-/// cannot be asked or is at another commit.
-pub fn pushed(root: &Path) -> Result<Pushed, String> {
+/// cannot be asked or has neither branch at the commit.
+pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
     in_repository(root)?;
     unchanged(root)?;
     let commit = git(root, &["rev-parse", "HEAD"])?;
+    let green_at = green.map(|branch| tip(root, branch)).transpose()?;
+    if let (Some(branch), Some(Some(at))) = (green, &green_at)
+        && *at == commit
+    {
+        return Ok(Pushed {
+            commit,
+            held_by: HeldBy::Green(branch.to_owned()),
+        });
+    }
     let remote = git(root, &["ls-remote", "--symref", "origin", "HEAD"])?;
     let (branch, at) = remote_head(&remote).ok_or_else(|| {
         "origin names no default branch, which is the one a game is shipped from".to_owned()
     })?;
-    if at != commit {
-        return Err(format!(
+    if at == commit {
+        return Ok(Pushed {
+            commit,
+            held_by: HeldBy::Default(branch),
+        });
+    }
+    Err(match (green, green_at) {
+        (Some(passed), Some(passed_at)) => format!(
+            "HEAD is at {}, origin's {branch} is at {} and its {passed} {}. Check out {passed}, \
+             the newest commit your tests passed, or push or pull until {branch} matches",
+            short(&commit),
+            short(&at),
+            passed_at.map_or_else(
+                || "is missing".to_owned(),
+                |passed_at| format!("at {}", short(&passed_at))
+            )
+        ),
+        _ => format!(
             "HEAD is at {}, and origin's {branch} is at {}. Push or pull until they match",
             short(&commit),
             short(&at)
-        ));
-    }
-    Ok(Pushed { commit, branch })
+        ),
+    })
 }
 
 /// This moment as the file system tells a file's change time, read back from a file made for it.

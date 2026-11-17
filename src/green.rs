@@ -70,11 +70,10 @@ pub fn require(root: &Path, branch: &str, policy: Policy) -> Result<Shipped, Str
 ///
 /// When Git cannot be run or origin cannot be asked.
 pub fn standing(root: &Path, branch: &str, commit: &str) -> Result<Standing, String> {
-    let reference = format!("refs/heads/{branch}");
-    let printed = git(root, &["ls-remote", "origin", &reference])?;
-    let Some(tip) = tip_of(&printed) else {
+    let Some(tip) = tip(root, branch)? else {
         return Ok(Standing::Off { tip: None });
     };
+    let reference = format!("refs/heads/{branch}");
     if tip == commit {
         return Ok(Standing::On);
     }
@@ -91,6 +90,16 @@ pub fn standing(root: &Path, branch: &str, commit: &str) -> Result<Standing, Str
             String::from_utf8_lossy(&ancestry.stderr).trim()
         )),
     }
+}
+
+/// The commit origin's `branch` is at, when origin has the branch.
+///
+/// # Errors
+///
+/// When Git cannot be run or origin cannot be asked.
+pub fn tip(root: &Path, branch: &str) -> Result<Option<String>, String> {
+    let reference = format!("refs/heads/{branch}");
+    git(root, &["ls-remote", "origin", &reference]).map(|printed| tip_of(&printed))
 }
 
 /// The commit `git ls-remote` printed for the branch, when it printed one.
