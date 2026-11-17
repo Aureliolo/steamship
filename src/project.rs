@@ -1104,12 +1104,14 @@ fn held_back(root: &Path, (branch, at): (&str, &str)) -> Result<Option<PathBuf>,
     if String::from_utf8_lossy(&resolved.stdout).trim() == at {
         return Ok(None);
     }
-    // A reftable repository locks its one list of tables rather than the ref's own file.
-    for name in [
-        format!("{tracking}.lock"),
-        "reftable/tables.list.lock".to_owned(),
+    // A reftable repository locks its one list of tables rather than the ref's own file. Origin's
+    // branch is in the list every worktree shares, which `--git-path` would map to a linked
+    // worktree's own.
+    let common = git(root, &["rev-parse", "--git-common-dir"])?;
+    for lock in [
+        git_path(root, &format!("{tracking}.lock"))?,
+        native(&root.join(common).join("reftable").join("tables.list.lock")),
     ] {
-        let lock = git_path(root, &name)?;
         if lock.exists() {
             return Ok(Some(lock));
         }
@@ -1117,11 +1119,17 @@ fn held_back(root: &Path, (branch, at): (&str, &str)) -> Result<Option<PathBuf>,
     Ok(None)
 }
 
-/// The file `name` in the checkout's git folder, wherever a worktree or a subfolder puts it, with
-/// one kind of separator, as git prints `/` and Windows' `del` refuses a path that mixes them.
+/// The file `name` in the checkout's git folder, wherever a worktree or a subfolder puts it.
 fn git_path(root: &Path, name: &str) -> Result<PathBuf, String> {
-    let path = root.join(git(root, &["rev-parse", "--git-path", name])?);
-    Ok(path.components().collect())
+    Ok(native(
+        &root.join(git(root, &["rev-parse", "--git-path", name])?),
+    ))
+}
+
+/// `path` with one kind of separator, as git prints `/` and Windows' `del` refuses a path that
+/// mixes them.
+fn native(path: &Path) -> PathBuf {
+    path.components().collect()
 }
 
 /// This moment as the file system tells a file's change time, read back from a file made for it.
@@ -1440,10 +1448,18 @@ mod tests {
             assert_eq!(held.to_string_lossy(), native.to_string_lossy());
         }
         let table = temp.path().join("table");
+        ran(
+            &table,
+            &["worktree", "add", "--quiet", "--detach", "../tabled"],
+        );
         let tables = table.join(".git").join("reftable").join("tables.list.lock");
         fs::write(&tables, "").unwrap();
-        let held = held_back(&table, (&branch, &second)).unwrap().unwrap();
-        assert_eq!(held.canonicalize().unwrap(), tables.canonicalize().unwrap());
+        // A linked worktree's own list holds only its HEAD, so the lock that matters is the one
+        // every worktree shares.
+        for root in [table, temp.path().join("tabled")] {
+            let held = held_back(&root, (&branch, &second)).unwrap().unwrap();
+            assert_eq!(held.canonicalize().unwrap(), tables.canonicalize().unwrap());
+        }
     }
 
     #[test]
