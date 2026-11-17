@@ -1006,10 +1006,7 @@ fn in_history_of(
             short(at)
         ));
     }
-    let ancestry = git_run(
-        root,
-        &["--no-lazy-fetch", "merge-base", "--is-ancestor", commit, at],
-    )?;
+    let ancestry = git_held(root, &["merge-base", "--is-ancestor", commit, at])?;
     match ancestry.status.code() {
         Some(0) => Ok((true, shallow)),
         Some(1) => Ok((false, shallow)),
@@ -1021,15 +1018,12 @@ fn in_history_of(
     }
 }
 
-/// Whether the checkout at `root` has `commit`. A partial clone is not let to fetch it alone,
-/// which would bring its whole history without asking what the checkout has.
+/// Whether the checkout at `root` has `commit`.
 fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
     let named = format!("{commit}^{{commit}}");
-    Ok(
-        git_run(root, &["--no-lazy-fetch", "cat-file", "-e", &named])?
-            .status
-            .success(),
-    )
+    Ok(git_held(root, &["cat-file", "-e", &named])?
+        .status
+        .success())
 }
 
 /// Fetches origin's `branch`, the whole history too when the checkout is `shallow`, leaving
@@ -1216,12 +1210,29 @@ fn failure_line(stderr: &str) -> &str {
 ///
 /// When Git cannot be run.
 pub fn git_run(root: &Path, args: &[&str]) -> Result<process::Output, String> {
+    git_output(root, args, false)
+}
+
+/// Git run with `args` in `root`, however it ended, never fetching an object the checkout lacks.
+/// A partial clone would otherwise fetch a missing commit alone, with its whole history.
+///
+/// # Errors
+///
+/// When Git cannot be run.
+pub fn git_held(root: &Path, args: &[&str]) -> Result<process::Output, String> {
+    git_output(root, args, true)
+}
+
+/// Git run with `args` in `root`, `held` from fetching what the checkout lacks.
+fn git_output(root: &Path, args: &[&str], held: bool) -> Result<process::Output, String> {
     run::output(
         run::command("git")
             .args(args)
             .current_dir(root)
             // A remote asked for a password would wait for one. The credential helper answers.
-            .env("GIT_TERMINAL_PROMPT", "0"),
+            .env("GIT_TERMINAL_PROMPT", "0")
+            // Rather than --no-lazy-fetch, which git before 2.45 refuses.
+            .envs(held.then_some(("GIT_NO_LAZY_FETCH", "1"))),
     )
     .map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {

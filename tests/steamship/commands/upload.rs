@@ -2779,7 +2779,8 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
         "{hotfix_shown}{hotfix_why}"
     );
 
-    // Once main moves on, its new commits are asked for as one fetch, never fetched one by one.
+    // Once main moves on, its new commits are asked for as one fetch, never fetched one by one,
+    // and without --no-lazy-fetch, which git before 2.45 refuses.
     pushed_ungreen(&root, "Main moves on again");
     fs::remove_file(&traced).unwrap();
     let (_, moved_shown, moved_why) = live_in(&shallow, &first, true);
@@ -2787,7 +2788,8 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
     assert!(
         moved_shown.contains("the build live on testing comes from this commit's history\n")
             && moved_trace.contains(" fetch --quiet --no-write-fetch-head origin refs/heads/main")
-            && moved_trace.matches("built-in: git fetch").count() == 1,
+            && moved_trace.matches("built-in: git fetch").count() == 1
+            && !moved_trace.contains("--no-lazy-fetch"),
         "{moved_shown}{moved_why}{moved_trace}"
     );
 }
