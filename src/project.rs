@@ -1027,11 +1027,19 @@ fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
         .success())
 }
 
-/// Fetches origin's `branch`, the whole history too when the checkout is `shallow`, leaving
-/// `FETCH_HEAD` to whatever else fetches in the checkout.
+/// Fetches origin's `branch`, the whole history too when the checkout is `shallow`. It writes no
+/// ref and no `FETCH_HEAD`, so uploads at once, or a lock another git run left, never collide
+/// with it, and it leaves submodules alone, whose remotes the comparison never needs.
 fn fetched(root: &Path, branch: &str, shallow: bool) -> Result<(), String> {
     let reference = format!("refs/heads/{branch}");
-    let mut args = vec!["fetch", "--quiet", "--no-write-fetch-head"];
+    let mut args = vec![
+        "fetch",
+        "--quiet",
+        "--no-write-fetch-head",
+        "--refmap=",
+        "--no-tags",
+        "--recurse-submodules=no",
+    ];
     if shallow {
         // Commits alone answer the comparison, and a game's history of art and audio can be
         // large. A server that cannot filter sends it whole.

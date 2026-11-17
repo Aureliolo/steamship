@@ -2701,6 +2701,27 @@ fn green_cloned(temp: &Path, name: &str, args: &[&str]) -> PathBuf {
     clone
 }
 
+/// `upload` in `clone`, with `more` variables set, while testing's build is made from `commit`.
+fn uploaded_with_live_testing(
+    clone: &Path,
+    commit: &str,
+    more: &[(&str, &str)],
+) -> (Option<i32>, String, String) {
+    let (host, _requests) = web_api(vec![
+        ("200 OK", testing_live(4242).to_owned()),
+        (
+            "200 OK",
+            format!(
+                // In full, as git fetches a missing commit only by its whole name.
+                r#"{{"response": {{"builds": {{"4242": {{"Description": "0.3.1 {commit}"}}}}}}}}"#
+            ),
+        ),
+    ]);
+    let mut variables = vec![("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, host.as_str())];
+    variables.extend(more);
+    in_game_with(clone, &["upload"], &variables)
+}
+
 #[test]
 fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
     let (temp, root) = pushed_game(Some(GREEN_UNBUILT));
@@ -2715,22 +2736,11 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
     let traced_whole = temp.path().join("git-trace2.txt");
     let traced_whole_text = traced_whole.display().to_string();
     let live_in = |clone: &Path, commit: &str, trace: bool| {
-        let (host, _requests) = web_api(vec![
-            ("200 OK", testing_live(4242).to_owned()),
-            (
-                "200 OK",
-                format!(
-                    // In full, as git fetches a missing commit only by its whole name.
-                    r#"{{"response": {{"builds": {{"4242": {{"Description": "0.3.1 {commit}"}}}}}}}}"#
-                ),
-            ),
-        ]);
-        let mut variables = vec![("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, host.as_str())];
-        if trace {
-            variables.push(("GIT_TRACE", traced_text.as_str()));
-            variables.push(("GIT_TRACE2", traced_whole_text.as_str()));
-        }
-        in_game_with(clone, &["upload"], &variables)
+        let tracing: &[(&str, &str)] = &[
+            ("GIT_TRACE", traced_text.as_str()),
+            ("GIT_TRACE2", traced_whole_text.as_str()),
+        ];
+        uploaded_with_live_testing(clone, commit, if trace { tracing } else { &[] })
     };
     let live_from = |commit: &str| live_in(&shallow, commit, false);
 
@@ -2775,7 +2785,10 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
         let trace = fs::read_to_string(&traced).unwrap();
         let whole = fs::read_to_string(&traced_whole).unwrap();
         assert!(
-            trace.contains(" fetch --quiet --no-write-fetch-head origin refs/heads/main")
+            trace.contains(
+                " fetch --quiet --no-write-fetch-head --refmap= --no-tags --recurse-submodules=no \
+                 origin refs/heads/main"
+            )
                 && trace.matches("built-in: git fetch").count() == 1
                 // Git before 2.45 refuses that option, so it never reaches git.
                 && whole.contains("rev-parse --verify --quiet")
@@ -2800,8 +2813,16 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
     };
     // Main's hotfix came with main, and is not in green's history.
     fetched_once(&hotfix, &hotfix);
+    let whole = green_cloned(temp.path(), "whole", &[]);
     pushed_ungreen(&root, "Main moves on again");
     fetched_once(&first, "");
+    // The fetch writes no ref, so a lock another git run left on origin/main is no obstacle.
+    fs::write(whole.join(".git/refs/remotes/origin/main.lock"), "").unwrap();
+    let (_, whole_shown, whole_why) = live_in(&whole, &first, false);
+    assert!(
+        whole_shown.contains("the build live on testing comes from this commit's history\n"),
+        "{whole_shown}{whole_why}"
+    );
     // A build made from a branch the clone never fetched is not in its history either.
     git(&root, &["checkout", "--quiet", "-b", "side"]);
     commit(&root, "A build of a side branch");
