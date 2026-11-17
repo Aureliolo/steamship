@@ -5,7 +5,7 @@ use std::path::{self, Path, PathBuf};
 use std::process::ExitCode;
 
 use steamship::cli::{FAILED, REFUSED};
-use steamship::project::{self, HeldBy, Project};
+use steamship::project::{self, Project};
 use steamship::show::{self, Spinner};
 use steamship::{run, scripts};
 
@@ -130,22 +130,36 @@ pub(crate) fn shipped_from(
         },
     );
     show::field("cores", &held_to(game.cores)?);
-    let spinner = Spinner::start(
-        "commit",
-        "asking origin which branch is at this commit",
-        false,
-    );
+    let spinner = Spinner::start("commit", "asking origin for its default branch", false);
     match project::pushed(&game.root, green) {
         Ok(pushed) => {
-            let (HeldBy::Green(branch) | HeldBy::Default(branch)) = &pushed.held_by;
-            spinner.done(&format!(
-                "{}, at the tip of origin's {branch}, with nothing uncommitted",
-                project::short(&pushed.commit)
-            ));
+            let short = project::short(&pushed.commit);
+            let default = &pushed.default;
+            spinner.done(&match green {
+                Some(passed) if pushed.at_green_tip => format!(
+                    "{short}, the tip of origin's {passed}, in {default}'s history, with nothing \
+                     uncommitted"
+                ),
+                _ => format!("{short}, as origin's {default} has it, with nothing uncommitted"),
+            });
+            if pushed.deepened {
+                show::note(&format!(
+                    "this shallow clone fetched more history, to compare the commit with \
+                     origin's {default}. Older files are still fetched only when git needs them"
+                ));
+            }
+            if let Some(lock) = &pushed.held_back {
+                show::note(&format!(
+                    "{} exists, so git could not move origin/{default} to the commits it fetched. \
+                     Later fetches download them again until that file is gone. Delete it if no \
+                     git is running",
+                    lock.display()
+                ));
+            }
             Ok(pushed)
         }
         Err(why) => {
-            spinner.failed("refused");
+            spinner.failed("not pushed");
             Err(fail(&why, REFUSED))
         }
     }

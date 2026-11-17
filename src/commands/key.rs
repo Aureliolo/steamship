@@ -228,13 +228,18 @@ pub(crate) fn print_unanswered(app: u32, error: &webapi::Error, why: Option<&str
 
 /// Says why the Web API did not answer, and the exit code for it.
 pub(crate) fn web_api_failed(spinner: Spinner, error: &webapi::Error) -> ExitCode {
-    spinner.failed(&match error {
+    spinner.failed(&failed_word(error));
+    fail(&answered(error), FAILED)
+}
+
+/// The spinner's word for a Web API call that failed with `error`.
+pub(crate) fn failed_word(error: &webapi::Error) -> String {
+    match error {
         webapi::Error::NotAKey => "not a key".to_owned(),
         webapi::Error::Refused => "key refused".to_owned(),
         webapi::Error::Status(status, _) => format!("HTTP {status}"),
         webapi::Error::Unreachable(_) => "no answer".to_owned(),
         webapi::Error::Unreadable(_) => "unreadable".to_owned(),
         webapi::Error::Failed { .. } => "failed".to_owned(),
-    });
-    fail(&answered(error), FAILED)
+    }
 }

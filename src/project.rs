@@ -191,17 +191,15 @@ pub struct Mod {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pushed {
     pub commit: String,
-    pub held_by: HeldBy,
-}
-
-/// The branch of origin that is at a game's commit, named.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HeldBy {
-    /// The game's green branch, at the newest commit its tests passed, which the default branch
-    /// has moved past.
-    Green(String),
     /// origin's default branch.
-    Default(String),
+    pub default: String,
+    /// Whether the commit is the tip of the game's green branch, in the default branch's history
+    /// but behind its tip.
+    pub at_green_tip: bool,
+    /// Whether a shallow clone fetched more history to tell.
+    pub deepened: bool,
+    /// The lock file that kept origin's default branch from moving to what the fetch brought.
+    pub held_back: Option<PathBuf>,
 }
 
 impl Project {
@@ -934,7 +932,8 @@ pub fn godot_version(text: &str) -> Option<String> {
 /// not and origin's default branch or `green` branch is at it.
 ///
 /// So what goes up is the newest pushed commit, or the newest the game's tests passed. The
-/// default branch is asked first, so a commit at both is held by it.
+/// default branch is asked first, so a commit at both is its tip. Green's tip is taken only once
+/// the default branch has it in its history.
 ///
 /// # Errors
 ///
@@ -951,31 +950,163 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
     if at == commit {
         return Ok(Pushed {
             commit,
-            held_by: HeldBy::Default(branch),
+            default: branch,
+            at_green_tip: false,
+            deepened: false,
+            held_back: None,
         });
     }
-    let green_at = match green {
-        Some(passed) => tip(root, passed)?.map(|passed_at| (passed, passed_at)),
-        None => None,
+    let refused = format!(
+        "HEAD is at {}, and origin's {branch} is at {}. Push or pull until they match",
+        short(&commit),
+        short(&at)
+    );
+    let Some(passed) = green else {
+        return Err(refused);
     };
-    match green_at {
-        Some((passed, passed_at)) if passed_at == commit => Ok(Pushed {
-            commit,
-            held_by: HeldBy::Green(passed.to_owned()),
-        }),
-        Some((passed, passed_at)) => Err(format!(
-            "HEAD is at {}, origin's {branch} is at {} and its {passed} at {}. Check out \
-             {passed}, or push or pull until {branch} matches",
-            short(&commit),
-            short(&at),
+    match tip(root, passed)? {
+        Some(passed_at) if passed_at == commit => {
+            let (in_history, deepened, held_back) = in_history_of(root, &commit, (&branch, &at))?;
+            if !in_history {
+                return Err(format!(
+                    "{refused}. It is the tip of origin's {passed}, which ships only once \
+                     {branch} has it in its history"
+                ));
+            }
+            Ok(Pushed {
+                commit,
+                default: branch,
+                at_green_tip: true,
+                deepened,
+                held_back,
+            })
+        }
+        Some(passed_at) => Err(format!(
+            "{refused}, or fetch origin's {passed} and check out its tip, {}",
             short(&passed_at)
         )),
-        None => Err(format!(
-            "HEAD is at {}, and origin's {branch} is at {}. Push or pull until they match",
-            short(&commit),
-            short(&at)
+        None => Err(refused),
+    }
+}
+
+/// Whether `at`, the commit origin's `branch` is at, has `commit` in its history, whether a
+/// shallow clone fetched more history to tell, and the lock file that kept origin's branch from
+/// moving, if one did. That leaves every commit in the checkout for any later comparison.
+///
+/// It compares with `at` itself, never with what a fetch names, which another git run in the
+/// checkout can rewrite.
+fn in_history_of(
+    root: &Path,
+    commit: &str,
+    (branch, at): (&str, &str),
+) -> Result<(bool, bool, Option<PathBuf>), String> {
+    let shallow = git(root, &["rev-parse", "--is-shallow-repository"])? == "true";
+    // A partial clone, such as a shallow one fetched before, fetches first, as git before 2.45
+    // would fetch a missing `at` alone, with its whole history, on looking for it.
+    let held_back = if shallow || partial(root)? || !has_commit(root, at)? {
+        fetched(root, (branch, at), shallow)?
+    } else {
+        None
+    };
+    if !has_commit(root, at)? {
+        return Err(format!(
+            "origin's {branch} moved from {} while it was fetched. Run the command again",
+            short(at)
+        ));
+    }
+    let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, at])?;
+    match ancestry.status.code() {
+        Some(0) => Ok((true, shallow, held_back)),
+        Some(1) => Ok((false, shallow, held_back)),
+        _ => Err(format!(
+            "git could not tell whether origin's {branch} has {} in its history: {}",
+            short(commit),
+            String::from_utf8_lossy(&ancestry.stderr).trim()
         )),
     }
+}
+
+/// Whether the checkout at `root` is a partial clone, as git marks one: a `.promisor` file beside
+/// a pack it fetched with a filter, whichever remote it came from.
+fn partial(root: &Path) -> Result<bool, String> {
+    let packs = root.join(git(root, &["rev-parse", "--git-path", "objects/pack"])?);
+    Ok(fs::read_dir(packs).is_ok_and(|entries| {
+        entries.flatten().any(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|end| end == "promisor")
+        })
+    }))
+}
+
+/// Whether the checkout at `root` has `commit`, never fetching it, so one that a force-push took
+/// from origin's branch while it was fetched answers no.
+fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
+    let named = format!("{commit}^{{commit}}");
+    Ok(git_held(root, &["cat-file", "-e", &named])?
+        .status
+        .success())
+}
+
+/// Fetches origin's `branch` until the checkout has `at`, the whole history too when `shallow`.
+/// It gives the lock file that kept origin's branch from moving, when that is what failed.
+fn fetched(
+    root: &Path,
+    (branch, at): (&str, &str),
+    shallow: bool,
+) -> Result<Option<PathBuf>, String> {
+    // Into origin's remote-tracking branch even where the clone tracks only green, as the next
+    // fetch then tells origin what the checkout holds, rather than taking it all again. No refs
+    // the remote's configuration maps it to, which can be the checkout's own branches.
+    let reference = format!("+refs/heads/{branch}:refs/remotes/origin/{branch}");
+    let mut args = vec![
+        "fetch",
+        "--quiet",
+        "--no-write-fetch-head",
+        "--refmap=",
+        "--no-tags",
+        "--recurse-submodules=no",
+    ];
+    if shallow {
+        // Commits alone answer the comparison, and a game's history of art and audio can be
+        // large. A server that cannot filter sends it whole.
+        args.extend(["--unshallow", "--filter=blob:none"]);
+    }
+    args.extend(["origin", reference.as_str()]);
+    let Err(failed) = git(root, &args) else {
+        return Ok(None);
+    };
+    let why = failed.trim_end_matches('.');
+    // Git writes the ref after the commits, so another upload's lock on it, or one a git run left,
+    // fails a fetch that has already brought what the comparison needs. A clone still shallow
+    // has not.
+    if git(root, &["rev-parse", "--is-shallow-repository"])? == "false" && has_commit(root, at)? {
+        return held_back(root, (branch, at));
+    }
+    let lock = root.join(git(root, &["rev-parse", "--git-path", "shallow.lock"])?);
+    Err(if lock.exists() {
+        format!(
+            "{} exists, so another git run may be fetching into this checkout. Run the command \
+             again once it ends, or delete that file if no git is running",
+            lock.display()
+        )
+    } else {
+        format!("{why}. Run the command again")
+    })
+}
+
+/// The lock file that keeps origin's `branch` behind `at`, while there is one. Every later fetch
+/// takes the same commits again until it is gone. Any other failure passes with the next fetch.
+fn held_back(root: &Path, (branch, at): (&str, &str)) -> Result<Option<PathBuf>, String> {
+    let tracking = format!("refs/remotes/origin/{branch}");
+    let lock = root.join(git(
+        root,
+        &["rev-parse", "--git-path", &format!("{tracking}.lock")],
+    )?);
+    let resolved = git_run(root, &["rev-parse", "--verify", "--quiet", &tracking])?;
+    let behind = String::from_utf8_lossy(&resolved.stdout).trim() != at;
+    Ok((behind && lock.exists()).then_some(lock))
 }
 
 /// This moment as the file system tells a file's change time, read back from a file made for it.
@@ -1106,21 +1237,28 @@ fn remote_head(printed: &str) -> Option<(String, String)> {
 pub fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_run(root, args)?;
     if !output.status.success() {
-        let said = String::from_utf8_lossy(&output.stderr);
-        let said = said
-            .lines()
-            .find(|line| !line.trim().is_empty())
-            .unwrap_or("");
         return Err(format!(
             "git {} failed in {}: {}",
             args.join(" "),
             root.display(),
-            said.trim()
+            failure_line(&String::from_utf8_lossy(&output.stderr))
         ));
     }
     Ok(String::from_utf8_lossy(&output.stdout)
         .trim_end()
         .to_owned())
+}
+
+/// The line of git's `stderr` that says why it failed. Git can warn first, such as of a filter the
+/// server ignores, so it is the first line not starting `warning: `, or the first when all do.
+fn failure_line(stderr: &str) -> &str {
+    let mut said = stderr
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    let first = said.clone().next().unwrap_or("");
+    said.find(|line| !line.starts_with("warning: "))
+        .unwrap_or(first)
 }
 
 /// Git run with `args` in `root`, however it ended.
@@ -1129,12 +1267,30 @@ pub fn git(root: &Path, args: &[&str]) -> Result<String, String> {
 ///
 /// When Git cannot be run.
 pub fn git_run(root: &Path, args: &[&str]) -> Result<process::Output, String> {
+    git_output(root, args, false)
+}
+
+/// Git run with `args` in `root`, however it ended, never fetching an object the checkout lacks
+/// from git 2.45 on. A partial clone would otherwise fetch a missing commit alone, with its whole
+/// history.
+///
+/// # Errors
+///
+/// When Git cannot be run.
+pub fn git_held(root: &Path, args: &[&str]) -> Result<process::Output, String> {
+    git_output(root, args, true)
+}
+
+/// Git run with `args` in `root`, `held` from fetching what the checkout lacks.
+fn git_output(root: &Path, args: &[&str], held: bool) -> Result<process::Output, String> {
     run::output(
         run::command("git")
             .args(args)
             .current_dir(root)
             // A remote asked for a password would wait for one. The credential helper answers.
-            .env("GIT_TERMINAL_PROMPT", "0"),
+            .env("GIT_TERMINAL_PROMPT", "0")
+            // Rather than --no-lazy-fetch, which git before 2.45 refuses.
+            .envs(held.then_some(("GIT_NO_LAZY_FETCH", "1"))),
     )
     .map_err(|error| {
         if error.kind() == io::ErrorKind::NotFound {
@@ -1168,6 +1324,86 @@ mod tests {
     use super::*;
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn a_commit_a_partial_clone_lacks_is_not_fetched_to_tell_whether_it_is_there() {
+        let temp = tempfile::tempdir().unwrap();
+        let ran = |root: &Path, args: &[&str]| {
+            let output = git_run(root, args).unwrap();
+            assert!(output.status.success(), "git {args:?}: {output:?}");
+        };
+        ran(temp.path(), &["init", "--quiet", "origin"]);
+        let origin = temp.path().join("origin");
+        let committed = |message: &str| {
+            ran(
+                &origin,
+                &[
+                    "-c",
+                    "user.name=Sample",
+                    "-c",
+                    "user.email=sample@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--quiet",
+                    "--allow-empty",
+                    "-m",
+                    message,
+                ],
+            );
+            git(&origin, &["rev-parse", "HEAD"]).unwrap()
+        };
+        let first = committed("First");
+        let path = origin.display().to_string().replace('\\', "/");
+        let url = format!("file:///{}", path.trim_start_matches('/'));
+        ran(
+            temp.path(),
+            &[
+                "-c",
+                "uploadpack.allowFilter=true",
+                "clone",
+                "--quiet",
+                "--filter=blob:none",
+                &url,
+                "partial",
+            ],
+        );
+        let clone = temp.path().join("partial");
+        let second = committed("Second");
+        assert!(partial(&clone).unwrap() && !partial(&origin).unwrap());
+        assert!(has_commit(&clone, &first).unwrap());
+        // git would fetch the second commit from origin to answer, had it not been held.
+        assert!(!has_commit(&clone, &second).unwrap());
+        // A lock is told only while it holds origin's remote-tracking branch behind.
+        let branch = git(&origin, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(held_back(&clone, (&branch, &second)), Ok(None));
+        let lock = clone
+            .join(".git")
+            .join("refs")
+            .join("remotes")
+            .join("origin")
+            .join(format!("{branch}.lock"));
+        fs::write(&lock, "").unwrap();
+        assert_eq!(held_back(&clone, (&branch, &first)), Ok(None));
+        let held = held_back(&clone, (&branch, &second)).unwrap().unwrap();
+        assert_eq!(held.canonicalize().unwrap(), lock.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn a_git_failure_is_told_by_its_first_line_that_is_not_a_warning() {
+        assert_eq!(
+            failure_line(
+                "\nwarning: redirecting to https://example.com/game.git/\n  fatal: no such ref\n"
+            ),
+            "fatal: no such ref"
+        );
+        assert_eq!(
+            failure_line("\n  warning: only a warning\n"),
+            "warning: only a warning"
+        );
+        assert_eq!(failure_line("error: one\nwarning: two\n"), "error: one");
+        assert_eq!(failure_line(""), "");
+    }
 
     fn configured(text: &str) -> Result<Project, String> {
         Project::configured(Path::new("game"), text)

@@ -74,7 +74,8 @@ A command given its app or files works as it does outside a game, whatever `stea
 - `released`: `true` once the game is released. An upload then sets the build live on the game's
   branch only, never on default. Under `[demo]` it does the same for the demo's app.
 - `green`: a branch on origin that your tests move forward to each commit they pass. An upload
-  then ships only a commit on that branch, unless `--allow-ungreen` is given.
+  then ships only a commit on that branch, unless `--allow-ungreen` is given. Its tip ships even
+  once the default branch has moved past it, as [shipping](#the-tree-and-the-scripts) says.
 
 The default branch is never named here. steamship sets it through the Web API while the game is
 unreleased and `released` is not set. Once the game is released, the publisher sets it.
@@ -103,7 +104,7 @@ A folder or file that `steamship.toml` names has to be there.
 With no script, `steamship upload` ships the game's pushed commit in these steps. It stops at the
 first that fails:
 
-1. The tree has to be the pushed commit.
+1. The tree has to be the tip of origin's default branch, or of `green`.
 2. The version is read from `CHANGES.md` or `project.godot`.
 3. The app build script and the settings snapshot are checked.
 4. The `build` command runs, held to `cores` processors as steamcmd is. The tree is then checked
@@ -118,17 +119,29 @@ first that fails:
 ### The tree and the scripts
 
 The tree is refused while it holds anything its commit does not, untracked files included. It is
-also refused unless the commit is the tip of origin's default branch or of the `green` branch
+also refused unless the commit is the tip of origin's default branch, apart from the `green` case
 below.
 
 With `green` set, the commit has to be on that branch of origin. The check runs before the build.
 When it refuses, it names the commit and where the branch is. `--dry-run` skips the check.
 `--allow-ungreen` uploads a commit that is not on the branch, such as a hotfix.
 
-Green's tip also ships after the default branch has moved past it, provided its commit holds
-every build live on a branch the upload sets live, such as a hotfix's. Steam is asked which builds
-are live, so this needs a Web API key. The upload is refused when a live build has a description
-steamship did not write, or is not among the last 20 builds. Upload the default branch's tip then.
+The tip of `green` ships even after the default branch has moved past it, while the default
+branch has it in its history. Every build live on a branch the upload sets live has to come from
+that history too, so a newer hotfix is never replaced. Asking Steam which builds are live needs a
+Web API key. A shallow clone fetches the commits it lacks to compare them with origin's default
+branch. The upload prints a note when it does. Git fetches older files only when it needs them.
+
+The upload of that tip is refused when Steam cannot show this, as with:
+
+- no Web API key
+- nothing live on the default branch, while Steam lists no branches
+- a live build older than the last 20, or with a description steamship did not write
+- a live build made from a commit outside the tip's history
+
+Upload once your tests have moved `green` to the default branch's tip. A game out on Steam needs
+`released = true`, or its default branch's old build is compared too. `--dry-run` skips the
+comparison with Steam, but not the default branch's history.
 
 The app build script has to set the game's branch live, and no other. The settings snapshot has
 to be there, with an install folder of letters and digits alone.
@@ -184,8 +197,8 @@ Each command run in a game takes from it whatever is not given:
 
 - `steamship settings --save` and `--check` with no file use the snapshot. Either refuses an
   install folder of anything but letters and digits.
-- `steamship rich-presence` with neither the app nor files sends every language's file, from a
-  pushed tree only. `--dry-run` checks them and sends nothing.
+- `steamship rich-presence` with neither the app nor files sends every language's file, from the
+  tip of origin's default branch only. `--dry-run` checks them and sends nothing.
 - `steamship builds`, `steamship promote` and `steamship fetch` take the game's app.
 
 ### Achievements and leaderboards
@@ -201,9 +214,9 @@ Each command run in a game takes from it whatever is not given:
 
 ### Workshop items
 
-`steamship workshop` uploads every example mod, or the one `--name` names, from a pushed tree
-only. Its title, description and version come from its `manifest.json`. Its preview is the
-`preview.png` beside it, which every example mod needs.
+`steamship workshop` uploads every example mod, or the one `--name` names, from the tip of
+origin's default branch only. Its title, description and version come from its `manifest.json`.
+Its preview is the `preview.png` beside it, which every example mod needs.
 
 A new item needs `--visibility`, which applies only to items being made. One already published
 keeps its visibility.

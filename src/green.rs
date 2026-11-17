@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::project::{git, git_run, short};
+use crate::project::{git, git_held, git_run, short};
 
 /// The commit an upload is made from, and whether the green branch held it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,41 +92,31 @@ pub fn standing(root: &Path, branch: &str, commit: &str) -> Result<Standing, Str
     }
 }
 
-/// Whether the commit at `root`'s HEAD holds another.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Holds {
-    /// The other is HEAD or one of its ancestors.
-    Yes,
-    No,
-    /// The checkout has no commit by that name, or more than one.
-    Unknown,
-}
-
-/// Whether the commit at `root`'s HEAD holds `commit`, which may be abbreviated.
+/// Whether `commit`, which may be abbreviated, is HEAD or one of its ancestors at `root`.
 ///
-/// A commit HEAD holds is in its history, so one missing from the checkout is not held. A shallow
-/// clone, as CI checks out, is deepened first, since it lacks that history.
+/// It reads the checkout alone, whose history [`crate::project::pushed`] fetches whole for green's
+/// tip. A commit missing from that history, or an abbreviation of more than one, is not in it.
+/// Missing history, as in a shallow clone, can only make a commit look absent, never present.
 ///
 /// # Errors
 ///
-/// When Git cannot be run, or a shallow clone cannot be deepened.
-pub fn holds(root: &Path, commit: &str) -> Result<Holds, String> {
-    if git(root, &["rev-parse", "--is-shallow-repository"])? == "true" {
-        drop(git(root, &["fetch", "--quiet", "--unshallow", "origin"])?);
-    }
+/// When Git cannot be run or cannot compare the two.
+pub fn in_history(root: &Path, commit: &str) -> Result<bool, String> {
     let named = format!("{commit}^{{commit}}");
-    let resolved = git_run(root, &["rev-parse", "--verify", "--quiet", &named])?;
+    // A partial clone holds every commit of HEAD's history, so one it lacks is outside it, and is
+    // not fetched.
+    let resolved = git_held(root, &["rev-parse", "--verify", "--quiet", &named])?;
     if !resolved.status.success() {
-        return Ok(Holds::Unknown);
+        return Ok(false);
     }
     // The full name, as a blob can share the abbreviation, which merge-base would refuse.
     let full = String::from_utf8_lossy(&resolved.stdout).trim().to_owned();
     let ancestry = git_run(root, &["merge-base", "--is-ancestor", &full, "HEAD"])?;
     match ancestry.status.code() {
-        Some(0) => Ok(Holds::Yes),
-        Some(1) => Ok(Holds::No),
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
         _ => Err(format!(
-            "git could not tell whether HEAD holds {commit}: {}",
+            "git could not tell whether {commit} is in HEAD's history: {}",
             String::from_utf8_lossy(&ancestry.stderr).trim()
         )),
     }
