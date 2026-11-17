@@ -103,13 +103,32 @@ pub fn standing(root: &Path, branch: &str, commit: &str) -> Result<Standing, Str
 /// When Git cannot be run or cannot compare the two.
 pub fn in_history(root: &Path, commit: &str) -> Result<bool, String> {
     let named = format!("{commit}^{{commit}}");
-    let resolved = git_run(root, &["rev-parse", "--verify", "--quiet", &named])?;
+    // A partial clone holds every commit of its history, so one it lacks is not fetched alone.
+    let resolved = git_run(
+        root,
+        &[
+            "--no-lazy-fetch",
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &named,
+        ],
+    )?;
     if !resolved.status.success() {
         return Ok(false);
     }
     // The full name, as a blob can share the abbreviation, which merge-base would refuse.
     let full = String::from_utf8_lossy(&resolved.stdout).trim().to_owned();
-    let ancestry = git_run(root, &["merge-base", "--is-ancestor", &full, "HEAD"])?;
+    let ancestry = git_run(
+        root,
+        &[
+            "--no-lazy-fetch",
+            "merge-base",
+            "--is-ancestor",
+            &full,
+            "HEAD",
+        ],
+    )?;
     match ancestry.status.code() {
         Some(0) => Ok(true),
         Some(1) => Ok(false),

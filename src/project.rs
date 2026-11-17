@@ -196,7 +196,7 @@ pub struct Pushed {
     /// Whether the commit is the tip of the game's green branch, in the default branch's history
     /// but behind its tip.
     pub at_green_tip: bool,
-    /// Whether a shallow clone was fetched whole to tell.
+    /// Whether a shallow clone fetched its history of commits to tell.
     pub deepened: bool,
 }
 
@@ -986,8 +986,8 @@ pub fn pushed(root: &Path, green: Option<&str>) -> Result<Pushed, String> {
 }
 
 /// Whether `at`, the commit origin's `branch` is at, has `commit` in its history, and whether a
-/// shallow clone was fetched whole to tell. That leaves the checkout's history whole for any later
-/// comparison.
+/// shallow clone fetched its history of commits to tell. That leaves every commit in the checkout
+/// for any later comparison.
 ///
 /// It compares with `at` itself, never with what a fetch names, which another git run in the
 /// checkout can rewrite. A checkout with its whole history and `at` in it is not fetched at all.
@@ -1006,7 +1006,10 @@ fn in_history_of(
             short(at)
         ));
     }
-    let ancestry = git_run(root, &["merge-base", "--is-ancestor", commit, at])?;
+    let ancestry = git_run(
+        root,
+        &["--no-lazy-fetch", "merge-base", "--is-ancestor", commit, at],
+    )?;
     match ancestry.status.code() {
         Some(0) => Ok((true, shallow)),
         Some(1) => Ok((false, shallow)),
@@ -1018,10 +1021,15 @@ fn in_history_of(
     }
 }
 
-/// Whether the checkout at `root` has `commit`.
+/// Whether the checkout at `root` has `commit`. A partial clone is not let to fetch it alone,
+/// which would bring its whole history without asking what the checkout has.
 fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
     let named = format!("{commit}^{{commit}}");
-    Ok(git_run(root, &["cat-file", "-e", &named])?.status.success())
+    Ok(
+        git_run(root, &["--no-lazy-fetch", "cat-file", "-e", &named])?
+            .status
+            .success(),
+    )
 }
 
 /// Fetches origin's `branch`, the whole history too when the checkout is `shallow`, leaving
@@ -1179,9 +1187,11 @@ pub fn git(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = git_run(root, args)?;
     if !output.status.success() {
         let said = String::from_utf8_lossy(&output.stderr);
+        // Git warns before it fails, as of a filter a server ignores, and the failure is the news.
         let said = said
             .lines()
-            .find(|line| !line.trim().is_empty())
+            .find(|line| !line.trim().is_empty() && !line.starts_with("warning: "))
+            .or_else(|| said.lines().find(|line| !line.trim().is_empty()))
             .unwrap_or("");
         return Err(format!(
             "git {} failed in {}: {}",

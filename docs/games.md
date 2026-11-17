@@ -129,7 +129,8 @@ When it refuses, it names the commit and where the branch is. `--dry-run` skips 
 The tip of `green` ships even after the default branch has moved past it, while the default
 branch has it in its history. Every build live on a branch the upload sets live has to come from
 that history too, so a newer hotfix is never replaced. Steam is asked which builds are live, which
-needs a Web API key. A shallow clone is fetched whole to compare them.
+needs a Web API key. A shallow clone fetches its history of commits to compare them, and git
+fetches older files only as it needs them.
 
 The upload of that tip is refused when Steam cannot show this, as with:
 

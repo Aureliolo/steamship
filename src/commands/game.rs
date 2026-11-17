@@ -144,7 +144,8 @@ pub(crate) fn shipped_from(
             });
             if pushed.deepened {
                 show::note(&format!(
-                    "this shallow clone was fetched whole, to compare it with origin's {default}"
+                    "this shallow clone fetched its history of commits, to compare it with \
+                     origin's {default}. Git fetches older files as it needs them"
                 ));
             }
             Ok(pushed)

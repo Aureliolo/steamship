@@ -2755,10 +2755,11 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
 
     let (_, shown, why) = live_from(&first);
     assert!(
-        why.contains("this shallow clone was fetched whole, to compare it with origin's main")
-            && shown.contains(
-                "  live      \u{2713} the build live on testing comes from this commit's history\n"
-            ),
+        why.contains(
+            "this shallow clone fetched its history of commits, to compare it with origin's main"
+        ) && shown.contains(
+            "  live      \u{2713} the build live on testing comes from this commit's history\n"
+        ),
         "{shown}{why}"
     );
     // Main's hotfix came with main, and is not in green's history. A clone that already has both
@@ -2774,8 +2775,20 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
         failure(&hotfix_why).contains(&format!(
             "was made from {}, which is not in this commit's history",
             hotfix.get(..9).unwrap()
-        )) && !hotfix_why.contains("fetched whole"),
+        )) && !hotfix_why.contains("history of commits"),
         "{hotfix_shown}{hotfix_why}"
+    );
+
+    // Once main moves on, its new commits are asked for as one fetch, never fetched one by one.
+    pushed_ungreen(&root, "Main moves on again");
+    fs::remove_file(&traced).unwrap();
+    let (_, moved_shown, moved_why) = live_in(&shallow, &first, true);
+    let moved_trace = fs::read_to_string(&traced).unwrap();
+    assert!(
+        moved_shown.contains("the build live on testing comes from this commit's history\n")
+            && moved_trace.contains(" fetch --quiet --no-write-fetch-head origin refs/heads/main")
+            && moved_trace.matches("built-in: git fetch").count() == 1,
+        "{moved_shown}{moved_why}{moved_trace}"
     );
 }
 
