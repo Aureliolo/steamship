@@ -2334,14 +2334,6 @@ fn a_game_ships_green_s_tip_behind_main_but_no_older_green_commit() {
         "refused for its version alone: {why}"
     );
 
-    fs::write(root.join("stray.txt"), "not committed").unwrap();
-    let (_, stray_why) = refused_for(&["upload", "--version", "0.0.0"]);
-    assert!(
-        stray_why.contains("the game's folder holds what its commit does not (stray.txt)"),
-        "{stray_why}"
-    );
-    fs::remove_file(root.join("stray.txt")).unwrap();
-
     git(&root, &["checkout", "--quiet", "main"]);
     pushed(&root, "Green moves on");
     let newest = head(&root);
@@ -2356,6 +2348,15 @@ fn a_game_ships_green_s_tip_behind_main_but_no_older_green_commit() {
             short(&newest)
         )),
         "an older green commit is refused, --allow-ungreen or not: {older_why}"
+    );
+
+    // Last, as a file just deleted can still be listed for a moment on Windows.
+    git(&root, &["checkout", "--quiet", "--detach", &newest]);
+    fs::write(root.join("stray.txt"), "not committed").unwrap();
+    let (_, stray_why) = refused_for(&["upload", "--version", "0.0.0"]);
+    assert!(
+        stray_why.contains("the game's folder holds what its commit does not (stray.txt)"),
+        "{stray_why}"
     );
 }
 
