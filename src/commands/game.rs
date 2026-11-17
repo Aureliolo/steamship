@@ -150,8 +150,10 @@ pub(crate) fn shipped_from(
             }
             if let Some(why) = &pushed.unrecorded {
                 show::note(&format!(
-                    "{why}. The comparison went ahead, but until git can move origin/{default} \
-                     here, each later fetch takes those commits again"
+                    "{why}. The upload went ahead, but origin/{default} did not move. Each later \
+                     fetch downloads those commits again until git can move it. Delete the lock \
+                     file the error names if no git is running, or wait for the other git run to \
+                     end"
                 ));
             }
             Ok(pushed)

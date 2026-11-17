@@ -198,8 +198,8 @@ pub struct Pushed {
     pub at_green_tip: bool,
     /// Whether a shallow clone fetched more history to tell.
     pub deepened: bool,
-    /// Why git could not move origin's remote-tracking branch to what it fetched, when that was
-    /// all that failed.
+    /// Git's error when the fetch brought the commits but could not move origin's branch, such as
+    /// on a held lock.
     pub unrecorded: Option<String>,
 }
 
@@ -1050,9 +1050,8 @@ fn has_commit(root: &Path, commit: &str) -> Result<bool, String> {
         .success())
 }
 
-/// Fetches origin's `branch` until the checkout has `at`, the whole history too when it is
-/// `shallow`, and tells why git could not move origin's remote-tracking branch when that alone
-/// failed. It leaves `FETCH_HEAD`, tags, every other ref and submodules alone.
+/// Fetches origin's `branch` until the checkout has `at`, the whole history too when `shallow`.
+/// It gives git's error when only moving origin's branch failed.
 fn fetched(
     root: &Path,
     (branch, at): (&str, &str),
@@ -1089,8 +1088,8 @@ fn fetched(
     let lock = root.join(git(root, &["rev-parse", "--git-path", "shallow.lock"])?);
     Err(if lock.exists() {
         format!(
-            "another git run is fetching into this checkout, as {} shows. Run the command again \
-             once it ends, or delete that file if no git is running",
+            "{} exists, so another git run may be fetching into this checkout. Run the command \
+             again once it ends, or delete that file if no git is running",
             lock.display()
         )
     } else {
@@ -1098,9 +1097,8 @@ fn fetched(
     })
 }
 
-/// `why` a fetch that brought `at` failed, while origin's remote-tracking `branch` is not at
-/// `at`. Another upload may have moved it there, or it was there before, and then nothing is
-/// fetched again.
+/// `why` the fetch failed, only while origin's `branch` is not at `at`. When another upload moved
+/// it there, or it was there already, there is nothing to report.
 fn unrecorded(
     root: &Path,
     (branch, at): (&str, &str),

@@ -2757,11 +2757,10 @@ fn green_s_tip_in_a_shallow_clone_is_compared_with_its_whole_history() {
     let (locked_code, locked, locked_why) = live_from(&first);
     assert_eq!(locked_code, Some(2_i32), "{locked}{locked_why}");
     assert!(
-        failure(&locked_why).starts_with("another git run is fetching into this checkout, as ")
-            && failure(&locked_why).ends_with(
-                "shallow.lock shows. Run the command again once it ends, or delete that file if \
-                 no git is running"
-            ),
+        failure(&locked_why).ends_with(
+            "shallow.lock exists, so another git run may be fetching into this checkout. Run the \
+             command again once it ends, or delete that file if no git is running"
+        ),
         "{locked_why}"
     );
     fs::remove_file(&lock).unwrap();
@@ -2852,8 +2851,9 @@ fn a_whole_clone_fetches_main_once_for_green_s_tip_past_a_lock_another_git_left(
         assert_eq!(
             why.contains("main.lock")
                 && why.contains(
-                    "exists. The comparison went ahead, but until git can move origin/main here, \
-                     each later fetch takes those commits again"
+                    "exists. The upload went ahead, but origin/main did not move. Each later fetch \
+                     downloads those commits again until git can move it. Delete the lock file \
+                     the error names if no git is running, or wait for the other git run to end"
                 ),
             fetches == 1,
             "{why}"
@@ -2872,7 +2872,7 @@ fn a_shallow_clone_holding_main_s_tip_is_refused_while_another_git_fetches_into_
     let (code, shown, why) = uploaded_with_live_testing(&both, &first, &[]);
     assert_eq!(code, Some(2_i32), "{shown}{why}");
     assert!(
-        failure(&why).starts_with("another git run is fetching into this checkout, as "),
+        failure(&why).contains("shallow.lock exists, so another git run may be fetching into"),
         "{shown}{why}"
     );
 }
