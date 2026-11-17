@@ -2463,9 +2463,17 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
         ),
         "{by_hand}{by_hand_why}"
     );
+}
+
+#[test]
+fn green_s_tip_ships_with_nothing_live_and_is_refused_while_steam_cannot_say() {
+    let (_temp, root) = pushed_game(Some(GREEN_UNBUILT));
+    let tested = head(&root);
+    pushed_ungreen(&root, "Main moves past green");
+    git(&root, &["checkout", "--quiet", "--detach", &tested]);
 
     // Steam's answer for an app with nothing live yet.
-    let (host, _requests) = web_api(vec![
+    let (unlisting, _requests) = web_api(vec![
         ("500 Internal Server Error", String::new()),
         (
             "200 OK",
@@ -2478,18 +2486,18 @@ fn green_s_tip_is_refused_while_a_build_it_lacks_is_live() {
     let (_, unlisted, unlisted_why) = in_game_with(
         &root,
         &["upload"],
-        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &unlisting)],
     );
     assert!(
         unlisted.contains("no build live yet\n"),
         "{unlisted}{unlisted_why}"
     );
 
-    let (host, _requests) = web_api(vec![("403 Forbidden", "{}")]);
+    let (forbidding, _forbidden) = web_api(vec![("403 Forbidden", "{}")]);
     let (unasked_code, unasked, unasked_why) = in_game_with(
         &root,
         &["upload"],
-        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &host)],
+        &[("STEAMSHIP_WEB_API_KEY", KEY), (STAND_IN, &forbidding)],
     );
     assert_eq!(unasked_code, Some(1_i32), "{unasked}{unasked_why}");
     assert!(
