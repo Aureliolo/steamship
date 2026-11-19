@@ -162,11 +162,12 @@ pub(crate) fn achievements_file(path: &Path, app: u32) -> Result<achievements::L
 }
 
 /// The gettext catalogue at `path`, read, and refused when it is not one, is in a language Steam
-/// has none of or in English, or is in the same language as one of the `others`.
+/// has none of or in English, or is in the same language as one of the `others`. None for an
+/// English one whose every entry names a register, since Steam has no language for it.
 pub(crate) fn catalogue_file(
     path: &Path,
     others: &[achievements::Catalogued],
-) -> Result<achievements::Catalogued, ExitCode> {
+) -> Result<Option<achievements::Catalogued>, ExitCode> {
     let refused = |why: &dyn Display| fail(&format!("{}: {why}", path.display()), REFUSED);
     let text = fs::read_to_string(path).map_err(|error| refused(&error))?;
     let catalogue = po::read(&text).map_err(|why| refused(&why))?;
@@ -184,19 +185,50 @@ pub(crate) fn catalogue_file(
         )));
     };
     if language == "english" {
-        return Err(refused(
-            &"is in English, the language the game's own files are written in",
-        ));
+        let Some(registers) = catalogue.registers() else {
+            let english = "is in English, the language the game's own files are written in";
+            // In a catalogue of twins, the one entry outside a register is what to fix.
+            let twins = catalogue
+                .entries
+                .iter()
+                .any(|entry| entry.register().is_some());
+            let stray = catalogue
+                .entries
+                .iter()
+                .find(|entry| twins && entry.register().is_none());
+            return Err(refused(&stray.map_or_else(
+                || english.to_owned(),
+                |entry| {
+                    let named = entry.context.as_deref().map_or_else(
+                        || format!("\"{}\", with no msgctxt,", entry.id),
+                        |context| format!("msgctxt \"{context}\" of \"{}\"", entry.id),
+                    );
+                    format!(
+                        "{english}. {named} names no register. A twin's context ends in @ and a \
+                         name of letters, digits, _ or -"
+                    )
+                },
+            )));
+        };
+        show::field(
+            "file",
+            &format!(
+                "{}, English ({}), passed by",
+                path.display(),
+                registers.join(", ")
+            ),
+        );
+        return Ok(None);
     }
     if let Some(other) = others.iter().find(|other| other.language == language) {
         return Err(refused(&format!("is in {language}, as {} is", other.file)));
     }
     show::field("file", &format!("{}, {language}", path.display()));
-    Ok(achievements::Catalogued {
+    Ok(Some(achievements::Catalogued {
         file: path.display().to_string(),
         language,
         catalogue,
-    })
+    }))
 }
 
 /// The achievements files at `paths`, each read as `achievements_file` reads one or as a
@@ -218,7 +250,7 @@ fn achievements_files(
             .is_some_and(|extension| extension.eq_ignore_ascii_case("po"));
         if catalogue {
             let read = catalogue_file(path, &catalogues)?;
-            catalogues.push(read);
+            catalogues.extend(read);
         } else {
             files.push((path.display().to_string(), achievements_file(path, app)?));
         }

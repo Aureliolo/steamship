@@ -1,11 +1,11 @@
 //! `steamship text`.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{MAIN_SEPARATOR_STR, PathBuf};
 
 use steamship::webapi::STAND_IN;
 
-use crate::{in_game, in_game_with, pushed_game, web_api};
+use crate::{in_game, in_game_with, pushed_game, spelt, web_api};
 
 #[test]
 fn a_game_writes_its_text_in_every_language_and_then_finds_it_unchanged() {
@@ -528,6 +528,80 @@ const TEMPLATED_STORE: &str = r#"{
 const TEMPLATED_WORKSHOP: &str = r#"{"title": "Harbours", "description": "Made by players."}"#;
 const TEMPLATED_PRESENCE: &str = r##"{"#menu": "At the menu", "#grinding": "Grinding at %mill%",
     "#Mill_": {"records": "achievement"}}"##;
+
+#[test]
+fn an_english_catalogue_of_register_twins_is_passed_by_and_the_english_kept() {
+    let (_temp, root) = pushed_game(None);
+    let steam = root.join("steam");
+    fs::write(steam.join("workshop_english.json"), TEMPLATED_WORKSHOP).unwrap();
+    let locale = root.join("game/locale/de.po");
+    let mut german = fs::read_to_string(&locale).unwrap();
+    german.push_str(
+        "\nmsgctxt \"rich presence\"\nmsgid \"At the menu\"\nmsgstr \"Im Men\u{fc}\"\n\n\
+         msgctxt \"steam workshop\"\nmsgid \"Harbours\"\nmsgstr \"H\u{e4}fen\"\n\n\
+         msgctxt \"steam workshop\"\nmsgid \"Made by players.\"\n\
+         msgstr \"Von Spielern gemacht.\"\n",
+    );
+    fs::write(&locale, german).unwrap();
+    let writes = [&["text"][..], &["achievements", "--write"]];
+    for args in writes {
+        let (code, said, why) = in_game(&root, args);
+        assert_eq!(code, Some(0_i32), "{args:?}: {said}{why}");
+    }
+
+    let english = root.join("game/locale/en.po");
+    let twins = "msgid \"\"\nmsgstr \"Language: en\\n\"\n\n\
+        msgctxt \"rich presence@period\"\nmsgid \"At the menu\"\n\
+        msgstr \"At the bill of fare\"\n\n\
+        msgctxt \"steam workshop@period\"\nmsgid \"Harbours\"\nmsgstr \"Havens\"\n\n\
+        msgctxt \"achievement.name@period\"\nmsgid \"base:first_anchor\"\n\
+        msgstr \"Down to the Wheel, Sir\"\n";
+    fs::write(&english, twins).unwrap();
+    let passed = format!(
+        "{}, English (period), passed by\n",
+        spelt(&root, &["game", "locale", "en.po"].join(MAIN_SEPARATOR_STR))
+    );
+    // Unchanged: what each writes, the English included, is what it wrote without the twins.
+    for args in [
+        &["text", "--unchanged"][..],
+        &["achievements", "--write", "--unchanged"],
+    ] {
+        let (code, said, why) = in_game(&root, args);
+        assert_eq!(code, Some(0_i32), "{args:?}: {said}{why}");
+        assert!(said.contains(&passed), "{args:?}: {said}");
+    }
+
+    fs::write(
+        &english,
+        format!("{twins}\nmsgctxt \"rich presence\"\nmsgid \"At the menu\"\nmsgstr \"Dining\"\n"),
+    )
+    .unwrap();
+    for args in writes {
+        let (code, said, why) = in_game(&root, args);
+        assert_eq!(code, Some(2_i32), "{args:?}: {said}{why}");
+        assert!(
+            why.contains(
+                "en.po: is in English, the language the game's own files are written in. \
+                 msgctxt \"rich presence\" of \"At the menu\" names no register. A twin's \
+                 context ends in @ and a name of letters, digits, _ or -\n"
+            ),
+            "{args:?}: {why}"
+        );
+    }
+
+    fs::write(
+        &english,
+        "msgid \"\"\nmsgstr \"Language: en\\n\"\n\n\
+         msgctxt \"rich presence\"\nmsgid \"At the menu\"\nmsgstr \"Dining\"\n",
+    )
+    .unwrap();
+    let (code, said, why) = in_game(&root, &["text"]);
+    assert_eq!(code, Some(2_i32), "{said}{why}");
+    assert!(
+        why.contains("en.po: is in English, the language the game's own files are written in\n"),
+        "a catalogue of no twins names no entry: {why}"
+    );
+}
 
 #[test]
 fn a_games_steam_text_is_printed_as_a_template_its_own_takes_in() {
