@@ -36,6 +36,28 @@ impl Catalogue {
             .iter()
             .any(|entry| entry.context.as_deref() == context && entry.id == id)
     }
+
+    /// The registers the catalogue words its lines in, such as `period` for a context ending in
+    /// `@period`, when it holds entries and each has one. A game keeps a second wording of the
+    /// language its own files are written in so, as twins of those files' lines.
+    #[must_use]
+    pub fn registers(&self) -> Option<Vec<&str>> {
+        let mut registers = self
+            .entries
+            .iter()
+            .map(|entry| {
+                let (_, register) = entry.context.as_deref()?.rsplit_once('@')?;
+                let named = !register.is_empty()
+                    && register
+                        .chars()
+                        .all(|each| each.is_ascii_alphanumeric() || matches!(each, '_' | '-'));
+                named.then_some(register)
+            })
+            .collect::<Option<Vec<_>>>()?;
+        registers.sort_unstable();
+        registers.dedup();
+        (!registers.is_empty()).then_some(registers)
+    }
 }
 
 /// Each locale gettext names a language by, with Steam's name for it, from Valve's table of the
@@ -453,5 +475,39 @@ mod tests {
         ] {
             assert_eq!(steam_language(locale), language, "{locale}");
         }
+    }
+
+    #[test]
+    fn a_catalogue_is_in_registers_only_while_every_entry_s_context_names_one() {
+        let twin = |context: &str| format!("msgctxt \"{context}\"\nmsgid \"a\"\nmsgstr \"b\"\n\n");
+        let registers = |contexts: &[&str]| {
+            let text: String = contexts.iter().map(|context| twin(context)).collect();
+            read(&format!("msgid \"\"\nmsgstr \"Language: en\\n\"\n\n{text}"))
+                .unwrap()
+                .registers()
+                .map(|named| named.join(" "))
+        };
+        assert_eq!(
+            registers(&[
+                "store page@period",
+                "deed.name@period",
+                "@slang",
+                "a@b@old_1-x"
+            ]),
+            Some("old_1-x period slang".to_owned())
+        );
+        for (contexts, why) in [
+            (&[][..], "no entries"),
+            (
+                &["store page@period", "store page"][..],
+                "one without a register",
+            ),
+            (&["store page@"][..], "an empty register"),
+            (&["mail me@home page"][..], "a register with a space"),
+        ] {
+            assert_eq!(registers(contexts), None, "{why}");
+        }
+        let plain = read("msgid \"a\"\nmsgstr \"b\"\n").unwrap();
+        assert_eq!(plain.registers(), None, "an entry with no context");
     }
 }

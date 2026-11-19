@@ -487,3 +487,7 @@ the template already.
 `steamship languages` lists each locale a catalogue may be named by, with Steam's name for its
 language. `--json` prints the same as one object, `{"pt-BR": "brazilian", ...}`, for a tool that
 keeps its own copy to check it against.
+
+An English catalogue is refused, since the game's own files give the English. One whose every
+entry has a context ending in a register, such as `@period`, is a second English wording the game
+offers. Steam has no language for it, so `text` and `achievements` pass it by.

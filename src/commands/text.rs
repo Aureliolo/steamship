@@ -257,12 +257,12 @@ fn requirements_shown(
     (compared, missing)
 }
 
-/// Every catalogue in the game's locale folder, read.
+/// Every language's catalogue in the game's locale folder, read.
 fn text_catalogued(game: &Project) -> Result<Vec<achievements::Catalogued>, ExitCode> {
     let mut catalogued: Vec<achievements::Catalogued> = Vec::new();
     for path in game.catalogues().map_err(|why| fail(&why, REFUSED))? {
         let read = catalogue_file(&path, &catalogued)?;
-        catalogued.push(read);
+        catalogued.extend(read);
     }
     Ok(catalogued)
 }
