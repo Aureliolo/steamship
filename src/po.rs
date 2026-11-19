@@ -37,26 +37,32 @@ impl Catalogue {
             .any(|entry| entry.context.as_deref() == context && entry.id == id)
     }
 
-    /// The registers the catalogue words its lines in, such as `period` for a context ending in
-    /// `@period`, when it holds entries and each has one. A game keeps a second wording of the
-    /// language its own files are written in so, as twins of those files' lines.
+    /// The registers its entries are worded in, such as `period` for a context ending in
+    /// `@period`. None unless the catalogue has entries and every one names a register. A game
+    /// keeps a second wording of its own language this way, as twins of its files' lines.
     #[must_use]
     pub fn registers(&self) -> Option<Vec<&str>> {
         let mut registers = self
             .entries
             .iter()
-            .map(|entry| {
-                let (_, register) = entry.context.as_deref()?.rsplit_once('@')?;
-                let named = !register.is_empty()
-                    && register
-                        .chars()
-                        .all(|each| each.is_ascii_alphanumeric() || matches!(each, '_' | '-'));
-                named.then_some(register)
-            })
+            .map(Entry::register)
             .collect::<Option<Vec<_>>>()?;
         registers.sort_unstable();
         registers.dedup();
         (!registers.is_empty()).then_some(registers)
+    }
+}
+
+impl Entry {
+    /// The register its context names after its last `@`, a name of letters, digits, `_` or `-`.
+    #[must_use]
+    pub fn register(&self) -> Option<&str> {
+        let (_, register) = self.context.as_deref()?.rsplit_once('@')?;
+        let named = !register.is_empty()
+            && register
+                .chars()
+                .all(|each| each.is_ascii_alphanumeric() || matches!(each, '_' | '-'));
+        named.then_some(register)
     }
 }
 

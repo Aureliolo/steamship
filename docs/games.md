@@ -488,6 +488,10 @@ the template already.
 language. `--json` prints the same as one object, `{"pt-BR": "brazilian", ...}`, for a tool that
 keeps its own copy to check it against.
 
-An English catalogue is refused, since the game's own files give the English. One whose every
-entry has a context ending in a register, such as `@period`, is a second English wording the game
-offers. Steam has no language for it, so `text` and `achievements` pass it by.
+An English catalogue is refused, since the game's own files give the English. The exception is a
+register, a second English wording the game offers, such as a period one. Its catalogue holds
+twins of English lines, each under the line's context with `@` and the register's name added,
+such as `store page@period`. The name is letters, digits, `_` or `-`.
+
+`text` and `achievements` show such a catalogue as `English (period), passed by`, since Steam has
+no language for it. One that holds no entries, or any entry outside a register, is refused.

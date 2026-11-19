@@ -163,7 +163,7 @@ pub(crate) fn achievements_file(path: &Path, app: u32) -> Result<achievements::L
 
 /// The gettext catalogue at `path`, read, and refused when it is not one, is in a language Steam
 /// has none of or in English, or is in the same language as one of the `others`. None for an
-/// English one whose every entry is in a register, which Steam has no language for.
+/// English one whose every entry names a register, since Steam has no language for it.
 pub(crate) fn catalogue_file(
     path: &Path,
     others: &[achievements::Catalogued],
@@ -186,16 +186,36 @@ pub(crate) fn catalogue_file(
     };
     if language == "english" {
         let Some(registers) = catalogue.registers() else {
-            return Err(refused(
-                &"is in English, the language the game's own files are written in",
-            ));
+            let english = "is in English, the language the game's own files are written in";
+            // In a catalogue of twins, the one entry outside a register is what to fix.
+            let twins = catalogue
+                .entries
+                .iter()
+                .any(|entry| entry.register().is_some());
+            let stray = catalogue
+                .entries
+                .iter()
+                .find(|entry| twins && entry.register().is_none());
+            return Err(refused(&stray.map_or_else(
+                || english.to_owned(),
+                |entry| {
+                    let named = entry.context.as_deref().map_or_else(
+                        || format!("\"{}\", with no msgctxt,", entry.id),
+                        |context| format!("msgctxt \"{context}\" of \"{}\"", entry.id),
+                    );
+                    format!(
+                        "{english}. {named} names no register. A twin's context ends in @ and a \
+                         name of letters, digits, _ or -"
+                    )
+                },
+            )));
         };
         show::field(
             "file",
             &format!(
-                "{}, the English register {}, which Steam has no language for",
+                "{}, English ({}), passed by",
                 path.display(),
-                registers.join(" and ")
+                registers.join(", ")
             ),
         );
         return Ok(None);

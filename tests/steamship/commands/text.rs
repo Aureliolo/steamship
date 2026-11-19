@@ -558,7 +558,7 @@ fn an_english_catalogue_of_register_twins_is_passed_by_and_the_english_kept() {
         msgstr \"Down to the Wheel, Sir\"\n";
     fs::write(&english, twins).unwrap();
     let passed = format!(
-        "{}, the English register period, which Steam has no language for\n",
+        "{}, English (period), passed by\n",
         spelt(&root, &["game", "locale", "en.po"].join(MAIN_SEPARATOR_STR))
     );
     // Unchanged: what each writes, the English included, is what it wrote without the twins.
@@ -581,11 +581,26 @@ fn an_english_catalogue_of_register_twins_is_passed_by_and_the_english_kept() {
         assert_eq!(code, Some(2_i32), "{args:?}: {said}{why}");
         assert!(
             why.contains(
-                "en.po: is in English, the language the game's own files are written in\n"
+                "en.po: is in English, the language the game's own files are written in. \
+                 msgctxt \"rich presence\" of \"At the menu\" names no register. A twin's \
+                 context ends in @ and a name of letters, digits, _ or -\n"
             ),
             "{args:?}: {why}"
         );
     }
+
+    fs::write(
+        &english,
+        "msgid \"\"\nmsgstr \"Language: en\\n\"\n\n\
+         msgctxt \"rich presence\"\nmsgid \"At the menu\"\nmsgstr \"Dining\"\n",
+    )
+    .unwrap();
+    let (code, said, why) = in_game(&root, &["text"]);
+    assert_eq!(code, Some(2_i32), "{said}{why}");
+    assert!(
+        why.contains("en.po: is in English, the language the game's own files are written in\n"),
+        "a catalogue of no twins names no entry: {why}"
+    );
 }
 
 #[test]
