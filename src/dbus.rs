@@ -1052,6 +1052,13 @@ pub mod session {
         }
 
         proptest! {
+            // A case that fails waits out the stand-in bus's read limit, and shrinking would wait
+            // it out again for each smaller case.
+            #![proptest_config(ProptestConfig {
+                max_shrink_time: 5_000,
+                ..ProptestConfig::default()
+            })]
+
             #[test]
             fn a_held_signal_is_found_unless_sixty_four_later_ones_pushed_it_out(
                 before in prop::collection::vec(0_u8..3, 0..80),

@@ -670,7 +670,7 @@ mod tests {
         let started = Instant::now();
         let finished = run::run(
             Path::new("/bin/sh"),
-            &[OsString::from("-c"), OsString::from("sleep 60 & exit 3")],
+            &[OsString::from("-c"), OsString::from("sleep 20 & exit 3")],
             &[],
             &env::temp_dir(),
             Duration::from_secs(50),
@@ -678,11 +678,11 @@ mod tests {
             None,
         )
         .unwrap();
-        // The sleep holds the output open, so the run ends before its minute is up only if the
+        // The sleep holds the output open, so the run ends before the sleep is up only if the
         // group was stopped when the shell ended.
         assert_eq!(finished.code, Some(3_i32));
         assert!(
-            started.elapsed() < Duration::from_secs(30),
+            started.elapsed() < Duration::from_secs(10),
             "took {:?}",
             started.elapsed()
         );
@@ -700,7 +700,13 @@ mod tests {
         )
         .unwrap();
         let mut written = Vec::new();
-        drop(output.read_to_end(&mut written));
+        // Capped, since output that never ends would fill the memory instead of failing.
+        drop(output.by_ref().take(1 << 16).read_to_end(&mut written));
+        assert!(
+            written.is_empty(),
+            "{} bytes from a program that wrote none",
+            written.len()
+        );
         drop(input);
         assert_eq!(terminal.wait().unwrap(), Some(6_i32));
     }
