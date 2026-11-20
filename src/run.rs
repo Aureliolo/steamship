@@ -401,25 +401,30 @@ mod tests {
     }
 
     /// A shell, what makes it run the one line that follows, a line that starts a grandchild
-    /// holding the output open for a minute and then waits a minute itself, and one that starts
-    /// such a grandchild and exits 4 at once. `cmd` keeps the quotes around a line holding `&` or
-    /// `>` unless told `/s`, `/d` keeps it from running anything set up to run whenever it
+    /// holding the output open for twenty seconds and then waits as long itself, and one that
+    /// starts such a grandchild and exits 4 at once. `cmd` keeps the quotes around a line holding
+    /// `&` or `>` unless told `/s`, `/d` keeps it from running anything set up to run whenever it
     /// starts, and its own path is written with backslashes because it reads any `/` on its
     /// command line, its own path included, as the start of a switch.
     #[cfg(windows)]
     const SHELL: (&str, &[&str], &str, &str) = (
         r"C:\Windows\System32\cmd.exe",
         &["/d", "/s", "/c"],
-        "start /b ping -n 60 127.0.0.1 > nul & ping -n 60 127.0.0.1",
-        "start /b ping -n 60 127.0.0.1 > nul & exit 4",
+        "start /b ping -n 20 127.0.0.1 > nul & ping -n 20 127.0.0.1",
+        "start /b ping -n 20 127.0.0.1 > nul & exit 4",
     );
     #[cfg(unix)]
     const SHELL: (&str, &[&str], &str, &str) = (
         "/bin/sh",
         &["-c"],
-        "sleep 60 & sleep 60",
-        "sleep 60 & exit 4",
+        "sleep 20 & sleep 20",
+        "sleep 20 & exit 4",
     );
+
+    /// What a program that is to be stopped is held to: under half the twenty seconds its lines
+    /// run when nothing stops them. A runner that stops nothing then fails the test once the
+    /// program ends, instead of holding up the whole run.
+    const STOPPED_BY: Duration = Duration::from_secs(10);
 
     fn shell_args(line: &str) -> Vec<OsString> {
         SHELL
@@ -444,11 +449,11 @@ mod tests {
         .unwrap()
     }
 
-    /// A line that says it will never finish, then waits a minute anyway.
+    /// A line that says it will never finish, then waits twenty seconds anyway.
     #[cfg(windows)]
-    const HOPELESS_LINE: &str = "echo no way through& ping -n 60 127.0.0.1 > nul";
+    const HOPELESS_LINE: &str = "echo no way through& ping -n 20 127.0.0.1 > nul";
     #[cfg(unix)]
-    const HOPELESS_LINE: &str = "echo no way through; sleep 60";
+    const HOPELESS_LINE: &str = "echo no way through; sleep 20";
 
     #[test]
     fn stops_a_program_once_it_says_it_never_will_finish() {
@@ -468,7 +473,7 @@ mod tests {
         assert_eq!(finished.code, None);
         assert!(String::from_utf8_lossy(&finished.output).contains("no way through"));
         assert!(
-            started.elapsed() < Duration::from_secs(10),
+            started.elapsed() < STOPPED_BY,
             "took {:?}",
             started.elapsed()
         );
@@ -573,7 +578,7 @@ mod tests {
         // grandchild has been stopped as well.
         assert_eq!(finished.code, None);
         assert!(
-            started.elapsed() < Duration::from_secs(30),
+            started.elapsed() < STOPPED_BY,
             "took {:?}",
             started.elapsed()
         );
@@ -590,9 +595,13 @@ mod tests {
             let sooner = (0_i32..40_i32)
                 .filter(|_| {
                     let started = Instant::now();
-                    let finished = shell("sleep 2", limit);
+                    let finished = shell("sleep 10", limit);
                     assert_eq!(finished.code, None);
-                    started.elapsed() < Duration::from_millis(50)
+                    let took = started.elapsed();
+                    // A program left running would make each of the 80 runs last its whole
+                    // sleep.
+                    assert!(took < Duration::from_secs(5), "took {took:?} at {limit:?}");
+                    took < Duration::from_millis(50)
                 })
                 .count();
             assert!(
@@ -869,6 +878,13 @@ mod tests {
         let result = waited::<i32, _>(Duration::MAX, &seen, Some(startup), |pause| {
             pauses.push(pause);
             thread::sleep(pause);
+            // Past its start-up limit the run must have ended, since its own limit never comes.
+            if began.elapsed() > limit + Duration::from_secs(5) {
+                return Err(io::Error::other(format!(
+                    "still looking after {:?}, past its start-up limit of {limit:?}",
+                    began.elapsed()
+                )));
+            }
             Ok(None)
         });
         assert_eq!(result.unwrap(), None);
@@ -980,13 +996,13 @@ mod tests {
     #[test]
     fn a_program_that_does_not_start_in_time_is_stopped() {
         let wait = if cfg!(windows) {
-            "ping -n 60 127.0.0.1 > nul"
+            "ping -n 20 127.0.0.1 > nul"
         } else {
-            "sleep 60"
+            "sleep 20"
         };
         let (finished, took) = started_shell(&readying(wait));
         assert_eq!(finished.code, None);
-        assert!(took < Duration::from_secs(20), "took {took:?}");
+        assert!(took < STOPPED_BY, "took {took:?}");
     }
 
     #[test]
@@ -1096,10 +1112,10 @@ mod tests {
         let started = Instant::now();
         let finished = shell(SHELL.3, Duration::from_secs(50));
         // Again the grandchild holds the output open, so the run ends before the grandchild's
-        // minute is up only if the grandchild was stopped when its parent ended.
+        // time is up only if the grandchild was stopped when its parent ended.
         assert_eq!(finished.code, Some(4_i32));
         assert!(
-            started.elapsed() < Duration::from_secs(30),
+            started.elapsed() < STOPPED_BY,
             "took {:?}",
             started.elapsed()
         );
@@ -1226,7 +1242,7 @@ mod tests {
 
     #[test]
     fn a_program_on_a_terminal_dropped_unwaited_is_ended() {
-        // The line runs for a minute, and holds the output open, unless it is ended.
+        // The line runs for twenty seconds, and holds the output open, unless it is ended.
         let (terminal, output, _input) = native::Terminal::start(
             Path::new(SHELL.0),
             &shell_args(SHELL.2),
@@ -1234,8 +1250,14 @@ mod tests {
             &env::temp_dir(),
         )
         .unwrap();
+        let started = Instant::now();
         drop(terminal);
         drop(to_the_end(output));
+        assert!(
+            started.elapsed() < STOPPED_BY,
+            "took {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

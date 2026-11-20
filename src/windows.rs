@@ -2538,8 +2538,12 @@ mod tests {
         assert!(said.contains('\\'), "{said}");
         let (terminal, mut output, _input) =
             Terminal::start(&whoami, &[], &[], &env::temp_dir()).unwrap();
-        let mut seen = Vec::new();
-        let _: usize = io::Read::read_to_end(&mut output, &mut seen).unwrap();
+        // A console that is never closed leaves its output open for good.
+        let _: usize = within(
+            Duration::from_secs(30),
+            "the output of a program on a terminal to end",
+            move || io::Read::read_to_end(&mut output, &mut Vec::new()).unwrap(),
+        );
         assert_eq!(terminal.wait().unwrap(), Some(0_i32));
     }
 
@@ -2662,6 +2666,25 @@ mod tests {
             copy_file(&Path::new(&source).join(file), &folder.path().join(file));
         }
         folder
+    }
+
+    /// What `work` gives, which a test waits `limit` for on a thread of its own. Whatever blocks
+    /// it, such as a dialogue nobody answers, then fails the test naming `what` it waited for. The
+    /// thread is left behind.
+    fn within<Done, Work>(limit: Duration, what: &str, work: Work) -> Done
+    where
+        Done: Send + 'static,
+        Work: FnOnce() -> Done + Send + 'static,
+    {
+        let (sender, receiver) = mpsc::channel();
+        let _working = thread::spawn(move || drop(sender.send(work())));
+        match receiver.recv_timeout(limit) {
+            Ok(done) => done,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                panic!("waited {limit:?} for {what}, which did not come")
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("{what} panicked"),
+        }
     }
 
     /// The reason `shipped` gives for `folder`.
@@ -2788,7 +2811,13 @@ mod tests {
             &folder.path().join("conpty.dll"),
         );
         fs::write(folder.path().join("OpenConsole.exe"), "not a program").unwrap();
-        let reason = refused(folder.path());
+        // A dialogue about the program that nobody answers would hold the start for good, and
+        // with it the lock every other start takes.
+        let reason = within(
+            Duration::from_secs(30),
+            "OpenConsole.exe to be refused",
+            move || refused(folder.path()),
+        );
         assert!(
             reason.starts_with("OpenConsole.exe beside steamship.exe did not start: "),
             "{reason}"
@@ -3048,7 +3077,12 @@ mod tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(4))]
+        // A case that fails waits out its limit, and shrinking would wait it out again.
+        #![proptest_config(ProptestConfig {
+            cases: 4,
+            max_shrink_iters: 0,
+            ..ProptestConfig::default()
+        })]
 
         #[test]
         fn no_program_starts_while_a_handle_is_marked_to_be_handed_down(
@@ -3104,9 +3138,15 @@ mod tests {
                     })
                 })
                 .collect();
-            for worker in workers {
-                worker.join().unwrap();
-            }
+            within(
+                Duration::from_secs(15),
+                "every thread to mark handles and start programs",
+                move || {
+                    for worker in workers {
+                        worker.join().unwrap();
+                    }
+                },
+            );
             // Every program is still running, so a write end it inherited is still open.
             let pipes: Vec<_> = mem::take(&mut *readers.lock().unwrap());
             let (sender, receiver) = mpsc::channel();

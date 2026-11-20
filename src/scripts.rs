@@ -807,4 +807,16 @@ mod tests {
             steam.join("..").join("export")
         );
     }
+
+    #[test]
+    fn a_script_that_exists_but_cannot_be_read_is_not_said_to_be_missing() {
+        let folder = tempfile::tempdir().unwrap();
+        let in_its_place = folder.path().join("app_build.vdf");
+        fs::create_dir_all(&in_its_place).unwrap();
+        let said = read(&in_its_place).unwrap_err().to_string();
+        assert!(
+            said.starts_with(&format!("{}: cannot be read: ", in_its_place.display())),
+            "{said}"
+        );
+    }
 }
