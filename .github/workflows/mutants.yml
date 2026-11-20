@@ -15,10 +15,11 @@ name: Mutants
 # rather than timed out. Two mutants are built and tested at a time, one for each pair of the
 # runner's four cores.
 #
-# The whole crate is too much for one job: Linux's share is some 2,300 mutants at about 25 s each,
-# eight hours with two at a time. So the weekly run splits each system's share into eight shards,
-# dealt out in turn so that the slow mutants spread across them, and gives each two hours, where a
-# Linux shard takes about one.
+# The whole crate is too much for one job: Linux's share was 3,805 mutants on 2026-11-20, at about
+# 15 s each with two at a time. So the weekly run splits each system's share into shards of what
+# that system's runner gets through in about an hour, dealt out in turn so that the slow mutants
+# spread across them, and gives each two hours. The plan counts each share afresh, so the shards
+# grow with the crate. A fixed eight shards once outgrew their two hours unnoticed.
 on:
   # Every pull request, whatever it targets, so that one stacked on another is checked too.
   pull_request:
@@ -46,15 +47,40 @@ jobs:
       && (startsWith(github.head_ref, 'packages/v') || startsWith(github.head_ref, 'release/v'))
       && github.event.pull_request.user.login == 'aurelios-git-bot[bot]') }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
+      contents: read # Lists the mutants of the weekly run's source.
       pull-requests: read # Lists the files the pull request changes.
     outputs:
-      systems: ${{ steps.plan.outputs.systems }}
+      jobs: ${{ steps.plan.outputs.jobs }}
     steps:
+      - name: Checkout
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        if: github.event_name != 'pull_request'
+        run: bash .github/rust-install.sh
+
+      # Listing reads the source without compiling it, so Linux lists each system's share, its own
+      # module included.
+      - name: Install cargo-mutants
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          archive="cargo-mutants-x86_64-unknown-linux-gnu.tar.gz"
+          bash .github/tool-download.sh sourcefrog/cargo-mutants "$(bash .github/pin.sh CARGO_MUTANTS_LINUX_TAG)" \
+            "${archive}" "$(bash .github/pin.sh CARGO_MUTANTS_LINUX_SHA256)" "${RUNNER_TEMP}"
+          tar -xzf "${RUNNER_TEMP}/${archive}" -C "${RUNNER_TEMP}"
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
       # The systems are listed here rather than in the matrix: a matrix's include entries are
       # added after its exclusions, so one cannot leave out a system that an include describes.
-      - name: List the systems with something to mutate
+      - name: Plan a job for each shard of each system with something to mutate
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -73,30 +99,45 @@ jobs:
             changed="$(gh api --paginate "repos/${REPOSITORY}/pulls/${PULL_REQUEST}/files" \
               --jq '.[].filename')"
           fi
+          # A shard holds what its system's runner mutates in about an hour, as measured on
+          # 2026-11-20: Linux about 15 s a mutant, Windows about 35 s, macOS slower still.
           systems="$(jq -cn --arg changed "${changed}" --arg pull "${PULL_REQUEST}" \
             '($changed | split("\n")) as $changed
-             | [{platform: "linux", runner: env.LINUX_RUNNER,
+             | [{platform: "linux", runner: env.LINUX_RUNNER, per_shard: 240,
                  mutate: "--exclude src/windows.rs --exclude src/macos.rs"},
-                {platform: "windows", runner: env.WINDOWS_RUNNER,
+                {platform: "windows", runner: env.WINDOWS_RUNNER, per_shard: 90,
                  mutate: "--file src/windows.rs", module: "src/windows.rs"},
-                {platform: "macos", runner: env.MACOS_RUNNER,
+                {platform: "macos", runner: env.MACOS_RUNNER, per_shard: 50,
                  mutate: "--file src/macos.rs", module: "src/macos.rs"}]
              | map(select($pull == "" or .module == null
                           or (.module as $module | $changed | index($module)))
                    | del(.module))')"
-          echo "Mutating on: $(jq -r 'map(.platform) | join(", ")' <<< "${systems}")"
-          echo "systems=${systems}" >> "${GITHUB_OUTPUT}"
+          jobs='[]'
+          while read -r system; do
+            shards=1
+            if [[ -z "${PULL_REQUEST}" ]]; then
+              read -ra mutate <<< "$(jq -r .mutate <<< "${system}")"
+              count="$(cargo mutants --list "${mutate[@]}" | wc -l)"
+              per_shard="$(jq -r .per_shard <<< "${system}")"
+              shards=$(( (count + per_shard - 1) / per_shard ))
+              echo "$(jq -r .platform <<< "${system}"): ${count} mutants, shards: ${shards}"
+            fi
+            jobs="$(jq -c --argjson system "${system}" --argjson shards "${shards}" \
+              '. + [range($shards) | $system + {shard: ., shards: $shards} | del(.per_shard)]' \
+              <<< "${jobs}")"
+          done < <(jq -c '.[]' <<< "${systems}")
+          echo "Mutating on: $(jq -r 'map(.platform) | unique | join(", ")' <<< "${jobs}")"
+          echo "jobs=${jobs}" >> "${GITHUB_OUTPUT}"
 
   mutants:
     # A pull request's one job for each system is named by the system alone.
-    name: mutants (${{ matrix.system.platform }}${{ github.event_name != 'pull_request' && format(' {0}/8', matrix.shard) || '' }})
+    name: mutants (${{ matrix.platform }}${{ github.event_name != 'pull_request' && format(' {0}/{1}', matrix.shard, matrix.shards) || '' }})
     needs: [plan]
     strategy:
       fail-fast: false
       matrix:
-        system: ${{ fromJSON(needs.plan.outputs.systems) }}
-        shard: ${{ fromJSON(github.event_name == 'pull_request' && '[0]' || '[0, 1, 2, 3, 4, 5, 6, 7]') }}
-    runs-on: ${{ matrix.system.runner }}
+        include: ${{ fromJSON(needs.plan.outputs.jobs) }}
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: ${{ github.event_name == 'pull_request' && 60 || 120 }}
     permissions:
       contents: read # Reads the source it mutates, and the base branch to diff against.
@@ -157,7 +198,7 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          MUTATE: ${{ matrix.system.mutate }}
+          MUTATE: ${{ matrix.mutate }}
           STEAMSHIP_TEST_CONPTY: ${{ steps.prerequisites.outputs.conpty }}
         run: |
           set -euo pipefail
@@ -169,13 +210,14 @@ jobs:
       - name: Mutate everything, one shard
         if: github.event_name != 'pull_request'
         env:
-          MUTATE: ${{ matrix.system.mutate }}
+          MUTATE: ${{ matrix.mutate }}
           SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
           STEAMSHIP_TEST_CONPTY: ${{ steps.prerequisites.outputs.conpty }}
         run: |
           set -euo pipefail
           read -ra mutate <<< "${MUTATE}"
-          cargo mutants "${mutate[@]}" --shard "${SHARD}/8" --sharding round-robin \
+          cargo mutants "${mutate[@]}" --shard "${SHARD}/${SHARDS}" --sharding round-robin \
             --no-shuffle --minimum-test-timeout 120 --jobs 2
 
       # A job stopped at its timeout ends cancelled, not failed, and its report matters as much.
@@ -183,7 +225,7 @@ jobs:
         if: failure() || cancelled()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: mutants-${{ matrix.system.platform }}-${{ matrix.shard }}
+          name: mutants-${{ matrix.platform }}-${{ matrix.shard }}
           path: mutants.out/
           if-no-files-found: ignore
 

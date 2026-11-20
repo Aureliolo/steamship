@@ -1236,8 +1236,14 @@ mod tests {
 
     #[test]
     fn the_output_of_a_program_on_a_terminal_ends_when_it_does_whatever_it_left_running() {
+        let started = Instant::now();
         let (code, _) = on_terminal(&shell_args(SHELL.3), &[], &env::temp_dir(), b"");
         assert_eq!(code, Some(4_i32));
+        assert!(
+            started.elapsed() < STOPPED_BY,
+            "took {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

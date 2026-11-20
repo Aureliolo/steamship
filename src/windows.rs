@@ -2437,7 +2437,10 @@ mod tests {
             acl: NonNull::new(unsafe { acl.assume_init() }),
         };
         let user = User::current().unwrap();
-        let mut system = system_sid().unwrap();
+        // S-1-5-18 is written out, since a wrong SID from `system_sid` would match the desktop it
+        // made. Revision 1 with one sub-authority, the NT authority 5 in big-endian bytes, then
+        // the sub-authority 18.
+        let mut system: [u32; 3] = [0x0000_0101, 0x0500_0000, 18];
         // GENERIC_ALL as a desktop reads it: every desktop right and the standard ones.
         let all = 0x000f_01ff;
         assert_eq!(
