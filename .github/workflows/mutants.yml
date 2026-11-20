@@ -16,10 +16,10 @@ name: Mutants
 # runner's four cores.
 #
 # The whole crate is too much for one job: Linux's share was 3,805 mutants on 2026-11-20, at about
-# 15 s each with two at a time. So the weekly run splits each system's share into shards of what
+# 20 s each with two at a time. So the weekly run splits each system's share into shards of what
 # that system's runner gets through in about an hour, dealt out in turn so that the slow mutants
-# spread across them, and gives each two hours. The plan counts each share afresh, so the shards
-# grow with the crate. A fixed eight shards once outgrew their two hours unnoticed.
+# spread across them, and gives each two hours. The plan counts each share afresh, since a fixed
+# number of shards would outgrow its two hours as the crate grows.
 on:
   # Every pull request, whatever it targets, so that one stacked on another is checked too.
   pull_request:
@@ -100,10 +100,10 @@ jobs:
               --jq '.[].filename')"
           fi
           # A shard holds what its system's runner mutates in about an hour, as measured on
-          # 2026-11-20: Linux about 15 s a mutant, Windows about 35 s, macOS slower still.
+          # 2026-11-20: Linux about 20 s a mutant, Windows about 40 s, macOS about 30 s.
           systems="$(jq -cn --arg changed "${changed}" --arg pull "${PULL_REQUEST}" \
             '($changed | split("\n")) as $changed
-             | [{platform: "linux", runner: env.LINUX_RUNNER, per_shard: 240,
+             | [{platform: "linux", runner: env.LINUX_RUNNER, per_shard: 180,
                  mutate: "--exclude src/windows.rs --exclude src/macos.rs"},
                 {platform: "windows", runner: env.WINDOWS_RUNNER, per_shard: 90,
                  mutate: "--file src/windows.rs", module: "src/windows.rs"},
