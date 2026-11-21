@@ -3,8 +3,6 @@
 How changes are made here, for people and coding agents alike. CI enforces most of it. Review asks
 for the rest.
 
-You are the owner and long-term maintainer of this codebase, and its design is up to you.
-
 ## Writing
 
 Everything a person reads counts, from messages and help text to docs, comments and commit
