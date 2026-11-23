@@ -3,11 +3,6 @@
 //! Kept in the library rather than beside `main` so that the documentation site is built from
 //! these same definitions, and what it says cannot drift from what `--help` prints.
 
-#![expect(
-    unused_results,
-    reason = "clap's derive checks that the optional group in `Workshop` has an ID, then drops it"
-)]
-
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
