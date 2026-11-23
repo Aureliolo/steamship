@@ -396,7 +396,7 @@ jobs:
 
       - name: Lint the Markdown
         if: '!cancelled()'
-        uses: DavidAnson/markdownlint-cli2-action@696eb3f2509270d7b882d2aa68347bc676e7af34 # v25.0.0
+        uses: DavidAnson/markdownlint-cli2-action@3ce8f712b5d8f31acd8e201be6d97e3d2bb23eb7 # v25.1.0
 
       # Claude Code reads AGENTS.md only where no CLAUDE.md sits beside it, so one added anywhere,
       # as `claude /init` writes one, would quietly stop the project's instructions loading there.

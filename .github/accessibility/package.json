@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
-    "axe-core": "4.14.0",
-    "puppeteer-core": "25.17.0"
+    "axe-core": "4.14.1",
+    "puppeteer-core": "25.18.1"
   }
 }
