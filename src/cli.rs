@@ -565,8 +565,8 @@ pub enum Command {
     },
     /// Forget the saved login.
     ///
-    /// Removes the login steamcmd saved, the account steamship remembered and the kept Web API
-    /// key. The next upload needs `steamship login` first.
+    /// Removes the login steamcmd saved, the account steamship remembered, the kept Web API key
+    /// and the kept branch passwords. The next upload needs `steamship login` first.
     Logout,
     /// Write starter build scripts for an app.
     ///

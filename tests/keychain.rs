@@ -10,6 +10,8 @@ pub mod common;
 
 #[cfg(target_os = "linux")]
 use std::env;
+use std::panic::{self, AssertUnwindSafe};
+use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::Once;
 
@@ -48,9 +50,15 @@ fn store() {
 #[cfg(not(target_os = "linux"))]
 const fn store() {}
 
-/// A home whose key the library forgets once the test is done with it.
+/// Forgets the key and every branch password kept for `home`.
+fn forget_all(home: &Path) {
+    drop(keychain::forget(home));
+    drop(keychain::forget_branch_passwords(home));
+}
+
+/// A home whose key and branch passwords the library forgets once the test is done with them.
 fn forgetting_home() -> common::store::Home {
-    common::store::Home::new(|home| drop(keychain::forget(home)))
+    common::store::Home::new(forget_all)
 }
 
 #[test]
@@ -130,5 +138,70 @@ fn a_branch_password_is_kept_for_its_app_and_branch_apart_from_the_key() {
         keychain::branch_password(home, 480, "testing")
             .unwrap()
             .is_none()
+    );
+}
+
+/// Homes that only start like another's, which forget everything kept for them when dropped.
+struct Neighbours(Vec<PathBuf>);
+
+impl Drop for Neighbours {
+    fn drop(&mut self) {
+        for home in &self.0 {
+            forget_all(home);
+        }
+    }
+}
+
+#[test]
+fn every_branch_password_of_a_home_is_forgotten_and_those_of_no_other_home() {
+    store();
+    let home = forgetting_home();
+    let path = home.path();
+    let neighbours = Neighbours(
+        ["x", " b", ":1000:friends"]
+            .map(|tail| PathBuf::from(format!("{}{tail}", path.display())))
+            .to_vec(),
+    );
+    for (app, branch) in [(480, "testing"), (480, "staging"), (1000, "friends")] {
+        keychain::keep_branch_password(path, app, branch, "open-sesame").unwrap();
+    }
+    keychain::keep(path, &Key::parse(FIRST).unwrap()).unwrap();
+    for other in &neighbours.0 {
+        keychain::keep(other, &Key::parse(SECOND).unwrap()).unwrap();
+        keychain::keep_branch_password(other, 1000, "friends", "open-sesame").unwrap();
+    }
+    assert_eq!(keychain::branch_passwords(path).unwrap().len(), 3);
+
+    assert_eq!(keychain::forget_branch_passwords(path).unwrap(), 3);
+    assert_eq!(keychain::forget_branch_passwords(path).unwrap(), 0);
+    assert!(keychain::branch_passwords(path).unwrap().is_empty());
+    assert!(keychain::has(path).unwrap(), "the key is not a branch password");
+    for other in &neighbours.0 {
+        assert!(keychain::has(other).unwrap(), "{}", other.display());
+        assert_eq!(
+            keychain::branch_passwords(other).unwrap(),
+            [keychain::Item::branch(other, 1000, "friends")],
+            "{}",
+            other.display()
+        );
+    }
+}
+
+#[test]
+fn a_home_that_keeps_a_branch_password_after_its_forget_ran_fails_its_test() {
+    store();
+    let home = common::store::Home::new(|home| drop(keychain::forget(home)));
+    let path = home.path().to_path_buf();
+    keychain::keep_branch_password(&path, 480, "testing", "open-sesame").unwrap();
+    let caught = panic::catch_unwind(AssertUnwindSafe(|| drop(home)));
+    {
+        let _store = common::store::lock();
+        forget_all(&path);
+    }
+    let payload = caught.unwrap_err();
+    let message = payload.downcast_ref::<String>().unwrap();
+    assert!(
+        message.contains(&format!("branch-password {}:480:testing", path.display())),
+        "{message}"
     );
 }

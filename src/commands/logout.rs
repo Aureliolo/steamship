@@ -1,4 +1,4 @@
-//! `steamship logout`: the saved login, the account and the key forgotten.
+//! `steamship logout`: the saved login, the account, the key and the branch passwords forgotten.
 
 use std::fmt::Display;
 use std::fs;
@@ -40,6 +40,7 @@ pub(crate) fn run_logout() -> ExitCode {
         }
     }
     failed |= forget_key(&home);
+    failed |= forget_passwords(&home);
     if failed {
         return ExitCode::from(FAILED);
     }
@@ -128,4 +129,57 @@ fn forget_key(home: &Path) -> bool {
         }
     }
     false
+}
+
+/// Forgets every branch password `fetch --keep-password` kept for `home`. Returns true when it
+/// failed.
+fn forget_passwords(home: &Path) -> bool {
+    show_passwords(keychain::forget_branch_passwords(home))
+}
+
+/// Shows what forgetting the branch passwords came to. Returns true when it failed.
+fn show_passwords(forgotten: Result<usize, keychain::Error>) -> bool {
+    match forgotten {
+        Ok(0) | Err(keychain::Error::Unavailable(_)) => show::field("passwords", "none kept"),
+        Ok(count) => show::done("passwords", &format!("{count} forgotten")),
+        Err(
+            error @ (keychain::Error::Failed(_)
+            | keychain::Error::Unsettled(_)
+            | keychain::Error::NotAKey),
+        ) => {
+            show::failed("passwords", "not forgotten");
+            report(
+                &error,
+                Hint {
+                    before: "remove the branch passwords from the credential store by hand, \
+                             then run ",
+                    command: "steamship logout",
+                    after: " again",
+                },
+            );
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_by_the_store_fails_the_step_and_nothing_else_does() {
+        for refused in [
+            keychain::Error::Failed("refused".to_owned()),
+            keychain::Error::Unsettled("not shown yet".to_owned()),
+            keychain::Error::NotAKey,
+        ] {
+            assert!(show_passwords(Err(refused)));
+        }
+        assert!(!show_passwords(Ok(0)));
+        assert!(!show_passwords(Ok(2)));
+        assert!(!show_passwords(Err(keychain::Error::Unavailable(
+            "no bus".to_owned()
+        ))));
+    }
 }

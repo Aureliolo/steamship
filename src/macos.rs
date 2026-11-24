@@ -2,14 +2,16 @@
 //! own so that everything here is compiled, tested and mutation-tested on the system where it
 //! runs.
 
+use std::path::Path;
+
 use security_framework::base::Error as Status;
-use security_framework::item::{ItemClass, ItemSearchOptions};
+use security_framework::item::{ItemClass, ItemSearchOptions, Limit, SearchResult};
 use security_framework::passwords::{
     PasswordOptions, delete_generic_password, get_generic_password, set_generic_password_options,
 };
 use zeroize::Zeroizing;
 
-use crate::keychain::{Error, Item};
+use crate::keychain::{BRANCH_LABEL, Error, Item};
 
 /// The Keychain's errSecItemNotFound.
 const NOT_FOUND: i32 = -25_300;
@@ -77,6 +79,36 @@ pub fn keep_secret(item: &Item, secret: &[u8]) -> Result<(), Error> {
     // Kept on this Mac alone, never synchronised to iCloud.
     options.set_access_synchronized(Some(false));
     set_generic_password_options(secret, options).map_err(failed)
+}
+
+/// The branch passwords the Keychain keeps for `home`: generic passwords whose service is the
+/// branch label and whose account is exactly the home, an app and a branch.
+///
+/// # Errors
+///
+/// When the Keychain cannot be searched.
+pub fn branch_items(home: &Path) -> Result<Vec<Item>, Error> {
+    // Attributes alone, never the secrets, so the Keychain has nothing to ask permission for.
+    let found = ItemSearchOptions::new()
+        .class(ItemClass::generic_password())
+        .service(BRANCH_LABEL)
+        .load_attributes(true)
+        .limit(Limit::All)
+        .search();
+    answered(
+        found.map(|results| {
+            results
+                .iter()
+                .filter_map(SearchResult::simplify_dict)
+                .filter_map(|attributes| {
+                    attributes
+                        .get("acct")
+                        .and_then(|account| Item::branch_in_account(home, account))
+                })
+                .collect()
+        }),
+        Vec::new(),
+    )
 }
 
 /// Removes `item`, and says whether it was kept.

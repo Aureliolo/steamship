@@ -5,7 +5,11 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
-use crate::{APPS, KEY, forgetting_home, login_with_key, steamship, web_api};
+use crate::common;
+use crate::{
+    APPS, KEY, faked_with, fetching, forgetting_home, login_with_key, logout, saved_login,
+    steamship, web_api,
+};
 
 /// Keeps a file out of a removal's reach until dropped.
 ///
@@ -134,6 +138,7 @@ fn logout_forgets_steamcmds_saved_login_on_every_system_and_the_account() {
          login     \u{2713} forgotten\n  \
          account   \u{2713} forgotten\n  \
          api key   none kept\n  \
+         passwords none kept\n  \
          \u{2713} logged out\n    \
          the next upload needs steamship login first\n"
     );
@@ -295,5 +300,173 @@ fn a_carried_login_goes_even_when_its_folder_cannot_be_cleared() {
         );
         assert!(!left, "{folder}: {file} is left");
         assert!(stderr.contains(folder), "{folder}: {stderr}");
+    }
+}
+
+/// A steamcmd that logs in, waits at its console, and installs the app it is typed `app_update`
+/// for, on the friends branch, as build 4100.
+const FETCHES_ANY_APP: &str = "#!/bin/sh\n\
+    folder=\n\
+    while [ $# -gt 0 ]; do\n\
+      case \"$1\" in\n\
+        +force_install_dir) folder=\"$2\"; shift ;;\n\
+      esac\n\
+      shift\n\
+    done\n\
+    echo \"Logging in user 'build_bot' [U:1:1] to Steam Public...OK\"\n\
+    printf 'Steam>'\n\
+    read -r typed\n\
+    echo \"$typed\"\n\
+    app=${typed#app_update }\n\
+    app=${app%% *}\n\
+    mkdir -p \"$folder/steamapps\"\n\
+    printf '\"AppState\"\\n{\\n\"buildid\" \"4100\"\\n\"UserConfig\"\\n{\\n\"BetaKey\" \"friends\"\\n}\\n}\\n' \
+      > \"$folder/steamapps/appmanifest_$app.acf\"\n\
+    echo \"Success! App '$app' fully installed.\"\n\
+    printf 'Steam>'\n\
+    read -r quit\n";
+
+/// Fetches the friends branch of each of `apps` with `--keep-password`, so that a password is
+/// kept for each.
+fn keep_passwords(home: &Path, apps: &[&str]) {
+    saved_login(home);
+    for app in apps {
+        let (code, stdout, stderr) = fetching(
+            home,
+            &[*app, "--branch", "friends", "--keep-password"],
+            &[("STEAMSHIP_BRANCH_PASSWORD", "open-sesame")],
+        );
+        assert_eq!(code, Some(0_i32), "{app}: {stdout}{stderr}");
+    }
+}
+
+/// What the store keeps for `home`, as its kinds in order.
+fn kept_kinds(home: &Path) -> Vec<&'static str> {
+    let mut kinds: Vec<&'static str> = common::store::kept_for(home)
+        .unwrap()
+        .iter()
+        .map(|item| item.kind)
+        .collect();
+    kinds.sort_unstable();
+    kinds
+}
+
+/// Whether a fetch of app `app`'s friends branch with no password given finds one kept.
+fn finds_a_password(home: &Path, app: &str) -> bool {
+    saved_login(home);
+    let (code, stdout, stderr) = fetching(home, &[app, "--branch", "friends"], &[]);
+    assert!(matches!(code, Some(0_i32 | 2_i32)), "{stdout}{stderr}");
+    code == Some(0_i32)
+}
+
+#[test]
+fn logout_forgets_every_branch_password_kept_for_its_home_and_the_key() {
+    let home = common::store::Home::of(faked_with(FETCHES_ANY_APP), logout);
+    keep_a_key(home.path());
+    keep_passwords(home.path(), &["1000", "1001"]);
+    assert_eq!(
+        kept_kinds(home.path()),
+        ["branch-password", "branch-password", "web-api-key"]
+    );
+    assert!(finds_a_password(home.path(), "1000") && finds_a_password(home.path(), "1001"));
+    let (code, stdout, stderr) = steamship(&["logout"], Some(home.path()), &[]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  api key   \u{2713} forgotten\n  passwords \u{2713} 2 forgotten\n"),
+        "{stdout}"
+    );
+    assert!(kept_kinds(home.path()).is_empty());
+    assert!(!finds_a_password(home.path(), "1000"));
+    assert!(!finds_a_password(home.path(), "1001"));
+    let (again, said, _) = steamship(&["logout"], Some(home.path()), &[]);
+    assert_eq!(again, Some(0_i32), "{said}");
+    assert!(
+        said.contains("  api key   none kept\n  passwords none kept\n"),
+        "{said}"
+    );
+}
+
+#[test]
+fn logout_forgets_the_branch_passwords_of_a_home_that_kept_no_key() {
+    let home = common::store::Home::of(faked_with(FETCHES_ANY_APP), logout);
+    keep_passwords(home.path(), &["1000"]);
+    assert_eq!(kept_kinds(home.path()), ["branch-password"]);
+    let (code, stdout, stderr) = steamship(&["logout"], Some(home.path()), &[]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  api key   none kept\n  passwords \u{2713} 1 forgotten\n"),
+        "{stdout}"
+    );
+    assert!(kept_kinds(home.path()).is_empty());
+}
+
+/// Copies the folder `from` and all it holds to the empty folder `to`.
+fn copy_tree(from: &Path, to: &Path) {
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            fs::create_dir_all(&target).unwrap();
+            copy_tree(&entry.path(), &target);
+        } else {
+            let _: u64 = fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// Homes beside another, whose key and passwords are forgotten by `logout` before they go.
+struct Beside(Vec<tempfile::TempDir>);
+
+impl Drop for Beside {
+    fn drop(&mut self) {
+        for home in &self.0 {
+            logout(home.path());
+        }
+    }
+}
+
+#[test]
+fn logout_leaves_the_key_and_passwords_of_homes_whose_path_starts_the_same() {
+    let home = common::store::Home::of(faked_with(FETCHES_ANY_APP), logout);
+    let stem = home.path().file_name().unwrap().to_string_lossy().into_owned();
+    let parent = home.path().parent().unwrap();
+    let beside = Beside(
+        ["x", " b"]
+            .map(|tail| {
+                let other = tempfile::Builder::new()
+                    .prefix(&format!("{stem}{tail}"))
+                    .rand_bytes(0)
+                    .tempdir_in(parent)
+                    .unwrap();
+                copy_tree(home.path(), other.path());
+                other
+            })
+            .into(),
+    );
+    for other in &beside.0 {
+        keep_a_key(other.path());
+        keep_passwords(other.path(), &["1000"]);
+    }
+    keep_a_key(home.path());
+    keep_passwords(home.path(), &["1000", "1001"]);
+    let (code, stdout, stderr) = steamship(&["logout"], Some(home.path()), &[]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  passwords \u{2713} 2 forgotten\n"),
+        "{stdout}"
+    );
+    assert!(kept_kinds(home.path()).is_empty());
+    for other in &beside.0 {
+        assert_eq!(
+            kept_kinds(other.path()),
+            ["branch-password", "web-api-key"],
+            "{}",
+            other.path().display()
+        );
+        assert!(
+            finds_a_password(other.path(), "1000"),
+            "{}",
+            other.path().display()
+        );
     }
 }

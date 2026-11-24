@@ -5,6 +5,7 @@
 
 use std::env;
 use std::ffi::OsString;
+use std::path::Path;
 use std::slice;
 use std::time::Duration;
 
@@ -12,13 +13,14 @@ use zeroize::Zeroizing;
 
 use crate::dbus::session::Connection;
 use crate::dbus::{self, Value};
-use crate::keychain::{Error, Item};
+use crate::keychain::{BRANCH_KIND, Error, Item};
 
 const SERVICE: &str = "org.freedesktop.secrets";
 const ROOT: &str = "/org/freedesktop/secrets";
 const SECRETS: &str = "org.freedesktop.Secret.Service";
 const COLLECTION: &str = "org.freedesktop.Secret.Collection";
 const ITEM: &str = "org.freedesktop.Secret.Item";
+const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 const PROMPT: &str = "org.freedesktop.Secret.Prompt";
 const BUS: &str = "org.freedesktop.DBus";
 const BUS_PATH: &str = "/org/freedesktop/DBus";
@@ -66,6 +68,24 @@ fn attributes(item: &Item) -> Value {
             .map(|(name, value)| (*name, value.as_str())),
     );
     Value::texts(&pairs)
+}
+
+/// The attributes every item of `kind` kept for `home` is found by, whatever tells it apart
+/// within the home. The Secret Service matches each attribute exactly, so another home whose
+/// path starts the same is not found.
+fn of_kind(kind: &str, home: &str) -> Value {
+    Value::texts(&[("application", "steamship"), ("kind", kind), ("home", home)])
+}
+
+/// The text of the attribute `name` in `attributes`, an `a{ss}`.
+fn attribute<'a>(attributes: &'a Value, name: &str) -> Option<&'a str> {
+    let Value::Array(_, pairs) = attributes else {
+        return None;
+    };
+    pairs.iter().find_map(|pair| match pair {
+        Value::Entry(key, value) if key.text() == Some(name) => value.text(),
+        _ => None,
+    })
 }
 
 /// The Secret Service, with a session open to carry secrets in. The session is "plain": the
@@ -131,7 +151,12 @@ impl Service {
 
     /// The entries kept as `item`: those unlocked, then those locked.
     fn search(&mut self, item: &Item) -> Result<(Vec<String>, Vec<String>), Error> {
-        let answer = self.call(ROOT, SECRETS, "SearchItems", &[attributes(item)])?;
+        self.search_by(attributes(item))
+    }
+
+    /// The entries that have `attributes`: those unlocked, then those locked.
+    fn search_by(&mut self, attributes: Value) -> Result<(Vec<String>, Vec<String>), Error> {
+        let answer = self.call(ROOT, SECRETS, "SearchItems", &[attributes])?;
         let list = |at: usize| {
             answer
                 .get(at)
@@ -236,6 +261,35 @@ impl Service {
         self.prompt(created.get(1).and_then(Value::path).unwrap_or(NONE))
     }
 
+    /// The branch passwords kept for `home`, found by what each entry says of itself. Reading an
+    /// entry's attributes needs no unlocking.
+    fn branch_items(&mut self, home: &Path) -> Result<Vec<Item>, Error> {
+        let (unlocked, locked) =
+            self.search_by(of_kind(BRANCH_KIND, &home.display().to_string()))?;
+        let mut items = Vec::new();
+        for entry in unlocked.iter().chain(&locked) {
+            let answer = self.call(
+                entry,
+                PROPERTIES,
+                "Get",
+                &[
+                    Value::Str(ITEM.to_owned()),
+                    Value::Str("Attributes".to_owned()),
+                ],
+            )?;
+            let Some(Value::Variant(attributes)) = answer.first() else {
+                return Err(Error::Failed("an item with no attributes".to_owned()));
+            };
+            if let (Some(app), Some(branch)) =
+                (attribute(attributes, "app"), attribute(attributes, "branch"))
+                && let Some(item) = Item::listed_branch(home, app, branch)
+            {
+                items.push(item);
+            }
+        }
+        Ok(items)
+    }
+
     fn forget(&mut self, item: &Item) -> Result<bool, Error> {
         let (unlocked, locked) = self.search(item)?;
         let entries: Vec<String> = unlocked.into_iter().chain(locked).collect();
@@ -285,6 +339,35 @@ pub fn keep_secret(item: &Item, secret: &[u8]) -> Result<(), Error> {
 /// When the Secret Service cannot be reached, or refuses.
 pub fn forget_secret(item: &Item) -> Result<bool, Error> {
     service()?.forget(item)
+}
+
+/// The branch passwords kept for `home`.
+///
+/// # Errors
+///
+/// When the Secret Service cannot be reached or read.
+pub fn branch_items(home: &Path) -> Result<Vec<Item>, Error> {
+    service()?.branch_items(home)
+}
+
+/// Every item kept for `home`, its key and its branch passwords, on the bus `lookup` names in
+/// `DBUS_SESSION_BUS_ADDRESS`. For a test process whose own environment is not that of the
+/// `steamship` it runs.
+///
+/// # Errors
+///
+/// When the Secret Service cannot be reached or read.
+pub fn kept_for<Lookup>(home: &Path, lookup: Lookup) -> Result<Vec<Item>, Error>
+where
+    Lookup: Fn(&str) -> Option<OsString>,
+{
+    let mut service = Service::open(lookup)?;
+    let mut items = service.branch_items(home)?;
+    let key = Item::key(home);
+    if service.has(&key)? {
+        items.push(key);
+    }
+    Ok(items)
 }
 
 #[cfg(test)]
@@ -773,6 +856,53 @@ mod tests {
             .filter_map(|call| call.path.as_deref())
             .collect();
         assert_eq!(deleted, ["/item/1", "/item/2"]);
+    }
+
+    #[test]
+    fn the_branch_passwords_of_a_home_are_read_from_each_entrys_attributes_locked_or_not() {
+        let listed = |app: &str, branch: &str| {
+            Answer::Return(vec![Value::Variant(Box::new(Value::texts(&[
+                ("application", "steamship"),
+                ("kind", "branch-password"),
+                ("home", "/home"),
+                ("app", app),
+                ("branch", branch),
+            ])))])
+        };
+        let (_folder, address, serving) = standing_in(b"OK 0123\r\n", move |call| {
+            match call.member.as_deref().unwrap_or_default() {
+                "OpenSession" => session(),
+                "SearchItems" => found(&["/item/1"], &["/item/2", "/item/3"]),
+                "Get" => match call.path.as_deref() {
+                    Some("/item/1") => listed("480", "testing"),
+                    Some("/item/2") => listed("1000", "friends"),
+                    _ => listed("0480", "testing"),
+                },
+                _ => Answer::Return(Vec::new()),
+            }
+        });
+        let mut service = opened(&address).unwrap();
+        assert_eq!(
+            service.branch_items(Path::new("/home")).unwrap(),
+            [
+                Item::branch(Path::new("/home"), 480, "testing"),
+                Item::branch(Path::new("/home"), 1000, "friends"),
+            ]
+        );
+        drop(service);
+        let calls = serving.join().unwrap();
+        let search = calls
+            .iter()
+            .find(|call| call.member.as_deref() == Some("SearchItems"))
+            .unwrap();
+        assert_eq!(
+            search.body,
+            [Value::texts(&[
+                ("application", "steamship"),
+                ("kind", "branch-password"),
+                ("home", "/home"),
+            ])]
+        );
     }
 
     #[test]

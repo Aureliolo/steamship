@@ -26,10 +26,11 @@ use std::path::Path;
 use std::process::{ChildStdin, Stdio};
 #[cfg(target_os = "linux")]
 use std::sync::OnceLock;
-#[cfg(target_os = "linux")]
 use std::thread;
 #[cfg(target_os = "linux")]
 use std::time::{Duration, Instant};
+
+use steamship::keychain::{self, Item};
 
 #[cfg(target_os = "linux")]
 use steamship::dbus::Value;
@@ -93,9 +94,10 @@ pub fn lock() -> File {
 
 /// A home of its own for a test that keeps a key in the system's store. It holds [`lock`].
 ///
-/// Its key is forgotten as it is dropped, by `forget`, whether the test passed or failed: the
-/// folder goes either way, and a key kept for a folder no longer there would stay in the
-/// person's own store for good.
+/// Its key and branch passwords are forgotten as it is dropped, by `forget`, whether the test
+/// passed or failed: the folder goes either way, and a secret kept for a folder no longer there
+/// would stay in the person's own store for good. A test that passed then fails if the store
+/// still keeps anything for the home.
 #[derive(Debug)]
 pub struct Home {
     folder: tempfile::TempDir,
@@ -135,7 +137,53 @@ impl Home {
 impl Drop for Home {
     fn drop(&mut self) {
         (self.forget)(self.folder.path());
+        // A test that already failed has more to say than a leak it may itself have caused.
+        if thread::panicking() {
+            return;
+        }
+        let left = kept_for(self.folder.path());
+        assert!(
+            left.as_ref().is_ok_and(Vec::is_empty),
+            "the credential store still keeps for {}: {}",
+            self.folder.path().display(),
+            left.map_or_else(
+                |error| format!("it could not be read ({error})"),
+                |items| items
+                    .iter()
+                    .map(|item| format!("{} {}", item.kind, item.account()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        );
     }
+}
+
+/// Every item the store keeps for `home`: its key and its branch passwords.
+///
+/// # Errors
+///
+/// When the store cannot be read.
+#[cfg(not(target_os = "linux"))]
+pub fn kept_for(home: &Path) -> Result<Vec<Item>, keychain::Error> {
+    let mut items = keychain::branch_passwords(home)?;
+    if keychain::has(home)? {
+        items.push(Item::key(home));
+    }
+    Ok(items)
+}
+
+/// Every item the store keeps for `home`: its key and its branch passwords, in this process's own
+/// Secret Service, which no variable of this process's environment names.
+///
+/// # Errors
+///
+/// When the store cannot be read.
+#[cfg(target_os = "linux")]
+pub fn kept_for(home: &Path) -> Result<Vec<Item>, keychain::Error> {
+    let address = OsString::from(secret_service());
+    steamship::secret_service::kept_for(home, |name| {
+        (name == "DBUS_SESSION_BUS_ADDRESS").then(|| address.clone())
+    })
 }
 
 /// What a `steamship` run by the tests needs set: on Linux this process's own Secret Service.

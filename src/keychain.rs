@@ -47,6 +47,9 @@ pub const LABEL: &str = "steamship Web API key";
 /// What a branch's password is called where the store shows it.
 pub const BRANCH_LABEL: &str = "steamship branch password";
 
+/// What kind an item is when it holds a branch's password.
+pub const BRANCH_KIND: &str = "branch-password";
+
 /// A secret as the store keeps it: what kind it is and what the store calls it, the steamship
 /// home it is kept for, and what else tells it apart within that home, by name and value.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,11 +76,33 @@ impl Item {
     #[must_use]
     pub fn branch(home: &Path, app: u32, branch: &str) -> Self {
         Self {
-            kind: "branch-password",
+            kind: BRANCH_KIND,
             label: BRANCH_LABEL,
             home: home.display().to_string(),
             within: vec![("app", app.to_string()), ("branch", branch.to_owned())],
         }
+    }
+
+    /// The branch password the store lists for `home` with these `app` and `branch` texts, when
+    /// they are exactly what [`Item::branch`] writes. Anything else is not steamship's for this
+    /// home, so forgetting it would take another home's item.
+    #[must_use]
+    pub fn listed_branch(home: &Path, app: &str, branch: &str) -> Option<Self> {
+        let number: u32 = app.parse().ok()?;
+        (number.to_string() == app && !branch.is_empty() && !branch.contains(':'))
+            .then(|| Self::branch(home, number, branch))
+    }
+
+    /// The branch password whose account, as [`Item::account`] writes it, is `account`, when it is
+    /// one kept for `home`. A home that only starts the same, such as `/a` beside `/a b`, has
+    /// none.
+    #[must_use]
+    pub fn branch_in_account(home: &Path, account: &str) -> Option<Self> {
+        let rest = account
+            .strip_prefix(home.display().to_string().as_str())?
+            .strip_prefix(':')?;
+        let (app, branch) = rest.split_once(':')?;
+        Self::listed_branch(home, app, branch)
     }
 
     /// The one name the item is found by among those of its kind: the home, then what tells it
@@ -201,6 +226,45 @@ pub fn forget_branch_password(home: &Path, app: u32, branch: &str) -> Result<boo
     platform::forget_secret(&Item::branch(home, app, branch))
 }
 
+/// The branch passwords kept for `home`, as items, found out without asking to unlock anything.
+///
+/// # Errors
+///
+/// When the store cannot be reached or read.
+pub fn branch_passwords(home: &Path) -> Result<Vec<Item>, Error> {
+    platform::branch_items(home)
+}
+
+/// Forgets every branch password kept for `home`, and says how many there were. One the store
+/// refuses does not stop the others.
+///
+/// # Errors
+///
+/// When the store cannot be reached or read, or refuses one: the first refusal.
+pub fn forget_branch_passwords(home: &Path) -> Result<usize, Error> {
+    forget_each(branch_passwords(home)?, platform::forget_secret)
+}
+
+/// Forgets each of `items` with `forget`, and counts those that were kept. A refusal does not stop
+/// the rest.
+fn forget_each(
+    items: Vec<Item>,
+    mut forget: impl FnMut(&Item) -> Result<bool, Error>,
+) -> Result<usize, Error> {
+    let mut forgotten = 0_usize;
+    let mut refused = None;
+    for item in items {
+        match forget(&item) {
+            Ok(true) => forgotten = forgotten.saturating_add(1),
+            Ok(false) => {}
+            Err(error) => {
+                refused.get_or_insert(error);
+            }
+        }
+    }
+    refused.map_or(Ok(forgotten), Err)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,5 +301,55 @@ mod tests {
         );
         assert_eq!(password.home, "/a/b");
         assert_eq!(password.account(), "/a/b:480:testing");
+    }
+
+    #[test]
+    fn a_listed_account_is_a_branch_password_of_the_home_only_when_it_is_exactly_one() {
+        let home = Path::new("/a");
+        assert_eq!(
+            Item::branch_in_account(home, "/a:480:testing"),
+            Some(Item::branch(home, 480, "testing"))
+        );
+        for account in [
+            "/a b:480:testing",
+            "/ab:480:testing",
+            "/a:1000:friends:480:testing",
+            "/a:0480:testing",
+            "/a:+480:testing",
+            "/a:480:",
+            "/a:480",
+            "/a:x:testing",
+            "/a:99999999999:testing",
+            "/a",
+            "",
+        ] {
+            assert_eq!(Item::branch_in_account(home, account), None, "{account}");
+        }
+        assert_eq!(
+            Item::branch_in_account(Path::new("/a:1000:friends"), "/a:1000:friends:480:testing"),
+            Some(Item::branch(Path::new("/a:1000:friends"), 480, "testing"))
+        );
+    }
+
+    #[test]
+    fn a_refusal_while_forgetting_leaves_the_rest_forgotten_and_is_the_error() {
+        let home = Path::new("/a");
+        let items: Vec<Item> = [(480, "testing"), (480, "staging"), (1000, "friends")]
+            .iter()
+            .map(|&(app, branch)| Item::branch(home, app, branch))
+            .collect();
+        let mut tried = Vec::new();
+        let answer = forget_each(items.clone(), |item| {
+            tried.push(item.account());
+            if item.account().ends_with("staging") {
+                Err(Error::Failed("refused".to_owned()))
+            } else {
+                Ok(true)
+            }
+        });
+        assert_eq!(answer, Err(Error::Failed("refused".to_owned())));
+        assert_eq!(tried.len(), 3);
+        assert_eq!(forget_each(items, |_| Ok(true)), Ok(3));
+        assert_eq!(forget_each(Vec::new(), |_| Ok(true)), Ok(0));
     }
 }

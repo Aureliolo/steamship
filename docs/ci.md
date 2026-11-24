@@ -120,8 +120,8 @@ every run would make another item. Make the item once and add its ID to the scri
 ### Keeping the home
 
 The action gives each job a home of its own. When the job ends, whatever the outcome,
-`steamship logout` removes the login, the account, the key and an install's working folders from
-it. A workflow that wants to keep the home's chunk cache and the record `rollback` reads sets
+`steamship logout` removes the login, the account, the key, the kept branch passwords and an
+install's working folders from it. A workflow that wants to keep the home's chunk cache and the record `rollback` reads sets
 `home:` and caches that folder. The [home folder's table](install.md#the-home-folder) says what
 each entry holds.
 
