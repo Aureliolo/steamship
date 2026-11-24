@@ -6,6 +6,8 @@
 //! the Steam login is, so that `logout` forgets both and a test with a home of its own never meets
 //! a person's real key. A branch's password is kept for the home, the app and the branch.
 
+#[cfg(feature = "fake-steamcmd")]
+use std::env;
 use std::error;
 use std::fmt;
 use std::iter;
@@ -101,7 +103,7 @@ impl Item {
     /// none.
     #[must_use]
     pub fn branch_in_account(home: &Path, account: &str) -> Option<Self> {
-        Self::listed(BRANCH_KIND, account).filter(|item| item.home == home.display().to_string())
+        Self::listed(BRANCH_KIND, account).filter(|item| same_home(&item.home, home))
     }
 
     /// The item of this `kind` whose account, as [`Item::account`] writes it, is `account`, when
@@ -243,6 +245,35 @@ pub fn forget_branch_password(home: &Path, app: u32, branch: &str) -> Result<boo
     platform::forget_secret(&Item::branch(home, app, branch))
 }
 
+/// Whether `listed`, a home as the store lists it, is `home`.
+///
+/// The Credential Manager of Windows matches names whatever their letter case, so there a home
+/// spelt in another case is the same home, and forgetting only the one spelling would leave the
+/// other's secrets found.
+#[must_use]
+pub fn same_home(listed: &str, home: &Path) -> bool {
+    let home = home.display().to_string();
+    if cfg!(windows) {
+        listed.chars().count() == home.chars().count()
+            && listed
+                .chars()
+                .zip(home.chars())
+                .all(|(one, other)| upper(one) == upper(other))
+    } else {
+        listed == home
+    }
+}
+
+/// `letter` in upper case, where that is one letter, as Windows compares names a letter at a
+/// time.
+fn upper(letter: char) -> char {
+    let mut upper = letter.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(one), None) => one,
+        _ => letter,
+    }
+}
+
 /// The branch passwords kept for `home`, as items, found out without asking to unlock anything.
 ///
 /// # Errors
@@ -252,8 +283,7 @@ pub fn branch_passwords(home: &Path) -> Result<Vec<Item>, Error> {
     platform::branch_items(home)
 }
 
-/// Every secret the store keeps for steamship, whatever home it is kept for. Where the store
-/// cannot list them all, as the Secret Service of Linux, there are none to list.
+/// Every secret the store keeps for steamship, whatever home it is kept for.
 ///
 /// # Errors
 ///
@@ -269,7 +299,21 @@ pub fn all_items() -> Result<Vec<Item>, Error> {
 ///
 /// When the store cannot be reached or read, or refuses one: the first refusal.
 pub fn forget_branch_passwords(home: &Path) -> Result<usize, Error> {
-    forget_each(branch_passwords(home)?, platform::forget_secret)
+    forget_each(branch_passwords(home)?, forget_listed)
+}
+
+/// Forgets a branch password listed for a home. A test build refuses each while
+/// `STEAMSHIP_TEST_REFUSE_PASSWORDS` is set: the real store refuses only along with the key, so
+/// a refusal of the passwords alone cannot otherwise be tested.
+fn forget_listed(item: &Item) -> Result<bool, Error> {
+    #[cfg(feature = "fake-steamcmd")]
+    if env::var_os("STEAMSHIP_TEST_REFUSE_PASSWORDS").is_some() {
+        return Err(Error::Failed(format!(
+            "it refused to remove {}",
+            item.account()
+        )));
+    }
+    platform::forget_secret(item)
 }
 
 /// Forgets each of `items` with `forget`, and counts those that were kept. A refusal does not stop
@@ -397,5 +441,35 @@ mod tests {
         assert_eq!(tried.len(), 3);
         assert_eq!(forget_each(items, |_| Ok(true)), Ok(3));
         assert_eq!(forget_each(Vec::new(), |_| Ok(true)), Ok(0));
+    }
+
+    #[test]
+    fn a_listed_password_already_gone_is_not_counted_as_forgotten() {
+        let home = Path::new("/a");
+        let items = vec![
+            Item::branch(home, 480, "testing"),
+            Item::branch(home, 480, "staging"),
+            Item::branch(home, 1000, "friends"),
+        ];
+        let answer = forget_each(items, |item| Ok(!item.account().ends_with("staging")));
+        assert_eq!(answer, Ok(2));
+    }
+
+    #[test]
+    fn a_listed_home_in_another_letter_case_is_the_same_only_where_the_store_ignores_case() {
+        let home = Path::new("C:\\Temp\\Home");
+        let listed = Item::branch_in_account(home, "c:\\temp\\HOME:480:testing");
+        if cfg!(windows) {
+            assert_eq!(
+                listed,
+                Some(Item::branch(Path::new("c:\\temp\\HOME"), 480, "testing"))
+            );
+        } else {
+            assert_eq!(listed, None);
+        }
+        assert!(same_home("C:\\Temp\\Home", home));
+        assert!(!same_home("C:\\Temp\\Homes", home));
+        assert!(!same_home("C:\\Temp\\Hom", home));
+        assert!(!same_home("C:\\Temp\\Hose", home));
     }
 }

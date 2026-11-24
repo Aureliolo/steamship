@@ -11,7 +11,7 @@ use security_framework::passwords::{
 };
 use zeroize::Zeroizing;
 
-use crate::keychain::{BRANCH_KIND, BRANCH_LABEL, Error, Item, KEY_KIND, LABEL};
+use crate::keychain::{BRANCH_KIND, BRANCH_LABEL, Error, Item, KEY_KIND, LABEL, same_home};
 
 /// The Keychain's errSecItemNotFound.
 const NOT_FOUND: i32 = -25_300;
@@ -89,7 +89,7 @@ pub fn keep_secret(item: &Item, secret: &[u8]) -> Result<(), Error> {
 /// When the Keychain cannot be searched.
 pub fn branch_items(home: &Path) -> Result<Vec<Item>, Error> {
     let mut items = listed(BRANCH_KIND, BRANCH_LABEL)?;
-    items.retain(|item| item.home == home.display().to_string());
+    items.retain(|item| same_home(&item.home, home));
     Ok(items)
 }
 

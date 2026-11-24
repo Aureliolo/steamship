@@ -475,3 +475,52 @@ fn logout_leaves_the_key_and_passwords_of_homes_whose_path_starts_the_same() {
         );
     }
 }
+
+#[test]
+fn a_store_that_refuses_the_branch_passwords_fails_logout_once_the_other_steps_ran() {
+    let home = common::store::Home::of(faked_with(FETCHES_ANY_APP), logout);
+    keep_a_key(home.path());
+    keep_passwords(home.path(), &["1000"]);
+    let (code, stdout, stderr) = steamship(
+        &["logout"],
+        Some(home.path()),
+        &[("STEAMSHIP_TEST_REFUSE_PASSWORDS", "1")],
+    );
+    assert_eq!(code, Some(1_i32), "{stdout}{stderr}");
+    assert!(
+        stdout.contains(
+            "  login     \u{2713} forgotten\n  \
+             account   \u{2713} forgotten\n"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("  api key   \u{2713} forgotten\n  passwords \u{2717} not forgotten\n"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("logged out"), "{stdout}");
+    assert!(
+        stderr.contains(
+            "remove the branch passwords from the credential store by hand, then run steamship \
+             logout again"
+        ),
+        "{stderr}"
+    );
+    assert_eq!(kept_kinds(home.path()), ["branch-password"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn logout_forgets_the_branch_passwords_kept_for_its_home_spelt_in_another_letter_case() {
+    let home = common::store::Home::of(faked_with(FETCHES_ANY_APP), logout);
+    keep_passwords(home.path(), &["1000"]);
+    let spelt = home.path().display().to_string().to_uppercase();
+    assert_ne!(spelt, home.path().display().to_string());
+    let (code, stdout, stderr) = steamship(&["logout"], Some(Path::new(&spelt)), &[]);
+    assert_eq!((code, stderr.as_str()), (Some(0_i32), ""), "{stdout}");
+    assert!(
+        stdout.contains("  passwords \u{2713} 1 forgotten\n"),
+        "{stdout}"
+    );
+    assert_eq!(kept_kinds(home.path()), Vec::<&str>::new());
+}

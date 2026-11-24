@@ -8,14 +8,13 @@
 
 pub mod common;
 
-#[cfg(target_os = "linux")]
 use std::env;
+use std::fs;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "linux")]
 use std::sync::Once;
 
-use steamship::keychain;
 #[cfg(target_os = "macos")]
 use steamship::macos as platform;
 #[cfg(target_os = "linux")]
@@ -23,6 +22,7 @@ use steamship::secret_service as platform;
 use steamship::webapi::Key;
 #[cfg(windows)]
 use steamship::windows as platform;
+use steamship::{keychain, run};
 
 const FIRST: &str = "0123456789ABCDEF0123456789ABCDEF";
 const SECOND: &str = "fedcba9876543210fedcba9876543210";
@@ -258,4 +258,78 @@ fn a_new_home_forgets_what_is_kept_for_temp_homes_that_are_gone_and_for_no_other
             home.display()
         );
     }
+}
+
+/// Set for the copy of this test program that
+/// `a_failing_test_that_leaves_a_branch_password_kept_fails_for_its_own_reason` starts, in which
+/// that test fails for real.
+const FAILING: &str = "STEAMSHIP_TEST_FAILING_WITH_A_LEAK";
+
+// A panic while a panic unwinds ends the whole program, so the failing test runs in a copy of
+// this one, where that would show as the copy's crash rather than end this run.
+#[test]
+fn a_failing_test_that_leaves_a_branch_password_kept_fails_for_its_own_reason() {
+    store();
+    if env::var_os(FAILING).is_some() {
+        let home = common::store::Home::new(|home| drop(keychain::forget(home)));
+        keychain::keep_branch_password(home.path(), 480, "testing", "open-sesame").unwrap();
+        println!("home {}", home.path().display());
+        panic!("the test's own failure");
+    }
+    let output = run::output(
+        run::command(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "a_failing_test_that_leaves_a_branch_password_kept_fails_for_its_own_reason",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(FAILING, "1"),
+    )
+    .unwrap();
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let home = said
+        .lines()
+        .find_map(|line| line.strip_prefix("home "))
+        .map(PathBuf::from);
+    if let Some(home) = &home {
+        forget_locked(home);
+        if home.exists() {
+            fs::remove_dir_all(home).unwrap();
+        }
+    }
+    assert_eq!(output.status.code(), Some(101_i32), "{said}");
+    assert!(said.contains("the test's own failure"), "{said}");
+    assert!(!said.contains("the credential store still keeps"), "{said}");
+    let home = home.unwrap();
+    assert_eq!(common::store::kept_for(&home).unwrap(), Vec::new());
+}
+
+#[test]
+fn a_gone_home_outside_the_temp_folder_keeps_its_secrets_through_a_sweep() {
+    store();
+    let outside = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let path = outside.path().to_path_buf();
+    let _remains = Remains(vec![path.clone()]);
+    let held = common::store::lock();
+    keychain::keep(&path, &Key::parse(FIRST).unwrap()).unwrap();
+    keychain::keep_branch_password(&path, 480, "testing", "open-sesame").unwrap();
+    drop(held);
+    drop(outside);
+    assert!(!path.exists());
+
+    let fresh = forgetting_home();
+
+    assert!(keychain::has(&path).unwrap(), "{}", path.display());
+    assert_eq!(
+        keychain::branch_passwords(&path).unwrap(),
+        [keychain::Item::branch(&path, 480, "testing")]
+    );
+    drop(fresh);
+    forget_locked(&path);
+    assert_eq!(common::store::kept_for(&path).unwrap(), Vec::new());
 }

@@ -36,10 +36,14 @@ use steamship::keychain::{self, Item};
 use steamship::dbus::Value;
 #[cfg(target_os = "linux")]
 use steamship::dbus::session::Connection;
+#[cfg(target_os = "macos")]
+use steamship::macos as platform;
 #[cfg(target_os = "linux")]
 use steamship::run;
 #[cfg(target_os = "linux")]
 use steamship::secret_service;
+#[cfg(windows)]
+use steamship::windows as platform;
 
 /// Starts the bus, prints its address once it listens, then gnome-keyring on it, and ends both
 /// when its input ends. The bus starts nothing itself: a session bus would start a gnome-keyring
@@ -174,24 +178,46 @@ impl Drop for Home {
 /// When the store cannot be read or refuses to forget.
 pub fn sweep() {
     let temp = env::temp_dir();
-    let mut homes: Vec<String> = keychain::all_items()
-        .unwrap()
-        .into_iter()
-        .map(|item| item.home)
-        .filter(|home| {
-            let home = Path::new(home);
-            home.strip_prefix(&temp)
-                .is_ok_and(|rest| !rest.as_os_str().is_empty())
-                && !home.exists()
-        })
-        .collect();
-    homes.sort();
-    homes.dedup();
-    for home in homes {
-        let home = Path::new(&home);
-        let _key = keychain::forget(home).unwrap();
-        let _passwords = keychain::forget_branch_passwords(home).unwrap();
+    for item in all_kept().unwrap() {
+        let home = Path::new(&item.home);
+        if home
+            .strip_prefix(&temp)
+            .is_ok_and(|rest| !rest.as_os_str().is_empty())
+            && !home.exists()
+        {
+            let _kept = forget_kept(&item).unwrap();
+        }
     }
+}
+
+/// Every item the store keeps for steamship.
+#[cfg(not(target_os = "linux"))]
+fn all_kept() -> Result<Vec<Item>, keychain::Error> {
+    keychain::all_items()
+}
+
+/// Removes `item` from the store, and says whether it was kept.
+#[cfg(not(target_os = "linux"))]
+fn forget_kept(item: &Item) -> Result<bool, keychain::Error> {
+    platform::forget_secret(item)
+}
+
+/// Every item this process's own Secret Service keeps for steamship.
+#[cfg(target_os = "linux")]
+fn all_kept() -> Result<Vec<Item>, keychain::Error> {
+    secret_service::all_items_on(own_bus)
+}
+
+/// Removes `item` from this process's own Secret Service, and says whether it was kept.
+#[cfg(target_os = "linux")]
+fn forget_kept(item: &Item) -> Result<bool, keychain::Error> {
+    secret_service::forget_on(item, own_bus)
+}
+
+/// The address of this process's own session bus, as `name` is looked up in an environment.
+#[cfg(target_os = "linux")]
+fn own_bus(name: &str) -> Option<OsString> {
+    (name == "DBUS_SESSION_BUS_ADDRESS").then(|| OsString::from(secret_service()))
 }
 
 /// Every item the store keeps for `home`: its key and its branch passwords.
@@ -216,10 +242,7 @@ pub fn kept_for(home: &Path) -> Result<Vec<Item>, keychain::Error> {
 /// When the store cannot be read.
 #[cfg(target_os = "linux")]
 pub fn kept_for(home: &Path) -> Result<Vec<Item>, keychain::Error> {
-    let address = OsString::from(secret_service());
-    secret_service::kept_for(home, |name| {
-        (name == "DBUS_SESSION_BUS_ADDRESS").then(|| address.clone())
-    })
+    secret_service::kept_for(home, own_bus)
 }
 
 /// What a `steamship` run by the tests needs set: on Linux this process's own Secret Service.
