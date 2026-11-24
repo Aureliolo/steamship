@@ -11,7 +11,7 @@ use security_framework::passwords::{
 };
 use zeroize::Zeroizing;
 
-use crate::keychain::{BRANCH_LABEL, Error, Item};
+use crate::keychain::{BRANCH_KIND, BRANCH_LABEL, Error, Item, KEY_KIND, LABEL};
 
 /// The Keychain's errSecItemNotFound.
 const NOT_FOUND: i32 = -25_300;
@@ -88,10 +88,28 @@ pub fn keep_secret(item: &Item, secret: &[u8]) -> Result<(), Error> {
 ///
 /// When the Keychain cannot be searched.
 pub fn branch_items(home: &Path) -> Result<Vec<Item>, Error> {
+    let mut items = listed(BRANCH_KIND, BRANCH_LABEL)?;
+    items.retain(|item| item.home == home.display().to_string());
+    Ok(items)
+}
+
+/// Every key and branch password the Keychain keeps for steamship, whatever home it is kept for.
+///
+/// # Errors
+///
+/// When the Keychain cannot be searched.
+pub fn all_items() -> Result<Vec<Item>, Error> {
+    let mut items = listed(KEY_KIND, LABEL)?;
+    items.extend(listed(BRANCH_KIND, BRANCH_LABEL)?);
+    Ok(items)
+}
+
+/// The items of `kind` whose generic password has the service `label`, for any home.
+fn listed(kind: &str, label: &str) -> Result<Vec<Item>, Error> {
     // Attributes alone, never the secrets, so the Keychain has nothing to ask permission for.
     let found = ItemSearchOptions::new()
         .class(ItemClass::generic_password())
-        .service(BRANCH_LABEL)
+        .service(label)
         .load_attributes(true)
         .limit(Limit::All)
         .search();
@@ -103,7 +121,7 @@ pub fn branch_items(home: &Path) -> Result<Vec<Item>, Error> {
                 .filter_map(|attributes| {
                     attributes
                         .get("acct")
-                        .and_then(|account| Item::branch_in_account(home, account))
+                        .and_then(|account| Item::listed(kind, account))
                 })
                 .collect()
         }),

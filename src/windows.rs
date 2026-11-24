@@ -1364,9 +1364,33 @@ pub fn forget_secret(item: &keychain::Item) -> Result<bool, keychain::Error> {
 /// When the Credential Manager cannot be read.
 pub fn branch_items(home: &Path) -> Result<Vec<keychain::Item>, keychain::Error> {
     let kind = format!("steamship:{}:", keychain::BRANCH_KIND);
-    // Windows takes only a trailing `*` as a wildcard and may read others as one too, so what it
-    // lists is read again below.
-    let filter = wide(OsStr::new(&format!("{kind}{}:*", home.display())));
+    let names = target_names(&format!("{kind}{}:*", home.display()))?;
+    Ok(names
+        .iter()
+        .filter_map(|name| name.strip_prefix(&kind))
+        .filter_map(|account| keychain::Item::branch_in_account(home, account))
+        .collect())
+}
+
+/// Every secret the Credential Manager keeps for steamship, whatever home it is kept for.
+///
+/// # Errors
+///
+/// When the Credential Manager cannot be read.
+pub fn all_items() -> Result<Vec<keychain::Item>, keychain::Error> {
+    Ok(target_names("steamship:*")?
+        .iter()
+        .filter_map(|name| {
+            let (kind, account) = name.strip_prefix("steamship:")?.split_once(':')?;
+            keychain::Item::listed(kind, account)
+        })
+        .collect())
+}
+
+/// The names of the generic credentials that match `filter`. Windows takes only a trailing `*` as
+/// a wildcard and may read others as one too, so a caller reads each name again.
+fn target_names(filter: &str) -> Result<Vec<String>, keychain::Error> {
+    let filter = wide(OsStr::new(filter));
     let mut count = 0_u32;
     let mut found: *mut *mut CREDENTIALW = ptr::null_mut();
     // SAFETY: `filter` is NUL-terminated and outlives the call. On success Windows points `found`
@@ -1387,10 +1411,10 @@ pub fn branch_items(home: &Path) -> Result<Vec<keychain::Item>, keychain::Error>
     let credentials = unsafe {
         slice::from_raw_parts(found.0.as_ptr(), usize::try_from(count).unwrap_or_default())
     };
-    let mut items = Vec::new();
-    for credential in credentials {
+    let mut names = Vec::new();
+    for pointer in credentials {
         // SAFETY: each pointer in the list is to a credential that stays until the list is freed.
-        let credential = unsafe { &**credential };
+        let credential = unsafe { &**pointer };
         if !credential.CredentialBlob.is_null() {
             let size = usize::try_from(credential.CredentialBlobSize).unwrap_or_default();
             // SAFETY: the blob is `CredentialBlobSize` bytes, which nothing else is using.
@@ -1401,15 +1425,9 @@ pub fn branch_items(home: &Path) -> Result<Vec<keychain::Item>, keychain::Error>
             continue;
         }
         // SAFETY: a credential's name is NUL-terminated.
-        let name = unsafe { text_at(credential.TargetName) };
-        if let Some(item) = name
-            .strip_prefix(&kind)
-            .and_then(|account| keychain::Item::branch_in_account(home, account))
-        {
-            items.push(item);
-        }
+        names.push(unsafe { text_at(credential.TargetName) });
     }
-    Ok(items)
+    Ok(names)
 }
 
 /// The text at `name`, which Windows ends with a NUL.
@@ -1419,8 +1437,13 @@ pub fn branch_items(home: &Path) -> Result<Vec<keychain::Item>, keychain::Error>
 /// `name` points at UTF-16 units that end in a NUL, all readable.
 unsafe fn text_at(name: *const u16) -> String {
     let mut length = 0_usize;
-    // SAFETY: the units up to the NUL are readable, and the loop stops at it.
-    while unsafe { *name.add(length) } != 0 {
+    loop {
+        // SAFETY: the units up to the NUL are readable, and the loop stops at it.
+        let unit = unsafe { name.add(length) };
+        // SAFETY: `unit` is at or before the NUL.
+        if unsafe { unit.read() } == 0 {
+            break;
+        }
         length = length.saturating_add(1);
     }
     // SAFETY: `length` units were just read.
@@ -3205,12 +3228,17 @@ mod tests {
         let mut expected = mine.clone();
         expected.sort_by_key(keychain::Item::account);
         assert_eq!(listed, expected);
-        assert_eq!(branch_items(&beside[0]).unwrap(), vec![others[0].clone()]);
+        let first = others.first().unwrap();
+        let key = others.last().unwrap();
+        assert_eq!(
+            branch_items(beside.first().unwrap()).unwrap(),
+            slice::from_ref(first)
+        );
         for item in &mine {
             assert!(forget_secret(item).unwrap());
         }
         assert_eq!(branch_items(&home).unwrap(), Vec::new());
-        assert!(has_secret(&others[0]).unwrap() && has_secret(&others[3]).unwrap());
+        assert!(has_secret(first).unwrap() && has_secret(key).unwrap());
     }
 
     /// What one thread of a run does: marks a pipe's handle to be handed down for a while, or

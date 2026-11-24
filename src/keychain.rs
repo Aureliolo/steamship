@@ -47,6 +47,9 @@ pub const LABEL: &str = "steamship Web API key";
 /// What a branch's password is called where the store shows it.
 pub const BRANCH_LABEL: &str = "steamship branch password";
 
+/// What kind an item is when it holds the Web API key.
+pub const KEY_KIND: &str = "web-api-key";
+
 /// What kind an item is when it holds a branch's password.
 pub const BRANCH_KIND: &str = "branch-password";
 
@@ -65,7 +68,7 @@ impl Item {
     #[must_use]
     pub fn key(home: &Path) -> Self {
         Self {
-            kind: "web-api-key",
+            kind: KEY_KIND,
             label: LABEL,
             home: home.display().to_string(),
             within: Vec::new(),
@@ -98,11 +101,25 @@ impl Item {
     /// none.
     #[must_use]
     pub fn branch_in_account(home: &Path, account: &str) -> Option<Self> {
-        let rest = account
-            .strip_prefix(home.display().to_string().as_str())?
-            .strip_prefix(':')?;
-        let (app, branch) = rest.split_once(':')?;
-        Self::listed_branch(home, app, branch)
+        Self::listed(BRANCH_KIND, account).filter(|item| item.home == home.display().to_string())
+    }
+
+    /// The item of this `kind` whose account, as [`Item::account`] writes it, is `account`, when
+    /// steamship writes such an account. The home is whatever the account names: a branch ends in
+    /// an app and a branch that hold no colon, and a home may hold some.
+    #[must_use]
+    pub fn listed(kind: &str, account: &str) -> Option<Self> {
+        match kind {
+            KEY_KIND => (!account.is_empty()).then(|| Self::key(Path::new(account))),
+            BRANCH_KIND => {
+                let mut parts = account.rsplitn(3, ':');
+                let branch = parts.next()?;
+                let app = parts.next()?;
+                let home = parts.next().filter(|home| !home.is_empty())?;
+                Self::listed_branch(Path::new(home), app, branch)
+            }
+            _ => None,
+        }
     }
 
     /// The one name the item is found by among those of its kind: the home, then what tells it
@@ -235,6 +252,16 @@ pub fn branch_passwords(home: &Path) -> Result<Vec<Item>, Error> {
     platform::branch_items(home)
 }
 
+/// Every secret the store keeps for steamship, whatever home it is kept for. Where the store
+/// cannot list them all, as the Secret Service of Linux, there are none to list.
+///
+/// # Errors
+///
+/// When the store cannot be reached or read.
+pub fn all_items() -> Result<Vec<Item>, Error> {
+    platform::all_items()
+}
+
 /// Forgets every branch password kept for `home`, and says how many there were. One the store
 /// refuses does not stop the others.
 ///
@@ -258,7 +285,9 @@ fn forget_each(
             Ok(true) => forgotten = forgotten.saturating_add(1),
             Ok(false) => {}
             Err(error) => {
-                refused.get_or_insert(error);
+                if refused.is_none() {
+                    refused = Some(error);
+                }
             }
         }
     }
@@ -329,6 +358,23 @@ mod tests {
             Item::branch_in_account(Path::new("/a:1000:friends"), "/a:1000:friends:480:testing"),
             Some(Item::branch(Path::new("/a:1000:friends"), 480, "testing"))
         );
+    }
+
+    #[test]
+    fn a_listed_item_is_read_back_into_the_home_it_was_kept_for() {
+        let home = Path::new("C:\\Temp\\a:1000");
+        for item in [Item::key(home), Item::branch(home, 480, "testing")] {
+            assert_eq!(Item::listed(item.kind, &item.account()), Some(item));
+        }
+        for (kind, account) in [
+            ("web-api-key", ""),
+            ("branch-password", ":480:testing"),
+            ("branch-password", "480:testing"),
+            ("branch-password", "/a:480:"),
+            ("other", "/a"),
+        ] {
+            assert_eq!(Item::listed(kind, account), None, "{kind} {account}");
+        }
     }
 
     #[test]

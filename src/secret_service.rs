@@ -78,13 +78,19 @@ fn of_kind(kind: &str, home: &str) -> Value {
 }
 
 /// The text of the attribute `name` in `attributes`, an `a{ss}`.
-fn attribute<'a>(attributes: &'a Value, name: &str) -> Option<&'a str> {
+fn attribute<'attributes>(attributes: &'attributes Value, name: &str) -> Option<&'attributes str> {
     let Value::Array(_, pairs) = attributes else {
         return None;
     };
-    pairs.iter().find_map(|pair| match pair {
-        Value::Entry(key, value) if key.text() == Some(name) => value.text(),
-        _ => None,
+    pairs.iter().find_map(|pair| {
+        let Value::Entry(key, value) = pair else {
+            return None;
+        };
+        if key.text() == Some(name) {
+            value.text()
+        } else {
+            None
+        }
     })
 }
 
@@ -280,9 +286,10 @@ impl Service {
             let Some(Value::Variant(attributes)) = answer.first() else {
                 return Err(Error::Failed("an item with no attributes".to_owned()));
             };
-            if let (Some(app), Some(branch)) =
-                (attribute(attributes, "app"), attribute(attributes, "branch"))
-                && let Some(item) = Item::listed_branch(home, app, branch)
+            if let (Some(app), Some(branch)) = (
+                attribute(attributes, "app"),
+                attribute(attributes, "branch"),
+            ) && let Some(item) = Item::listed_branch(home, app, branch)
             {
                 items.push(item);
             }
@@ -348,6 +355,22 @@ pub fn forget_secret(item: &Item) -> Result<bool, Error> {
 /// When the Secret Service cannot be reached or read.
 pub fn branch_items(home: &Path) -> Result<Vec<Item>, Error> {
     service()?.branch_items(home)
+}
+
+/// Every secret kept for steamship, whatever home it is kept for.
+///
+/// The Secret Service cannot list across homes without a lookup per home, and the tests that need
+/// the list run a Secret Service of their own, so there are none to list.
+///
+/// # Errors
+///
+/// Never, but the other stores can fail.
+#[expect(
+    clippy::missing_const_for_fn,
+    reason = "the other stores read what they keep, so a caller cannot rely on this being const"
+)]
+pub fn all_items() -> Result<Vec<Item>, Error> {
+    Ok(Vec::new())
 }
 
 /// Every item kept for `home`, its key and its branch passwords, on the bus `lookup` names in
@@ -859,7 +882,7 @@ mod tests {
     }
 
     #[test]
-    fn the_branch_passwords_of_a_home_are_read_from_each_entrys_attributes_locked_or_not() {
+    fn the_branch_passwords_of_a_home_are_read_from_each_entries_attributes_locked_or_not() {
         let listed = |app: &str, branch: &str| {
             Answer::Return(vec![Value::Variant(Box::new(Value::texts(&[
                 ("application", "steamship"),

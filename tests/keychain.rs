@@ -174,8 +174,11 @@ fn every_branch_password_of_a_home_is_forgotten_and_those_of_no_other_home() {
 
     assert_eq!(keychain::forget_branch_passwords(path).unwrap(), 3);
     assert_eq!(keychain::forget_branch_passwords(path).unwrap(), 0);
-    assert!(keychain::branch_passwords(path).unwrap().is_empty());
-    assert!(keychain::has(path).unwrap(), "the key is not a branch password");
+    assert_eq!(keychain::branch_passwords(path).unwrap(), Vec::new());
+    assert!(
+        keychain::has(path).unwrap(),
+        "the key is not a branch password"
+    );
     for other in &neighbours.0 {
         assert!(keychain::has(other).unwrap(), "{}", other.display());
         assert_eq!(
@@ -194,14 +197,65 @@ fn a_home_that_keeps_a_branch_password_after_its_forget_ran_fails_its_test() {
     let path = home.path().to_path_buf();
     keychain::keep_branch_password(&path, 480, "testing", "open-sesame").unwrap();
     let caught = panic::catch_unwind(AssertUnwindSafe(|| drop(home)));
-    {
-        let _store = common::store::lock();
-        forget_all(&path);
-    }
+    forget_locked(&path);
     let payload = caught.unwrap_err();
     let message = payload.downcast_ref::<String>().unwrap();
     assert!(
         message.contains(&format!("branch-password {}:480:testing", path.display())),
         "{message}"
     );
+}
+
+/// Forgets the key and every branch password kept for `home`, holding the store's lock.
+fn forget_locked(home: &Path) {
+    let _store = common::store::lock();
+    forget_all(home);
+}
+
+/// Forgets everything kept for its homes once dropped, holding the store's lock to do it.
+struct Remains(Vec<PathBuf>);
+
+impl Drop for Remains {
+    fn drop(&mut self) {
+        for home in &self.0 {
+            forget_locked(home);
+        }
+    }
+}
+
+#[test]
+fn a_new_home_forgets_what_is_kept_for_temp_homes_that_are_gone_and_for_no_other() {
+    store();
+    let gone = tempfile::tempdir().unwrap();
+    let standing = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let homes = [gone.path(), standing.path(), outside.path()];
+    let _remains = Remains(homes.map(Path::to_path_buf).to_vec());
+    {
+        let _store = common::store::lock();
+        for home in homes {
+            keychain::keep(home, &Key::parse(FIRST).unwrap()).unwrap();
+            keychain::keep_branch_password(home, 480, "testing", "open-sesame").unwrap();
+        }
+    }
+    let gone_home = gone.path().to_path_buf();
+    drop(gone);
+    assert!(!gone_home.exists());
+
+    let _fresh = forgetting_home();
+
+    assert!(
+        !keychain::has(&gone_home).unwrap(),
+        "the key of the gone home"
+    );
+    assert_eq!(keychain::branch_passwords(&gone_home).unwrap(), Vec::new());
+    for home in [standing.path(), outside.path()] {
+        assert!(keychain::has(home).unwrap(), "{}", home.display());
+        assert_eq!(
+            keychain::branch_passwords(home).unwrap().len(),
+            1,
+            "{}",
+            home.display()
+        );
+    }
 }

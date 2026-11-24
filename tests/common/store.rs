@@ -38,6 +38,8 @@ use steamship::dbus::Value;
 use steamship::dbus::session::Connection;
 #[cfg(target_os = "linux")]
 use steamship::run;
+#[cfg(target_os = "linux")]
+use steamship::secret_service;
 
 /// Starts the bus, prints its address once it listens, then gnome-keyring on it, and ends both
 /// when its input ends. The bus starts nothing itself: a session bus would start a gnome-keyring
@@ -92,7 +94,8 @@ pub fn lock() -> File {
     file
 }
 
-/// A home of its own for a test that keeps a key in the system's store. It holds [`lock`].
+/// A home of its own for a test that keeps a key in the system's store. It holds [`lock`], taken
+/// after a [`sweep`] of what earlier runs left.
 ///
 /// Its key and branch passwords are forgotten as it is dropped, by `forget`, whether the test
 /// passed or failed: the folder goes either way, and a secret kept for a folder no longer there
@@ -121,10 +124,12 @@ impl Home {
     /// When the lock cannot be held.
     #[must_use]
     pub fn of(folder: tempfile::TempDir, forget: fn(&Path)) -> Self {
+        let store = lock();
+        sweep();
         Self {
             folder,
             forget,
-            _store: lock(),
+            _store: store,
         }
     }
 
@@ -158,6 +163,37 @@ impl Drop for Home {
     }
 }
 
+/// Forgets what steamship keeps for each home in the system's temp folder that is gone.
+///
+/// Runs that were killed, or built without a forget, leave such secrets behind, and no later run
+/// would ever meet them again. A home outside the temp folder, or one still there, is left alone:
+/// it may be a person's own, or another test's.
+///
+/// # Panics
+///
+/// When the store cannot be read or refuses to forget.
+pub fn sweep() {
+    let temp = env::temp_dir();
+    let mut homes: Vec<String> = keychain::all_items()
+        .unwrap()
+        .into_iter()
+        .map(|item| item.home)
+        .filter(|home| {
+            let home = Path::new(home);
+            home.strip_prefix(&temp)
+                .is_ok_and(|rest| !rest.as_os_str().is_empty())
+                && !home.exists()
+        })
+        .collect();
+    homes.sort();
+    homes.dedup();
+    for home in homes {
+        let home = Path::new(&home);
+        let _key = keychain::forget(home).unwrap();
+        let _passwords = keychain::forget_branch_passwords(home).unwrap();
+    }
+}
+
 /// Every item the store keeps for `home`: its key and its branch passwords.
 ///
 /// # Errors
@@ -181,7 +217,7 @@ pub fn kept_for(home: &Path) -> Result<Vec<Item>, keychain::Error> {
 #[cfg(target_os = "linux")]
 pub fn kept_for(home: &Path) -> Result<Vec<Item>, keychain::Error> {
     let address = OsString::from(secret_service());
-    steamship::secret_service::kept_for(home, |name| {
+    secret_service::kept_for(home, |name| {
         (name == "DBUS_SESSION_BUS_ADDRESS").then(|| address.clone())
     })
 }

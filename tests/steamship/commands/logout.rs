@@ -375,7 +375,7 @@ fn logout_forgets_every_branch_password_kept_for_its_home_and_the_key() {
         stdout.contains("  api key   \u{2713} forgotten\n  passwords \u{2713} 2 forgotten\n"),
         "{stdout}"
     );
-    assert!(kept_kinds(home.path()).is_empty());
+    assert_eq!(kept_kinds(home.path()), Vec::<&str>::new());
     assert!(!finds_a_password(home.path(), "1000"));
     assert!(!finds_a_password(home.path(), "1001"));
     let (again, said, _) = steamship(&["logout"], Some(home.path()), &[]);
@@ -397,7 +397,7 @@ fn logout_forgets_the_branch_passwords_of_a_home_that_kept_no_key() {
         stdout.contains("  api key   none kept\n  passwords \u{2713} 1 forgotten\n"),
         "{stdout}"
     );
-    assert!(kept_kinds(home.path()).is_empty());
+    assert_eq!(kept_kinds(home.path()), Vec::<&str>::new());
 }
 
 /// Copies the folder `from` and all it holds to the empty folder `to`.
@@ -428,7 +428,12 @@ impl Drop for Beside {
 #[test]
 fn logout_leaves_the_key_and_passwords_of_homes_whose_path_starts_the_same() {
     let home = common::store::Home::of(faked_with(FETCHES_ANY_APP), logout);
-    let stem = home.path().file_name().unwrap().to_string_lossy().into_owned();
+    let stem = home
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
     let parent = home.path().parent().unwrap();
     let beside = Beside(
         ["x", " b"]
@@ -455,7 +460,7 @@ fn logout_leaves_the_key_and_passwords_of_homes_whose_path_starts_the_same() {
         stdout.contains("  passwords \u{2713} 2 forgotten\n"),
         "{stdout}"
     );
-    assert!(kept_kinds(home.path()).is_empty());
+    assert_eq!(kept_kinds(home.path()), Vec::<&str>::new());
     for other in &beside.0 {
         assert_eq!(
             kept_kinds(other.path()),
