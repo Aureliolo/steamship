@@ -273,7 +273,8 @@ fn a_failing_test_that_leaves_a_branch_password_kept_fails_for_its_own_reason() 
     if env::var_os(FAILING).is_some() {
         let home = common::store::Home::new(|home| drop(keychain::forget(home)));
         keychain::keep_branch_password(home.path(), 480, "testing", "open-sesame").unwrap();
-        println!("home {}", home.path().display());
+        // libtest prints the test's name on the same line, so the path follows a marker of its own.
+        println!("leaky home {}", home.path().display());
         panic!("the test's own failure");
     }
     let output = run::output(
@@ -294,7 +295,7 @@ fn a_failing_test_that_leaves_a_branch_password_kept_fails_for_its_own_reason() 
     );
     let home = said
         .lines()
-        .find_map(|line| line.strip_prefix("home "))
+        .find_map(|line| line.split_once("leaky home ").map(|(_, path)| path))
         .map(PathBuf::from);
     if let Some(home) = &home {
         forget_locked(home);

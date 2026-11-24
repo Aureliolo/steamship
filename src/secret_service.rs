@@ -297,10 +297,11 @@ impl Service {
         self.items_by(Value::texts(&[("application", "steamship")]))
     }
 
-    /// The items of the entries that have `attributes`, found by what each entry says of itself.
+    /// The items of the entries that have the attributes `wanted`, found by what each entry says of
+    /// itself.
     /// Reading an entry's attributes needs no unlocking.
-    fn items_by(&mut self, attributes: Value) -> Result<Vec<Item>, Error> {
-        let (unlocked, locked) = self.search_by(attributes)?;
+    fn items_by(&mut self, wanted: Value) -> Result<Vec<Item>, Error> {
+        let (unlocked, locked) = self.search_by(wanted)?;
         let mut items = Vec::new();
         for entry in unlocked.iter().chain(&locked) {
             let answer = self.call(
