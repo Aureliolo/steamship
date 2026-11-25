@@ -2461,15 +2461,24 @@ mod tests {
 
     #[test]
     fn making_a_desktop_leaves_the_process_on_its_own_station() {
+        // Handles, not names: a process already on the logon session's station, as under a
+        // service or the gates' queue, makes its desktops on a station of the same name.
+        let before = {
+            // Held so that no other test has moved the process meanwhile.
+            let _held = STATION.lock().unwrap_or_else(PoisonError::into_inner);
+            // SAFETY: takes no arguments. The handle belongs to the process and is never closed.
+            unsafe { GetProcessWindowStation() }
+        };
         let _desktop = Desktop::create().unwrap();
-        let (own, made_on) = {
+        let (after, made_on) = {
             // Held so that no other test's desktop is being made meanwhile.
             let held = STATION.lock().unwrap_or_else(PoisonError::into_inner);
-            // SAFETY: takes no arguments. The handle belongs to the process and is never closed.
-            let own = station_name(unsafe { GetProcessWindowStation() }).unwrap();
-            (own, held.as_ref().map(|station| station.name.clone()))
+            // SAFETY: as above.
+            let after = unsafe { GetProcessWindowStation() };
+            (after, held.as_ref().map(|station| station.handle))
         };
-        assert_ne!(Some(own), made_on);
+        assert_eq!(after, before);
+        assert_ne!(Some(after), made_on);
     }
 
     #[test]
