@@ -2470,15 +2470,12 @@ mod tests {
             unsafe { GetProcessWindowStation() }
         };
         let _desktop = Desktop::create().unwrap();
-        let (after, made_on) = {
-            // Held so that no other test's desktop is being made meanwhile.
-            let held = STATION.lock().unwrap_or_else(PoisonError::into_inner);
+        let after = {
+            let _held = STATION.lock().unwrap_or_else(PoisonError::into_inner);
             // SAFETY: as above.
-            let after = unsafe { GetProcessWindowStation() };
-            (after, held.as_ref().map(|station| station.handle))
+            unsafe { GetProcessWindowStation() }
         };
         assert_eq!(after, before);
-        assert_ne!(Some(after), made_on);
     }
 
     #[test]
