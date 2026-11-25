@@ -2,14 +2,16 @@
 //! own so that everything here is compiled, tested and mutation-tested on the system where it
 //! runs.
 
+use std::path::Path;
+
 use security_framework::base::Error as Status;
-use security_framework::item::{ItemClass, ItemSearchOptions};
+use security_framework::item::{ItemClass, ItemSearchOptions, Limit, SearchResult};
 use security_framework::passwords::{
     PasswordOptions, delete_generic_password, get_generic_password, set_generic_password_options,
 };
 use zeroize::Zeroizing;
 
-use crate::keychain::{Error, Item};
+use crate::keychain::{BRANCH_KIND, BRANCH_LABEL, Error, Item, KEY_KIND, LABEL, same_home};
 
 /// The Keychain's errSecItemNotFound.
 const NOT_FOUND: i32 = -25_300;
@@ -77,6 +79,54 @@ pub fn keep_secret(item: &Item, secret: &[u8]) -> Result<(), Error> {
     // Kept on this Mac alone, never synchronised to iCloud.
     options.set_access_synchronized(Some(false));
     set_generic_password_options(secret, options).map_err(failed)
+}
+
+/// The branch passwords the Keychain keeps for `home`: generic passwords whose service is the
+/// branch label and whose account is exactly the home, an app and a branch.
+///
+/// # Errors
+///
+/// When the Keychain cannot be searched.
+pub fn branch_items(home: &Path) -> Result<Vec<Item>, Error> {
+    let mut items = listed(BRANCH_KIND, BRANCH_LABEL)?;
+    items.retain(|item| same_home(&item.home, home));
+    Ok(items)
+}
+
+/// Every key and branch password the Keychain keeps for steamship, whatever home it is kept for.
+///
+/// # Errors
+///
+/// When the Keychain cannot be searched.
+pub fn all_items() -> Result<Vec<Item>, Error> {
+    let mut items = listed(KEY_KIND, LABEL)?;
+    items.extend(listed(BRANCH_KIND, BRANCH_LABEL)?);
+    Ok(items)
+}
+
+/// The items of `kind` whose generic password has the service `label`, for any home.
+fn listed(kind: &str, label: &str) -> Result<Vec<Item>, Error> {
+    // Attributes alone, never the secrets, so the Keychain has nothing to ask permission for.
+    let found = ItemSearchOptions::new()
+        .class(ItemClass::generic_password())
+        .service(label)
+        .load_attributes(true)
+        .limit(Limit::All)
+        .search();
+    answered(
+        found.map(|results| {
+            results
+                .iter()
+                .filter_map(SearchResult::simplify_dict)
+                .filter_map(|attributes| {
+                    attributes
+                        .get("acct")
+                        .and_then(|account| Item::listed(kind, account))
+                })
+                .collect()
+        }),
+        Vec::new(),
+    )
 }
 
 /// Removes `item`, and says whether it was kept.

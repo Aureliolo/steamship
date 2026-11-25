@@ -33,8 +33,8 @@ use windows_sys::Win32::Security::Authorization::{
     GetNamedSecurityInfoW, SE_FILE_OBJECT, SetNamedSecurityInfoW, SetSecurityInfo,
 };
 use windows_sys::Win32::Security::Credentials::{
-    CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredFree, CredReadW,
-    CredWriteW,
+    CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW, CredDeleteW, CredEnumerateW,
+    CredFree, CredReadW, CredWriteW,
 };
 use windows_sys::Win32::Security::{
     ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAceEx, CONTAINER_INHERIT_ACE,
@@ -1354,6 +1354,146 @@ pub fn forget_secret(item: &keychain::Item) -> Result<bool, keychain::Error> {
             target_name(item),
             SETTLE.as_secs()
         )))
+    }
+}
+
+/// The branch passwords the Credential Manager keeps for `home`.
+///
+/// # Errors
+///
+/// When the Credential Manager cannot be read.
+pub fn branch_items(home: &Path) -> Result<Vec<keychain::Item>, keychain::Error> {
+    let kind = format!("steamship:{}:", keychain::BRANCH_KIND);
+    let names = target_names(&format!("{kind}{}:*", home.display()))?;
+    Ok(names
+        .iter()
+        .filter_map(|name| name.strip_prefix(&kind))
+        .filter_map(|account| keychain::Item::branch_in_account(home, account))
+        .collect())
+}
+
+/// Every secret the Credential Manager keeps for steamship, whatever home it is kept for.
+///
+/// # Errors
+///
+/// When the Credential Manager cannot be read.
+pub fn all_items() -> Result<Vec<keychain::Item>, keychain::Error> {
+    Ok(target_names("steamship:*")?
+        .iter()
+        .filter_map(|name| {
+            let (kind, account) = name.strip_prefix("steamship:")?.split_once(':')?;
+            keychain::Item::listed(kind, account)
+        })
+        .collect())
+}
+
+/// Whether `listed`, a home as the Credential Manager lists it, is `home`.
+///
+/// It matches names a letter at a time whatever their letter case, so a home spelt in another
+/// case is the same home, and forgetting only the one spelling would leave the other's secrets
+/// found.
+#[must_use]
+pub fn same_home(listed: &str, home: &Path) -> bool {
+    let home = home.display().to_string();
+    listed.chars().count() == home.chars().count()
+        && listed
+            .chars()
+            .zip(home.chars())
+            .all(|(one, other)| upper(one) == upper(other))
+}
+
+/// `letter` in upper case, where that is one letter.
+fn upper(letter: char) -> char {
+    let mut upper = letter.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(one), None) => one,
+        _ => letter,
+    }
+}
+
+/// The names of the generic credentials that match `filter`. Windows takes only a trailing `*` as
+/// a wildcard and may read others as one too, so a caller reads each name again.
+fn target_names(filter: &str) -> Result<Vec<String>, keychain::Error> {
+    let filter = wide(OsStr::new(filter));
+    let mut count = 0_u32;
+    let mut found: *mut *mut CREDENTIALW = ptr::null_mut();
+    // SAFETY: `filter` is NUL-terminated and outlives the call. On success Windows points `found`
+    // at `count` pointers to credentials it allocated.
+    if unsafe { CredEnumerateW(filter.as_ptr(), 0, &raw mut count, &raw mut found) } == 0_i32 {
+        let error = io::Error::last_os_error();
+        return if not_found(&error) {
+            Ok(Vec::new())
+        } else {
+            Err(store_failed(&error))
+        };
+    }
+    let found = Enumerated(NonNull::new(found).ok_or_else(|| {
+        keychain::Error::Failed("Windows found credentials but gave none back".to_owned())
+    })?);
+    // SAFETY: CredEnumerateW succeeded, so `found` holds `count` pointers, left alone until the
+    // list is freed.
+    let credentials = unsafe {
+        slice::from_raw_parts(found.0.as_ptr(), usize::try_from(count).unwrap_or_default())
+    };
+    // SAFETY: each pointer in the list is to a credential that stays until the list is freed.
+    Ok(unsafe { names_of(credentials) })
+}
+
+/// The names of the generic credentials among `credentials`, each one's secret wiped first.
+///
+/// # Safety
+///
+/// Each pointer is to a credential as Windows writes one, which nothing else uses meanwhile.
+unsafe fn names_of(credentials: &[*mut CREDENTIALW]) -> Vec<String> {
+    let mut names = Vec::new();
+    for pointer in credentials {
+        // SAFETY: the caller hands over credentials nothing else is using.
+        let credential = unsafe { &**pointer };
+        if !credential.CredentialBlob.is_null() {
+            let size = usize::try_from(credential.CredentialBlobSize).unwrap_or_default();
+            // SAFETY: the blob is `CredentialBlobSize` bytes, which nothing else is using.
+            // Windows frees it without wiping it, and listing has no use for it.
+            unsafe { slice::from_raw_parts_mut(credential.CredentialBlob, size) }.zeroize();
+        }
+        if credential.Type != CRED_TYPE_GENERIC || credential.TargetName.is_null() {
+            continue;
+        }
+        // SAFETY: a credential's name is NUL-terminated.
+        names.push(unsafe { text_at(credential.TargetName) });
+    }
+    names
+}
+
+/// The text at `name`, which Windows ends with a NUL.
+///
+/// # Safety
+///
+/// `name` points at UTF-16 units that end in a NUL, all readable.
+unsafe fn text_at(name: *const u16) -> String {
+    let mut length = 0_usize;
+    loop {
+        // SAFETY: the units up to the NUL are readable, and the loop stops at it.
+        let unit = unsafe { name.add(length) };
+        // SAFETY: `unit` is at or before the NUL.
+        if unsafe { unit.read() } == 0 {
+            break;
+        }
+        length = length.saturating_add(1);
+    }
+    // SAFETY: `length` units were just read.
+    String::from_utf16_lossy(unsafe { slice::from_raw_parts(name, length) })
+}
+
+/// The list `CredEnumerateW` allocated, freed once it is dropped.
+#[derive(Debug)]
+struct Enumerated(NonNull<*mut CREDENTIALW>);
+
+impl Drop for Enumerated {
+    fn drop(&mut self) {
+        // SAFETY: the list came from CredEnumerateW and is freed once, here.
+        unsafe {
+            CredFree(self.0.as_ptr().cast_const().cast());
+        }
     }
 }
 
@@ -3075,6 +3215,109 @@ mod tests {
                 "{listed}"
             );
         }
+    }
+
+    #[test]
+    fn a_listing_names_the_generic_credentials_alone_and_wipes_every_secret() {
+        use windows_sys::Win32::Security::Credentials::CRED_TYPE_DOMAIN_PASSWORD;
+        let mut name = wide(OsStr::new("steamship:web-api-key:C:\\Home"));
+        let mut other = wide(OsStr::new("steamship:web-api-key:C:\\Domain"));
+        let mut secret = *b"open-sesame";
+        let mut also = *b"sesame";
+        let mut generic = CREDENTIALW {
+            Type: CRED_TYPE_GENERIC,
+            TargetName: name.as_mut_ptr(),
+            CredentialBlob: secret.as_mut_ptr(),
+            CredentialBlobSize: 11,
+            ..CREDENTIALW::default()
+        };
+        let mut domain = CREDENTIALW {
+            Type: CRED_TYPE_DOMAIN_PASSWORD,
+            TargetName: other.as_mut_ptr(),
+            CredentialBlob: also.as_mut_ptr(),
+            CredentialBlobSize: 6,
+            ..CREDENTIALW::default()
+        };
+        let mut nameless = CREDENTIALW {
+            Type: CRED_TYPE_GENERIC,
+            ..CREDENTIALW::default()
+        };
+        let listed = [&raw mut generic, &raw mut domain, &raw mut nameless];
+        // SAFETY: each pointer is to a credential above, whose name and secret outlive the call.
+        let names = unsafe { names_of(&listed) };
+        assert_eq!(names, ["steamship:web-api-key:C:\\Home"]);
+        assert_eq!(secret, [0; 11]);
+        assert_eq!(also, [0; 6]);
+    }
+
+    #[test]
+    fn a_home_is_the_same_whatever_its_letter_case_and_only_then() {
+        assert!(same_home("c:\\temp\\HOME", Path::new("C:\\Temp\\Home")));
+        assert!(same_home(
+            "C:\\TEMP\\CAF\u{c9}",
+            Path::new("C:\\Temp\\Caf\u{e9}")
+        ));
+        assert!(!same_home("C:\\Temp\\Homes", Path::new("C:\\Temp\\Home")));
+        assert!(!same_home("C:\\Temp\\Hom", Path::new("C:\\Temp\\Home")));
+        assert!(!same_home("C:\\Temp\\Hose", Path::new("C:\\Temp\\Home")));
+    }
+
+    /// Forgets the items it is given when dropped, so a failed test leaves nothing in the store.
+    struct Forgetting(Vec<keychain::Item>);
+
+    impl Drop for Forgetting {
+        fn drop(&mut self) {
+            for item in &self.0 {
+                drop(forget_secret(item));
+            }
+        }
+    }
+
+    #[test]
+    fn the_branch_passwords_listed_are_those_of_the_home_alone() {
+        let store = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(env::temp_dir().join("steamship-tests-credentials.lock"))
+            .unwrap();
+        store.lock().unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let home = folder.path().join("a");
+        let beside = [
+            folder.path().join("a b"),
+            folder.path().join("ab"),
+            folder.path().join("a:1000:friends"),
+        ];
+        let mine = vec![
+            keychain::Item::branch(&home, 480, "testing"),
+            keychain::Item::branch(&home, 1000, "friends"),
+        ];
+        let mut others: Vec<keychain::Item> = beside
+            .iter()
+            .map(|other| keychain::Item::branch(other, 480, "testing"))
+            .collect();
+        others.push(keychain::Item::key(&home));
+        let _forgetting = Forgetting(mine.iter().chain(&others).cloned().collect());
+        for item in mine.iter().chain(&others) {
+            keep_secret(item, b"open-sesame").unwrap();
+        }
+        let mut listed = branch_items(&home).unwrap();
+        listed.sort_by_key(keychain::Item::account);
+        let mut expected = mine.clone();
+        expected.sort_by_key(keychain::Item::account);
+        assert_eq!(listed, expected);
+        let first = others.first().unwrap();
+        let key = others.last().unwrap();
+        assert_eq!(
+            branch_items(beside.first().unwrap()).unwrap(),
+            slice::from_ref(first)
+        );
+        for item in &mine {
+            assert!(forget_secret(item).unwrap());
+        }
+        assert_eq!(branch_items(&home).unwrap(), Vec::new());
+        assert!(has_secret(first).unwrap() && has_secret(key).unwrap());
     }
 
     /// What one thread of a run does: marks a pipe's handle to be handed down for a while, or

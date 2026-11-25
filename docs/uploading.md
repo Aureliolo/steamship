@@ -33,7 +33,7 @@ exits 6 instead. Wait, then run again. A new login only adds attempts.
 saved token as an upload would and says whether Steam takes it. It asks for nothing and prints
 neither the account's name nor any key. It exits 0 when an upload would log in, 3 when it would
 not and 6 when Steam is limiting login attempts. `steamship logout` forgets the token, the
-account and the Web API key.
+account, the Web API key and the kept branch passwords.
 
 ## Starting scripts
 
@@ -593,7 +593,8 @@ read it while the fetch runs.
 
 Once Steam has taken a typed password, Enter keeps it for the next fetch. `--keep-password` keeps
 it, or the one from the variable, without asking. A kept password that Steam refuses is
-forgotten. The next fetch asks for the one the branch takes now.
+forgotten. The next fetch asks for the one the branch takes now. `steamship logout` forgets every
+password kept for the home.
 
 ```sh
 steamship fetch 480 --branch testing --keep-password

@@ -565,8 +565,8 @@ pub enum Command {
     },
     /// Forget the saved login.
     ///
-    /// Removes the login steamcmd saved, the account steamship remembered and the kept Web API
-    /// key. The next upload needs `steamship login` first.
+    /// Removes the login steamcmd saved, the account steamship remembered, the kept Web API key
+    /// and the kept branch passwords. The next upload needs `steamship login` first.
     Logout,
     /// Write starter build scripts for an app.
     ///
@@ -1303,7 +1303,7 @@ mod tests {
 
     /// Names read only in a debug build or a test build, with a text that guards each one in its
     /// file, so a release build cannot reach them.
-    const NOT_IN_RELEASE: [(&str, &str); 4] = [
+    const NOT_IN_RELEASE: [(&str, &str); 5] = [
         // A stand-in host is taken only where `webapi::is_stand_in` allows it, and the test below
         // holds that rule to a debug build.
         ("STEAMSHIP_WEB_API_STAND_IN", "is_stand_in"),
@@ -1312,6 +1312,11 @@ mod tests {
         ("STEAMSHIP_FAKE_STEAMCMD", "feature = \"fake-steamcmd\""),
         // Microsoft's console is taken from this folder only when the tests turn the feature on.
         ("STEAMSHIP_TEST_CONPTY", "feature = \"fake-steamcmd\""),
+        // The store refuses the branch passwords only when the tests turn the feature on.
+        (
+            "STEAMSHIP_TEST_REFUSE_PASSWORDS",
+            "feature = \"fake-steamcmd\"",
+        ),
     ];
 
     /// Each source file's name without its extension and its code up to the test module, without
