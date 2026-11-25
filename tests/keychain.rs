@@ -311,26 +311,28 @@ fn a_failing_test_that_leaves_a_branch_password_kept_fails_for_its_own_reason() 
 }
 
 #[test]
-fn a_gone_home_outside_the_temp_folder_keeps_its_secrets_through_a_sweep() {
+fn a_gone_home_outside_the_swept_folder_keeps_its_secrets_through_a_sweep() {
     store();
-    let outside = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    // A folder of the test's own is swept, since the system's temp folder may hold the whole
+    // build, as a mutation run's copy of the repository does.
+    let swept = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
     let path = outside.path().to_path_buf();
     let _remains = Remains(vec![path.clone()]);
     let held = common::store::lock();
     keychain::keep(&path, &Key::parse(FIRST).unwrap()).unwrap();
     keychain::keep_branch_password(&path, 480, "testing", "open-sesame").unwrap();
-    drop(held);
     drop(outside);
     assert!(!path.exists());
 
-    let fresh = forgetting_home();
+    common::store::sweep(swept.path());
 
     assert!(keychain::has(&path).unwrap(), "{}", path.display());
     assert_eq!(
         keychain::branch_passwords(&path).unwrap(),
         [keychain::Item::branch(&path, 480, "testing")]
     );
-    drop(fresh);
+    drop(held);
     forget_locked(&path);
     assert_eq!(common::store::kept_for(&path).unwrap(), Vec::new());
 }

@@ -129,7 +129,7 @@ impl Home {
     #[must_use]
     pub fn of(folder: tempfile::TempDir, forget: fn(&Path)) -> Self {
         let store = lock();
-        sweep();
+        sweep(&env::temp_dir());
         Self {
             folder,
             forget,
@@ -167,21 +167,21 @@ impl Drop for Home {
     }
 }
 
-/// Forgets what steamship keeps for each home in the system's temp folder that is gone.
+/// Forgets what steamship keeps for each home in `temp` that is gone. [`Home`] sweeps the
+/// system's temp folder, under [`lock`].
 ///
 /// Runs that were killed, or built without a forget, leave such secrets behind, and no later run
-/// would ever meet them again. A home outside the temp folder, or one still there, is left alone:
-/// it may be a person's own, or another test's.
+/// would ever meet them again. A home outside `temp`, or one still there, is left alone: it may
+/// be a person's own, or another test's.
 ///
 /// # Panics
 ///
 /// When the store cannot be read or refuses to forget.
-pub fn sweep() {
-    let temp = env::temp_dir();
+pub fn sweep(temp: &Path) {
     for item in all_kept().unwrap() {
         let home = Path::new(&item.home);
         if home
-            .strip_prefix(&temp)
+            .strip_prefix(temp)
             .is_ok_and(|rest| !rest.as_os_str().is_empty())
             && !home.exists()
         {
