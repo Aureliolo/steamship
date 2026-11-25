@@ -336,3 +336,56 @@ fn a_gone_home_outside_the_swept_folder_keeps_its_secrets_through_a_sweep() {
     forget_locked(&path);
     assert_eq!(common::store::kept_for(&path).unwrap(), Vec::new());
 }
+
+/// Set for the copy of this test program that
+/// `a_new_home_keeps_the_secrets_of_a_gone_home_outside_the_temp_folder` starts, with a temp
+/// folder of its own, in which that test only makes a home.
+const SWEEPING: &str = "STEAMSHIP_TEST_SWEEPING_ITS_OWN_TEMP";
+
+// The copy's temp folder is one of the test's own, so the gone home stands outside it however the
+// system's temp folder lies, and the copy's lock file is its own too.
+#[test]
+fn a_new_home_keeps_the_secrets_of_a_gone_home_outside_the_temp_folder() {
+    store();
+    if env::var_os(SWEEPING).is_some() {
+        drop(forgetting_home());
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let path = outside.path().to_path_buf();
+    let _remains = Remains(vec![path.clone()]);
+    let held = common::store::lock();
+    keychain::keep_branch_password(&path, 480, "testing", "open-sesame").unwrap();
+    drop(outside);
+    assert!(!path.exists());
+
+    let output = run::output(
+        run::command(env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "a_new_home_keeps_the_secrets_of_a_gone_home_outside_the_temp_folder",
+                "--test-threads=1",
+            ])
+            .env(SWEEPING, "1")
+            .env("TMP", temp.path())
+            .env("TEMP", temp.path())
+            .env("TMPDIR", temp.path()),
+    )
+    .unwrap();
+
+    let said = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.status.success(), "{said}");
+    assert_eq!(
+        keychain::branch_passwords(&path).unwrap(),
+        [keychain::Item::branch(&path, 480, "testing")],
+        "{said}"
+    );
+    drop(held);
+    forget_locked(&path);
+    assert_eq!(common::store::kept_for(&path).unwrap(), Vec::new());
+}
