@@ -245,33 +245,15 @@ pub fn forget_branch_password(home: &Path, app: u32, branch: &str) -> Result<boo
     platform::forget_secret(&Item::branch(home, app, branch))
 }
 
-/// Whether `listed`, a home as the store lists it, is `home`.
-///
-/// The Credential Manager of Windows matches names whatever their letter case, so there a home
-/// spelt in another case is the same home, and forgetting only the one spelling would leave the
-/// other's secrets found.
+#[cfg(windows)]
+use crate::windows::same_home;
+
+/// Whether `listed`, a home as the store lists it, is `home`, letter for letter, as the
+/// Keychain and the Secret Service match it.
+#[cfg(not(windows))]
 #[must_use]
 pub fn same_home(listed: &str, home: &Path) -> bool {
-    let home = home.display().to_string();
-    if cfg!(windows) {
-        listed.chars().count() == home.chars().count()
-            && listed
-                .chars()
-                .zip(home.chars())
-                .all(|(one, other)| upper(one) == upper(other))
-    } else {
-        listed == home
-    }
-}
-
-/// `letter` in upper case, where that is one letter, as Windows compares names a letter at a
-/// time.
-fn upper(letter: char) -> char {
-    let mut upper = letter.to_uppercase();
-    match (upper.next(), upper.next()) {
-        (Some(one), None) => one,
-        _ => letter,
-    }
+    listed == home.display().to_string()
 }
 
 /// The branch passwords kept for `home`, as items, found out without asking to unlock anything.
@@ -281,15 +263,6 @@ fn upper(letter: char) -> char {
 /// When the store cannot be reached or read.
 pub fn branch_passwords(home: &Path) -> Result<Vec<Item>, Error> {
     platform::branch_items(home)
-}
-
-/// Every secret the store keeps for steamship, whatever home it is kept for.
-///
-/// # Errors
-///
-/// When the store cannot be reached or read.
-pub fn all_items() -> Result<Vec<Item>, Error> {
-    platform::all_items()
 }
 
 /// Forgets every branch password kept for `home`, and says how many there were. One the store

@@ -1387,6 +1387,30 @@ pub fn all_items() -> Result<Vec<keychain::Item>, keychain::Error> {
         .collect())
 }
 
+/// Whether `listed`, a home as the Credential Manager lists it, is `home`.
+///
+/// It matches names a letter at a time whatever their letter case, so a home spelt in another
+/// case is the same home, and forgetting only the one spelling would leave the other's secrets
+/// found.
+#[must_use]
+pub fn same_home(listed: &str, home: &Path) -> bool {
+    let home = home.display().to_string();
+    listed.chars().count() == home.chars().count()
+        && listed
+            .chars()
+            .zip(home.chars())
+            .all(|(one, other)| upper(one) == upper(other))
+}
+
+/// `letter` in upper case, where that is one letter.
+fn upper(letter: char) -> char {
+    let mut upper = letter.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(one), None) => one,
+        _ => letter,
+    }
+}
+
 /// The names of the generic credentials that match `filter`. Windows takes only a trailing `*` as
 /// a wildcard and may read others as one too, so a caller reads each name again.
 fn target_names(filter: &str) -> Result<Vec<String>, keychain::Error> {
@@ -1411,9 +1435,19 @@ fn target_names(filter: &str) -> Result<Vec<String>, keychain::Error> {
     let credentials = unsafe {
         slice::from_raw_parts(found.0.as_ptr(), usize::try_from(count).unwrap_or_default())
     };
+    // SAFETY: each pointer in the list is to a credential that stays until the list is freed.
+    Ok(unsafe { names_of(credentials) })
+}
+
+/// The names of the generic credentials among `credentials`, each one's secret wiped first.
+///
+/// # Safety
+///
+/// Each pointer is to a credential as Windows writes one, which nothing else uses meanwhile.
+unsafe fn names_of(credentials: &[*mut CREDENTIALW]) -> Vec<String> {
     let mut names = Vec::new();
     for pointer in credentials {
-        // SAFETY: each pointer in the list is to a credential that stays until the list is freed.
+        // SAFETY: the caller hands over credentials nothing else is using.
         let credential = unsafe { &**pointer };
         if !credential.CredentialBlob.is_null() {
             let size = usize::try_from(credential.CredentialBlobSize).unwrap_or_default();
@@ -1427,7 +1461,7 @@ fn target_names(filter: &str) -> Result<Vec<String>, keychain::Error> {
         // SAFETY: a credential's name is NUL-terminated.
         names.push(unsafe { text_at(credential.TargetName) });
     }
-    Ok(names)
+    names
 }
 
 /// The text at `name`, which Windows ends with a NUL.
@@ -3181,6 +3215,51 @@ mod tests {
                 "{listed}"
             );
         }
+    }
+
+    #[test]
+    fn a_listing_names_the_generic_credentials_alone_and_wipes_every_secret() {
+        use windows_sys::Win32::Security::Credentials::CRED_TYPE_DOMAIN_PASSWORD;
+        let mut name = wide(OsStr::new("steamship:web-api-key:C:\\Home"));
+        let mut other = wide(OsStr::new("steamship:web-api-key:C:\\Domain"));
+        let mut secret = *b"open-sesame";
+        let mut also = *b"sesame";
+        let mut generic = CREDENTIALW {
+            Type: CRED_TYPE_GENERIC,
+            TargetName: name.as_mut_ptr(),
+            CredentialBlob: secret.as_mut_ptr(),
+            CredentialBlobSize: 11,
+            ..CREDENTIALW::default()
+        };
+        let mut domain = CREDENTIALW {
+            Type: CRED_TYPE_DOMAIN_PASSWORD,
+            TargetName: other.as_mut_ptr(),
+            CredentialBlob: also.as_mut_ptr(),
+            CredentialBlobSize: 6,
+            ..CREDENTIALW::default()
+        };
+        let mut nameless = CREDENTIALW {
+            Type: CRED_TYPE_GENERIC,
+            ..CREDENTIALW::default()
+        };
+        let listed = [&raw mut generic, &raw mut domain, &raw mut nameless];
+        // SAFETY: each pointer is to a credential above, whose name and secret outlive the call.
+        let names = unsafe { names_of(&listed) };
+        assert_eq!(names, ["steamship:web-api-key:C:\\Home"]);
+        assert_eq!(secret, [0; 11]);
+        assert_eq!(also, [0; 6]);
+    }
+
+    #[test]
+    fn a_home_is_the_same_whatever_its_letter_case_and_only_then() {
+        assert!(same_home("c:\\temp\\HOME", Path::new("C:\\Temp\\Home")));
+        assert!(same_home(
+            "C:\\TEMP\\CAF\u{c9}",
+            Path::new("C:\\Temp\\Caf\u{e9}")
+        ));
+        assert!(!same_home("C:\\Temp\\Homes", Path::new("C:\\Temp\\Home")));
+        assert!(!same_home("C:\\Temp\\Hom", Path::new("C:\\Temp\\Home")));
+        assert!(!same_home("C:\\Temp\\Hose", Path::new("C:\\Temp\\Home")));
     }
 
     /// Forgets the items it is given when dropped, so a failed test leaves nothing in the store.

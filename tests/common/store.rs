@@ -193,7 +193,7 @@ pub fn sweep(temp: &Path) {
 /// Every item the store keeps for steamship.
 #[cfg(not(target_os = "linux"))]
 fn all_kept() -> Result<Vec<Item>, keychain::Error> {
-    keychain::all_items()
+    platform::all_items()
 }
 
 /// Removes `item` from the store, and says whether it was kept.

@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 
 use crate::dbus::session::Connection;
 use crate::dbus::{self, Value};
-use crate::keychain::{BRANCH_KIND, Error, Item, KEY_KIND, same_home};
+use crate::keychain::{BRANCH_KIND, Error, Item, KEY_KIND};
 
 const SERVICE: &str = "org.freedesktop.secrets";
 const ROOT: &str = "/org/freedesktop/secrets";
@@ -287,9 +287,7 @@ impl Service {
 
     /// The branch passwords kept for `home`.
     fn branch_items(&mut self, home: &Path) -> Result<Vec<Item>, Error> {
-        let mut items = self.items_by(of_kind(BRANCH_KIND, &home.display().to_string()))?;
-        items.retain(|item| item.kind == BRANCH_KIND && same_home(&item.home, home));
-        Ok(items)
+        self.items_by(of_kind(BRANCH_KIND, &home.display().to_string()))
     }
 
     /// Every item kept for steamship, whatever home it is kept for.
@@ -379,15 +377,6 @@ pub fn forget_secret(item: &Item) -> Result<bool, Error> {
 /// When the Secret Service cannot be reached or read.
 pub fn branch_items(home: &Path) -> Result<Vec<Item>, Error> {
     service()?.branch_items(home)
-}
-
-/// Every secret kept for steamship, whatever home it is kept for.
-///
-/// # Errors
-///
-/// When the Secret Service cannot be reached or read.
-pub fn all_items() -> Result<Vec<Item>, Error> {
-    service()?.all_items()
 }
 
 /// Every secret kept for steamship, on the bus `lookup` names in `DBUS_SESSION_BUS_ADDRESS`. For
